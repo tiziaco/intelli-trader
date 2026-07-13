@@ -104,13 +104,13 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 - [x] **Phase 3: EngineContext + Storage-in-Handler** - `EngineContext` threaded into `compose_engine(ctx, spec)`, handler-owns storage init, `SqlBackend→SqlEngine` rename (CTX-01..04) (completed 2026-07-09)
 - [x] **Phase 4: Storage Schema: Migrations Relocation + New Durable Stores** - `migrations/` → project root FIRST, then `SystemStore`/`VenueStore`/`StrategyRegistryStore` chained on the `HaltRecordStore` template; single-head + parity Alembic gate over the FULL chain + rehydrate (SQL-01..02, STORE-01..05) (completed 2026-07-09)
 - [x] **Phase 5: Venue Registry + Bundle** - Two registries, `VenuePlugin`/`VenueBundle`, precision/validate on the exchange, connector memoization, shared `StreamSupervisor` — kills every `if exchange==` (VENUE-01..07) (completed 2026-07-12)
-- [ ] **Phase 6: LiveRunner + Factory + Facade Shrink** - `build_live_system`, `LiveRunner`, shared `UniverseWiring` *(oracle-sensitive)*, `LiveRouteRegistrar`, ~200-line facade (RUN-01..07)
+- [ ] **Phase 6: LiveRunner + Factory + Facade Shrink** - `build_live_system`, `LiveRunner`, shared `UniverseWiring` *(oracle-sensitive)*, `LiveRouteRegistrar`, ~200-line facade, replay→`tests/ReplayRunner` (RUN-01..07, TEST-01)
 - [ ] **Phase 7: Safety + Reconciliation + Stream Recovery** - `SafetyController`, `ReconciliationCoordinator`, `StreamRecoveryHandler`, CONTROL routes, pre-trade throttle — flag machinery deleted (SAFE-01..06)
 - [ ] **Phase 8: Error Subsystem** - Injected `ErrorPolicy`, formalized `ErrorHandler`, two-guard terminal safety, CF-1 aggregate circuit breaker (ERR-01..04)
 - [ ] **Phase 9 ★: Runtime-Config Platform** - `RuntimeConfig` overlay, scoped `ConfigUpdateEvent` + allowlist, restart layering, stats/state UI read-model (RTCFG-01..06)
 - [ ] **Phase 10 ★: Strategies Registry** - Durable `StrategyRegistryStore` rehydrate, enable/disable via `STRATEGY_COMMAND`, atomic strategy-param reconfiguration (STRAT-01..03)
 - [ ] **Phase 11 ★: Multi-Portfolio-Live** - Per-`account_id` account factory, distinct-`account_id` invariant (fail loud), per-portfolio reconcile, `clOrdId→client_order_id` (MPORT-01..06)
-- [ ] **Phase 12: Test Migration + Gates** - `run_paper_replay`→`ReplayRunner` in `tests/` (production replay-free); live-smoke / config-restart / multi-portfolio-attribution gates (TEST-01..04)
+- [ ] **Phase 12: Test Migration + Gates** - live-smoke / config-restart / multi-portfolio-attribution gates (TEST-02..04; TEST-01 replay relocation pulled forward into P6)
 
 ## Phase Details
 
@@ -246,7 +246,7 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 
 **Goal**: Make `build_live_system` the live composition root over a new `LiveRunner`, shrinking `LiveTradingSystem` to a ~200-line facade — with the shared `UniverseWiring` extracted byte-exact (the highest oracle-risk seam) and reused by both runners, and live routes composed declaratively.
 **Depends on**: Phase 4, Phase 5
-**Requirements**: RUN-01, RUN-02, RUN-03, RUN-04, RUN-05, RUN-06, RUN-07
+**Requirements**: RUN-01, RUN-02, RUN-03, RUN-04, RUN-05, RUN-06, RUN-07, TEST-01 *(TEST-01 pulled forward from P12 — same construction path P6 builds; kills the production-replay tax across P7–P11)*
 **Success Criteria** (what must be TRUE):
 
   1. The shared `UniverseWiring` helper (`derive_membership → build Universe → inject exchange/order/portfolio/strategies → feed.bind`, incl. the WR-03 desync assert) is extracted as one intact unit and reused by both `BacktestRunner` and the live `SessionInitializer` — **BacktestRunner stays byte-exact `134 / 46189.87730727451`** (per-PLAN gate on the `UniverseWiring` extraction; the milestone's highest oracle risk).
@@ -254,6 +254,7 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
   3. `LiveTradingSystem` shrinks to a ~200-line facade (lifecycle, status/read-model, `add_event`); legacy `print_status`/`get_statistics` are dropped and `__init__` sheds `exchange`/`to_sql`/`queue_timeout`/`max_idle_time`.
   4. `LiveRouteRegistrar` composes live + CONTROL routes declaratively (list order = execution order; no subclass, no runtime mutation) with backtest getting base routes only; `UniverseHandler` is a first-class handler with explicit deps and zero OKX coupling; `StrategyWarmupConsumer` is rehomed sized to `max(strategy.warmup)` with the CF-10 depth-hint seam shaped (K-computation deferred).
   5. `test_okx_inertness.py` stays green (live decomposition imports no `ccxt.pro` on the backtest path).
+  6. **TEST-01 (pulled forward from P12):** `run_paper_replay` → `ReplayRunner` in `tests/`; the `replay` plugin (`SimulatedExchange` + `ReplayDataProvider` over the golden CSV) is registered **only** by a test fixture; production is replay-free (`run_paper_replay` + `PAPER_PARITY_*`/`_PAPER_*` leave production). `ReplayRunner` injects a **fail-fast `ErrorPolicy`** (via the P6 injected-seam) so the parity gate can't false-green. Done as pure code-motion with `test_paper_parity` green continuously, sliced as its own plan AFTER the `UniverseWiring` extraction locks (per-PLAN oracle gate).
 
 **Plans**: TBD
 
@@ -332,12 +333,12 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 
 ### Phase 12: Test Migration + Gates
 
-**Goal**: Move the replay driver into `tests/` so production is replay-free, and add the live-smoke, config-restart, and multi-portfolio-attribution gates that lock the decomposed live surface. Lands last (needs the whole surface incl. multi-portfolio).
+**Goal**: Add the live-smoke, config-restart, and multi-portfolio-attribution gates that lock the decomposed live surface. Lands last (needs the whole surface incl. multi-portfolio). *(TEST-01 — the replay-driver relocation to `tests/` — was pulled forward into P6; P12 now inherits replay-free production and only adds the surface-dependent gates.)*
 **Depends on**: Phase 6, Phase 11
-**Requirements**: TEST-01, TEST-02, TEST-03, TEST-04
+**Requirements**: TEST-02, TEST-03, TEST-04 *(TEST-01 delivered in P6)*
 **Success Criteria** (what must be TRUE):
 
-  1. `run_paper_replay` → `ReplayRunner` in `tests/`; the `replay` plugin (`SimulatedExchange` + `ReplayDataProvider` over the golden CSV) is registered **only** by a test fixture, and production is replay-free (`run_paper_replay` + `PAPER_PARITY_*`/`_PAPER_*` leave production).
+  1. *(TEST-01 delivered in P6 — production is already replay-free: `run_paper_replay` → `tests/` `ReplayRunner`, `replay` plugin fixture-registered-only. P12 inherits this; no P12 action.)*
   2. A live-smoke gate exercises the decomposed live surface end-to-end (facade → factory → `LiveRunner` → controllers) on the replay fixture.
   3. A config-restart gate proves persisted runtime overrides survive a restart (RTCFG-03).
   4. A multi-portfolio attribution gate proves fills route to the correct portfolio and the distinct-`account_id` invariant fails loud (MPORT-02/MPORT-04).

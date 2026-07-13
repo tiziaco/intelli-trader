@@ -33,6 +33,9 @@ depth-hint seam shaped. **Live-only decomposition** layered on the mode-agnostic
 - `_LiveWarmupConsumer` → reusable `StrategyWarmupConsumer` in
   `price_handler/feed/cache_registration.py`, sized `max(strategy.warmup)`; CF-10 depth-hint
   seam shaped (K-computation deferred) (RUN-07).
+- **TEST-01 (pulled forward from P12):** `run_paper_replay` → `ReplayRunner` in `tests/`; the
+  `replay` plugin registered ONLY by a test fixture; production replay-free (`run_paper_replay` +
+  `PAPER_PARITY_*`/`_PAPER_*` leave production). See D-16/D-18.
 - Backtest oracle byte-exact (per-PLAN gate on `UniverseWiring`); `test_okx_inertness.py` green.
 
 **Explicitly NOT in this phase (deferred to later phases — downstream must NOT pull forward):**
@@ -42,10 +45,11 @@ depth-hint seam shaped. **Live-only decomposition** layered on the mode-agnostic
 - Full `ErrorPolicy` formalization: EventHandler-construction injection (removing the
   monkeypatch), backtest fail-fast / live publish-and-continue split, CF-1 circuit breaker —
   **P8** (P6 only shapes the minimal injected seam; see D-07).
-- `run_paper_replay` → `tests/` `ReplayRunner` + replay-free production — **P12** (TEST-01);
-  P6 keeps it a thin facade method with the minimal adaptation (see D-16).
 - CF-10 K-computation (per-symbol `max(warmup for concerned strategies)` + per-symbol ring
   sizing) — deferred until a deeper-warmup roster lands; P6 shapes only the seam (see D-17).
+- The remaining P12 test-migration gates (TEST-02 live-smoke, TEST-03 config-restart, TEST-04
+  multi-portfolio attribution) — stay in **P12** (they need the P7/P9/P11 surface). Only TEST-01
+  (the replay relocation) was pulled forward — see D-18.
 
 </domain>
 
@@ -206,21 +210,39 @@ depth-hint seam shaped. **Live-only decomposition** layered on the mode-agnostic
   RUN-05/RUN-06 by building routes + UniverseHandler at `start()`, leaving the facade half-wired between
   `__init__` and `start()`).
 
-### Area 7 — run_paper_replay integrity (parity gate)
+### Area 7 — run_paper_replay integrity + relocation (TEST-01 pulled into P6)
 
-- **D-16 (Minimal P6 adaptation — drop line 1490, preserve steps 2-3 verbatim):** `run_paper_replay`
-  (`live_trading_system.py:1422`) NEVER used `_event_processing_loop`/the daemon/LiveRunner — it has
-  its own synchronous per-bar drive calling `event_handler.process_events()` directly (steps 2-3,
-  `:1499-1524`). Its ONLY touchpoint with the decomposed code is line 1490
+- **D-16 (Session-init touchpoint — drop line 1490; the sync drive is otherwise unchanged):**
+  `run_paper_replay` (`live_trading_system.py:1422`) NEVER used `_event_processing_loop`/the daemon/
+  LiveRunner — it has its own synchronous per-bar drive calling `event_handler.process_events()`
+  directly (steps 2-3, `:1499-1524`). Its ONLY touchpoint with the decomposed code is line 1490
   `self._initialize_live_session()`. Since D-12 makes `SessionInitializer` run at construction, the
   replay instance (built via `build_live_system(paper_spec)`) already has its session initialized — so
-  P6's ONLY change is to **DROP line 1490**; steps 2-3 stay VERBATIM. **Fail-fast enforcement for replay
-  is NOT P6 work** — spec §12a assigns "backtest/replay → fail-fast" (via the injected `ErrorPolicy`) to
-  **P8**; P6 preserves current behavior. **Relocation to `tests/` `ReplayRunner` + replay-free
-  production is P12** (TEST-01). Chosen over "keep an explicit repointed init call" (adds a second init
-  path — construction + explicit — that has to stay consistent). This corrects an over-scoped proposal
-  (inject fail-fast ErrorPolicy / construct-via-factory-with-replay-logic) that pulled P8 + P12 work
-  into P6.
+  the session-init call is **dropped** and steps 2-3 relocate VERBATIM into `ReplayRunner` (D-18).
+  Chosen over "keep an explicit repointed init call" (adds a second init path that has to stay
+  consistent).
+
+- **D-18 (TEST-01 pulled forward P12 → P6 — `run_paper_replay` relocates to `tests/` `ReplayRunner`,
+  production replay-free):** Owner decision (2026-07-13) to pull the replay relocation into P6 rather
+  than carry a production replay method through P7–P11. **Why it fits P6 (not a stretch):** (1) TEST-01
+  needs ONLY P6's `build_live_system` + the P5 venue/replay plugins — **zero P7–P11 dependency** (P12's
+  "lands last" rationale is about TEST-02/03/04, which need the P7/P9/P11 surface); (2) P6 already
+  decomposes the exact construction path `ReplayRunner` uses; (3) `run_paper_replay` has no production
+  caller (it's a parity driver invoked by `test_paper_parity.py`) — moving it OUT of
+  `live_trading_system.py` removes dead weight, not a feature; (4) it composes with D-07 — `ReplayRunner`
+  injects a **fail-fast `ErrorPolicy`** via the P6 minimal seam (re-raise is trivial), so the relocated
+  parity gate is trustworthy from P6 (this SUPERSEDES the earlier in-discussion framing that deferred
+  replay fail-fast wholesale to P8 — P8 still formalizes only the LIVE side + circuit breaker). Scope of
+  TEST-01: `run_paper_replay` → `ReplayRunner` in `tests/` (steps 2-3 verbatim, D-16); the `replay`
+  plugin (`SimulatedExchange` + `ReplayDataProvider` over the golden CSV) registered ONLY by a test
+  fixture (NOT by production `build_live_system`); `PAPER_PARITY_*`/`_PAPER_*` leave production;
+  production is replay-free. **Guardrail:** `test_paper_parity` is the safety net DURING P6's
+  oracle-sensitive decomposition — do the relocation as **pure code-motion with the parity gate green
+  continuously**, sliced as its OWN plan AFTER the `UniverseWiring` extraction (RUN-04) locks green
+  (don't remake the ruler and the measured thing in one uncontrolled step). Rejected keeping TEST-01 in
+  P12 (five phases of recurring production-replay tax) and a partial move (leaves production
+  half-replay-free, re-touches the same seam later). ROADMAP + REQUIREMENTS updated to reassign TEST-01
+  P12 → P6.
 
 ### Area 8 — CF-10 depth-hint seam shape (RUN-07)
 
@@ -309,10 +331,14 @@ depth-hint seam shaped. **Live-only decomposition** layered on the mode-agnostic
   (`:248`) + `set_precision_resolver` (`:252`) collapse into the new `set_venue_metadata(exchange)`
   (D-11); `set_freeze_gate` (`:235`) stays an interim callable.
 
-### run_paper_replay (RUN — parity gate; D-16)
-- `itrader/trading_system/live_trading_system.py:1422-1524` `run_paper_replay` — line 1490
-  (`_initialize_live_session()`) is the ONLY P6 change (dropped); steps 2-3 (`:1499-1524`) verbatim.
-  Relocation to `tests/` `ReplayRunner` is P12.
+### run_paper_replay → tests/ReplayRunner (TEST-01, pulled into P6; D-16/D-18)
+- `itrader/trading_system/live_trading_system.py:1422-1524` `run_paper_replay` — relocates to `tests/`
+  `ReplayRunner`: drop line 1490 (`_initialize_live_session()`, now construction-time), steps 2-3
+  (`:1499-1524`) move verbatim, inject a fail-fast `ErrorPolicy` (D-07 seam). `PAPER_PARITY_*` constants
+  (`:80-100` region) + `_PAPER_*` leave production; the `replay` plugin becomes fixture-registered-only.
+- `tests/**/test_paper_parity.py` — the parity gate that must stay green CONTINUOUSLY through the
+  relocation (pure code-motion; slice AFTER RUN-04 locks).
+- `.planning/REQUIREMENTS.md` § TEST-01 (traceability: TEST-01 → **P6**) — authoritative scope.
 
 ### CF-10 warmup seam (RUN-07 / D-17)
 - `itrader/trading_system/live_trading_system.py:121-133` `_LiveWarmupConsumer` + `:1289-1292`

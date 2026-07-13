@@ -302,11 +302,16 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 - [ ] **MPORT-06**: Connectors are keyed `(venue, account_id)` (VENUE-03) so multi-account portfolios share
   or decouple connectors correctly without a combinatorial matrix (LR-20/§8c).
 
-### Test Migration + Gates (P12)
+### Test Migration + Gates (P12 — except TEST-01, pulled forward into P6)
 
-- [ ] **TEST-01**: `run_paper_replay` → `ReplayRunner` in `tests/`; the `replay` plugin (`SimulatedExchange`
-  + `ReplayDataProvider` over the golden CSV) is registered **only** by a test fixture; production is
-  replay-free (`run_paper_replay` + `PAPER_PARITY_*`/`_PAPER_*` leave production) (concern 9/§13/§8e).
+- [ ] **TEST-01** *(delivered in **P6**, pulled forward from P12)*: `run_paper_replay` → `ReplayRunner` in
+  `tests/`; the `replay` plugin (`SimulatedExchange` + `ReplayDataProvider` over the golden CSV) is
+  registered **only** by a test fixture; production is replay-free (`run_paper_replay` +
+  `PAPER_PARITY_*`/`_PAPER_*` leave production) (concern 9/§13/§8e). Rationale: it needs only P6's
+  `build_live_system` (zero P7–P11 dependency), rides the same construction path P6 builds, and removes the
+  recurring production-replay tax across P7–P11. `ReplayRunner` injects a fail-fast `ErrorPolicy` (P6
+  injected-seam) so the parity gate can't false-green; done as pure code-motion, `test_paper_parity` green
+  continuously, sliced AFTER the `UniverseWiring` extraction locks.
 
 - [ ] **TEST-02**: A live-smoke gate exercises the decomposed live surface end-to-end (facade → factory →
   `LiveRunner` → controllers) on the replay fixture.
@@ -414,7 +419,7 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | MPORT-04 | P11 | Pending |
 | MPORT-05 | P11 | Pending |
 | MPORT-06 | P11 | Pending |
-| TEST-01 | P12 | Pending |
+| TEST-01 | P6 | Pending |
 | TEST-02 | P12 | Pending |
 | TEST-03 | P12 | Pending |
 | TEST-04 | P12 | Pending |

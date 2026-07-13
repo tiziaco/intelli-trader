@@ -129,6 +129,24 @@ the one-line minimal. (→ D-16)
 
 **User's choice:** Named depth-computation boundary. Per-symbol rings + K-computation stay deferred. (→ D-17)
 
+## Follow-up — pull TEST-01 (replay relocation) forward from P12 into P6
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| Yes — move TEST-01 into P6 | Reassign TEST-01 (run_paper_replay→tests/ReplayRunner, fixture-only replay plugin, PAPER_PARITY leaves, production replay-free); ReplayRunner injects fail-fast ErrorPolicy via the D-07 seam. | ✓ |
+| Keep TEST-01 in P12 | Leave relocation in P12; P6 keeps the D-16 minimal (production keeps run_paper_replay). | |
+| Move it, but keep D-16 minimal (partial) | Relocate the method but defer fixture-only plugin / PAPER_PARITY move. | |
+
+**User's choice:** Yes — move TEST-01 into P6.
+**Notes:** Owner raised it AFTER the initial 8 areas: a production replay method would "keep bothering
+me for every next phase until phase 12." Assessment confirmed it fits — TEST-01 needs only P6's factory
+(zero P7–P11 dependency; P12's "lands last" is about TEST-02/03/04), rides the same construction path P6
+builds, has no production caller, and composes with the D-07 ErrorPolicy seam (fail-fast = trivial
+re-raise → trustworthy gate from P6). This SUPERSEDES the earlier in-discussion framing (D-16) that
+deferred replay fail-fast + relocation wholesale. Guardrail: pure code-motion, test_paper_parity green
+continuously, sliced after RUN-04 locks. ROADMAP + REQUIREMENTS updated (TEST-01: P12 → P6). (→ D-16 rev,
+D-18)
+
 ---
 
 ## Claude's Discretion
@@ -144,5 +162,6 @@ the one-line minimal. (→ D-16)
   throttle → **P7** (facade bodies untouched in P6; interim gates repoint there).
 - Full ErrorPolicy formalization (EventHandler injection, fail-fast/live split, CF-1 circuit breaker,
   replay fail-fast) → **P8**.
-- run_paper_replay → `tests/ReplayRunner` + replay-free production → **P12** (TEST-01).
 - CF-10 K-computation + per-symbol ring sizing → future deeper-warmup roster.
+- TEST-02 (live-smoke) / TEST-03 (config-restart) / TEST-04 (multi-portfolio attribution) → **P12**
+  (need the P7/P9/P11 surface). Only TEST-01 was pulled forward.
