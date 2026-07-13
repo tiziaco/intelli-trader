@@ -36,7 +36,7 @@ from itrader.core.portfolio_read_model import PositionView
 from itrader.events_handler.events import SignalEvent, UniversePollEvent
 from itrader.events_handler.events.market import UniverseUpdateEvent
 from itrader.universe.universe import Universe
-from itrader.universe.universe_handler import UniverseHandler
+from itrader.universe.universe_handler import UniverseHandler, UniverseHandlerConfig
 
 pytestmark = pytest.mark.unit
 
@@ -57,14 +57,29 @@ class _FakeSelectionSource:
         return set(self._desired)
 
 
-class _FakeValidator:
-    """A ``validate_symbol`` that rejects a chosen symbol (D-06 venue bound)."""
+class _FakeExchange:
+    """A venue exposing BOTH ``validate_symbol`` (D-06) and ``resolve_precision``
+    (VENUE-04/D-09) — the single object ``set_venue_metadata`` takes (RUN-06/D-11,
+    the two former seams collapsed). ``rejected`` drives ``validate_symbol``;
+    ``precision`` maps symbol -> venue ``Instrument`` for ``resolve_precision`` (a
+    symbol absent from ``precision`` resolves to ``None`` -> the caller falls to the
+    default ladder). Merges the former ``_FakeValidator`` + ``_FakeResolver``.
+    """
 
-    def __init__(self, rejected: set[str]) -> None:
-        self._rejected = rejected
+    def __init__(
+        self,
+        *,
+        rejected: set[str] | None = None,
+        precision: dict[str, Instrument] | None = None,
+    ) -> None:
+        self._rejected = rejected or set()
+        self._precision = precision or {}
 
     def validate_symbol(self, symbol: str) -> bool:
         return symbol not in self._rejected
+
+    def resolve_precision(self, symbol: str) -> Instrument | None:
+        return self._precision.get(symbol)
 
 
 class _RecordingFeed:
@@ -161,10 +176,10 @@ def _universe(*symbols: str) -> Universe:
 
 def _handler(universe: Universe, feed: object | None = None) -> UniverseHandler:
     return UniverseHandler(
-        global_queue=Queue(),
+        bus=Queue(),
         universe=universe,
         feed=feed if feed is not None else _RecordingFeed([]),
-        timeframe="1d",
+        config=UniverseHandlerConfig(poll_timeframe="1d"),
     )
 
 
@@ -197,11 +212,12 @@ def _remove_handler(
     provider: object | None = None,
 ) -> UniverseHandler:
     handler = UniverseHandler(
-        global_queue=Queue(),
+        bus=Queue(),
         universe=universe,
         feed=_RecordingFeed([]),
-        timeframe="1d",
-        remove_policy=remove_policy,
+        config=UniverseHandlerConfig(
+            poll_timeframe="1d", remove_policy=remove_policy
+        ),
     )
     if read_model is not None:
         handler.set_portfolio_read_model(read_model)
@@ -218,7 +234,7 @@ def test_on_poll_no_source_is_a_noop() -> None:
     universe = _universe("BTC/USDC")
     handler = _handler(universe)
     handler.on_poll(UniversePollEvent(time=_ASOF))
-    assert handler._global_queue.empty()
+    assert handler._bus.empty()
     assert universe.members == ["BTC/USDC"]
 
 
@@ -228,7 +244,7 @@ def test_on_poll_current_membership_puts_nothing() -> None:
     handler = _handler(universe)
     handler.set_selection_source(_FakeSelectionSource({"BTC/USDC"}))
     handler.on_poll(UniversePollEvent(time=_ASOF))
-    assert handler._global_queue.empty()
+    assert handler._bus.empty()
 
 
 def test_on_poll_add_emits_one_update_event() -> None:
@@ -236,11 +252,11 @@ def test_on_poll_add_emits_one_update_event() -> None:
     universe = _universe("BTC/USDC")
     handler = _handler(universe)
     handler.set_selection_source(_FakeSelectionSource({"BTC/USDC", "ETH/USDC"}))
-    handler.set_symbol_validator(_FakeValidator(rejected=set()))
+    handler.set_venue_metadata(_FakeExchange())
 
     handler.on_poll(UniversePollEvent(time=_ASOF))
 
-    event = _drain_one(handler._global_queue)
+    event = _drain_one(handler._bus)
     assert isinstance(event, UniverseUpdateEvent)
     assert event.added == ("ETH/USDC",)
     assert event.removed == ()
@@ -254,11 +270,11 @@ def test_on_poll_rejected_symbol_dropped_before_apply() -> None:
     handler.set_selection_source(
         _FakeSelectionSource({"BTC/USDC", "ETH/USDC", "FAKE/USDC"})
     )
-    handler.set_symbol_validator(_FakeValidator(rejected={"FAKE/USDC"}))
+    handler.set_venue_metadata(_FakeExchange(rejected={"FAKE/USDC"}))
 
     handler.on_poll(UniversePollEvent(time=_ASOF))
 
-    event = _drain_one(handler._global_queue)
+    event = _drain_one(handler._bus)
     assert isinstance(event, UniverseUpdateEvent)
     assert event.added == ("ETH/USDC",)
     assert "FAKE/USDC" not in universe.members
@@ -280,12 +296,12 @@ def test_on_poll_retries_failed_member_flips_pending_and_readds() -> None:
     handler = _handler(universe)
     # Selection returns the CURRENT membership — an EMPTY apply delta.
     handler.set_selection_source(_FakeSelectionSource({"BTC/USDC", "ETH/USDC"}))
-    handler.set_symbol_validator(_FakeValidator(rejected=set()))
+    handler.set_venue_metadata(_FakeExchange())
 
     handler.on_poll(UniversePollEvent(time=_ASOF))
 
     # Despite the empty apply delta, ONE UniverseUpdateEvent re-drives ETH's warmup.
-    event = _drain_one(handler._global_queue)
+    event = _drain_one(handler._bus)
     assert isinstance(event, UniverseUpdateEvent)
     assert event.added == ("ETH/USDC",)
     assert event.removed == ()
@@ -304,10 +320,10 @@ def test_on_poll_failed_retry_then_rewarm_marks_ready() -> None:
     universe.mark_failed("ETH/USDC")
     handler = _handler(universe, feed=_RecordingFeed(log))  # NO provider (paper)
     handler.set_selection_source(_FakeSelectionSource({"BTC/USDC", "ETH/USDC"}))
-    handler.set_symbol_validator(_FakeValidator(rejected=set()))
+    handler.set_venue_metadata(_FakeExchange())
 
     handler.on_poll(UniversePollEvent(time=_ASOF))
-    event = _drain_one(handler._global_queue)
+    event = _drain_one(handler._bus)
     assert isinstance(event, UniverseUpdateEvent)
     assert event.added == ("ETH/USDC",)
 
@@ -325,12 +341,12 @@ def test_on_poll_static_ready_universe_never_retries_oracle_inert() -> None:
     universe = _universe("BTC/USDC", "ETH/USDC")  # both READY at construction
     handler = _handler(universe)
     handler.set_selection_source(_FakeSelectionSource({"BTC/USDC", "ETH/USDC"}))
-    handler.set_symbol_validator(_FakeValidator(rejected=set()))
+    handler.set_venue_metadata(_FakeExchange())
 
     handler.on_poll(UniversePollEvent(time=_ASOF))
 
     # No FAILED members → no retry → empty-delta fast path → nothing queued.
-    assert handler._global_queue.empty()
+    assert handler._bus.empty()
     assert universe.is_ready("BTC/USDC") is True
     assert universe.is_ready("ETH/USDC") is True
 
@@ -356,14 +372,14 @@ def test_on_poll_freeze_gate_true_short_circuits() -> None:
     handler = _handler(universe)
     spy = _SpySelectionSource({"BTC/USDC", "ETH/USDC"})
     handler.set_selection_source(spy)
-    handler.set_symbol_validator(_FakeValidator(rejected=set()))
+    handler.set_venue_metadata(_FakeExchange())
     handler.set_freeze_gate(lambda: True)
 
     handler.on_poll(UniversePollEvent(time=_ASOF))
 
     # Membership frozen in place — no select consulted, no apply, nothing queued.
     assert spy.select_calls == 0
-    assert handler._global_queue.empty()
+    assert handler._bus.empty()
     assert universe.members == ["BTC/USDC"]
 
 
@@ -372,32 +388,18 @@ def test_on_poll_freeze_gate_false_behaves_as_unwired() -> None:
     universe = _universe("BTC/USDC")
     handler = _handler(universe)
     handler.set_selection_source(_FakeSelectionSource({"BTC/USDC", "ETH/USDC"}))
-    handler.set_symbol_validator(_FakeValidator(rejected=set()))
+    handler.set_venue_metadata(_FakeExchange())
     handler.set_freeze_gate(lambda: False)
 
     handler.on_poll(UniversePollEvent(time=_ASOF))
 
-    event = _drain_one(handler._global_queue)
+    event = _drain_one(handler._bus)
     assert isinstance(event, UniverseUpdateEvent)
     assert event.added == ("ETH/USDC",)
     assert set(universe.members) == {"BTC/USDC", "ETH/USDC"}
 
 
 # --- precision resolver (WR-04 / D-16 venue precision) ---------------------
-
-
-class _FakeResolver:
-    """A precision resolver returning a configured Instrument per symbol.
-
-    A symbol absent from ``by_symbol`` resolves to ``None`` (unresolvable → the
-    caller falls to the default ladder).
-    """
-
-    def __init__(self, by_symbol: dict[str, Instrument]) -> None:
-        self._by_symbol = by_symbol
-
-    def resolve_precision(self, symbol: str) -> Instrument | None:
-        return self._by_symbol.get(symbol)
 
 
 def _venue_inst(symbol: str) -> Instrument:
@@ -416,8 +418,9 @@ def test_on_poll_added_symbol_takes_resolver_precision() -> None:
     universe = _universe("BTC/USDC")
     handler = _handler(universe)
     handler.set_selection_source(_FakeSelectionSource({"BTC/USDC", "ETH/USDC"}))
-    handler.set_symbol_validator(_FakeValidator(rejected=set()))
-    handler.set_precision_resolver(_FakeResolver({"ETH/USDC": _venue_inst("ETH/USDC")}))
+    handler.set_venue_metadata(
+        _FakeExchange(precision={"ETH/USDC": _venue_inst("ETH/USDC")})
+    )
 
     handler.on_poll(UniversePollEvent(time=_ASOF))
 
@@ -431,8 +434,7 @@ def test_on_poll_added_symbol_no_resolver_uses_default_ladder() -> None:
     universe = _universe("BTC/USDC")
     handler = _handler(universe)
     handler.set_selection_source(_FakeSelectionSource({"BTC/USDC", "ETH/USDC"}))
-    handler.set_symbol_validator(_FakeValidator(rejected=set()))
-    # No precision resolver wired.
+    # No venue metadata wired (paper) -> no resolver -> Universe.apply default ladder.
 
     handler.on_poll(UniversePollEvent(time=_ASOF))
 
@@ -546,7 +548,7 @@ def test_remove_force_close_with_open_position_emits_exit_then_unsubscribes() ->
     )
 
     # A market-exit SignalEvent was emitted for the holding portfolio.
-    event = handler._global_queue.get_nowait()
+    event = handler._bus.get_nowait()
     assert isinstance(event, SignalEvent)
     assert event.ticker == "ETH/USDC"
     assert event.action is Side.SELL  # opposite of the open LONG

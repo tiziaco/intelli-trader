@@ -350,7 +350,10 @@ def remove_policy_harness():
         from itrader.execution_handler.exchanges.simulated import SimulatedExchange
         from itrader.trading_system.live_trading_system import LiveTradingSystem
         from itrader.universe.universe import Universe
-        from itrader.universe.universe_handler import UniverseHandler
+        from itrader.universe.universe_handler import (
+            UniverseHandler,
+            UniverseHandlerConfig,
+        )
 
         held, other = "AAAUSD", "BBBUSD"
 
@@ -386,11 +389,12 @@ def remove_policy_harness():
 
         provider = _RecordingUniverseProvider()
         universe_handler = UniverseHandler(
-            global_queue=system.global_queue,
+            bus=system.global_queue,
             universe=universe,
             feed=system.feed,
-            timeframe="1d",
-            remove_policy=remove_policy,
+            config=UniverseHandlerConfig(
+                poll_timeframe="1d", remove_policy=remove_policy
+            ),
         )
         # Real read model (open-position truth) + paper provider recorder.
         universe_handler.set_portfolio_read_model(system.portfolio_handler)

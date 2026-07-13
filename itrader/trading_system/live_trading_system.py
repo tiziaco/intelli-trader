@@ -1340,17 +1340,24 @@ class LiveTradingSystem:
             # the recurring inertness gate (tests/integration/test_okx_inertness.py).
             from itrader import config as _system_config
             from itrader.universe.membership import StrategyDerivedSelectionModel
-            from itrader.universe.universe_handler import UniverseHandler
+            from itrader.universe.universe_handler import (
+                UniverseHandler,
+                UniverseHandlerConfig,
+            )
 
-            # remove_policy + poll cadence come from the LIVE/monitoring config, NOT
-            # SystemConfig.PerformanceSettings (which carries the oracle-critical
-            # rng_seed) — §8/D-01 keeps the backtest oracle config untouched.
+            # RUN-06/D-11 first-class ctor (bus, universe, feed, config): the poll
+            # timeframe + remove_policy are READ FROM the config object. Both come from
+            # the LIVE/monitoring config, NOT SystemConfig.PerformanceSettings (which
+            # carries the oracle-critical rng_seed) — §8/D-01 keeps the backtest oracle
+            # config untouched.
             self._universe_handler = UniverseHandler(
-                global_queue=self.global_queue,
+                bus=self.global_queue,
                 universe=universe,
                 feed=self.feed,
-                timeframe=_STREAM_SETTINGS.okx_stream_timeframe,
-                remove_policy=_system_config.monitoring.universe_remove_policy,
+                config=UniverseHandlerConfig(
+                    poll_timeframe=_STREAM_SETTINGS.okx_stream_timeframe,
+                    remove_policy=_system_config.monitoring.universe_remove_policy,
+                ),
             )
             # D-12/OP-SEAM: the poll selection source is the strategy-derived model —
             # ``select()`` reads ``strategies_handler.get_strategies_universe()`` live
@@ -1367,15 +1374,15 @@ class LiveTradingSystem:
             # triggered, self-heals on the next unfrozen tick (no replay/buffering).
             self._universe_handler.set_freeze_gate(
                 lambda: self._is_halted() or self._is_submission_paused())
-            # D-06 venue bound: OKX validate_symbol filters the proposed set BEFORE
-            # apply (OKX arm only — guard None on paper/replay, no venue markets map).
+            # RUN-06/D-11 venue metadata: ONE set_venue_metadata call wires BOTH the
+            # D-06 validate_symbol filter and the VENUE-04/D-09 resolve_precision
+            # capability off the exchange (both AbstractExchange caps since P5 VENUE-04).
+            # Kept behavior-preserving under the existing okx-presence guard for now —
+            # paper/replay (no okx exchange) leaves the seams unset -> Universe.apply
+            # falls to the _DEFAULT_* ladder. 06-05's SessionInitializer makes this
+            # unconditional with the uniformly-resolved venue exchange.
             if self._okx_exchange is not None:
-                self._universe_handler.set_symbol_validator(self._okx_exchange)
-                # VENUE-04/D-09 venue precision: bind poll-added-symbol precision on the
-                # exchange's resolve_precision capability (guarded on okx presence,
-                # mirroring the validate_symbol guard). Paper/replay (no okx exchange)
-                # leaves the resolver unset -> Universe.apply falls to the _DEFAULT_* ladder.
-                self._universe_handler.set_precision_resolver(self._okx_exchange)
+                self._universe_handler.set_venue_metadata(self._okx_exchange)
             # Data-plane provider the add/remove branch drives (guard None on paper).
             if self._okx_data_provider is not None:
                 self._universe_handler.set_provider(self._okx_data_provider)

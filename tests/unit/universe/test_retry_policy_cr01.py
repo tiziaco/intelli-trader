@@ -27,7 +27,7 @@ from itrader.core.instrument import Instrument
 from itrader.events_handler.events import BarsLoaded, BarsLoadFailed, UniversePollEvent
 from itrader.events_handler.events.market import UniverseUpdateEvent
 from itrader.universe.universe import Universe
-from itrader.universe.universe_handler import UniverseHandler
+from itrader.universe.universe_handler import UniverseHandler, UniverseHandlerConfig
 
 pytestmark = pytest.mark.unit
 
@@ -82,10 +82,10 @@ def _universe(*symbols: str) -> Universe:
 
 def _handler(universe: Universe, *, feed: object | None = None) -> UniverseHandler:
     return UniverseHandler(
-        global_queue=Queue(),
+        bus=Queue(),
         universe=universe,
         feed=feed if feed is not None else _RecordingFeed([]),
-        timeframe="1d",
+        config=UniverseHandlerConfig(poll_timeframe="1d"),
     )
 
 
@@ -129,7 +129,7 @@ def test_failed_symbol_not_rewarmed_within_one_interval() -> None:
 
     # Poll 1 @ t0: no prior attempt -> retried immediately.
     handler.on_poll(UniversePollEvent(time=_ASOF))
-    event = _drain_one(handler._global_queue)
+    event = _drain_one(handler._bus)
     assert isinstance(event, UniverseUpdateEvent)
     assert event.added == ("ETH/USDC",)
     # mark_pending flipped it; simulate the re-warm failing again before the next poll.
@@ -137,12 +137,12 @@ def test_failed_symbol_not_rewarmed_within_one_interval() -> None:
 
     # Poll 2 @ t0 + 1h (< one 1d interval): cadence gate SKIPS the re-warm.
     handler.on_poll(UniversePollEvent(time=_ASOF + timedelta(hours=1)))
-    assert handler._global_queue.empty()  # nothing re-driven
+    assert handler._bus.empty()  # nothing re-driven
     assert universe.failed_symbols() == {"ETH/USDC"}  # still FAILED, not re-pended
 
     # Poll 3 @ t0 + 1 day (>= interval): retried again.
     handler.on_poll(UniversePollEvent(time=_ASOF + _ONE_DAY))
-    event = _drain_one(handler._global_queue)
+    event = _drain_one(handler._bus)
     assert isinstance(event, UniverseUpdateEvent)
     assert event.added == ("ETH/USDC",)
 
@@ -157,7 +157,7 @@ def test_first_retry_allowed_immediately_no_prior_attempt() -> None:
 
     handler.on_poll(UniversePollEvent(time=_ASOF))
 
-    event = _drain_one(handler._global_queue)
+    event = _drain_one(handler._bus)
     assert isinstance(event, UniverseUpdateEvent)
     assert event.added == ("ETH/USDC",)
 
