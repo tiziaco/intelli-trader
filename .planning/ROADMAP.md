@@ -271,7 +271,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 06-05-PLAN.md — RUN-05 + RUN-04(live): `LiveRouteRegistrar` + `SessionInitializer`; `_initialize_live_session` delegates (wave 3)
+- [x] 06-05-PLAN.md — RUN-05 + RUN-04(live): `LiveRouteRegistrar` + `SessionInitializer`; `_initialize_live_session` delegates (wave 3)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -383,7 +383,7 @@ P1 and P2 have no dependencies and can start in parallel.
 | 3. EngineContext + Storage-in-Handler | v1.8 | 2/2 | Complete    | 2026-07-09 |
 | 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 4/4 | Complete    | 2026-07-10 |
 | 5. Venue Registry + Bundle | v1.8 | 6/6 | Complete    | 2026-07-12 |
-| 6. LiveRunner + Factory + Facade Shrink | v1.8 | 4/7 | In Progress|  |
+| 6. LiveRunner + Factory + Facade Shrink | v1.8 | 5/7 | In Progress|  |
 | 7. Safety + Reconciliation + Stream Recovery | v1.8 | 0/TBD | Not started | - |
 | 8. Error Subsystem | v1.8 | 0/TBD | Not started | - |
 | 9 ★. Runtime-Config Platform | v1.8 | 0/TBD | Not started | - |
