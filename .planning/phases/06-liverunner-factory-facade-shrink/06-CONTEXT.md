@@ -26,8 +26,10 @@ depth-hint seam shaped. **Live-only decomposition** layered on the mode-agnostic
 - Shared `UniverseWiring` (`derive_membership → build Universe → inject exchange/order/
   portfolio/strategies → feed.bind`, incl. WR-03 desync assert) extracted as ONE intact
   unit, reused by both runners — oracle byte-exact (RUN-04).
-- `LiveRouteRegistrar` composes live + CONTROL routes declaratively (list order = execution
-  order); no subclass, no runtime mutation; backtest gets base routes only (RUN-05, LR-16).
+- `LiveRouteRegistrar` (the declarative route mechanism, list order = execution order; no subclass,
+  no runtime mutation; backtest gets base routes only) is built in P6 and registers the BUSINESS/live
+  routes; CONTROL route entries populate via the same registrar when their P7/P9 consumers land (RUN-05,
+  LR-16; D-10/D-23). `build_live_system` also wires live onto the `PriorityEventBus` (D-23).
 - `UniverseHandler` constructed at the live composition root as a first-class handler with
   explicit deps; zero OKX coupling (RUN-06).
 - `_LiveWarmupConsumer` → reusable `StrategyWarmupConsumer` in
@@ -93,7 +95,7 @@ depth-hint seam shaped. **Live-only decomposition** layered on the mode-agnostic
   `universe/` derivations and orchestrates + injects — orchestration is `trading_system`'s job.
   Rejected a class / shared-runner-base (heavier, tab/space transplant hazard, violates the
   composition-over-inheritance ethos). Called at DIFFERENT lifecycle points by the two callers
-  (backtest at `run()`-init unchanged; live at construction — see D-14/D-15) — fine, it's a pure
+  (backtest at `run()`-init unchanged; live at construction — see D-12) — fine, it's a pure
   function of registered-strategy state.
 
 ### Area 2 — P6/P7 facade boundary
@@ -172,13 +174,33 @@ depth-hint seam shaped. **Live-only decomposition** layered on the mode-agnostic
   handlers'/controllers' methods, installed into the single `EventHandler` ONCE at construction — no
   runtime mutation, no subclass (LR-16). Keeps the correctness-load-bearing cross-handler ordering
   greppable in ONE place: `FILL` = portfolio → order → universe; `BARS_LOADED` = strategies →
-  universe. The live route set (§13c): `UNIVERSE_POLL`, `UNIVERSE_UPDATE`, `STRATEGY_COMMAND`,
-  `BARS_LOADED`, `BARS_LOAD_FAILED`, `FILL` (appended), + CONTROL (`STREAM_STATE`, `CONNECTOR_FATAL`,
-  `CONFIG_UPDATE`). Backtest's `EventHandler` keeps the untouched base literal (empty `UNIVERSE_*`
-  routes) — inertness, proven by `test_okx_inertness.py`. Chosen over distributed per-handler
-  `owned_routes()` declaration (§5's literal wording) because cross-handler execution ordering can't
-  be expressed cleanly when spread across files. Requires `UniverseHandler` built at the root FIRST
-  (D-12/RUN-06) so the table can reference its methods at construction.
+  universe. **The routes P6 REGISTERS are the BUSINESS/live set only** (§13c): `UNIVERSE_POLL`,
+  `UNIVERSE_UPDATE`, `STRATEGY_COMMAND`, `BARS_LOADED`, `BARS_LOAD_FAILED`, `FILL` (appended). **The
+  CONTROL routes (`STREAM_STATE`/`CONNECTOR_FATAL`/`CONFIG_UPDATE`) are NOT registered in P6 — their
+  consumers don't exist yet** (P7 SafetyController/StreamRecovery, P9 config); they populate through the
+  SAME declarative registrar when those consumers land (see D-23). Backtest's `EventHandler` keeps the
+  untouched base literal (empty `UNIVERSE_*` routes) — inertness, proven by `test_okx_inertness.py`.
+  Chosen over distributed per-handler `owned_routes()` declaration (§5's literal wording) because
+  cross-handler execution ordering can't be expressed cleanly when spread across files. Requires
+  `UniverseHandler` built at the root FIRST (D-12/RUN-06) so the table can reference its methods at
+  construction.
+
+- **D-23 (CONTROL plane — P6 wires the live `PriorityEventBus`; CONTROL routes populate as consumers
+  land in P7/P9):** Live was never migrated off the raw `queue.Queue()` (`live_trading_system.py:236`,
+  `bus=self.global_queue`) — P2 built `PriorityEventBus` + the CONTROL EventTypes and wired
+  backtest→`FifoEventBus`, but the live→`PriorityEventBus` wiring is orphaned (no requirement owns it).
+  **P6's `build_live_system` wires live onto `PriorityEventBus`** as part of RUN-01's EngineContext
+  assembly; `LiveRunner` drains it. This is **inert without CONTROL events** — everything flows on the
+  BUSINESS tier and the monotonic `seq` preserves strict FIFO, so live behavior is unchanged in P6
+  (live is backtest-dark; no oracle concern). The **CONTROL routes are NOT part of P6's registered
+  route set** (correcting D-10's earlier over-claim): their consumers are P7 (`SafetyController`/
+  `StreamRecoveryHandler` for `STREAM_STATE`/`CONNECTOR_FATAL`) and P9 (`CONFIG_UPDATE`), so P7/P9 ADD
+  those entries through the same declarative `LiveRouteRegistrar` (construction-time declaration, NOT
+  runtime mutation — consistent with LR-16). Chosen over deferring the whole CONTROL plane to P7 (leaves
+  build_live_system assembling a non-final bus P7 swaps — RUN-01's EngineContext wouldn't be end-state
+  after P6) and over declaring empty CONTROL placeholders in P6 (empty routes read as "covered" when
+  they aren't — the trap D-10 fell into). Rationale: the bus is a build-time assembly concern P6 owns;
+  CONTROL routes are meaningless without their P7/P9 consumers.
 
 ### Area 5 — UniverseHandler first-class init (RUN-06)
 

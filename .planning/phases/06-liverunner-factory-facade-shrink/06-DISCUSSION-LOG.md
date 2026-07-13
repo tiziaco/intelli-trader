@@ -170,6 +170,22 @@ data leaves) — same rename logic, same `__test__ = False` guard.
 
 ---
 
+## Completeness pass — CONTROL plane / live EventBus (→ D-23, D-10 corrected)
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| Bus now, CONTROL routes as consumers land | build_live_system wires live→PriorityEventBus in P6 (inert w/o CONTROL events); LiveRouteRegistrar registers BUSINESS routes only; CONTROL entries populate via the same registrar in P7/P9. | ✓ |
+| Defer whole CONTROL plane to P7 | Keep FIFO in P6; P7 swaps PriorityEventBus + adds CONTROL routes + consumers as one unit. | |
+| Bus + empty CONTROL placeholders in P6 | Wire bus + declare empty CONTROL routes; P7/P9 fill consumers. | |
+
+**User's choice:** Bus now, CONTROL routes as consumers land.
+**Notes:** Surfaced during a completeness pass the owner requested. Code check found (1) live never
+migrated off raw `queue.Queue()` (`:236`) to `PriorityEventBus` — orphaned wiring, naturally P6's
+build_live_system (RUN-01); (2) D-10 over-claimed that P6's route set "includes CONTROL routes" whose
+consumers are P7/P9. Resolution: P6 wires the priority bus (inert without CONTROL events) + registers
+BUSINESS routes; P7/P9 add CONTROL entries via the same declarative registrar. D-10 corrected; D-23
+added; ROADMAP SC2 annotated. Also fixed a dangling D-14/D-15 reference (→ D-12).
+
 ## Claude's Discretion
 - Plan/wave slicing across RUN-01..07 (isolate/verify the RUN-04 `UniverseWiring` extraction as its
   own oracle-gated PLAN).
