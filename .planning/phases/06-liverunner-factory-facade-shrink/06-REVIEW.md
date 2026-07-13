@@ -25,7 +25,17 @@ findings:
   warning: 2
   info: 2
   total: 4
-status: issues_found
+status: partially_resolved
+resolution:
+  resolved: 3   # WR-01, WR-02, IN-02
+  deferred: 1   # IN-01 — folded into a design brainstorm on synthetic-signal attribution
+  updated: 2026-07-13
+  notes:
+    - "WR-01 — resolved 2026-07-13, fast task 260713-wr1 (commit dc1f5cb8): vacuous guard deleted, replaced with a TODO for the real future-feature condition."
+    - "WR-02 — resolved 2026-07-13, quick task 260713-phm (commit fe38b501): typed StateError guard added above the start() try-block."
+    - "IN-02 — resolved 2026-07-13, quick task 260713-phm (commit a9f3b5ac): LiveRunner.stop() now warns when the drain thread outlives the join timeout."
+    - "IN-01 — DEFERRED: not the one-line singleton swap; the fresh IDGenerator surfaced a deeper attribution concern (synthetic control-plane force-close signals get random, unattributable strategy_ids). Moved to a dedicated design brainstorm rather than a mechanical fix."
+    - "Related (owner-flagged, out of original review scope) — settings-centralization anti-pattern resolved 2026-07-13, quick task 260713-ncq (commits 1c2ff039..b602f28f): StreamSettings/FeedProviderSettings + DB gate centralized under SystemConfig."
 ---
 
 # Phase 06: Code Review Report
@@ -77,6 +87,8 @@ live or backtest hot path.
 
 ### WR-01: Subscription/membership mismatch guard is vacuous — it can never fire
 
+> **✅ RESOLVED** 2026-07-13 — fast task `260713-wr1`, commit `dc1f5cb8`. Deleted the tautological guard (and its now-unused `ConfigurationError` import); replaced it with a TODO documenting the real condition that would warrant a genuine `subscribed ⊆ members` guard (an independent subscription source being reintroduced). Membership is the sole subscription source since 06-02/D-05, so nothing to validate today.
+
 **File:** `itrader/trading_system/session_initializer.py:122-135`
 **Issue:** The transplanted "subscription vs membership" guard derives the subscribed set
 directly from `members` and then checks that subscribed set against `members`:
@@ -113,6 +125,8 @@ mismatched = [s for s in subscribed if s not in members]
 tautological check that reads as a live invariant.
 
 ### WR-02: `start()` dereferences `_error_policy` / `_live_runner` that are `None` unless the factory wired them — failure is masked as a generic ERROR
+
+> **✅ RESOLVED** 2026-07-13 — quick task `260713-phm`, commit `fe38b501`. Added a typed `StateError` guard clause at the top of `start()`, placed ABOVE the `try:` block and the `STARTING` status stamp so it propagates unhandled (a hard programming-error signal) rather than being swallowed by the broad `except Exception` and masked as `SystemStatus.ERROR + return False`.
 
 **File:** `itrader/trading_system/live_trading_system.py:1036,1196` (attrs default at `246-247`)
 **Issue:** The facade uses two-phase construction: `__init__` sets
@@ -152,6 +166,8 @@ if self._live_runner is None or self._error_policy is None:
 
 ### IN-01: `UniverseHandler` constructs a second `IDGenerator` instead of the `idgen` singleton
 
+> **⏸️ DEFERRED** 2026-07-13 — NOT taken as the one-line singleton swap. The fresh `IDGenerator()` exists only to mint a `strategy_id` for the synthetic force-close exit `SignalEvent` (`_emit_force_close_exit`, line 728) — a control-plane-originated signal with no owning strategy. That surfaced a deeper concern beyond the convention nit: each force-close gets a **random, unattributable** `strategy_id`, which may be the wrong identity model for system-originated signals. Moved to a dedicated design brainstorm (synthetic-signal attribution / reserved sentinel identity) rather than a mechanical fix, so the singleton swap is intentionally NOT applied yet — it would be resolved together with the identity decision.
+
 **File:** `itrader/universe/universe_handler.py:93`
 **Issue:** `_idgen = IDGenerator()` constructs a fresh generator at module import for the
 force-close exit signal's `strategy_id`. Project convention (CLAUDE.md — "IDs &
@@ -172,6 +188,8 @@ strategy_id=cast(StrategyId, idgen.generate_strategy_id()),
 and drop the module-level `_idgen = IDGenerator()`.
 
 ### IN-02: `LiveRunner.stop()` reports success without verifying the drain thread actually joined
+
+> **✅ RESOLVED** 2026-07-13 — quick task `260713-phm`, commit `a9f3b5ac`. `stop()` now checks `self._thread.is_alive()` after `join(timeout)` and emits a `logger.warning` when the daemon drain thread survives the join, so a non-joining thread is observable rather than silently advertised as STOPPED.
 
 **File:** `itrader/trading_system/live_runner.py:214-219`
 **Issue:** `stop()` sets the latch and calls `self._thread.join(timeout=timeout)` but never
