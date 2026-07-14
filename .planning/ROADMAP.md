@@ -352,7 +352,7 @@ Plans:
 
 **Wave 1**
 
-- [ ] 08-01-PLAN.md — Foundation primitives: `FailureClass` enum + 4 `HaltReason` members (D-08/D-16) + `FailureRateSettings` on `SafetySettings` (D-14/D-15) + okx FILL_TRANSLATION counted `ErrorEvent` on both drain paths (D-10) (ERR-03/ERR-04)
+- [x] 08-01-PLAN.md — Foundation primitives: `FailureClass` enum + 4 `HaltReason` members (D-08/D-16) + `FailureRateSettings` on `SafetySettings` (D-14/D-15) + okx FILL_TRANSLATION counted `ErrorEvent` on both drain paths (D-10) (ERR-03/ERR-04)
 
 **Wave 2** *(blocked on 08-01)*
 
@@ -438,7 +438,7 @@ P1 and P2 have no dependencies and can start in parallel.
 | 6. LiveRunner + Factory + Facade Shrink | v1.8 | 7/7 | Complete    | 2026-07-13 |
 | 6.1 (INSERTED). Seam Cleanup | v1.8 | 4/4 | Complete    | 2026-07-14 |
 | 7. Safety + Reconciliation + Stream Recovery | v1.8 | 6/6 | Complete    | 2026-07-14 |
-| 8. Error Subsystem | v1.8 | 0/3 | Not started | - |
+| 8. Error Subsystem | v1.8 | 1/3 | In Progress|  |
 | 9 ★. Runtime-Config Platform | v1.8 | 0/TBD | Not started | - |
 | 10 ★. Strategies Registry | v1.8 | 0/TBD | Not started | - |
 | 11 ★. Multi-Portfolio-Live | v1.8 | 0/TBD | Not started | - |

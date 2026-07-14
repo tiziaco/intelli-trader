@@ -2,17 +2,17 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: — Live System Refactor & Live-Readiness Hardening
-current_phase: 8
+current_phase: 08
 current_phase_name: Error Subsystem
 status: executing
 stopped_at: Phase 8 context gathered
-last_updated: "2026-07-14T22:23:28.775Z"
+last_updated: "2026-07-14T22:32:04.730Z"
 last_activity: 2026-07-14
-last_activity_desc: "Completed quick task 260714-v6n: Phase 07 review IN-01 (self-guard PreTradeThrottle)"
+last_activity_desc: Phase 08 execution started
 progress:
   total_phases: 9
   completed_phases: 7
-  total_plans: 32
+  total_plans: 35
   completed_plans: 32
   percent: 78
 ---
@@ -26,17 +26,17 @@ See: .planning/PROJECT.md (Current Milestone: v1.8 — Live System Refactor & Li
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct,
 deterministic, cross-validated numbers (oracle **134 / `46189.87730727451`**; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 shipped a live operating mode (paper-first on OKX) without disturbing that oracle.
-**Current focus:** Phase 07 — Safety + Reconciliation + Stream Recovery
+**Current focus:** Phase 08 — Error Subsystem
 thin ~200-line facade over focused, venue-parametrized, FastAPI-ready collaborators — **without
 disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI itself is out of scope
 (LR-01). Full scope: core refactor (P1–P8 + P12) + the three ★ feature-adds (P9–P11).
 
 ## Current Position
 
-Phase: 8 — Error Subsystem
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-07-14 — Completed quick task 260714-v6n: Phase 07 review IN-01 (self-guard PreTradeThrottle)
+Phase: 08 (Error Subsystem) — EXECUTING
+Plan: 1 of 3
+Status: Executing Phase 08
+Last activity: 2026-07-14 — Phase 08 execution started
 
 Progress: [███████░░░] 78%
 
