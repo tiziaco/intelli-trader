@@ -579,14 +579,12 @@ class LiveTradingSystem:
                 self._running = False
                 return False
 
-            # D-17 (error-policy split, WR-04): install the live publish-and-continue
-            # policy HERE — on the daemon/live path ONLY. A live session can't abort on
-            # one handler error (it must emit an ErrorEvent and keep draining, RES-01
-            # hardening); the offline deterministic ``TestRunner`` driver never reaches
-            # this bind (it never calls start()), so it keeps the base fail-fast re-raise
-            # so a handler failure aborts the replay loudly and the parity gate can't
-            # false-green (T-05-28 / D-19).
-            self.event_handler._on_handler_error = self._error_policy.on_handler_error  # type: ignore[method-assign]
+            # 08-03 (D-06): the live publish-and-continue policy is injected at
+            # EventHandler construction now (compose_engine, via build_live_system) — the
+            # old start()-only handler-failure-policy monkeypatch on the dispatcher is GONE.
+            # The offline deterministic ``TestRunner`` replay driver overrides the injected
+            # policy back to a FailFastPolicy in its build fixture (build_paper_replay_system),
+            # so the parity gate stays fail-fast BY DEFAULT and can't false-green (T-05-28 / D-19).
 
             # Initialize the live session
             self._initialize_live_session()
@@ -824,6 +822,13 @@ class LiveTradingSystem:
                     if self._live_runner is not None and self._live_runner._thread
                     else None),
                 'last_error': snap['last_error'],
+                # D-13 (08-03): the CF-1 tripwire snapshot (per-FailureClass in-window hit
+                # counts + last-trip HaltReason). Read None-safely — the ErrorPolicy is
+                # unwired on a facade built outside build_live_system. P8 scope = get_status
+                # ONLY (the SystemStore stats read-model is P9).
+                'breaker': (
+                    self._error_policy.breaker_snapshot()
+                    if self._error_policy is not None else {}),
                 'statistics': {
                     **self._stats,
                     'uptime_seconds': uptime
@@ -1034,6 +1039,31 @@ def build_live_system(
     from itrader import config as _system_config
     from itrader.trading_system.compose import compose_engine
 
+    # 08-03 (D-03/D-04/D-05): build the live ERROR-route collaborators BEFORE compose so
+    # they ride into the ErrorHandler + the injected handler-failure policy via
+    # compose_engine (the single mode-agnostic build site) — no post-build monkeypatch.
+    #   - alert_sink: the CRITICAL/halt egress (only declared ErrorEvent fields bound;
+    #     no connector secret leaks, Pitfall 16 / T-05-01).
+    #   - system_store: a freshly-minted SystemStore over the SAME SqlEngine (D-05
+    #     NEGATIVE — there is NO existing SystemStore to share and NO second engine to
+    #     build), gated on system_db_backend exactly like halt_record_store above; the
+    #     import stays LAZY inside the gate (storage.system_store is OKX-inertness _FORBIDDEN).
+    #   - error_policy: the live publish-and-continue tripwire, built with the static
+    #     D-14 failure-rate settings; halt + error_counter are late-bound below once
+    #     SafetyController + the facade exist (D-12 resolves the construction cycle).
+    from itrader.events_handler.error_policy import ErrorPolicy
+
+    alert_sink = LogAlertSink()
+    if system_db_backend is not None:
+        from itrader.storage.system_store import SystemStore
+        system_store: Optional[Any] = SystemStore(system_db_backend)
+    else:
+        system_store = None
+    error_policy = ErrorPolicy(
+        global_queue,
+        failure_settings=_system_config.safety.failure_rate,
+    )
+
     ctx = EngineContext(
         bus=global_queue,
         config=_system_config,
@@ -1041,7 +1071,9 @@ def build_live_system(
         feed=feed, store=None,
         sql_engine=system_db_backend,
     )
-    engine = compose_engine(ctx, exchange_config=None, results_store=None)
+    engine = compose_engine(
+        ctx, exchange_config=None, results_store=None,
+        alert_sink=alert_sink, system_store=system_store, error_policy=error_policy)
 
     # compose already wired portfolio_handler.set_order_storage(order_handler.storage) and
     # the FeeModelCommissionEstimator admission gate (D-05), so the former inline commission
@@ -1209,31 +1241,39 @@ def build_live_system(
                 facade._on_venue_stream_down, facade._on_venue_stream_up)
             okx_connector.set_halt_signal(facade._request_connector_halt)
 
-    # 05-04 (D-06): CRITICAL/halt alert sink at the composition root (only declared
-    # ErrorEvent fields bound — no connector secret leaks, Pitfall 16 / T-05-01).
-    event_handler._alert_sink = LogAlertSink()
+    # 08-03 (D-03/D-04): the CRITICAL/halt alert sink now rides into the ErrorHandler via
+    # compose_engine (built above as ``alert_sink``, injected at construction) — the old
+    # post-build alert-sink assignment on the event handler is GONE (the dispatcher holds
+    # no egress state, D-03).
     # 05-04 (D-01/D-02): engine-thread drift-halt signal -> freeze-in-place halt (the
     # facade delegator forwards to SafetyController.halt).
     portfolio_handler.set_halt_signal(facade.halt)
 
+    # 08-03 (D-12): late-bind the tripwire's runtime collaborators now that the
+    # SafetyController + the facade exist. compose_engine already injected the ErrorPolicy
+    # object (built above, before safety) as the dispatcher's failure policy AND the
+    # ErrorHandler's failure_sink; bind() resolves the construction cycle by wiring the
+    # deferred collaborators — ``halt=safety.halt`` (D-12 same-thread direct freeze) and
+    # ``error_counter=facade._increment_error_count`` (preserves the facade's errors_count
+    # bookkeeping). Both are only needed when a failure actually occurs at runtime.
+    error_policy.bind(halt=safety.halt, error_counter=facade._increment_error_count)
+
     # RUN-02 (D-05/D-06/D-07/D-08): the live runtime engine. LiveRunner OWNS the drain
-    # loop; it COMPOSES the WorkerSupervisor (poll timer, D-05) and takes the minimal
-    # ErrorPolicy (D-07). SAFE-03/D-06 (P7): the dispatch gate is repointed to
-    # SafetyController.gate_and_dispatch (the freeze-in-place gate), and the pre-submit
-    # throttle (PreTradeThrottle.allow) fires at the ORDER->execution boundary ahead of
-    # it. The former resume/halt per-tick drain hooks are GONE (CONTROL events replace the
-    # flag side-channel). The facade's error-policy install happens in start() (D-17).
-    from itrader.events_handler.error_policy import ErrorPolicy
+    # loop; it COMPOSES the WorkerSupervisor (poll timer, D-05). SAFE-03/D-06 (P7): the
+    # dispatch gate is repointed to SafetyController.gate_and_dispatch (the freeze-in-place
+    # gate), and the pre-submit throttle (PreTradeThrottle.allow) fires at the
+    # ORDER->execution boundary ahead of it. The former resume/halt per-tick drain hooks
+    # are GONE (CONTROL events replace the flag side-channel). 08-03/D-06: the handler-
+    # failure policy is injected at EventHandler construction (compose) now — LiveRunner no
+    # longer carries it, and the old start() monkeypatch is gone.
     from itrader.trading_system.live_runner import LiveRunner
     from itrader.trading_system.worker_supervisor import WorkerSupervisor
 
     cadence = _system_config.monitoring.universe_poll_cadence_s
-    error_policy = ErrorPolicy(global_queue, error_counter=facade._increment_error_count)
     worker_supervisor = WorkerSupervisor(global_queue, facade._stop_event, cadence)
     live_runner = LiveRunner(
         bus=global_queue,
         stop_event=facade._stop_event,
-        error_policy=error_policy,
         worker_supervisor=worker_supervisor,
         dispatch_gate=safety.gate_and_dispatch,
         update_stats=facade._update_stats,
