@@ -360,7 +360,7 @@ Plans:
 
 **Wave 3** *(blocked on 08-02)*
 
-- [ ] 08-03-PLAN.md — Wiring: `EventHandler` constructor injection (delete monkeypatch/`_log_error_event`/`_alert_sink`, D-01/03/06) + `compose_engine` `alert_sink`/`system_store`/`error_policy` kwargs (D-04) + `build_live_system` mints `SystemStore` over the shared `SqlEngine` (D-05) + late-bind `safety.halt` (D-12) + `get_status()` breaker surface (D-13) + retarget 4 existing tests; oracle byte-exact (ERR-01/02/03/04)
+- [x] 08-03-PLAN.md — Wiring: `EventHandler` constructor injection (delete monkeypatch/`_log_error_event`/`_alert_sink`, D-01/03/06) + `compose_engine` `alert_sink`/`system_store`/`error_policy` kwargs (D-04) + `build_live_system` mints `SystemStore` over the shared `SqlEngine` (D-05) + late-bind `safety.halt` (D-12) + `get_status()` breaker surface (D-13) + retarget 4 existing tests; oracle byte-exact (ERR-01/02/03/04)
 
 ### Phase 9 ★: Runtime-Config Platform
 
@@ -438,7 +438,7 @@ P1 and P2 have no dependencies and can start in parallel.
 | 6. LiveRunner + Factory + Facade Shrink | v1.8 | 7/7 | Complete    | 2026-07-13 |
 | 6.1 (INSERTED). Seam Cleanup | v1.8 | 4/4 | Complete    | 2026-07-14 |
 | 7. Safety + Reconciliation + Stream Recovery | v1.8 | 6/6 | Complete    | 2026-07-14 |
-| 8. Error Subsystem | v1.8 | 2/3 | In Progress|  |
+| 8. Error Subsystem | v1.8 | 3/3 | Complete   | 2026-07-14 |
 | 9 ★. Runtime-Config Platform | v1.8 | 0/TBD | Not started | - |
 | 10 ★. Strategies Registry | v1.8 | 0/TBD | Not started | - |
 | 11 ★. Multi-Portfolio-Live | v1.8 | 0/TBD | Not started | - |
