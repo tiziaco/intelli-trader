@@ -36,7 +36,7 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 Phase: 8 — Error Subsystem
 Plan: Not started
 Status: Phase complete — ready for verification
-Last activity: 2026-07-14 — Phase 07 complete, transitioned to Phase 8
+Last activity: 2026-07-14 — Completed quick task 260714-v6n: Phase 07 review IN-01 (self-guard PreTradeThrottle)
 
 Progress: [███████░░░] 78%
 
@@ -217,6 +217,7 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 | 260713-ncq | Centralize live stream/feed/DB settings under SystemConfig — inject StreamSettings/FeedProviderSettings (kill 10 inline default-constructions + _STREAM_SETTINGS global); DB gate via lazy SqlSettings() probe instead of os.getenv | 2026-07-13 | 33390772 | [260713-ncq-centralize-live-stream-feed-db-settings-](./quick/260713-ncq-centralize-live-stream-feed-db-settings-/) |
 | 260713-wr1 | Delete vacuous WR-01 subscription/membership guard in session_initializer.py (unreachable dead code — membership is the sole subscription source since 06-02/D-05); replace with a TODO for the real future-feature guard condition | 2026-07-13 | dc1f5cb8 | (fast — no dir) |
 | 260713-phm | Fix Phase 06 review WR-02 (typed StateError guard above start() try-block so an un-wired LiveTradingSystem fails loudly, not masked as generic ERROR) + IN-02 (LiveRunner.stop() warns when the drain thread outlives the join timeout) | 2026-07-13 | a9f3b5ac | [260713-phm-fix-phase-06-review-findings-wr-02-typed](./quick/260713-phm-fix-phase-06-review-findings-wr-02-typed/) |
+| 260714-v6n | Fix Phase 07 review IN-01: self-guard PreTradeThrottle.allow() with an ORDER-only top-gate (Option B) + remove now-dead None-guard in _exceeds_notional (Option A) — throttle no longer relies on live_runner's call-site type gate for safety | 2026-07-14 | baa125f8 | [260714-v6n-fix-phase-07-review-in-01-make-pretradet](./quick/260714-v6n-fix-phase-07-review-in-01-make-pretradet/) |
 | Phase 06 P01 | 4 min | 2 tasks | 2 files |
 | Phase 06 P02 | 12 min | 3 tasks | 3 files |
 | Phase 06 P03 | 6min | 1 tasks | 1 files |

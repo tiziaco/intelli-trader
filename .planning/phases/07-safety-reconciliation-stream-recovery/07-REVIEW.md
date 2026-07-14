@@ -183,7 +183,7 @@ durable-halt refusal test, assert that the coordinator's `run_startup_reconcile`
 
 ### IN-01: Asymmetric `None`-guard between `_exceeds_notional` and `_reject`
 
-> **◻ DEFERRED** (documented, not fixed) — harmless today: `_reject` only fires for an ENTRY `OrderEvent` whose `price`/`quantity` are non-optional `Decimal`. Left as-is per the phase-close decision.
+> **✅ RESOLVED** — quick task `260714-v6n` (commit `baa125f8`). Fixed via "Option B + Option A folded in": `allow()` now opens with an ORDER-only top-gate (`getattr(event, 'type', None) is not EventType.ORDER → return True`), so the throttle meters ORDER events only and no longer relies on `live_runner`'s call-site type gate for safety — past the gate the ENTRY branch provably implies an `OrderEvent`. The now-provably-dead `None`-guard in `_exceeds_notional` was removed. Zero behavior change (CANCEL/PROTECTIVE/ENTRY paths unchanged). Re-verified: mypy --strict clean on the module, 5/5 throttle unit tests, oracle byte-exact (134 / 46189.87730727451) + OKX inertness green.
 
 **File:** `itrader/trading_system/safety/pre_trade_throttle.py:186-191,217-222`
 **Issue:** `_exceeds_notional` defensively guards `price`/`quantity` being `None`
