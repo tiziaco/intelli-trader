@@ -33,6 +33,9 @@ from itrader import config, idgen
 from itrader.config import ExchangeConfig, OrderConfig, get_exchange_preset
 from itrader.core.exceptions import ConfigurationError
 from itrader.events_handler.bus import FifoEventBus
+from itrader.outils.time_parser import to_timedelta
+from itrader.price_handler.feed.bar_feed import BacktestBarFeed
+from itrader.price_handler.store.csv_store import CsvPriceStore
 from itrader.reporting.frames import build_equity_curve, build_trade_log
 from itrader.reporting.summary import print_metrics_summary
 from itrader.results.records import PortfolioRecord, RunRecord
@@ -145,16 +148,31 @@ class BacktestTradingSystem(object):
 				portfolios=[],
 				exchange=exchange_config,
 			)
+			# 06.1-01 (D-01/D-04): store + feed CONSTRUCTION moved out of the spec-free
+			# compose seam onto the factory/legacy arm — built with the SAME argument
+			# values compose used (data/start/end/timeframe off the synthesized spec,
+			# empties->None) so the run stays byte-identical, then injected onto ctx.
+			store = CsvPriceStore(
+				csv_paths=spec.data or None,
+				start_date=spec.start or None,
+				end_date=spec.end or None)
+			feed = BacktestBarFeed(store, to_timedelta(spec.timeframe))
 			# The handler now OWNS its bus (FifoEventBus — byte-exact FIFO, D-07) and
 			# its storage (from environment='backtest'); config is carried, sql_engine
-			# is None (SQL-import-inert, GATE-01).
+			# is None (SQL-import-inert, GATE-01). feed rides required on ctx, store real.
 			ctx = EngineContext(
 				bus=FifoEventBus(),
 				config=config,
 				environment='backtest',
+				feed=feed,
+				store=store,
 				sql_engine=None,
 			)
-			self.engine = compose_engine(ctx, spec)
+			# 06.1-01 (D-04): spec-free compose — pass exchange_config/results_store
+			# explicitly (the legacy arm has no results store). exchange_config is the
+			# seeded ExchangeConfig riding on spec.exchange.
+			self.engine = compose_engine(
+				ctx, exchange_config=spec.exchange, results_store=None)
 			self.runner = BacktestRunner(self.engine)
 
 		self.logger.info('Trading system initialised')
@@ -453,13 +471,31 @@ def build_backtest_system(spec: SystemSpec) -> BacktestTradingSystem:
 	#    it on the spec, e.g. ``SqlResultsStore(SqlEngine(SqlSettings.results_default()),
 	#    strict_persist=SqlSettings.results_default().strict_persist)`` with the SQL
 	#    surface imported on THAT path only — never here.
+	# 06.1-01 (D-01/D-04): build the store + feed read-models HERE (the spec-free
+	# compose seam no longer constructs them) with the SAME argument values compose
+	# used off the spec (data/start/end/timeframe, empties->None) — byte-identical —
+	# and inject them onto ctx (feed required, store real in backtest).
+	store = CsvPriceStore(
+		csv_paths=spec.data or None,
+		start_date=spec.start or None,
+		end_date=spec.end or None)
+	feed = BacktestBarFeed(store, to_timedelta(spec.timeframe))
 	ctx = EngineContext(
 		bus=FifoEventBus(),
 		config=config,
 		environment='backtest',
+		feed=feed,
+		store=store,
 		sql_engine=None,
 	)
-	engine = compose_engine(ctx, spec)
+	# 06.1-01 (D-04): spec-free compose — pass exchange_config (the seeded
+	# ExchangeConfig on spec.exchange) + the OPTIONAL results_store explicitly. The
+	# e2e ScenarioSpec is the SystemSpec alias and carries results_store; getattr
+	# keeps a duck-typed spec absent-field safe (-> None -> store-free/byte-exact).
+	engine = compose_engine(
+		ctx,
+		exchange_config=spec.exchange,
+		results_store=getattr(spec, 'results_store', None))
 	runner = BacktestRunner(engine)
 
 	# 4. Add strategies/portfolios in SPEC ORDER (Trap 6 — get_active_portfolios

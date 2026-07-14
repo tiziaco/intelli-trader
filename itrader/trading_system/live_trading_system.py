@@ -1616,10 +1616,15 @@ def build_live_system(
             data_registry.register(_name, _plugin)
 
     # (2) D-23: the infra ctx wires live onto the PriorityEventBus (not the raw queue).
+    # 06.1-01 (D-01/D-02): the shared EngineContext now carries feed (required) + store
+    # (Optional). Live injects the LiveBarFeed and store=None (LiveBarFeed reads no
+    # store) — a construction-site fix only; the hand-rolled handler graph below is
+    # untouched this plan (the compose-consumption rewire is plan 06.1-02).
     ctx = EngineContext(
         bus=global_queue,
         config=_system_config,
         environment='live',
+        feed=feed, store=None,
         sql_engine=system_db_backend,
     )
     venue_spec = SimpleNamespace(

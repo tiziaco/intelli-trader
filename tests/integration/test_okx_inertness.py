@@ -117,12 +117,24 @@ assert "sql" not in _cfg.__dict__, (
 # import failure mode, GATE-01 lineage).
 from itrader.events_handler.bus import FifoEventBus
 from itrader.trading_system.engine_context import EngineContext
+# 06.1-01 (D-01/D-03): the EngineContext now carries a REQUIRED ``feed`` + Optional
+# ``store``. The probe builds a PURE BacktestBarFeed over a CsvPriceStore — both are
+# already on the backtest import graph, so the register-vs-build inertness assertion
+# below (no ccxt.pro/SQL pulled, `sql` cached_property unresolved) still holds.
+from itrader.price_handler.store.csv_store import CsvPriceStore
+from itrader.price_handler.feed.bar_feed import BacktestBarFeed
+from itrader.outils.time_parser import to_timedelta
 _bus = FifoEventBus()
-_ctx = EngineContext(bus=_bus, config=_cfg, environment="backtest", sql_engine=None)
+_store = CsvPriceStore()
+_feed = BacktestBarFeed(_store, to_timedelta("1d"))
+_ctx = EngineContext(
+    bus=_bus, config=_cfg, environment="backtest",
+    feed=_feed, store=_store, sql_engine=None)
 _heavy = [name for name in ("sqlalchemy", "ccxt") if name in sys.modules]
 assert not _heavy, (
     "P2 register-vs-build inertness violation: constructing FifoEventBus/"
-    "EngineContext(sql_engine=None) pulled a heavy backend: " + repr(_heavy)
+    "EngineContext(feed=BacktestBarFeed, sql_engine=None) pulled a heavy backend: "
+    + repr(_heavy)
 )
 assert "sql" not in _cfg.__dict__, (
     "P2 register-vs-build inertness violation: building the EngineContext resolved "
