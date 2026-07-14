@@ -118,6 +118,34 @@ order_command_map = {
 }
 
 
+# Order Risk Role Enum (CANCEL de-risks, PROTECTIVE brackets, ENTRY opens risk)
+class OrderRiskRole(Enum):
+	"""Risk role of an order for the pre-trade safety gate/throttle (D-05/D-16).
+
+	The single shared vocabulary consumed by BOTH the ``SafetyController``
+	dispatch gate (Plan 03) and the ``PreTradeThrottle`` (Plan 05) — one source
+	of truth so a CANCEL/PROTECTIVE order can physically never be throttled and
+	only risk-opening ENTRY orders are metered.
+
+	Class-based with explicit string values (member name == ``.value``) and a
+	case-insensitive ``_missing_`` (OrderCommand house pattern). Per D-16 ONLY
+	the enum lands here; the ``classify()`` function that maps an ``OrderEvent``
+	to a role travels with ``SafetyController`` in Plan 03 — do NOT add it here.
+	"""
+	CANCEL = "CANCEL"
+	PROTECTIVE = "PROTECTIVE"
+	ENTRY = "ENTRY"
+
+	@classmethod
+	def _missing_(cls, value: object) -> "OrderRiskRole":
+		"""Case-insensitive string parse; raise a clear f-string error."""
+		if isinstance(value, str):
+			for member in cls:
+				if member.value.upper() == value.upper():
+					return member
+		raise ValueError(f"Unknown OrderRiskRole: {value!r}")
+
+
 class OrderOperationType(Enum):
 	"""Order-management operation type (D-04).
 
