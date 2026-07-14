@@ -785,7 +785,38 @@ the oracle** (drops `ta` on the runtime path); its lock is cross-validation + a 
 v1.0/v1.1/v1.2/v1.3/v1.4 SHIPPED — archived under `milestones/`.*
 
 ---
-*Last updated: 2026-07-13 — **v1.8 Phase 6 (LiveRunner + Factory + Facade Shrink) COMPLETE.** 7 plans
+*Last updated: 2026-07-14 — **v1.8 Phase 7 (Safety + Reconciliation + Stream Recovery) COMPLETE.** 6 plans
+(4 waves, executed sequentially on the feature branch — worktree isolation auto-degraded off a diverged HEAD,
+#683); goal verified `passed` (5/5 success criteria, `07-VERIFICATION.md`). Delivered SAFE-01..06 — the
+live-safety machinery extracted out of the `LiveTradingSystem` facade into three focused, independently-testable
+collaborators plus a net-new pre-trade throttle. A pure `SafetyController` state machine (no venue I/O): status
+latch (`VALID_STATUS_TRANSITIONS`, single `update_status`, `force=` reserved for `reset_halt`), winner-only
+`halt`→CRITICAL `ErrorEvent`→durable `record_halt`, `pause_submission`/`resume_submission` + a bounded
+deferred-protective queue with **D-11 overflow→HALT** (was silent drop-oldest), the dispatch gate, and
+`check_durable_halt_on_start()` running FIRST inside `start()` before any venue I/O. A `StreamRecoveryHandler`
+owning engine-thread reconnect-resume I/O (catch-up missed fills + account snapshot + all-streams-healthy
+gate→`resume_submission`), with the **CF-2 loop-native backfill** contract enforced by a single-writer ring
+tripwire in `live_bar_feed.py` (a non-owner engine-thread write during in-flight loop-native backfill raises
+`StateError`, behaviorally exercised). A `ReconciliationCoordinator` (`portfolio_handler/reconcile/`) keyed on
+account KIND (`is_venue_truth`, not `exchange=='okx'`) with the **CF-7** typed `ReconciliationError` guard
+closing the bare `str(matched["id"])` KeyError gap. And the net-new `PreTradeThrottle` (SAFE-06) — a D-04
+sliding-window submit-rate + Decimal max-notional operator backstop that meters ENTRY only (CANCEL/PROTECTIVE
+bypass via the SINGLE shared `classify()` predicate, D-05/D-16), rejects a breach → `FillEvent(REFUSED)` +
+de-duped WARNING off the injected clock, ON by default (10/10s + $25k). Assembly (07-06): the connector
+stream/fatal handoff is now `StreamStateEvent`/`ConnectorFatalEvent` CONTROL events routed on the engine thread
+via `LiveRouteRegistrar` (down→pause, up→`on_reconnect`, fatal→`halt`), and the
+`_pending_stream_resume`/`_pending_connector_halt` flag side-channel is **fully deleted** (grep-0); the facade
+is a thin delegator over the injected collaborators. Milestone gate held (live-only, backtest-dark): SMA_MACD
+oracle **byte-exact** (134 / `46189.87730727451`), OKX inertness green, `mypy --strict` clean (257 files), zero
+new dependencies; full suite **2201 passed / 6 skipped** (skips OKX-demo-cred-gated). Advisory `07-REVIEW`
+(0 critical / 3 warning / 2 info) — all 3 warnings FIXED before close (commits `9d600212`/`8233315e`): WR-01
+deleted the dead duplicate reconcile methods + 2 orphaned imports the 07-06 surgery left in the facade (the
+mypy `ignore_errors` blind spot), WR-02 stopped counting throttle-REFUSED orders as `orders_executed`
+(dedicated `orders_throttle_rejected` counter), WR-03 re-pointed 3 tests off the dead facade copies onto the
+`ReconciliationCoordinator`; IN-01/IN-02 documented + deferred. Next: Phase 8 — Error Subsystem (CF-1 aggregate
+circuit breaker).*
+
+*Earlier: 2026-07-13 — **v1.8 Phase 6 (LiveRunner + Factory + Facade Shrink) COMPLETE.** 7 plans
 (5 waves); goal verified `passed` (6/6 success criteria, `06-VERIFICATION.md`). Delivered RUN-01..07 + TEST-01
 — the live analog of `build_backtest_system → compose_engine → BacktestRunner`. RUN-04 (the milestone's
 **highest oracle risk**): the shared `wire_universe(engine)` unit (`derive_membership → build Universe →
