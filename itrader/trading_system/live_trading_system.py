@@ -1,6 +1,5 @@
 import threading
 from collections import deque
-from dataclasses import dataclass
 from datetime import datetime, UTC
 from decimal import Decimal
 from typing import Optional, Dict, Any, Callable, TYPE_CHECKING
@@ -15,19 +14,9 @@ from typing import Optional, Dict, Any, Callable, TYPE_CHECKING
 _DEFERRED_PROTECTIVE_REPLAY_MAX = 1000
 
 from itrader.core.enums import ErrorSeverity, HaltReason, OrderCommand, SystemStatus, VALID_STATUS_TRANSITIONS
-from itrader.core.exceptions import ConfigurationError, StateError
-from itrader.events_handler.full_event_handler import EventHandler
+from itrader.core.exceptions import StateError
 from itrader.outils.time_parser import to_timedelta
-from itrader.price_handler.store.csv_store import CsvPriceStore
-from itrader.strategy_handler.strategies_handler import StrategiesHandler
-from itrader.strategy_handler.storage import SignalStorageFactory
-from itrader.screeners_handler.screeners_handler import ScreenersHandler
-from itrader.order_handler.order_handler import OrderHandler
-from itrader.order_handler.storage import OrderStorageFactory
-from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.portfolio_handler.reconcile import is_within_single_unit_tolerance
-from itrader.execution_handler.execution_handler import ExecutionHandler
-from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.trading_system.alert_sink import LogAlertSink
 from itrader.trading_system.venue_spec import build_venue_spec
 # 06.1-04 (SEAM-04/D-13): pure imports HOISTED to module top. Safe now because the
@@ -45,7 +34,7 @@ from itrader.universe.universe_handler import UniverseHandlerConfig
 
 from itrader.logger import get_itrader_logger
 from itrader.events_handler.bus import PriorityEventBus
-from itrader.events_handler.events import EventType, ErrorEvent, UniversePollEvent
+from itrader.events_handler.events import EventType, ErrorEvent
 
 if TYPE_CHECKING:
     # Pure forward-refs for the pure-injection facade signature (06.1-02/D-10) — under
