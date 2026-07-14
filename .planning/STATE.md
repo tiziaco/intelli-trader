@@ -5,10 +5,10 @@ milestone_name: — Live System Refactor & Live-Readiness Hardening
 current_phase: 7
 current_phase_name: Safety + Reconciliation + Stream Recovery
 status: verifying
-stopped_at: Phase 6 context gathered
-last_updated: "2026-07-13T14:05:14.188Z"
+stopped_at: Phase 06.1 context gathered
+last_updated: "2026-07-14T08:04:15.059Z"
 last_activity: 2026-07-13
-last_activity_desc: Phase 06 complete, transitioned to Phase 7
+last_activity_desc: "Completed quick task 260713-phm: fix Phase 06 review WR-02 + IN-02"
 progress:
   total_phases: 9
   completed_phases: 6
@@ -264,11 +264,11 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-13T13:43:59.509Z
-Stopped at: Phase 6 context gathered
+Last session: 2026-07-14T08:04:15.048Z
+Stopped at: Phase 06.1 context gathered
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
-Resume file: .planning/phases/06-liverunner-factory-facade-shrink/06-CONTEXT.md
+Resume file: .planning/phases/06.1-seam-cleanup-make-build-live-system-consume-the-shared-compo/06.1-CONTEXT.md
 Carried todo: 14 pending todos in `todos/pending/` (10 fold into v1.8 as CF-1..CF-10; `v17-residual-carryforward.md`
 is the index; the substantive open item is `margin-equity-double-counts-notional-wr01`, owner-gated).
 
