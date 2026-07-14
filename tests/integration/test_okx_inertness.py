@@ -98,6 +98,21 @@ assert not leaked, (
     "stack: " + repr(leaked) + " (must be lazy-imported inside the live path only)"
 )
 
+# Phase 06.1 (SEAM-04, D-12): the trading_system barrel DROPPED the live surface
+# entirely — importing the backtest root (above) pulls ONLY the backtest composition
+# root, so the live module itself must be ABSENT from sys.modules at this point. Before
+# the barrel drop, `trading_system/__init__.py` eagerly imported LiveTradingSystem /
+# build_live_system, silently dragging the whole live module onto the backtest import
+# graph (the root cause of the pervasive lazy-imports-inside-methods). The later
+# explicit `from itrader.trading_system.live_trading_system import build_live_system`
+# (in the P6 register-vs-build block below) runs AFTER this assertion and legitimately
+# pulls the module for the register-vs-build check — it does not weaken this guard.
+assert "itrader.trading_system.live_trading_system" not in sys.modules, (
+    "SEAM-04/D-12 INERTNESS VIOLATION: importing the backtest root pulled "
+    "itrader.trading_system.live_trading_system onto the backtest import graph — the "
+    "trading_system barrel must NOT re-import (or re-export) the live module (D-12)"
+)
+
 # Phase 1 (CFG-02, D-05/D-06 register-vs-build): importing itrader runs
 # SystemConfig.default() (itrader/__init__.py). The lazy `sql` cached_property must
 # stay UNRESOLVED at import — its absence from the singleton's __dict__ proves zero
@@ -117,12 +132,24 @@ assert "sql" not in _cfg.__dict__, (
 # import failure mode, GATE-01 lineage).
 from itrader.events_handler.bus import FifoEventBus
 from itrader.trading_system.engine_context import EngineContext
+# 06.1-01 (D-01/D-03): the EngineContext now carries a REQUIRED ``feed`` + Optional
+# ``store``. The probe builds a PURE BacktestBarFeed over a CsvPriceStore — both are
+# already on the backtest import graph, so the register-vs-build inertness assertion
+# below (no ccxt.pro/SQL pulled, `sql` cached_property unresolved) still holds.
+from itrader.price_handler.store.csv_store import CsvPriceStore
+from itrader.price_handler.feed.bar_feed import BacktestBarFeed
+from itrader.outils.time_parser import to_timedelta
 _bus = FifoEventBus()
-_ctx = EngineContext(bus=_bus, config=_cfg, environment="backtest", sql_engine=None)
+_store = CsvPriceStore()
+_feed = BacktestBarFeed(_store, to_timedelta("1d"))
+_ctx = EngineContext(
+    bus=_bus, config=_cfg, environment="backtest",
+    feed=_feed, store=_store, sql_engine=None)
 _heavy = [name for name in ("sqlalchemy", "ccxt") if name in sys.modules]
 assert not _heavy, (
     "P2 register-vs-build inertness violation: constructing FifoEventBus/"
-    "EngineContext(sql_engine=None) pulled a heavy backend: " + repr(_heavy)
+    "EngineContext(feed=BacktestBarFeed, sql_engine=None) pulled a heavy backend: "
+    + repr(_heavy)
 )
 assert "sql" not in _cfg.__dict__, (
     "P2 register-vs-build inertness violation: building the EngineContext resolved "
@@ -347,10 +374,18 @@ def test_production_build_live_system_registers_no_replay_data_provider() -> Non
     the paper→okx system would require credentials, but the registration/selection SOURCE is
     the load-bearing invariant. A future edit that re-registers ``'replay'`` in production (or
     re-points the paper map back to ``'replay'``) reddens this loudly.
+
+    SEAM-03/D-11: the ``{'okx':'okx','paper':'okx'}`` default-provider map was centralized
+    into the shared ``build_venue_spec`` builder (``trading_system/venue_spec.py``) — its
+    SOLE home — which BOTH ``for_exchange`` and ``build_live_system`` call. The paper→okx
+    selection invariant is therefore asserted against ``build_venue_spec``'s source now (the
+    inline ``SimpleNamespace`` + map in ``build_live_system`` was deleted); the registration
+    assertions still inspect ``build_live_system`` where ``data_registry.register`` lives.
     """
     import inspect
 
     from itrader.trading_system import live_trading_system as _lts
+    from itrader.trading_system import venue_spec as _venue_spec
 
     source = inspect.getsource(_lts.build_live_system)
 
@@ -362,11 +397,13 @@ def test_production_build_live_system_registers_no_replay_data_provider() -> Non
         "production build_live_system must register NO 'replay' data provider — the replay "
         "harness left itrader for tests/ (D-18); a test fixture injects it via data_plugins"
     )
-    # The paper venue selects the OKX live data feed (D-21), never the replay feed.
-    assert "'paper': 'okx'" in source or '"paper": "okx"' in source, (
-        "production build_live_system must map paper→'okx' (the OKX live data feed, D-21)"
+    # The paper venue selects the OKX live data feed (D-21), never the replay feed. Since
+    # SEAM-03/D-11 the default-provider map lives in the shared build_venue_spec builder.
+    builder_source = inspect.getsource(_venue_spec.build_venue_spec)
+    assert "'paper': 'okx'" in builder_source or '"paper": "okx"' in builder_source, (
+        "build_venue_spec must map paper→'okx' (the OKX live data feed, D-21/D-11)"
     )
-    assert "'paper': 'replay'" not in source and '"paper": "replay"' not in source, (
-        "production build_live_system must NOT map paper→'replay' (the replay feed left "
-        "production for the test fixture, D-21)"
+    assert "'paper': 'replay'" not in builder_source and '"paper": "replay"' not in builder_source, (
+        "build_venue_spec must NOT map paper→'replay' (the replay feed left production for "
+        "the test fixture, D-21)"
     )
