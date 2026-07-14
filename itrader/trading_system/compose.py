@@ -38,16 +38,14 @@ from itrader.events_handler.full_event_handler import EventHandler
 from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.order_handler.order_handler import OrderHandler
-from itrader.outils.time_parser import to_timedelta
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
-from itrader.price_handler.feed.bar_feed import BacktestBarFeed
-from itrader.price_handler.store.csv_store import CsvPriceStore
+from itrader.price_handler.feed.base import BarFeed
+from itrader.price_handler.store.base import PriceStore
 from itrader.results import ResultsStore
 from itrader.screeners_handler.screeners_handler import ScreenersHandler
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
 from itrader.trading_system.engine_context import EngineContext
 from itrader.trading_system.simulation.time_generator import TimeGenerator
-from itrader.trading_system.system_spec import SystemSpec
 from itrader.universe import Universe
 
 
@@ -90,8 +88,13 @@ class Engine:
 
 	global_queue: "EventBus"
 	clock: BacktestClock
-	store: CsvPriceStore
-	feed: BacktestBarFeed
+	# D-04/D-01: widened to the BASE store/feed types so live's ``store=None`` +
+	# ``LiveBarFeed`` satisfy ``mypy --strict`` (backtest injects the concrete
+	# ``CsvPriceStore`` + ``BacktestBarFeed``, a safe subtype). No default here:
+	# ``compose_engine`` always passes both explicitly off ``ctx``, and a default
+	# would break the dataclass required-field ordering that follows.
+	store: Optional[PriceStore]
+	feed: BarFeed
 	strategies_handler: StrategiesHandler
 	screeners_handler: ScreenersHandler
 	portfolio_handler: PortfolioHandler
@@ -111,58 +114,57 @@ class Engine:
 	results_store: Optional[ResultsStore] = None
 
 
-def compose_engine(ctx: "EngineContext", spec: "SystemSpec") -> Engine:
-	"""Wire the shared component graph from an infra ``ctx`` + a declarative ``spec`` (D-01/D-04).
+def compose_engine(
+	ctx: "EngineContext", *,
+	exchange_config: Optional[Any] = None,
+	results_store: Optional["ResultsStore"] = None) -> Engine:
+	"""Wire the shared component graph from a SPEC-FREE infra ``ctx`` (D-01/D-04).
 
-	End-state two-arg seam (CTX-01/D-01): the shared event transport is
-	``ctx.bus`` (the internal FIFO buffer the seam used to construct is DELETED —
-	the composition root owns the bus now), and the run-mode infra knobs
-	(``ctx.environment`` / ``ctx.sql_engine``) select the handler-OWNED storage
-	backends. The declarative ``spec`` supplies the WHAT-to-run inputs (D-02).
+	Spec-free seam (D-04, the Phase-06.1 centerpiece): ``compose_engine`` no longer
+	takes a ``spec``. The store/feed READ-MODELS ride on ``ctx`` (``ctx.store`` /
+	``ctx.feed``, D-01) — the mode factory selects and injects them — so compose
+	no longer reads ``data`` / ``start`` / ``end`` / ``timeframe`` (those only ever
+	built the store/feed) and no longer constructs a ``CsvPriceStore`` /
+	``BacktestBarFeed`` itself. The only two remaining inputs are HOW/WHERE to
+	execute + persist, so they become explicit keyword params, NOT a spec read:
+	``exchange_config`` (the already-seeded ``ExchangeConfig``, ``None`` for live's
+	default) and ``results_store`` (the OPTIONAL sink, ``None`` on the oracle path).
+	The WHAT-to-run description (strategies / portfolios / dates / ticker) stays
+	FACTORY-LOCAL and never crosses this shared seam — backtest keeps its
+	``SystemSpec``, live keeps a tiny venue-spec object.
 
-	A1 spec-read constraint (D-04): the body reads ONLY the six permitted spec
-	fields — ``data`` / ``start`` / ``end`` / ``timeframe`` / ``exchange`` /
-	``results_store`` (empties mapped to ``None``) — it NEVER reads the
-	ticker / starting_cash / strategies / portfolios fields (the legacy arm passes
-	placeholders for those). The ``order_config`` stays handler-owned
+	The shared event transport is ``ctx.bus`` (the composition root owns the bus),
+	and the run-mode infra knobs (``ctx.environment`` / ``ctx.sql_engine``) select
+	the handler-OWNED storage backends. The ``order_config`` stays handler-owned
 	(``OrderConfig.default()``, D-04 lean).
 
 	Parameters
 	----------
 	ctx : EngineContext
-		The frozen infra bundle: ``bus`` (the shared transport injected into every
-		handler + the ``Engine`` holder), ``config`` (carried, unread until P9),
-		``environment`` (selects handler-owned storage backends), ``sql_engine``
-		(``None`` for backtest — keeps the path SQL-import-inert, GATE-01).
-	spec : SystemSpec
-		The declarative run description. Only the six A1 fields are read here; the
-		FACTORY (never this seam) reads the strategies / portfolios fields (Trap 6).
-		``spec.exchange`` is an already-seeded ``ExchangeConfig`` by the time compose
-		is called (both arms seed it, D-13/Trap 1).
+		The frozen mode-injection bundle: ``bus`` (the shared transport injected into
+		every handler + the ``Engine`` holder), ``config`` (carried, unread until P9),
+		``environment`` (selects handler-owned storage backends), ``feed`` (the REQUIRED
+		per-mode read-model), ``store`` (REAL in backtest / ``None`` in live, D-02),
+		``sql_engine`` (``None`` for backtest — keeps the path SQL-import-inert, GATE-01).
+	exchange_config : Optional[Any]
+		The already-seeded ``ExchangeConfig`` threaded into the ``ExecutionHandler``
+		(the complete symbol set folded in by the factory, D-13/Trap 1). ``None`` yields
+		the ``ExecutionHandler`` default (live's behavior today — no change).
+	results_store : Optional[ResultsStore]
+		The OPTIONAL results sink forwarded onto the ``Engine`` holder (RESULT-01/D-04).
+		``None`` on the oracle path keeps it store-free AND SQL-import-inert (GATE-01).
 	"""
-	# A1 kwargs->spec fold (D-04): map only the six permitted fields, empties->None
-	# so today's exact values are preserved byte-identically.
-	csv_paths = spec.data or None
-	start_date = spec.start or None
-	end_date = spec.end or None
-	timeframe = spec.timeframe
-	exchange_config = spec.exchange
-	# getattr (NOT spec.results_store): the e2e ScenarioSpec is duck-typed into
-	# this seam by name and has no such field — absent -> None -> store-free/byte-exact.
-	results_store = getattr(spec, "results_store", None)
+	# D-01/D-04: store + feed are INJECTED on ctx by the mode factory — compose reads
+	# them uniformly (backtest: real CsvPriceStore + BacktestBarFeed; live: store=None
+	# + LiveBarFeed). The construction MOVED to the factory so the seam is store/feed-
+	# agnostic and never reads a backtest-shaped run description.
+	store = ctx.store
+	feed = ctx.feed
 
 	# Determinism seam (D-09/D-10): the injected BacktestClock staged on the
 	# determinism seam (no domain consumer yet — result determinism comes from
 	# passing the bar time explicitly to record_metrics in the runner).
 	clock = BacktestClock()
-
-	# Store + look-ahead-safe feed read-model. csv_paths passes straight through;
-	# None falls back to the single-golden-ticker default (byte-identical).
-	store = CsvPriceStore(
-		csv_paths=csv_paths,
-		start_date=start_date,
-		end_date=end_date or None)
-	feed = BacktestBarFeed(store, to_timedelta(timeframe))
 
 	# ScreenersHandler is a deferred subsystem (ignore_errors override).
 	screeners_handler = ScreenersHandler(ctx.bus, feed)  # type: ignore[no-untyped-call]

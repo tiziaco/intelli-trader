@@ -17,12 +17,19 @@ FR7 — loud typed errors, never silent ``None``: accessors raise
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from datetime import datetime, timedelta
+from typing import Any, TYPE_CHECKING
 
 import pandas as pd
 
 from itrader.core.bar import Bar
 
 from .cache_registration import RawBarConsumer, derive
+
+if TYPE_CHECKING:
+    # String-only forward-refs for the ``generate_bar_event`` signature — keeps the
+    # base feed module's runtime imports unchanged (the events package is pure, but
+    # guarding it costs nothing and preserves the import surface exactly).
+    from itrader.events_handler.events import BarEvent, TimeEvent
 
 
 def assert_update_trigger(base_timeframe: timedelta,
@@ -180,6 +187,57 @@ class BarFeed(ABC):
             One immutable ``Bar`` per ticker that has a base bar stamped
             exactly ``time``. Tickers with no bar at ``time`` are ABSENT
             from the dict (sparse universe, D-15) — never ``None`` values.
+        """
+        pass
+
+    # -- Run-path event-sink binding (wiring time) ----------------------------
+
+    @abstractmethod
+    def bind(self, global_queue: Any, membership: list[str]) -> None:
+        """Bind the run-path event sink + membership set (wiring time).
+
+        Called once by the shared universe wiring (``wire_universe``) after
+        membership is derived. Declared on the base so the SHARED wiring seam can
+        call ``feed.bind`` uniformly across modes (``BacktestBarFeed`` enqueues via
+        the bound sink or returns the ``BarEvent`` when ``global_queue`` is ``None``;
+        ``LiveBarFeed`` binds the same sink for ``update()`` to ``put`` bars). The
+        ``global_queue`` type is left loose (``Any``) because the concrete feeds bind
+        different transports (an ``EventBus`` in backtest, a ``queue.Queue`` in live).
+
+        Parameters
+        ----------
+        global_queue : Any
+            The event sink the feed enqueues bar events onto, or ``None`` for the
+            backtest return-contract.
+        membership : list[str]
+            The derived tradable symbol set (used for the missing-ticker warning).
+        """
+        pass
+
+    # -- TIME-route bar-event factory (D-20/D-15) -----------------------------
+
+    @abstractmethod
+    def generate_bar_event(self, time_event: "TimeEvent") -> "BarEvent | None":
+        """Return the ``BarEvent`` for the tick at ``time_event``, or ``None``.
+
+        The TIME-route bar-event factory (D-20/D-15). Declared on the base so the
+        shared ``compose_engine`` seam can pass ``feed.generate_bar_event`` to the
+        ``EventHandler`` uniformly across modes (compose reads the base ``BarFeed``
+        type off ``ctx.feed``, not a concretion). ``BacktestBarFeed`` builds the
+        event from the pinned bar grid; ``LiveBarFeed`` is a DORMANT no-op — live
+        emits ``BarEvent``s directly via ``update()``, so its TIME route is
+        reserved-but-inert (D-02/D-05).
+
+        Parameters
+        ----------
+        time_event : TimeEvent
+            The tick the bar event is produced for (the pinned bar-date grid stamp
+            in backtest; unused by the dormant live override).
+
+        Returns
+        -------
+        BarEvent | None
+            The bar event for the tick, or ``None`` when there is no bar to emit.
         """
         pass
 

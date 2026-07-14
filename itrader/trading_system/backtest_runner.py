@@ -21,12 +21,14 @@ Indentation: TABS (``trading_system/`` package convention).
 
 from datetime import datetime
 from functools import reduce
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, cast
 
 import pandas as pd
 
 from itrader.core.exceptions import ConfigurationError
 from itrader.logger import get_itrader_logger
+from itrader.price_handler.feed.bar_feed import BacktestBarFeed
+from itrader.price_handler.store.base import PriceStore
 from itrader.trading_system.compose import Engine
 from itrader.trading_system.universe_wiring import wire_universe
 
@@ -68,24 +70,32 @@ class BacktestRunner:
 		# derived from strategy tickers => is_ready always True at the readiness
 		# gate), proven by the byte-exact oracle double-run on this plan.
 		wire_universe(engine)
+		# BacktestRunner is backtest-only: the shared Engine holder's store/feed are
+		# widened to the base ``Optional[PriceStore]`` / ``BarFeed`` (D-04, so the
+		# mode-agnostic seam can also produce a live Engine), but on THIS path they
+		# are always the concrete backtest backends. Narrow them for the
+		# backtest-specific reads (store symbols/index) + ``precompute`` (a
+		# BacktestBarFeed-only capability the live feed does not carry).
+		store = cast(PriceStore, engine.store)
+		feed = cast(BacktestBarFeed, engine.feed)
 		# Ping clock derived from the store's bar index (T-06-16). WR-07: fail
 		# loudly on an empty store, and derive the grid from the UNION of every
 		# symbol's index so a sparse multi-symbol universe never silently drops
 		# bars. For the single-symbol golden run the reduce returns that one index
 		# UNCHANGED (no union call), so the tick grid stays byte-identical.
-		symbols = engine.store.symbols()
+		symbols = store.symbols()
 		if not symbols:
 			raise ConfigurationError(
 				reason=(
 					"Backtest store has no symbols — cannot derive the ping clock "
 					"(empty data directory or bad store path)"))
 		ping_grid = reduce(
-			pd.Index.union, (engine.store.index(s) for s in symbols))
+			pd.Index.union, (store.index(s) for s in symbols))
 		engine.time_generator.set_dates(ping_grid)
 		# M5-03: resample ONCE at run-init per registered strategy declaration —
 		# the per-tick window path is then a pure positional slice.
 		for strategy in engine.strategies_handler.strategies:
-			engine.feed.precompute(strategy.tickers, strategy.timeframe)
+			feed.precompute(strategy.tickers, strategy.timeframe)
 
 	def _run_backtest(self, on_tick: Optional[Callable[[Any, Any], None]] = None) -> None:
 		"""Poll the events queue per tick and dispatch each event (fail-fast).
