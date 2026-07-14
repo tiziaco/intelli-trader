@@ -30,7 +30,18 @@ from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.trading_system.alert_sink import LogAlertSink
 from itrader.trading_system.venue_spec import build_venue_spec
+# 06.1-04 (SEAM-04/D-13): pure imports HOISTED to module top. Safe now because the
+# barrel drop (06.1-04 Task 1, D-12) removed this module from the backtest import graph,
+# so their module-top execution never touches the backtest path. session_initializer /
+# engine_context / universe_handler are all pure (no ccxt.pro/SQL/venue substrate) — the
+# P6 register-vs-build inertness block in test_okx_inertness proves importing this module
+# pulls no heavy backend. The genuinely-HEAVY imports (LiveBarFeed / SqlSettings / SQL
+# spine / ConnectorProvider / okx_plugin / assemble_venue / LiveRunner) STAY lazy inside
+# build_live_system's body (D-13).
+from itrader.trading_system.session_initializer import SessionInitializer
+from itrader.trading_system.engine_context import EngineContext
 from itrader.universe import Universe
+from itrader.universe.universe_handler import UniverseHandlerConfig
 
 from itrader.logger import get_itrader_logger
 from itrader.events_handler.bus import PriorityEventBus
@@ -912,12 +923,11 @@ class LiveTradingSystem:
         self.logger.info('Initializing live trading session')
 
         try:
-            # LAZY imports (mirror the donor's lazy live imports) so the backtest
-            # import path never pulls these onto its graph — the recurring inertness
-            # gate (tests/integration/test_okx_inertness.py).
+            # 06.1-04 (D-13): SessionInitializer / UniverseHandlerConfig hoisted to
+            # module top (the barrel drop removed this module from the backtest import
+            # graph, so their module-top import no longer touches the backtest path).
+            # ``config`` stays lazy here — it is read only inside this body.
             from itrader import config as _system_config
-            from itrader.trading_system.session_initializer import SessionInitializer
-            from itrader.universe.universe_handler import UniverseHandlerConfig
 
             # 06.1-02 (D-10): read the REAL compose Engine injected at construction
             # (build_live_system now calls compose_engine and injects the result). The
@@ -1529,11 +1539,11 @@ def build_live_system(
     # arm -> InMemoryOrderStorage). Live keeps exchange_config=None (the ExecutionHandler
     # default today — byte-preserving) and results_store=None. compose_engine reuses the
     # FeeModelCommissionEstimator admission adapter, retiring the re-inlined commission
-    # closure. compose_engine/EngineContext are PURE imports, taken lazily here to mirror
-    # the module's lazy-import discipline (inertness gate).
+    # closure. compose_engine is a PURE import, taken lazily here to mirror the module's
+    # lazy-import discipline (inertness gate). 06.1-04 (D-13): EngineContext is now
+    # hoisted to module top (pure — off the backtest graph after the barrel drop).
     from itrader import config as _system_config
     from itrader.trading_system.compose import compose_engine
-    from itrader.trading_system.engine_context import EngineContext
 
     ctx = EngineContext(
         bus=global_queue,
