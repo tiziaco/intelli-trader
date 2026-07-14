@@ -212,6 +212,10 @@ class LiveTradingSystem:
         self._stats = {
             'events_processed': 0,
             'orders_executed': 0,
+            # WR-02: an ORDER the pre-submit throttle REFUSED never reached execution
+            # (it only emitted a FillEvent(REFUSED)); count it here, not in
+            # orders_executed, so the read-model never over-reports submissions.
+            'orders_throttle_rejected': 0,
             'last_event_time': None,
             'uptime_start': None,
             'errors_count': 0
@@ -419,6 +423,22 @@ class LiveTradingSystem:
                 # so EventType.ORDER.name == 'ORDER' holds the same str contract).
                 if event_type == EventType.ORDER.name:
                     self._stats['orders_executed'] += 1
+
+    def _on_order_throttle_rejected(self) -> None:
+        """LiveRunner hook (WR-02 / D-04): a pre-submit-throttle-REFUSED ORDER.
+
+        The pre-submit throttle rejected this ORDER at the execution boundary: it
+        emitted only a ``FillEvent(REFUSED)`` and NEVER executed, so the runner skips
+        the dispatch gate AND ``_update_stats`` for it (which would bump
+        ``orders_executed`` and over-report submissions). The order was still dequeued
+        and processed, so count it in ``events_processed`` and on its own
+        ``orders_throttle_rejected`` counter — never ``orders_executed``. Facade body
+        stays put; reached via an injected callable exactly like ``_update_stats``.
+        """
+        with self._stats_lock:
+            self._stats['events_processed'] += 1
+            self._stats['last_event_time'] = datetime.now(UTC).isoformat()
+            self._stats['orders_throttle_rejected'] += 1
 
     def _record_bar_metrics(self, event) -> None:
         """Record the per-bar equity curve on ``EventType.BAR`` (D-16 / WR-01 fix).
@@ -1223,6 +1243,7 @@ def build_live_system(
         max_idle_time=_LIVE_MAX_IDLE_TIME,
         on_loop_start=facade._on_loop_start,
         on_loop_error=facade._on_loop_error,
+        on_order_throttle_rejected=facade._on_order_throttle_rejected,
     )
     facade._live_runner = live_runner
     facade._error_policy = error_policy

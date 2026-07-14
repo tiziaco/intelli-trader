@@ -73,6 +73,7 @@ class LiveRunner:
         max_idle_time: float,
         on_loop_start: Optional[Callable[[], None]] = None,
         on_loop_error: Optional[Callable[[BaseException], None]] = None,
+        on_order_throttle_rejected: Optional[Callable[[], None]] = None,
     ) -> None:
         """
         Parameters
@@ -106,6 +107,11 @@ class LiveRunner:
             stamp). Injected so the facade status/stats bookkeeping stays put.
         on_loop_error : Callable[[BaseException], None], optional
             Loop catch-all hook (facade: ``_stats['errors_count'] += 1``).
+        on_order_throttle_rejected : Callable[[], None], optional
+            WR-02 hook: a pre-submit-throttle-REFUSED ORDER. Called INSTEAD of
+            ``update_stats`` for a rejected order so the facade counts it as processed
+            but NOT executed (facade: ``_stats['orders_throttle_rejected'] += 1``),
+            never bumping ``orders_executed`` for an order that never executed.
         """
         self.logger = get_itrader_logger().bind(component="LiveRunner")
         self._bus = bus
@@ -121,6 +127,7 @@ class LiveRunner:
         self._max_idle_time = max_idle_time
         self._on_loop_start = on_loop_start
         self._on_loop_error = on_loop_error
+        self._on_order_throttle_rejected = on_order_throttle_rejected
         self._thread: Optional[threading.Thread] = None
 
     def _run_loop(self) -> None:
@@ -161,10 +168,16 @@ class LiveRunner:
                         # engine suppresses NEW order submission (SIGNAL/ORDER) while
                         # BAR/FILL/ERROR streaming + reconciling + persisting continue.
                         self._dispatch_gate(event)
-
-                    # Update statistics (D-04: facade _update_stats body stays put).
-                    self._update_stats(
-                        event.type.name if hasattr(event, 'type') else 'UNKNOWN')
+                        # Update statistics (D-04: facade _update_stats body stays put).
+                        self._update_stats(
+                            event.type.name if hasattr(event, 'type') else 'UNKNOWN')
+                    elif self._on_order_throttle_rejected is not None:
+                        # WR-02: a throttle-REFUSED ORDER never executed (it emitted only
+                        # a FillEvent(REFUSED)); count it as processed-not-executed via the
+                        # dedicated hook so orders_executed is NEVER over-reported. The
+                        # hook is always wired by build_live_system; if absent, the order
+                        # is simply left uncounted (never mis-counted as executed).
+                        self._on_order_throttle_rejected()
 
                     # 05-06 (D-16 / WR-01): record the per-bar equity curve keyed on
                     # EventType.BAR (the async/best-effort path). Facade body stays
