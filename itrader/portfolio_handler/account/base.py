@@ -51,6 +51,17 @@ class Account(ABC):
     """
 
     @property
+    def is_venue_truth(self) -> bool:
+        """Account KIND discriminator: True only for venue-cached (venue-truth) leaves.
+
+        The startup ``ReconciliationCoordinator`` keys the venue reconcile on this
+        discriminator (SAFE-05 / A4) rather than on ``exchange=='okx'`` — the compute
+        (``Simulated*``) leaves inherit ``False`` here and NEVER reach the venue reconcile
+        (matches D-23 RESTORE-only), while ``VenueAccount`` overrides it ``True``.
+        """
+        return False
+
+    @property
     @abstractmethod
     def balance(self) -> Decimal:
         """

@@ -28,11 +28,15 @@ from typing import Any, Dict, List, Optional
 import pytest
 import uuid_utils.compat as uc
 
-from itrader.core.enums import OrderStatus, OrderType, Side
+from itrader.core.enums import HaltReason, OrderStatus, OrderType, Side
 from itrader.core.exceptions import ReconciliationError
 from itrader.core.exceptions.base import ITraderError
 from itrader.core.ids import PortfolioId, StrategyId
 from itrader.order_handler.order import Order
+from itrader.portfolio_handler.reconcile import venue_reconciler as vr_module
+from itrader.portfolio_handler.reconcile.reconciliation_coordinator import (
+    ReconciliationCoordinator,
+)
 from itrader.portfolio_handler.reconcile.venue_reconciler import VenueReconciler
 
 _SYMBOL = "BTC/USDC"
@@ -141,3 +145,154 @@ def test_cf7_relink_bracket_succeeds_with_id():
 
     assert reconciler._relink_bracket(parent, resting, {}) is True
     assert child.venue_order_id == "venue-123"
+
+
+# ================================================================ Task 2: coordinator
+
+
+class _ComputeAccount:
+    """A compute (non-venue-truth) account double — the paper/simulated leaf kind."""
+
+    is_venue_truth = False
+
+    def __init__(self) -> None:
+        self.snapshot_calls = 0
+
+    def snapshot(self) -> None:  # pragma: no cover - must never be reached
+        self.snapshot_calls += 1
+
+
+class _VenueTruthAccount:
+    """A venue-truth account double with a canned positions map (the VenueAccount kind)."""
+
+    is_venue_truth = True
+
+    def __init__(self, positions: Optional[Dict[str, Decimal]] = None) -> None:
+        self._positions = positions if positions is not None else {}
+        self.snapshot_calls = 0
+        self.start_streaming_calls = 0
+
+    def snapshot(self) -> None:
+        self.snapshot_calls += 1
+
+    def start_streaming(self) -> None:
+        self.start_streaming_calls += 1
+
+    @property
+    def positions(self) -> Dict[str, Decimal]:
+        return self._positions
+
+
+class _FakePortfolio:
+    """Minimal portfolio double: an assignable account + a canned open position."""
+
+    def __init__(self, open_qty: Decimal = Decimal("0")) -> None:
+        self.account: Any = None
+        self._open_qty = open_qty
+
+    def get_open_position(self, _ticker: str) -> Any:
+        if self._open_qty == 0:
+            return None
+        return type("_Pos", (), {"net_quantity": self._open_qty})()
+
+
+class _FakePortfolioHandler:
+    """Portfolio-handler double: active portfolios + drift precision + rehydrate spy."""
+
+    def __init__(self, portfolios: List[_FakePortfolio]) -> None:
+        self._portfolios = portfolios
+        self.rehydrate_calls = 0
+
+    def get_active_portfolios(self) -> List[_FakePortfolio]:
+        return self._portfolios
+
+    def _drift_precision(self, _ticker: str) -> int:
+        return 8
+
+    def rehydrate(self, _seed_hook: Any) -> None:
+        self.rehydrate_calls += 1
+
+
+def _build_coordinator(*, venue_account: Any, portfolios: List[_FakePortfolio],
+                       halt_calls: List[str]) -> ReconciliationCoordinator:
+    handler = _FakePortfolioHandler(portfolios)
+    return ReconciliationCoordinator(
+        portfolio_handler=handler,
+        seed_applied_trades=lambda _keys: None,
+        order_storage=_FakeStore(),
+        venue_account=venue_account,
+        connector=_SyncConnector(),
+        exchange=None,
+        global_queue=queue.Queue(),
+        halt=halt_calls.append,
+    )
+
+
+def test_coordinator_compute_account_skips_venue_reconcile(monkeypatch):
+    """A compute (non-venue-truth) account runs rehydrate but constructs NO VenueReconciler."""
+    constructed: List[Any] = []
+    monkeypatch.setattr(
+        vr_module, "VenueReconciler",
+        lambda **kwargs: constructed.append(kwargs) or None)
+
+    account = _ComputeAccount()
+    portfolio = _FakePortfolio()
+    portfolio.account = account
+    halt_calls: List[str] = []
+    coordinator = _build_coordinator(
+        venue_account=account, portfolios=[portfolio], halt_calls=halt_calls)
+
+    coordinator.run_startup_reconcile()
+
+    assert coordinator._portfolio_handler.rehydrate_calls == 1
+    assert constructed == []          # no VenueReconciler for a compute account
+    assert account.snapshot_calls == 0
+    assert halt_calls == []           # no baseline halt on the compute path
+
+
+def test_coordinator_venue_truth_account_runs_reconcile(monkeypatch):
+    """A venue-truth account snapshots, links, and constructs exactly one VenueReconciler."""
+    constructed: List[Any] = []
+
+    class _SpyReconciler:
+        def __init__(self, **kwargs: Any) -> None:
+            constructed.append(kwargs)
+
+        def reconcile(self) -> None:
+            pass
+
+    monkeypatch.setattr(vr_module, "VenueReconciler", _SpyReconciler)
+
+    # venue flat AND engine flat → baseline guard is a clean no-op (no residual).
+    account = _VenueTruthAccount(positions={_SYMBOL: Decimal("0")})
+    portfolio = _FakePortfolio(open_qty=Decimal("0"))
+    halt_calls: List[str] = []
+    coordinator = _build_coordinator(
+        venue_account=account, portfolios=[portfolio], halt_calls=halt_calls)
+
+    coordinator.run_startup_reconcile()
+
+    assert account.snapshot_calls == 1
+    assert account.start_streaming_calls == 1
+    assert portfolio.account is account          # linked
+    assert len(constructed) == 1                 # exactly one VenueReconciler
+    assert halt_calls == []                       # flat/flat → no residual halt
+
+
+def test_coordinator_baseline_residual_halts_with_fixed_literal(monkeypatch):
+    """An unexplained base-asset residual latches HALT with the FIXED literal reason (V7)."""
+    monkeypatch.setattr(
+        vr_module, "VenueReconciler",
+        lambda **kwargs: type("_N", (), {"reconcile": lambda self: None})())
+
+    # venue holds 1.0 BTC but the engine believes it holds 0 → unexplained residual.
+    account = _VenueTruthAccount(positions={_SYMBOL: Decimal("1.0")})
+    portfolio = _FakePortfolio(open_qty=Decimal("0"))
+    halt_calls: List[str] = []
+    coordinator = _build_coordinator(
+        venue_account=account, portfolios=[portfolio], halt_calls=halt_calls)
+
+    coordinator.run_startup_reconcile()
+
+    assert halt_calls == [HaltReason.BASELINE_RESIDUAL.value]
+    assert halt_calls[0] == "baseline-residual"
