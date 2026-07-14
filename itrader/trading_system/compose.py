@@ -34,6 +34,8 @@ from typing import Any, Optional
 from itrader.core.clock import BacktestClock
 from itrader.config import OrderConfig
 from itrader.events_handler.bus import EventBus
+from itrader.events_handler.error_handler import ErrorHandler
+from itrader.events_handler.error_policy import FailFastPolicy
 from itrader.events_handler.full_event_handler import EventHandler
 from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
@@ -117,7 +119,10 @@ class Engine:
 def compose_engine(
 	ctx: "EngineContext", *,
 	exchange_config: Optional[Any] = None,
-	results_store: Optional["ResultsStore"] = None) -> Engine:
+	results_store: Optional["ResultsStore"] = None,
+	alert_sink: Optional[Any] = None,
+	system_store: Optional[Any] = None,
+	error_policy: Optional[Any] = None) -> Engine:
 	"""Wire the shared component graph from a SPEC-FREE infra ``ctx`` (D-01/D-04).
 
 	Spec-free seam (D-04, the Phase-06.1 centerpiece): ``compose_engine`` no longer
@@ -153,6 +158,22 @@ def compose_engine(
 	results_store : Optional[ResultsStore]
 		The OPTIONAL results sink forwarded onto the ``Engine`` holder (RESULT-01/D-04).
 		``None`` on the oracle path keeps it store-free AND SQL-import-inert (GATE-01).
+	alert_sink : Optional[Any]
+		The CRITICAL/halt egress collaborator injected into the ``ErrorHandler`` (D-03/D-04).
+		``build_live_system`` passes a ``LogAlertSink``; ``None`` on the backtest path (no
+		egress). Typed ``Optional[Any]`` so no ``LogAlertSink`` concrete lands on the
+		backtest import graph.
+	system_store : Optional[Any]
+		The durable KV store for the D-17 ``state.last_error`` persist, injected into the
+		``ErrorHandler``. ``build_live_system`` passes a gated ``SystemStore``; ``None`` in
+		backtest (no persist). Typed ``Optional[Any]`` — ``storage.system_store`` is in the
+		OKX-inertness _FORBIDDEN list, so it is NEVER module-imported here.
+	error_policy : Optional[Any]
+		The live publish-and-continue ``HandlerErrorPolicy`` (D-06) selected here as the
+		dispatcher's failure policy AND handed to the ``ErrorHandler`` as its ``failure_sink``
+		(the shared tripwire surface for the off-thread okx FILL_TRANSLATION count). ``None``
+		→ a ``FailFastPolicy`` is built instead (byte-exact oracle re-raise) and the
+		``ErrorHandler`` gets no tripwire (backtest logs only).
 	"""
 	# D-01/D-04: store + feed are INJECTED on ctx by the mode factory — compose reads
 	# them uniformly (backtest: real CsvPriceStore + BacktestBarFeed; live: store=None
@@ -233,6 +254,21 @@ def compose_engine(
 	portfolio_handler.set_order_storage(order_storage)
 
 	time_generator = TimeGenerator()
+
+	# D-01/D-03/D-04: build the ERROR-route consumer + select the handler-failure
+	# policy HERE (the single mode-agnostic site, beside the EventHandler). The live
+	# collaborators ride in as ``Optional[Any]`` kwargs (built by build_live_system);
+	# backtest passes all three None so the ErrorHandler logs only (no escalate/persist/
+	# count) and FailFastPolicy re-raises identically (oracle byte-exact). ``error_policy``
+	# doubles as the ErrorHandler's failure_sink (the shared tripwire the off-thread okx
+	# FILL_TRANSLATION event counts through, ERR-04) — None in backtest.
+	error_handler = ErrorHandler(
+		alert_sink=alert_sink,
+		system_store=system_store,
+		failure_sink=error_policy,
+	)
+	policy = error_policy if error_policy is not None else FailFastPolicy()
+
 	# The TIME route's BarEvent source is the feed-owned factory (D-20).
 	event_handler = EventHandler(
 		strategies_handler,
@@ -241,7 +277,9 @@ def compose_engine(
 		order_handler,
 		execution_handler,
 		feed.generate_bar_event,
-		ctx.bus
+		ctx.bus,
+		policy,
+		error_handler,
 	)
 
 	return Engine(

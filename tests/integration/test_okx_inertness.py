@@ -310,6 +310,8 @@ def test_backtest_event_handler_phase7_routes_are_inert_empty() -> None:
         execution_handler=MagicMock(),
         bar_event_source=MagicMock(),
         global_queue=_queue.Queue(),
+        error_policy=MagicMock(),
+        error_handler=MagicMock(),
     )
 
     for route_name in _PHASE7_INERT_ROUTES:
