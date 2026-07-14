@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: — Live System Refactor & Live-Readiness Hardening
-current_phase: 6
-current_phase_name: LiveRunner + Factory + Facade Shrink
+current_phase: 7
+current_phase_name: Safety + Reconciliation + Stream Recovery
 status: verifying
-stopped_at: Completed 05-03-PLAN.md
-last_updated: "2026-07-12T23:34:16.619Z"
-last_activity: 2026-07-12
-last_activity_desc: Phase 05 complete, transitioned to Phase 6
+stopped_at: Phase 6 context gathered
+last_updated: "2026-07-13T14:05:14.188Z"
+last_activity: 2026-07-13
+last_activity_desc: Phase 06 complete, transitioned to Phase 7
 progress:
   total_phases: 9
-  completed_phases: 5
-  total_plans: 19
-  completed_plans: 19
-  percent: 56
+  completed_phases: 6
+  total_plans: 26
+  completed_plans: 26
+  percent: 67
 ---
 
 # Project State
@@ -26,17 +26,17 @@ See: .planning/PROJECT.md (Current Milestone: v1.8 — Live System Refactor & Li
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct,
 deterministic, cross-validated numbers (oracle **134 / `46189.87730727451`**; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 shipped a live operating mode (paper-first on OKX) without disturbing that oracle.
-**Current focus:** Phase 05 — Venue Registry + Bundle
+**Current focus:** Phase 06 — liverunner-factory-facade-shrink
 thin ~200-line facade over focused, venue-parametrized, FastAPI-ready collaborators — **without
 disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI itself is out of scope
 (LR-01). Full scope: core refactor (P1–P8 + P12) + the three ★ feature-adds (P9–P11).
 
 ## Current Position
 
-Phase: 6 — LiveRunner + Factory + Facade Shrink
+Phase: 7 — Safety + Reconciliation + Stream Recovery
 Plan: Not started
 Status: Phase complete — ready for verification
-Last activity: 2026-07-13 — Completed quick task 260713-dbw: consolidate live-provider surface to the single LiveDataProvider Protocol
+Last activity: 2026-07-13 — Completed quick task 260713-phm: fix Phase 06 review WR-02 + IN-02
 
 Progress: [████░░░░░░] 44%
 
@@ -154,6 +154,15 @@ P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 - [Phase ?]: 05-06 (D-10): VenueLifecycle is a small class encoding the fixed connector start/stop order, None-guarding paper's absent connector (start no-ops when bundle.connector is None; stop prefers ConnectorProvider.close_all, falls back to connector.disconnect)
 - [Phase ?]: 05-06: plugin/ConnectorProvider imports stay LAZY inside LTS.__init__ not module top — trading_system/__init__.py imports LiveTradingSystem, so a module-top okx_plugin/paper_plugin/ConnectorProvider import would pull them onto the backtest import graph (inertness _FORBIDDEN) and redden test_okx_inertness
 - [Phase ?]: 05-06: VenueBundle.lifecycle retyped Any -> VenueLifecycle | None (05-04 forward-seam closed); TYPE_CHECKING forward-ref keeps the substrate import-inert
+- [Phase ?]: [Phase 06]: 06-01 (RUN-04/D-01/D-02): wire_universe(engine)->Universe extracted as ONE intact TABS free function in trading_system/universe_wiring.py; backtest_runner delegates to it, keeps ping-grid+precompute post-step; ADDS strategies_handler.set_universe (inert by construction) PROVEN byte-exact 134/46189.87730727451 on determinism double-run; inertness green
+- [Phase ?]: RUN-02: LiveRunner/WorkerSupervisor/ErrorPolicy authored as standalone import-inert 4-space modules; unwired here, build_live_system wires them in 06-05
+- [Phase ?]: D-04 held: live_trading_system.py facade byte-untouched this plan; LiveRunner reaches facade side-effects via injected callbacks
+- [Phase 06]: 06-03 (RUN-07/D-17): _LiveWarmupConsumer rehomed to price_handler/feed/cache_registration.py as frozen StrategyWarmupConsumer (ONE global ring); derive_warmup_depth(strategies) is the NAMED CF-10 depth boundary (global max(warmup) today, per-concerned-strategy later — body-only change); register_strategy_warmup(feed, strategies) is the reusable entry point for SessionInitializer (06-04). Named distinctly from derive() raw-history ladder (Landmine 4); import-inert, 4-space, mypy clean; old consumer stays in LTS until 06-04; oracle byte-exact 134/46189.87730727451
+- [Phase ?]: 06-04/RUN-06: UniverseHandler ctor is (bus, universe, feed, config); timeframe+remove_policy read from a flat UniverseHandlerConfig value object; set_venue_metadata(exchange) collapses the two former OKX-guarded venue setters (zero OKX coupling); 4 read-model setters + set_freeze_gate retained (D-11)
+- [Phase 06]: 06-05 (RUN-05/RUN-04-live/D-12): LiveRouteRegistrar (central declarative BUSINESS/live route table, list order = execution order, FILL appended, NO CONTROL route per D-23/LR-16) + SessionInitializer (composes wire_universe + register_strategy_warmup + first-class UniverseHandler + LiveRouteRegistrar); _initialize_live_session is a thin delegator; _LiveWarmupConsumer + inline route mutation removed; live GAINS the WR-03 assert; set_venue_metadata unconditional over resolved venue exchange (zero OKX coupling); interim Engine holder + 2 casts, 06-06 flips to build_live_system/compose_engine; oracle byte-exact 134/46189.87730727451, paper-parity + inertness green, mypy clean, 2125 passed
+- [Phase ?]: 06-06: build_live_system(spec) is the live composition root (RUN-01/D-09); facade __init__ is pure injection; live wires PriorityEventBus (D-23); LiveRunner owns the drain loop; D-12 construction-time session-init flip deferred to 06-07 — RUN-03 lands structurally
+- [Phase ?]: 06-07/TEST-01/D-18: relocated the whole replay harness to tests/support/replay_harness.py; production is replay-free (paper->OKX feed, D-21); paper EXECUTION venue untouched (D-20)
+- [Phase ?]: 06-07/D-16: TestRunner is behavior-preserving (calls _initialize_live_session before its per-bar drive); the D-12 construction-time flip stays DEFERRED per 06-06
 
 ### Pending Todos
 
@@ -197,6 +206,16 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 |---|-------------|------|--------|-----------|
 | 260713-cvb | Fix WR-02: ConnectorProvider.close_all isolates each disconnect + always clears memo (bound logger) | 2026-07-13 | 5045db99 | [260713-cvb-fix-connector-close-all-teardown](./quick/260713-cvb-fix-connector-close-all-teardown/) |
 | 260713-dbw | Consolidate live-provider surface to one symbol: drop BaseLiveDataProvider, keep the LiveDataProvider Protocol, inline the 7 no-op seams into ReplayDataProvider | 2026-07-13 | d3dec871 | [260713-dbw-consolidate-the-two-live-provider-symbol](./quick/260713-dbw-consolidate-the-two-live-provider-symbol/) |
+| 260713-ncq | Centralize live stream/feed/DB settings under SystemConfig — inject StreamSettings/FeedProviderSettings (kill 10 inline default-constructions + _STREAM_SETTINGS global); DB gate via lazy SqlSettings() probe instead of os.getenv | 2026-07-13 | 33390772 | [260713-ncq-centralize-live-stream-feed-db-settings-](./quick/260713-ncq-centralize-live-stream-feed-db-settings-/) |
+| 260713-wr1 | Delete vacuous WR-01 subscription/membership guard in session_initializer.py (unreachable dead code — membership is the sole subscription source since 06-02/D-05); replace with a TODO for the real future-feature guard condition | 2026-07-13 | dc1f5cb8 | (fast — no dir) |
+| 260713-phm | Fix Phase 06 review WR-02 (typed StateError guard above start() try-block so an un-wired LiveTradingSystem fails loudly, not masked as generic ERROR) + IN-02 (LiveRunner.stop() warns when the drain thread outlives the join timeout) | 2026-07-13 | a9f3b5ac | [260713-phm-fix-phase-06-review-findings-wr-02-typed](./quick/260713-phm-fix-phase-06-review-findings-wr-02-typed/) |
+| Phase 06 P01 | 4 min | 2 tasks | 2 files |
+| Phase 06 P02 | 12 min | 3 tasks | 3 files |
+| Phase 06 P03 | 6min | 1 tasks | 1 files |
+| Phase 06 P04 | 13min | 2 tasks | 7 files |
+| Phase 06 P05 | 9min | 3 tasks | 3 files |
+| Phase 06 P06 | 50min | 3 tasks | 26 files |
+| Phase 06 P07 | 70min | 3 tasks | 21 files |
 
 ## Deferred Items
 
@@ -245,11 +264,11 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-12T23:15:58.926Z
-Stopped at: Completed 05-03-PLAN.md
+Last session: 2026-07-13T13:43:59.509Z
+Stopped at: Phase 6 context gathered
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
-Resume file: .planning/phases/05-venue-registry-bundle/05-CONTEXT.md
+Resume file: .planning/phases/06-liverunner-factory-facade-shrink/06-CONTEXT.md
 Carried todo: 14 pending todos in `todos/pending/` (10 fold into v1.8 as CF-1..CF-10; `v17-residual-carryforward.md`
 is the index; the substantive open item is `margin-equity-double-counts-notional-wr01`, owner-gated).
 

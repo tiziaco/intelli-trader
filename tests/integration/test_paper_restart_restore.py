@@ -37,7 +37,8 @@ from itrader.portfolio_handler.storage.in_memory_storage import (
     InMemoryPortfolioStateStorage,
 )
 from itrader.portfolio_handler.reconcile import venue_reconciler as venue_reconciler_module
-from itrader.trading_system.live_trading_system import LiveTradingSystem
+from itrader.trading_system.live_trading_system import LiveTradingSystem  # noqa: F401
+from tests.support.replay_harness import build_paper_replay_system
 
 # A business time (never wall clock) so the persisted row's timestamp is deterministic.
 _BT = datetime(2024, 1, 1, tzinfo=timezone.utc)
@@ -107,7 +108,7 @@ def test_paper_restart_rehydrate_ungate_runs_without_venue_reconcile(monkeypatch
     GREEN (ungated): ``rehydrate`` runs for the durable store REGARDLESS of exchange, and
     ``VenueReconciler.reconcile()`` / venue snapshot are NOT invoked on the paper path.
     """
-    system = LiveTradingSystem(exchange="paper")
+    system, _ = build_paper_replay_system()
     calls: List[str] = []
 
     try:
@@ -164,7 +165,7 @@ def test_simulated_restore_cash_and_realised_pnl_on_paper_start(monkeypatch) -> 
     restored — reaching ``SimulatedCashAccount.restore_cash`` +
     ``PositionManager.restore_realised_pnl`` (previously dead on this path).
     """
-    system = LiveTradingSystem(exchange="paper")
+    system, _ = build_paper_replay_system()
 
     # A fresh durable paper portfolio at its construction-time initial cash, wired to a
     # durable store carrying the pre-restart cash + realised-PnL scalars.

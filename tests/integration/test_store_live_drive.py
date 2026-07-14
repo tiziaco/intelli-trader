@@ -244,7 +244,7 @@ def test_live_system_wires_cached_sql_from_database_url(pg_url, monkeypatch):
     import itrader.trading_system.live_trading_system as lts
 
     monkeypatch.setenv("ITRADER_DATABASE_URL", pg_url)
-    system = lts.LiveTradingSystem(exchange="binance")
+    system = lts.LiveTradingSystem.for_exchange("binance")
     try:
         assert type(system._signal_store).__name__ == "CachedSqlSignalStorage"
         assert type(system.portfolio_handler._order_storage).__name__ == "CachedSqlOrderStorage"
@@ -275,7 +275,7 @@ def test_live_system_wires_cached_sql_from_component_vars(pg_url, monkeypatch):
     monkeypatch.setenv("ITRADER_DATABASE_PASSWORD", u.password)
     monkeypatch.setenv("ITRADER_DATABASE_NAME", u.database)
 
-    system = lts.LiveTradingSystem(exchange="binance")
+    system = lts.LiveTradingSystem.for_exchange("binance")
     try:
         assert type(system._signal_store).__name__ == "CachedSqlSignalStorage"
         assert type(system.portfolio_handler._order_storage).__name__ == "CachedSqlOrderStorage"
@@ -302,7 +302,7 @@ def test_unconfigured_db_env_falls_back_to_in_memory(monkeypatch, caplog):
     monkeypatch.delenv("ITRADER_DATABASE_PASSWORD", raising=False)
     monkeypatch.delenv("ITRADER_DATABASE_URL", raising=False)
     with caplog.at_level(logging.WARNING):
-        system = lts.LiveTradingSystem(exchange="binance")
+        system = lts.LiveTradingSystem.for_exchange("binance")
     try:
         assert type(system._signal_store).__name__ == "InMemorySignalStore"
         assert type(system.portfolio_handler._order_storage).__name__ == "InMemoryOrderStorage"

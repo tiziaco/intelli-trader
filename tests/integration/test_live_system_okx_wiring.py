@@ -39,7 +39,7 @@ def _set_okx_env(monkeypatch) -> None:
     """Set a dummy OKX credential triple so the OKX arm's ``OkxSettings()`` constructs.
 
     The connector constructor is I/O-free (``connect()`` is deferred to ``start()``),
-    so a stubbed credential triple is enough to build ``LiveTradingSystem(exchange="okx")``
+    so a stubbed credential triple is enough to build ``LiveTradingSystem.for_exchange("okx")``
     fully offline — no socket, no ``load_markets`` round-trip.
     """
     monkeypatch.setenv("OKX_API_KEY", "test-key")
@@ -52,7 +52,7 @@ def test_construct_non_okx_venue_needs_no_okx_credentials(monkeypatch) -> None:
     _strip_okx_env(monkeypatch)
 
     # Must NOT raise pydantic.ValidationError for missing OKX_API_* — the OKX arm is gated.
-    system = LiveTradingSystem(exchange="binance")
+    system = LiveTradingSystem.for_exchange("binance")
 
     assert system._okx_connector is None
     assert system._okx_exchange is None
@@ -70,7 +70,7 @@ def test_construct_does_not_connect_in_constructor(monkeypatch) -> None:
     """
     _strip_okx_env(monkeypatch)
 
-    system = LiveTradingSystem(exchange="binance")
+    system = LiveTradingSystem.for_exchange("binance")
 
     # No connector was built, so there is nothing connected and nothing to leak.
     assert system._okx_connector is None
@@ -91,7 +91,7 @@ def test_okx_arm_injects_real_provider_into_live_feed(monkeypatch) -> None:
     """
     _set_okx_env(monkeypatch)
 
-    system = LiveTradingSystem(exchange="okx")
+    system = LiveTradingSystem.for_exchange("okx")
 
     # The OKX data arm was constructed for the okx venue.
     assert system._okx_data_provider is not None
@@ -108,7 +108,7 @@ def test_okx_arm_wires_provider_sink_to_feed_update(monkeypatch) -> None:
     """
     _set_okx_env(monkeypatch)
 
-    system = LiveTradingSystem(exchange="okx")
+    system = LiveTradingSystem.for_exchange("okx")
 
     assert system._okx_data_provider is not None
     # The provider holds the feed's update() as its closed-bar sink.
@@ -130,7 +130,7 @@ def test_okx_arm_binds_provider_to_engine_queue(monkeypatch) -> None:
     """
     _set_okx_env(monkeypatch)
 
-    system = LiveTradingSystem(exchange="okx")
+    system = LiveTradingSystem.for_exchange("okx")
 
     assert system._okx_data_provider is not None
     # The provider's warmup-emit queue IS the engine queue — spawn_warmup can now put
@@ -148,7 +148,7 @@ def test_okx_live_feed_capacity_derives_to_strategy_warmup(monkeypatch) -> None:
     """
     _set_okx_env(monkeypatch)
 
-    system = LiveTradingSystem(exchange="okx")
+    system = LiveTradingSystem.for_exchange("okx")
     # Pre-registration: no raw-bar consumer yet -> the newest-bar floor.
     assert system.feed.cache_capacity() == 1
 
@@ -183,7 +183,7 @@ def test_start_spawns_okx_order_arm_fill_stream(monkeypatch) -> None:
     the CR-01 gap (order mirror stays PENDING forever with no fill stream).
     """
     _set_okx_env(monkeypatch)
-    system = LiveTradingSystem(exchange="okx")
+    system = LiveTradingSystem.for_exchange("okx")
     _stub_okx_network(system)
     connect_spy = MagicMock(
         name="okx_exchange.connect",
@@ -216,7 +216,7 @@ def test_start_arms_okx_connector_halt_signal(monkeypatch) -> None:
     is the SOLE caller of ``OkxConnector.set_halt_signal``).
     """
     _set_okx_env(monkeypatch)
-    system = LiveTradingSystem(exchange="okx")
+    system = LiveTradingSystem.for_exchange("okx")
     _stub_okx_network(system)
     system._okx_exchange.connect = MagicMock(
         name="okx_exchange.connect",
@@ -245,7 +245,7 @@ def test_start_fails_when_okx_exchange_connect_fails(monkeypatch) -> None:
     and re-raise; the failure then flows through the existing except → SystemStatus.ERROR.
     """
     _set_okx_env(monkeypatch)
-    system = LiveTradingSystem(exchange="okx")
+    system = LiveTradingSystem.for_exchange("okx")
     _stub_okx_network(system)
     system._okx_exchange.connect = MagicMock(
         name="okx_exchange.connect",
@@ -274,7 +274,7 @@ def test_link_venue_account_single_portfolio_assigns(monkeypatch) -> None:
     reads venue truth.
     """
     _set_okx_env(monkeypatch)
-    system = LiveTradingSystem(exchange="okx")
+    system = LiveTradingSystem.for_exchange("okx")
 
     venue_account = MagicMock(name="venue_account")
     system._venue_account = venue_account
@@ -297,7 +297,7 @@ def test_link_venue_account_two_portfolios_fails_loud(monkeypatch) -> None:
     venue truth.
     """
     _set_okx_env(monkeypatch)
-    system = LiveTradingSystem(exchange="okx")
+    system = LiveTradingSystem.for_exchange("okx")
 
     system._venue_account = MagicMock(name="venue_account")
     p1 = MagicMock(name="portfolio_1")

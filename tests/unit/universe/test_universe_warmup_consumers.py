@@ -32,7 +32,7 @@ from itrader.events_handler.events.market import UniverseUpdateEvent
 from itrader.universe.membership import StrategyDerivedSelectionModel
 from itrader.universe.universe import Universe
 from itrader.config.stream import FeedProviderSettings
-from itrader.universe.universe_handler import UniverseHandler
+from itrader.universe.universe_handler import UniverseHandler, UniverseHandlerConfig
 
 pytestmark = pytest.mark.unit
 
@@ -146,10 +146,10 @@ def _handler(
     provider: object | None = None,
 ) -> UniverseHandler:
     handler = UniverseHandler(
-        global_queue=Queue(),
+        bus=Queue(),
         universe=universe,
         feed=feed,  # type: ignore[arg-type]
-        timeframe="1d",
+        config=UniverseHandlerConfig(poll_timeframe="1d"),
     )
     if provider is not None:
         handler.set_provider(provider)  # type: ignore[arg-type]

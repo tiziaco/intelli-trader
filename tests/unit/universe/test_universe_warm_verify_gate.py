@@ -27,7 +27,7 @@ from itrader.core.bar import Bar
 from itrader.core.portfolio_read_model import PositionView
 from itrader.events_handler.events import BarsLoaded
 from itrader.universe.universe import Universe
-from itrader.universe.universe_handler import UniverseHandler
+from itrader.universe.universe_handler import UniverseHandler, UniverseHandlerConfig
 
 pytestmark = pytest.mark.unit
 
@@ -145,11 +145,12 @@ def _handler(
     remove_policy: str = "orphan-and-track",
 ) -> UniverseHandler:
     handler = UniverseHandler(
-        global_queue=Queue(),
+        bus=Queue(),
         universe=universe,
         feed=feed,  # type: ignore[arg-type]
-        timeframe="1d",
-        remove_policy=remove_policy,
+        config=UniverseHandlerConfig(
+            poll_timeframe="1d", remove_policy=remove_policy
+        ),
     )
     if provider is not None:
         handler.set_provider(provider)  # type: ignore[arg-type]

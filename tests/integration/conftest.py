@@ -180,7 +180,7 @@ class _FlatFill:
 class _RemovePolicyHarness:
     """A two-symbol paper/replay engine wired for the remove-policy behaviours.
 
-    Holds a fully-wired ``LiveTradingSystem(exchange='paper')`` (reused
+    Holds a fully-wired ``LiveTradingSystem.for_exchange('paper')`` (reused
     ``SimulatedExchange``), a two-symbol ``Universe`` injected into the admission
     gate, and a ``UniverseHandler`` reading the live ``PortfolioHandler`` as its
     ``PortfolioReadModel``. Bars are driven per-symbol through ``feed.update`` with
@@ -317,8 +317,16 @@ class _RemovePolicyHarness:
     def queued_signals(self, symbol: str):
         from itrader.events_handler.events import SignalEvent
 
+        # 06-06 (D-23): the live system now drains a PriorityEventBus (no ``.queue``
+        # attr; its PriorityQueue is at ``._pq`` and holds ``(tier, seq, event)``
+        # tuples). Read a NON-destructive snapshot that works for either transport
+        # (a raw ``queue.Queue`` exposes ``.queue`` with bare events).
+        bus = self.system.global_queue
+        raw = getattr(bus, "_pq", bus)
+        snapshot = list(getattr(raw, "queue", []))
+        events = [item[2] if isinstance(item, tuple) else item for item in snapshot]
         return [
-            event for event in list(self.system.global_queue.queue)
+            event for event in events
             if isinstance(event, SignalEvent) and event.ticker == symbol
         ]
 
@@ -348,14 +356,20 @@ def remove_policy_harness():
     def _make(remove_policy: str = "orphan-and-track", cash: int = 1_000_000):
         from itrader.core.instrument import Instrument
         from itrader.execution_handler.exchanges.simulated import SimulatedExchange
-        from itrader.trading_system.live_trading_system import LiveTradingSystem
         from itrader.universe.universe import Universe
-        from itrader.universe.universe_handler import UniverseHandler
+        from itrader.universe.universe_handler import (
+            UniverseHandler,
+            UniverseHandlerConfig,
+        )
+
+        from tests.support.replay_harness import build_paper_replay_system
 
         held, other = "AAAUSD", "BBBUSD"
 
         # Fully-wired paper engine (reused SimulatedExchange, offline — no OKX/network).
-        system = LiveTradingSystem(exchange="paper")
+        # Production paper re-points to the OKX live feed (D-21); the offline replay DATA
+        # provider is injected via the test harness (paper↔replay lives in the fixture).
+        system, _ = build_paper_replay_system()
         simulated = system.execution_handler.exchanges["simulated"]
         simulated.register_symbol(held)
         simulated.register_symbol(other)
@@ -386,11 +400,12 @@ def remove_policy_harness():
 
         provider = _RecordingUniverseProvider()
         universe_handler = UniverseHandler(
-            global_queue=system.global_queue,
+            bus=system.global_queue,
             universe=universe,
             feed=system.feed,
-            timeframe="1d",
-            remove_policy=remove_policy,
+            config=UniverseHandlerConfig(
+                poll_timeframe="1d", remove_policy=remove_policy
+            ),
         )
         # Real read model (open-position truth) + paper provider recorder.
         universe_handler.set_portfolio_read_model(system.portfolio_handler)

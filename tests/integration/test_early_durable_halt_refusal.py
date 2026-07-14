@@ -69,7 +69,7 @@ class _UnresolvedHaltStore:
 def test_durably_halted_start_refuses_before_any_venue_io(monkeypatch) -> None:
     """A durably-halted ``start()`` refuses at the TOP with zero venue I/O (D-20/WR-01)."""
     _set_okx_env(monkeypatch)
-    system = LiveTradingSystem(exchange="okx")
+    system = LiveTradingSystem.for_exchange("okx")
     system._halt_record_store = _UnresolvedHaltStore("drift")
 
     # Spy/stub EVERY call start() could make before the refusal. On the fixed (top-gate)
@@ -113,7 +113,7 @@ def test_healthy_start_still_runs_session_init_when_no_durable_halt(monkeypatch)
     before. Proves the D-20 move did not accidentally short-circuit a healthy start.
     """
     _set_okx_env(monkeypatch)
-    system = LiveTradingSystem(exchange="okx")
+    system = LiveTradingSystem.for_exchange("okx")
     # No durable store -> the gate is skipped entirely (in-memory fallback).
     system._halt_record_store = None
 

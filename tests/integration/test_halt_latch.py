@@ -44,11 +44,17 @@ from itrader.core.enums import SystemStatus
 from itrader.core.sizing import FractionOfCash, TradingDirection
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
 from itrader.trading_system.live_trading_system import LiveTradingSystem
+from tests.support.replay_harness import build_paper_replay_system
 
 
 def _build_paper_system() -> LiveTradingSystem:
-    """A fully offline paper-venue system (mirrors test_live_paper_lifecycle wiring)."""
-    system = LiveTradingSystem(exchange="paper")
+    """A fully offline paper-venue system (mirrors test_live_paper_lifecycle wiring).
+
+    Production paper re-points to the OKX live feed (D-21), so the offline replay DATA
+    provider is injected via ``build_paper_replay_system`` (the paper↔replay pairing now
+    lives ONLY in the test harness).
+    """
+    system, _ = build_paper_replay_system()
     strategy = SMAMACDStrategy(
         timeframe="1d",
         tickers=["BTCUSD"],

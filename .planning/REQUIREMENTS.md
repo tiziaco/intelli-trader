@@ -156,32 +156,32 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 
 ### LiveRunner + Factory + Facade Shrink (P6)
 
-- [ ] **RUN-01**: `build_live_system(spec)` is the live factory / composition root — reads centralized
+- [x] **RUN-01**: `build_live_system(spec)` is the live factory / composition root — reads centralized
   config, builds the one `sql_engine`, resolves venue plugin(s), assembles `EngineContext`, calls
   `compose_engine`, builds bundle(s) + `LiveRunner` + controllers (LR-10/§5).
 
-- [ ] **RUN-02**: `LiveRunner` owns the drain loop + injected `ErrorPolicy` + worker supervision,
+- [x] **RUN-02**: `LiveRunner` owns the drain loop + injected `ErrorPolicy` + worker supervision,
   replacing `_event_processing_loop` (§5).
 
-- [ ] **RUN-03**: `LiveTradingSystem` shrinks to a ~200-line facade (lifecycle, status/read-model,
+- [x] **RUN-03**: `LiveTradingSystem` shrinks to a ~200-line facade (lifecycle, status/read-model,
   `add_event`; delegates everything else); legacy `print_status`/`get_statistics` dropped;
   `__init__` sheds `exchange`/`to_sql`/`queue_timeout`/`max_idle_time` (from config/spec) (concerns 8/25,
   §11e).
 
-- [ ] **RUN-04**: A shared `UniverseWiring` helper (`derive_membership → build Universe → inject
+- [x] **RUN-04**: A shared `UniverseWiring` helper (`derive_membership → build Universe → inject
   exchange/order/portfolio/strategies → feed.bind`) is extracted and reused by both `BacktestRunner` and
   the live `SessionInitializer`, moved as one intact unit incl. the WR-03 desync assert — **oracle
   byte-exact** (§13a, oracle-sensitive).
 
-- [ ] **RUN-05**: `LiveRouteRegistrar` composes live routes (incl. CONTROL routes) into the single
+- [x] **RUN-05**: `LiveRouteRegistrar` composes live routes (incl. CONTROL routes) into the single
   `EventHandler` declaratively (list order = execution order); no subclass, no runtime mutation; backtest
   gets base routes only (LR-16/§13c).
 
-- [ ] **RUN-06**: `UniverseHandler` is constructed at the live composition root as a first-class handler
+- [x] **RUN-06**: `UniverseHandler` is constructed at the live composition root as a first-class handler
   with explicit deps (`bus`, `universe`, `feed`, `config`) — zero OKX coupling (symbol validation/precision
   via `set_venue_metadata(exchange)`) (concern 10/§13b).
 
-- [ ] **RUN-07**: `_LiveWarmupConsumer` is rehomed to `price_handler/feed/cache_registration.py` as a
+- [x] **RUN-07**: `_LiveWarmupConsumer` is rehomed to `price_handler/feed/cache_registration.py` as a
   reusable `StrategyWarmupConsumer` sized to `max(strategy.warmup)`; the depth-hint seam is shaped for
   CF-10 (the K-computation change itself stays deferred) (concern 26/§13d).
 
@@ -302,11 +302,21 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 - [ ] **MPORT-06**: Connectors are keyed `(venue, account_id)` (VENUE-03) so multi-account portfolios share
   or decouple connectors correctly without a combinatorial matrix (LR-20/§8c).
 
-### Test Migration + Gates (P12)
+### Test Migration + Gates (P12 — except TEST-01, pulled forward into P6)
 
-- [ ] **TEST-01**: `run_paper_replay` → `ReplayRunner` in `tests/`; the `replay` plugin (`SimulatedExchange`
-  + `ReplayDataProvider` over the golden CSV) is registered **only** by a test fixture; production is
-  replay-free (`run_paper_replay` + `PAPER_PARITY_*`/`_PAPER_*` leave production) (concern 9/§13/§8e).
+- [x] **TEST-01** *(delivered in **P6**, pulled forward from P12)*: the ENTIRE replay test-harness moves
+  OUT of the `itrader` package into `tests/` — `run_paper_replay` → **`TestRunner`**, `ReplayDataProvider`
+  → **`TestLiveDataProvider`**, `ReplayDataPlugin` → **`TestDataPlugin`** (registered **only** by a test
+  fixture), `PAPER_PARITY_*`/`_PAPER_*` → `tests/`; production is replay-free (concern 9/§13/§8e). The
+  `paper` **execution** venue (`PaperVenuePlugin` + `SimulatedExchange` + `SimulatedAccount`) STAYS a real
+  live production mode, **untouched** — its production data feed re-points from `replay` to the **OKX live
+  feed** (`{'okx':'okx','paper':'okx'}`), so the `paper`↔replay pairing survives only in the test fixture.
+  `Test*`-named classes set `__test__ = False` (pytest auto-collects `Test*`; `filterwarnings=["error"]`
+  makes the collection warning a hard failure). Rationale: it needs only P6's `build_live_system` (zero
+  P7–P11 dependency), rides the same construction path P6 builds, and removes the recurring
+  production-replay tax across P7–P11. `TestRunner` is **fail-fast by default** (drives the EventHandler at
+  its default fail-fast seam, never calls `start()`) so the parity gate can't false-green; done as pure
+  code-motion, `test_paper_parity` green continuously, sliced AFTER the `UniverseWiring` extraction locks.
 
 - [ ] **TEST-02**: A live-smoke gate exercises the decomposed live surface end-to-end (facade → factory →
   `LiveRunner` → controllers) on the replay fixture.
@@ -382,13 +392,13 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | VENUE-05 | P5 | Complete |
 | VENUE-06 | P5 | Complete |
 | VENUE-07 | P5 | Complete |
-| RUN-01 | P6 | Pending |
-| RUN-02 | P6 | Pending |
-| RUN-03 | P6 | Pending |
-| RUN-04 | P6 | Pending |
-| RUN-05 | P6 | Pending |
-| RUN-06 | P6 | Pending |
-| RUN-07 | P6 | Pending |
+| RUN-01 | P6 | Complete |
+| RUN-02 | P6 | Complete |
+| RUN-03 | P6 | Complete |
+| RUN-04 | P6 | Complete |
+| RUN-05 | P6 | Complete |
+| RUN-06 | P6 | Complete |
+| RUN-07 | P6 | Complete |
 | SAFE-01 | P7 | Pending |
 | SAFE-02 | P7 | Pending |
 | SAFE-03 | P7 | Pending |
@@ -414,7 +424,7 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | MPORT-04 | P11 | Pending |
 | MPORT-05 | P11 | Pending |
 | MPORT-06 | P11 | Pending |
-| TEST-01 | P12 | Pending |
+| TEST-01 | P6 | Complete |
 | TEST-02 | P12 | Pending |
 | TEST-03 | P12 | Pending |
 | TEST-04 | P12 | Pending |

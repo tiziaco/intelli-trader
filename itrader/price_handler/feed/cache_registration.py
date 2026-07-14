@@ -32,9 +32,18 @@ Indentation: 4 SPACES (the ``price_handler/feed/`` package convention).
 """
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Protocol
 
-__all__ = ["RawBarConsumer", "NEWEST_BAR_ONLY", "derive", "derive_required_depths"]
+__all__ = [
+    "RawBarConsumer",
+    "NEWEST_BAR_ONLY",
+    "derive",
+    "derive_required_depths",
+    "StrategyWarmupConsumer",
+    "derive_warmup_depth",
+    "register_strategy_warmup",
+]
 
 #: The newest-bar-only capacity (P5-D16): depth 1 holds just the latest completed
 #: bar per symbol. This is the floor capacity — the only one the (current) empty
@@ -135,3 +144,108 @@ def derive(consumers: Iterable[RawBarConsumer] = ()) -> int:
     # Ladder per consumer (max over declared depths), never below the newest-bar
     # floor: the empty consumer set collapses to NEWEST_BAR_ONLY (the deferral).
     return max(NEWEST_BAR_ONLY, *depths) if depths else NEWEST_BAR_ONLY
+
+
+# -- Strategy warmup: a SEPARATE concern coexisting with the derive() ladder ----
+#
+# The symbols above (``derive`` / ``derive_required_depths``) are the RAW-HISTORY
+# ladder: capacity keys off raw-bar consumers because indicators self-buffer under
+# Model B (P5-D07). The symbols below are the STRATEGY-WARMUP concern (RUN-07/D-17):
+# a raw-bar consumer sized to the max strategy warmup so the LIVE feed's ring warms
+# the indicators. They are named distinctly (``derive_warmup_depth``, NOT ``derive``)
+# so the two concerns are NOT conflated (RESEARCH Landmine 4).
+
+
+class _SupportsWarmup(Protocol):
+    """The minimal structural shape ``derive_warmup_depth`` reads off a strategy."""
+
+    @property
+    def warmup(self) -> int:
+        """The number of bars this strategy needs before its indicators warm."""
+        ...
+
+
+class _SupportsRawBarConsumerRegistration(Protocol):
+    """The minimal structural shape ``register_strategy_warmup`` needs off a feed.
+
+    Only ``register_raw_bar_consumer`` is required — matching the loose-typing
+    convention of this module (a consumer only needs to be appended; the feed's
+    ``cache_capacity()`` re-derives from all registered consumers at call time).
+    """
+
+    def register_raw_bar_consumer(self, consumer: RawBarConsumer) -> None:
+        ...
+
+
+@dataclass(frozen=True)
+class StrategyWarmupConsumer:
+    """Raw-bar consumer that sizes ``LiveBarFeed.cache_capacity()`` to the warmup.
+
+    A minimal frozen ``RawBarConsumer`` (declares ``required_history_depth``, so it
+    structurally implements the ``RawBarConsumer`` Protocol above and coexists with
+    the ``derive()`` ladder by construction) registered on the LIVE feed so the ring
+    + warmup derive to the max strategy warmup (100 for SMA_MACD), not the
+    newest-bar floor (1). Without it the indicators never warm and
+    ``calculate_signals`` short-circuits to zero trades — the single most likely
+    correctness failure of the live path (RESEARCH Pitfall 1).
+
+    ONE global ring (a single scalar ``required_history_depth``): per-symbol ring
+    sizing + the K-computation stay DEFERRED (D-17). CF-10 generalizes only the
+    depth via ``derive_warmup_depth`` (below), not this consumer's shape.
+    """
+
+    required_history_depth: int
+
+
+def derive_warmup_depth(strategies: Iterable[_SupportsWarmup]) -> int:
+    """Derive the strategy-warmup ring depth — the NAMED, replaceable D-17 seam.
+
+    Today returns the GLOBAL ``max((s.warmup for s in strategies), default=1)`` —
+    the exact expression extracted from the old inline registration
+    (``live_trading_system.py``). This is the CF-10 depth boundary: CF-10 later
+    generalizes ONLY this function body — from the global ``max(warmup)`` to a
+    per-concerned-strategy ``max(warmup for strategies concerned with symbol)``
+    (the K-computation + per-symbol rings stay deferred) — WITHOUT re-touching the
+    registration wiring below or ``SessionInitializer`` (which calls
+    ``register_strategy_warmup``, never this function directly).
+
+    Named distinctly from ``derive`` (RESEARCH Landmine 4): ``derive`` is the
+    raw-history ladder (capacity keys off raw-bar consumers); this is the separate
+    strategy-warmup concern coexisting in the same file.
+
+    Parameters
+    ----------
+    strategies : Iterable[_SupportsWarmup]
+        The registered strategies; each contributes its ``warmup``.
+
+    Returns
+    -------
+    int
+        The global maximum warmup depth, or ``1`` for an empty strategy set.
+    """
+    return max((s.warmup for s in strategies), default=1)
+
+
+def register_strategy_warmup(
+    feed: _SupportsRawBarConsumerRegistration,
+    strategies: Iterable[_SupportsWarmup],
+) -> None:
+    """Register a warmup consumer sized to the strategies' warmup on ``feed``.
+
+    The reusable registration entry point (D-17) — called by ``SessionInitializer``
+    (06-04), replacing the inline registration in ``live_trading_system.py``.
+    Computes the depth via the named ``derive_warmup_depth`` boundary, then
+    registers a ``StrategyWarmupConsumer`` so ``feed.cache_capacity()`` re-derives
+    the ring to the max strategy warmup at call time (``base.py`` reads
+    ``derive(self._raw_bar_consumers)`` lazily, so registering IS what sizes it).
+
+    Parameters
+    ----------
+    feed : _SupportsRawBarConsumerRegistration
+        The feed to register on (needs only ``register_raw_bar_consumer``).
+    strategies : Iterable[_SupportsWarmup]
+        The strategies whose max ``warmup`` sizes the ring.
+    """
+    depth = derive_warmup_depth(strategies)
+    feed.register_raw_bar_consumer(
+        StrategyWarmupConsumer(required_history_depth=depth))

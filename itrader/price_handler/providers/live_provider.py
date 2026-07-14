@@ -11,8 +11,8 @@ sprinkling. It carries a single symbol:
   streaming/wiring seams (``set_global_queue`` / ``set_halt_signal`` /
   ``set_stream_state_listener`` / ``subscribe`` / ``unsubscribe`` /
   ``spawn_warmup`` / ``is_streaming_healthy``). It is a contract, not a base
-  class — method bodies are ``...``. A provider that does not stream (e.g. the
-  offline ``ReplayDataProvider``) implements those optional seams DIRECTLY as
+  class — method bodies are ``...``. A provider that does not stream (e.g. an
+  offline replay provider) implements those optional seams DIRECTLY as
   no-ops rather than inheriting them, so the lifecycle can call them
   unconditionally.
 

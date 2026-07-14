@@ -58,7 +58,7 @@ class _CapturingHaltStore:
 def test_connector_fatal_durable_write_runs_off_the_loop_thread(monkeypatch) -> None:
     """A connector-fatal escalation writes the durable halt OFF the loop thread (D-21/WR-02)."""
     _set_okx_env(monkeypatch)
-    system = LiveTradingSystem(exchange="okx")
+    system = LiveTradingSystem.for_exchange("okx")
     store = _CapturingHaltStore()
     system._halt_record_store = store
     try:
@@ -96,7 +96,7 @@ def test_connector_fatal_durable_write_runs_off_the_loop_thread(monkeypatch) -> 
 def test_connector_fatal_winner_only_single_durable_write(monkeypatch) -> None:
     """Two connector-fatal escalations still write the durable halt exactly ONCE (winner-only)."""
     _set_okx_env(monkeypatch)
-    system = LiveTradingSystem(exchange="okx")
+    system = LiveTradingSystem.for_exchange("okx")
     store = _CapturingHaltStore()
     system._halt_record_store = store
     try:

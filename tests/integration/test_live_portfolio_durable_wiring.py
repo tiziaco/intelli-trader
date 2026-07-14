@@ -26,7 +26,8 @@ from typing import Any, List
 import pytest
 
 from itrader.portfolio_handler.reconcile import venue_reconciler as venue_reconciler_module
-from itrader.trading_system.live_trading_system import LiveTradingSystem
+from itrader.trading_system.live_trading_system import LiveTradingSystem  # noqa: F401
+from tests.support.replay_harness import build_paper_replay_system
 
 
 class _StubVenueAccount:
@@ -55,7 +56,7 @@ def test_no_durable_store_falls_back_to_backtest(monkeypatch) -> None:
     for var in ("ITRADER_DATABASE_PASSWORD", "ITRADER_DATABASE_URL"):
         monkeypatch.delenv(var, raising=False)
 
-    system = LiveTradingSystem(exchange="paper")
+    system, _ = build_paper_replay_system()
     try:
         assert system._system_db_backend is None
         # The durable arm was not taken — the portfolio ledger stays in-memory (oracle-dark).
@@ -71,7 +72,7 @@ def test_durable_store_constructs_live_portfolio_handler(pg_database_env) -> Non
     Uses the shared session testcontainers Postgres via ``pg_database_env`` (sets
     ``ITRADER_DATABASE_URL``); SKIPS Dockerless (D-11).
     """
-    system = LiveTradingSystem(exchange="paper")
+    system, _ = build_paper_replay_system()
     try:
         # The durable arm was taken — one shared SqlEngine spine built.
         assert system._system_db_backend is not None
@@ -90,7 +91,7 @@ def test_portfolio_rehydrate_runs_before_reconcile_on_live_start(monkeypatch) ->
     call order of ``PortfolioHandler.rehydrate()`` vs ``VenueReconciler.reconcile()``, and halt
     in the post-reconcile baseline guard so no live thread is ever spawned.
     """
-    system = LiveTradingSystem(exchange="paper")
+    system, _ = build_paper_replay_system()
     calls: List[str] = []
 
     try:

@@ -28,7 +28,7 @@ def _system_with_portfolio():
 
     # exchange='binance' keeps construction fully offline (no OKX/replay wiring); with no
     # SYSTEM_DB_URL the store falls back to in-memory — irrelevant to the metrics path.
-    system = lts.LiveTradingSystem(exchange="binance")
+    system = lts.LiveTradingSystem.for_exchange("binance")
     system.portfolio_handler.add_portfolio(
         name="live-metrics", exchange="binance", cash=100_000.0)
     return system

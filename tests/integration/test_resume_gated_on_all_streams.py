@@ -32,7 +32,7 @@ def _set_okx_env(monkeypatch) -> None:
 def _paused_offline_okx_system(monkeypatch) -> LiveTradingSystem:
     """A paused OKX live system with both blocking resume legs stubbed offline."""
     _set_okx_env(monkeypatch)
-    system = LiveTradingSystem(exchange="okx")
+    system = LiveTradingSystem.for_exchange("okx")
     assert system._okx_exchange is not None
     assert system._okx_data_provider is not None
     # Neutralize the two blocking venue-I/O legs the drain runs before the gate

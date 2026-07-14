@@ -785,7 +785,39 @@ the oracle** (drops `ta` on the runtime path); its lock is cross-validation + a 
 v1.0/v1.1/v1.2/v1.3/v1.4 SHIPPED — archived under `milestones/`.*
 
 ---
-*Last updated: 2026-07-12 — **v1.8 Phase 5 (Venue Registry + Bundle) COMPLETE.** 6 plans (4 waves); goal
+*Last updated: 2026-07-13 — **v1.8 Phase 6 (LiveRunner + Factory + Facade Shrink) COMPLETE.** 7 plans
+(5 waves); goal verified `passed` (6/6 success criteria, `06-VERIFICATION.md`). Delivered RUN-01..07 + TEST-01
+— the live analog of `build_backtest_system → compose_engine → BacktestRunner`. RUN-04 (the milestone's
+**highest oracle risk**): the shared `wire_universe(engine)` unit (`derive_membership → build Universe →
+inject exchange/order/portfolio/strategies → feed.bind`, incl. the real WR-03 desync assert) extracted
+byte-exact as ONE intact function and reused by BOTH `BacktestRunner` and the live `SessionInitializer`.
+RUN-02: `LiveRunner` (drain loop) + `WorkerSupervisor` (poll-timer) + `ErrorPolicy` as standalone
+import-inert collaborators. RUN-07/CF-10: `StrategyWarmupConsumer` rehomed to
+`price_handler/feed/cache_registration.py` with a named `derive_warmup_depth` depth-hint seam. RUN-06:
+`UniverseHandler` promoted to a first-class ctor `(bus, universe, feed, config)` + `set_venue_metadata`
+(zero OKX coupling — the two OKX-guarded seams collapsed onto `AbstractExchange` capabilities). RUN-05:
+`LiveRouteRegistrar` (declarative BUSINESS routes, list order = execution order, no runtime mutation) +
+`SessionInitializer` (D-12). RUN-01/RUN-03: `build_live_system(spec)` is the live composition root and
+`LiveTradingSystem` is a pure-injection facade (`__init__` sheds `exchange`/`to_sql`/`queue_timeout`/
+`max_idle_time`; `print_status`/`get_statistics`/`_event_processing_loop`/`_run_poll_timer`/
+`_publish_and_continue` deleted; `PriorityEventBus` wired, D-23; ~45-site `for_exchange` sweep). TEST-01
+(pulled forward from P12): the ENTIRE replay harness moved OUT of `itrader` into `tests/support/`
+(`run_paper_replay`→`TestRunner`, `ReplayDataProvider`→`TestLiveDataProvider`, `ReplayDataPlugin`→
+`TestDataPlugin`, `__test__=False` guards), production is replay-free, and the `paper` execution venue's
+feed re-points replay→OKX (`{'okx':'okx','paper':'okx'}`) — pure code-motion with `test_paper_parity` green
+continuously. Milestone gate held every plan: SMA_MACD oracle **byte-exact** (134 / `46189.87730727451`),
+OKX inertness + register-vs-build green (the barrel + `build_live_system` pull no `ccxt.pro`/async/SQL onto
+the backtest graph), `mypy --strict` clean, zero new dependencies; full suite **2128 passed / 6 skipped**
+(skips OKX-demo-cred-gated). Two **decision-backed** deviations (verifier-accepted, not gaps): the ~200-line
+facade shrink is deferred to P7 close per locked **D-03** (interim 1715 lines retain the D-04
+safety/reconcile/stream bodies P7 extracts), and `build_live_system` relocates wiring verbatim rather than
+routing through `compose_engine` (which hardwires `BacktestBarFeed`, incompatible with the live
+`LiveBarFeed`). Advisory `06-REVIEW`: 0 critical / 2 warning / 2 info — WR-01 (a tautological live-only
+desync guard in `session_initializer.py`, an intentional forward-seam distinct from the real WR-03 assert in
+`wire_universe`) and WR-02 (two-phase-init `None`-deref if constructed outside the factory), both
+non-blocking. Next: Phase 7 — Safety + Reconciliation + Stream Recovery.*
+
+*Earlier: 2026-07-12 — **v1.8 Phase 5 (Venue Registry + Bundle) COMPLETE.** 6 plans (4 waves); goal
 verified `passed` (10/10 must-haves, `05-VERIFICATION.md`). Delivered VENUE-01..07 — the venue-parametrization
 substrate that kills every `if exchange==`: two independent registries (`ExecutionVenueRegistry` +
 `DataProviderRegistry`) selected via `SystemSpec`, a `VenueBundle` + `VenuePlugin`/`DataProviderPlugin`/

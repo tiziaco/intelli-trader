@@ -27,9 +27,8 @@ import pandas as pd
 
 from itrader.core.exceptions import ConfigurationError
 from itrader.logger import get_itrader_logger
-from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.trading_system.compose import Engine
-from itrader.universe import Universe, derive_instruments, derive_membership
+from itrader.trading_system.universe_wiring import wire_universe
 
 
 class BacktestRunner:
@@ -58,59 +57,17 @@ class BacktestRunner:
 		engine = self.engine
 		self.logger.info('Initialising backtest session')
 
-		# Membership derived at wiring time (M5-08, D-20): the union of strategy
-		# tickers and the screener set — used by the feed's factory only for the
-		# missing-ticker warning loop.
-		membership = derive_membership(
-			engine.strategies_handler.strategies,
-			# D-screener deferred subsystem (ignore_errors override) — untyped to the gate.
-			engine.screeners_handler.get_screeners_universe())  # type: ignore[no-untyped-call]
-		# INST-02/INST-03 (D-03/D-06/D-08): build the symbol->Instrument map and
-		# the Universe read-model at THIS Trap-4 point, then inject it into the
-		# exchange for Instrument-first min_order_size resolution. price_data is
-		# empty on the golden path — BTCUSD is DECLARED (D-10), so inference is
-		# never consulted and the oracle stays byte-exact (Pitfall 1/Pitfall 4).
-		instruments = derive_instruments(
-			engine.strategies_handler.strategies,
-			engine.screeners_handler.get_screeners_universe(),  # type: ignore[no-untyped-call]
-			price_data={})
-		# WR-03: derive_instruments calls derive_membership internally over the
-		# same inputs, so its key set must match the membership derived above. The
-		# two agree within one interpreter today, but a future non-idempotent
-		# derive_membership would silently desync universe.members from the
-		# instrument map (members holding a symbol absent from instrument_map ->
-		# KeyError on instrument(symbol) mid-run). Assert the invariant at wiring
-		# so a desync fails loudly here rather than deep in a tick.
-		if set(membership) != set(instruments):
-			raise ConfigurationError(
-				reason=(
-					"Universe membership desync: derive_membership and "
-					"derive_instruments produced different symbol sets "
-					f"(members={sorted(set(membership))}, "
-					f"instruments={sorted(set(instruments))})"))
-		universe = Universe(members=membership, instrument_map=instruments)
-		engine.universe = universe
-		# Inject the Universe into the simulated exchange so the admission gate
-		# resolves min_order_size Instrument-first (BTCUSD undeclared -> venue
-		# fallback 0.001 byte-identical, D-01a/Pitfall 2).
-		simulated_exchange = engine.execution_handler.exchanges.get('simulated')
-		if isinstance(simulated_exchange, SimulatedExchange):
-			simulated_exchange.set_universe(universe)
-		# Plan 02-03 (Pitfall 1, BLOCKING): mirror the exchange injection into the
-		# ORDER domain so the admission leverage cap (D-04) can read
-		# Instrument.max_leverage. Same Trap-4 ordering — the Universe was just
-		# built above, AFTER the order handler was constructed in compose_engine.
-		engine.order_handler.set_universe(universe)
-		# Plan 02-05 (D-13): mirror the injection into the PORTFOLIO domain so the
-		# maintenance_margin/margin_ratio read-model can resolve each open
-		# position's Instrument.maintenance_margin_rate. Same Trap-4 ordering — the
-		# Universe was just built above, AFTER the portfolio handler was
-		# constructed in compose_engine. Query-only and oracle-dark on the golden
-		# path (the accessors are never read during the SMA_MACD run).
-		engine.portfolio_handler.set_universe(universe)
-		# feed.bind receives universe.members — the SAME set-derived list
-		# derive_membership produced (Pitfall 4 — byte-identical to today).
-		engine.feed.bind(engine.global_queue, universe.members)
+		# RUN-04 (D-02): the shared, oracle-critical universe-injection ordering
+		# (derive membership/instruments -> WR-03 desync assert -> build Universe ->
+		# inject into exchange/order/portfolio/strategies -> feed.bind) now lives in
+		# the ONE greppable home wire_universe(), reused byte-exact by the live
+		# SessionInitializer (plan 06-04). The returned Universe is held on
+		# engine.universe by the helper. D-01: wire_universe ADDS
+		# strategies_handler.set_universe to this path; it is oracle-inert BY
+		# CONSTRUCTION (Universe construction-time Readiness.READY + membership
+		# derived from strategy tickers => is_ready always True at the readiness
+		# gate), proven by the byte-exact oracle double-run on this plan.
+		wire_universe(engine)
 		# Ping clock derived from the store's bar index (T-06-16). WR-07: fail
 		# loudly on an empty store, and derive the grid from the UNION of every
 		# symbol's index so a sparse multi-symbol universe never silently drops

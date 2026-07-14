@@ -35,6 +35,7 @@ from itrader.storage import SqlEngine
 from itrader.storage.halt_record_store import HaltRecordStore
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
 from itrader.trading_system.live_trading_system import LiveTradingSystem
+from tests.support.replay_harness import build_paper_replay_system
 from tests.support.schema import provision_schema
 
 
@@ -92,7 +93,7 @@ def _build_paper_system(store: HaltRecordStore) -> LiveTradingSystem:
     via attribute assignment so a FRESH instance on the SAME store observes a prior halt (the
     restart model — RESEARCH Pitfall 7). No OKX network / credentials.
     """
-    system = LiveTradingSystem(exchange="paper")
+    system, _ = build_paper_replay_system()
     system._halt_record_store = store
     strategy = SMAMACDStrategy(
         timeframe="1d",

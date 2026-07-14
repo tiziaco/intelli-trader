@@ -45,17 +45,19 @@ from itrader.reporting.frames import (
 )
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
 from itrader.trading_system.backtest_trading_system import BacktestTradingSystem
-from itrader.trading_system.live_trading_system import (
+from tests.support.replay_harness import (
     PAPER_PARITY_END_DATE,
     PAPER_PARITY_START_DATE,
     PAPER_PARITY_SYMBOL,
-    LiveTradingSystem,
+    TestRunner,
+    build_paper_replay_system,
 )
 
-# D-18 (structural half — SINGLE SOURCE): the backtest comparand window/symbol are
-# imported from live_trading_system's PAPER_PARITY_* constants — the SAME literals the
-# paper replay store is constructed from — so paper and backtest can never silently
-# desync (they previously agreed only by CsvPriceStore class-default coincidence, WR-02).
+# D-18 (TEST-01): the WHOLE replay harness left the itrader package for tests/. The
+# backtest comparand window/symbol are imported from the relocated PAPER_PARITY_*
+# constants — the SAME literals the replay store is constructed from — so paper and
+# backtest can never silently desync (WR-02). Production paper re-points to the OKX live
+# feed (D-21); the paper↔replay pairing survives ONLY in this test harness.
 _START_DATE = PAPER_PARITY_START_DATE
 _END_DATE = PAPER_PARITY_END_DATE
 _CASH = 10_000
@@ -114,13 +116,14 @@ def _run_backtest_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
 def _run_paper_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
     """Drive the live-paper path over the golden dataset; return (trades, equity) frames.
 
-    The paper side (04-02): ``LiveTradingSystem(exchange='paper')`` injects the replay
-    provider into the ``LiveBarFeed`` and reuses the account-free 'simulated'
-    ``SimulatedExchange`` as-is (D-04); ``run_paper_replay()`` replays the golden bars
-    through the real feed -> queue seam with backtest-faithful per-tick + run-end
-    discipline (D-02/D-03).
+    The paper side (TEST-01/D-18): ``build_paper_replay_system()`` builds the paper live
+    system with the relocated ``TestDataPlugin`` injected on the data registry (paper↔replay
+    lives ONLY in the fixture now) and reuses the account-free 'simulated'
+    ``SimulatedExchange`` as-is (D-04); ``TestRunner(system, provider).run()`` replays the
+    golden bars through the real feed -> queue seam with backtest-faithful per-tick +
+    run-end discipline, fail-fast BY DEFAULT (D-19).
     """
-    system = LiveTradingSystem(exchange="paper")
+    system, provider = build_paper_replay_system()
     strategy = _build_golden_strategy()
     system.strategies_handler.add_strategy(strategy)
     # 'simulated' routes to the reused SimulatedExchange (D-04) — the paper exchange.
@@ -129,7 +132,8 @@ def _run_paper_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
     )
     strategy.subscribe_portfolio(portfolio_id)
     # Synchronous offline drive (D-02/D-03): replay -> feed.update -> BarEvent -> queue.
-    system.run_paper_replay()
+    # TestRunner holds the TestLiveDataProvider handle (Landmine 2), not system._replay_provider.
+    TestRunner(system, provider).run()
 
     portfolio = system.portfolio_handler.get_portfolio(portfolio_id)
     return build_trade_log(portfolio), build_equity_curve(portfolio)

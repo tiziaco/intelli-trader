@@ -104,13 +104,14 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 - [x] **Phase 3: EngineContext + Storage-in-Handler** - `EngineContext` threaded into `compose_engine(ctx, spec)`, handler-owns storage init, `SqlBackend→SqlEngine` rename (CTX-01..04) (completed 2026-07-09)
 - [x] **Phase 4: Storage Schema: Migrations Relocation + New Durable Stores** - `migrations/` → project root FIRST, then `SystemStore`/`VenueStore`/`StrategyRegistryStore` chained on the `HaltRecordStore` template; single-head + parity Alembic gate over the FULL chain + rehydrate (SQL-01..02, STORE-01..05) (completed 2026-07-09)
 - [x] **Phase 5: Venue Registry + Bundle** - Two registries, `VenuePlugin`/`VenueBundle`, precision/validate on the exchange, connector memoization, shared `StreamSupervisor` — kills every `if exchange==` (VENUE-01..07) (completed 2026-07-12)
-- [ ] **Phase 6: LiveRunner + Factory + Facade Shrink** - `build_live_system`, `LiveRunner`, shared `UniverseWiring` *(oracle-sensitive)*, `LiveRouteRegistrar`, ~200-line facade (RUN-01..07)
+- [x] **Phase 6: LiveRunner + Factory + Facade Shrink** - `build_live_system`, `LiveRunner`, shared `UniverseWiring` *(oracle-sensitive)*, `LiveRouteRegistrar`, ~200-line facade, replay-harness→`tests/` (`TestRunner`/`TestLiveDataProvider`; paper→OKX live feed) (RUN-01..07, TEST-01) (completed 2026-07-13)
+- [ ] **Phase 6.1 (INSERTED): Seam Cleanup** - `build_live_system` consumes `compose_engine` (store/feed-agnostic seam, oracle byte-exact), collapse `LiveSystemComponents`, de-dup the `for_exchange` spec-builder, de-lazy the `trading_system` barrel — behavior-preserving, lands before P7 (SEAM-01..04)
 - [ ] **Phase 7: Safety + Reconciliation + Stream Recovery** - `SafetyController`, `ReconciliationCoordinator`, `StreamRecoveryHandler`, CONTROL routes, pre-trade throttle — flag machinery deleted (SAFE-01..06)
 - [ ] **Phase 8: Error Subsystem** - Injected `ErrorPolicy`, formalized `ErrorHandler`, two-guard terminal safety, CF-1 aggregate circuit breaker (ERR-01..04)
 - [ ] **Phase 9 ★: Runtime-Config Platform** - `RuntimeConfig` overlay, scoped `ConfigUpdateEvent` + allowlist, restart layering, stats/state UI read-model (RTCFG-01..06)
 - [ ] **Phase 10 ★: Strategies Registry** - Durable `StrategyRegistryStore` rehydrate, enable/disable via `STRATEGY_COMMAND`, atomic strategy-param reconfiguration (STRAT-01..03)
 - [ ] **Phase 11 ★: Multi-Portfolio-Live** - Per-`account_id` account factory, distinct-`account_id` invariant (fail loud), per-portfolio reconcile, `clOrdId→client_order_id` (MPORT-01..06)
-- [ ] **Phase 12: Test Migration + Gates** - `run_paper_replay`→`ReplayRunner` in `tests/` (production replay-free); live-smoke / config-restart / multi-portfolio-attribution gates (TEST-01..04)
+- [ ] **Phase 12: Test Migration + Gates** - live-smoke / config-restart / multi-portfolio-attribution gates (TEST-02..04; TEST-01 replay relocation pulled forward into P6)
 
 ## Phase Details
 
@@ -246,16 +247,56 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 
 **Goal**: Make `build_live_system` the live composition root over a new `LiveRunner`, shrinking `LiveTradingSystem` to a ~200-line facade — with the shared `UniverseWiring` extracted byte-exact (the highest oracle-risk seam) and reused by both runners, and live routes composed declaratively.
 **Depends on**: Phase 4, Phase 5
-**Requirements**: RUN-01, RUN-02, RUN-03, RUN-04, RUN-05, RUN-06, RUN-07
+**Requirements**: RUN-01, RUN-02, RUN-03, RUN-04, RUN-05, RUN-06, RUN-07, TEST-01 *(TEST-01 pulled forward from P12 — same construction path P6 builds; kills the production-replay tax across P7–P11)*
 **Success Criteria** (what must be TRUE):
 
   1. The shared `UniverseWiring` helper (`derive_membership → build Universe → inject exchange/order/portfolio/strategies → feed.bind`, incl. the WR-03 desync assert) is extracted as one intact unit and reused by both `BacktestRunner` and the live `SessionInitializer` — **BacktestRunner stays byte-exact `134 / 46189.87730727451`** (per-PLAN gate on the `UniverseWiring` extraction; the milestone's highest oracle risk).
-  2. `build_live_system(spec)` assembles centralized config → one `sql_engine` → venue plugin(s) → `EngineContext` → `compose_engine` → bundle(s) + `LiveRunner` + controllers; `LiveRunner` owns the drain loop + injected `ErrorPolicy` + worker supervision, replacing `_event_processing_loop`.
+  2. `build_live_system(spec)` assembles centralized config → one `sql_engine` → venue plugin(s) → `EngineContext` (wiring live onto the `PriorityEventBus`) → `compose_engine` → bundle(s) + `LiveRunner` + controllers; `LiveRunner` owns the drain loop + injected `ErrorPolicy` + worker supervision, replacing `_event_processing_loop`. CONTROL routes are NOT registered in P6 (their P7/P9 consumers don't exist yet); the `LiveRouteRegistrar` registers the BUSINESS/live routes and P7/P9 add CONTROL entries through it.
   3. `LiveTradingSystem` shrinks to a ~200-line facade (lifecycle, status/read-model, `add_event`); legacy `print_status`/`get_statistics` are dropped and `__init__` sheds `exchange`/`to_sql`/`queue_timeout`/`max_idle_time`.
   4. `LiveRouteRegistrar` composes live + CONTROL routes declaratively (list order = execution order; no subclass, no runtime mutation) with backtest getting base routes only; `UniverseHandler` is a first-class handler with explicit deps and zero OKX coupling; `StrategyWarmupConsumer` is rehomed sized to `max(strategy.warmup)` with the CF-10 depth-hint seam shaped (K-computation deferred).
   5. `test_okx_inertness.py` stays green (live decomposition imports no `ccxt.pro` on the backtest path).
+  6. **TEST-01 (pulled forward from P12):** the ENTIRE replay test-harness moves OUT of the `itrader` package into `tests/` — `run_paper_replay` → **`TestRunner`**, `ReplayDataProvider` → **`TestLiveDataProvider`**, `ReplayDataPlugin` → **`TestDataPlugin`** (test-fixture-registered-only), `PAPER_PARITY_*`/`_PAPER_*` → `tests/`; production is replay-free. The `paper` EXECUTION venue (`PaperVenuePlugin` + `SimulatedExchange` + `SimulatedAccount`) STAYS a **real live production mode, untouched** — its production data feed re-points from `replay` to the **OKX live feed** (`{'okx':'okx','paper':'okx'}`), so the `paper`↔replay pairing survives only in the test fixture. `TestRunner` is **fail-fast by default** (drives the EventHandler at its default fail-fast seam, never calls `start()`). `Test*`-named classes set `__test__ = False` (pytest-collection guard under `filterwarnings=["error"]`). Done as pure code-motion with `test_paper_parity` green continuously, sliced as its own plan AFTER the `UniverseWiring` extraction locks (per-PLAN oracle gate).
 
-**Plans**: TBD
+**Plans**: 7 plans
+
+Plans:
+**Wave 1**
+
+- [x] 06-01-PLAN.md — RUN-04: extract shared `wire_universe(engine)` (oracle-gated, isolated); repoint BacktestRunner (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [x] 06-02-PLAN.md — RUN-02: `LiveRunner` + `WorkerSupervisor` + minimal `ErrorPolicy` (new standalone modules) (wave 2)
+- [x] 06-03-PLAN.md — RUN-07: rehome `StrategyWarmupConsumer` + `register_strategy_warmup` + named `derive_warmup_depth` (CF-10 seam) (wave 2)
+- [x] 06-04-PLAN.md — RUN-06: `UniverseHandler` first-class ctor `(bus, universe, feed, config)` + `set_venue_metadata`; caller migration (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [x] 06-05-PLAN.md — RUN-05 + RUN-04(live): `LiveRouteRegistrar` + `SessionInitializer`; `_initialize_live_session` delegates (wave 3)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [x] 06-06-PLAN.md — RUN-01 + RUN-03: `build_live_system` factory + pure-injection facade + PriorityEventBus + `for_exchange` + ~45-site sweep (wave 4)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [x] 06-07-PLAN.md — TEST-01: replay harness → `tests/support/` (`TestRunner`/`TestLiveDataProvider`/`TestDataPlugin`); production replay-free, paper→OKX (wave 5)
+
+### Phase 06.1 (INSERTED): Seam Cleanup
+
+**Goal**: Behavior-preserving cleanup of the interim scaffolding Phase 6 left behind, landing BEFORE Phase 7 so P7 builds on the clean seam — make `build_live_system` consume the shared `compose_engine` (store/feed-agnostic seam) instead of hand-rolling a parallel handler graph, collapse the `LiveSystemComponents` bag, de-duplicate the `for_exchange` spec-builder, and de-lazy the `trading_system` barrel so the pervasive lazy-imports-inside-methods can move to module top. Live behavior unchanged; backtest byte-exact.
+**Depends on**: Phase 6
+**Requirements**: SEAM-01, SEAM-02, SEAM-03, SEAM-04 *(inserted cleanup requirements — detail in `06.1-SPEC.md`; not part of the original v1.8 REQUIREMENTS.md traceability set)*
+**Success Criteria** (what must be TRUE):
+
+  1. `build_live_system` wires its handler graph by calling `compose_engine` (with a store/feed injection seam) — the hand-rolled execution/strategies/order/event handler construction and the re-inlined `_estimate_commission` closure are gone; the backtest oracle stays byte-exact `134 / 46189.87730727451` (per-PLAN gate — this touches the shared compose path) with determinism double-run identical.
+  2. `LiveSystemComponents` is collapsed (the 20-field `Any` bag is replaced by the compose `Engine` + a small venue-extras object) and the interim `Engine` reconstruction in `_initialize_live_session` is removed.
+  3. `for_exchange` and `build_live_system` share ONE spec-builder — the `SimpleNamespace` fake-spec and the twice-written `{'okx':'okx','paper':'okx'}` default-provider map exist in exactly one place.
+  4. The `trading_system` barrel no longer eagerly imports the live module onto the backtest import graph; the pure (non-ccxt/non-SQL) imports move to module top; `tests/integration/test_okx_inertness.py` stays green (backtest import path pulls no `ccxt.pro`/SQL).
+
+**Out of scope** (owned elsewhere): loop-lifecycle callback web (`_on_loop_start`/`_on_loop_error`) → P7/P8/P9; session-init→construction flip → blocked by test contract, enabled by P10; `UniverseHandler` setter-fold → P7; `wire_universe`/membership relocation → working-as-intended (shared by both runners; `UniverseHandler` is live-only).
+
+**Plans**: TBD (run /gsd-plan-phase 06.1 to break down)
 
 ### Phase 7: Safety + Reconciliation + Stream Recovery
 
@@ -332,12 +373,12 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 
 ### Phase 12: Test Migration + Gates
 
-**Goal**: Move the replay driver into `tests/` so production is replay-free, and add the live-smoke, config-restart, and multi-portfolio-attribution gates that lock the decomposed live surface. Lands last (needs the whole surface incl. multi-portfolio).
+**Goal**: Add the live-smoke, config-restart, and multi-portfolio-attribution gates that lock the decomposed live surface. Lands last (needs the whole surface incl. multi-portfolio). *(TEST-01 — the replay-driver relocation to `tests/` — was pulled forward into P6; P12 now inherits replay-free production and only adds the surface-dependent gates.)*
 **Depends on**: Phase 6, Phase 11
-**Requirements**: TEST-01, TEST-02, TEST-03, TEST-04
+**Requirements**: TEST-02, TEST-03, TEST-04 *(TEST-01 delivered in P6)*
 **Success Criteria** (what must be TRUE):
 
-  1. `run_paper_replay` → `ReplayRunner` in `tests/`; the `replay` plugin (`SimulatedExchange` + `ReplayDataProvider` over the golden CSV) is registered **only** by a test fixture, and production is replay-free (`run_paper_replay` + `PAPER_PARITY_*`/`_PAPER_*` leave production).
+  1. *(TEST-01 delivered in P6 — production is already replay-free: `run_paper_replay` → `tests/` `ReplayRunner`, `replay` plugin fixture-registered-only. P12 inherits this; no P12 action.)*
   2. A live-smoke gate exercises the decomposed live surface end-to-end (facade → factory → `LiveRunner` → controllers) on the replay fixture.
   3. A config-restart gate proves persisted runtime overrides survive a restart (RTCFG-03).
   4. A multi-portfolio attribution gate proves fills route to the correct portfolio and the distinct-`account_id` invariant fails loud (MPORT-02/MPORT-04).
@@ -359,7 +400,8 @@ P1 and P2 have no dependencies and can start in parallel.
 | 3. EngineContext + Storage-in-Handler | v1.8 | 2/2 | Complete    | 2026-07-09 |
 | 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 4/4 | Complete    | 2026-07-10 |
 | 5. Venue Registry + Bundle | v1.8 | 6/6 | Complete    | 2026-07-12 |
-| 6. LiveRunner + Factory + Facade Shrink | v1.8 | 0/TBD | Not started | - |
+| 6. LiveRunner + Factory + Facade Shrink | v1.8 | 7/7 | Complete    | 2026-07-13 |
+| 6.1 (INSERTED). Seam Cleanup | v1.8 | 0/TBD | Not started | - |
 | 7. Safety + Reconciliation + Stream Recovery | v1.8 | 0/TBD | Not started | - |
 | 8. Error Subsystem | v1.8 | 0/TBD | Not started | - |
 | 9 ★. Runtime-Config Platform | v1.8 | 0/TBD | Not started | - |

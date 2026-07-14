@@ -34,7 +34,6 @@ from decimal import Decimal
 from queue import Queue
 from typing import Any, Callable, Dict, List, Optional
 
-from itrader.config.stream import StreamSettings
 from itrader.connectors.base import LiveConnector
 from itrader.core.enums import ErrorSeverity, OrderCommand, OrderType, Side
 from itrader.core.enums.execution import ExchangeConnectionStatus, ExecutionErrorCode
@@ -168,9 +167,10 @@ class OkxExchange(AbstractExchange):
 		# module top) so the module's import graph stays lean on the live path.
 		import ccxt
 
+		from itrader import config
 		from itrader.connectors.stream_supervisor import StreamSupervisor
 		self._supervisor = StreamSupervisor(
-			StreamSettings(),
+			config.stream,
 			transient_exceptions=(
 				ccxt.NetworkError, ccxt.RequestTimeout, ccxt.DDoSProtection),
 			fatal_exceptions=(ccxt.AuthenticationError, ccxt.PermissionDenied),
