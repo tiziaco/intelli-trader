@@ -104,6 +104,9 @@ def test_direct_emission_preserves_bar_route_order() -> None:
     event_handler = EventHandler(
         strategies, screeners, portfolio, order, execution,
         bar_event_source=lambda e: None, global_queue=q,
+        # 08-03: injected error_policy + error_handler (unused on the BAR route).
+        error_policy=SimpleNamespace(on_handler_error=lambda e, h: None),
+        error_handler=SimpleNamespace(on_error=lambda e: None),
     )
 
     # Drive the LIVE feed: update() emits the BarEvent directly (no TimeGenerator tick).

@@ -44,7 +44,8 @@ def wiring():
     execution = MagicMock()
     bar_event_source = MagicMock()
     handler = EventHandler(
-        strategies, screeners, portfolio, order, execution, bar_event_source, q
+        strategies, screeners, portfolio, order, execution, bar_event_source, q,
+        MagicMock(), MagicMock(),   # 08-03: injected error_policy + error_handler
     )
 
     def put(event_type):

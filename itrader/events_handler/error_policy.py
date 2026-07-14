@@ -201,6 +201,9 @@ class ErrorPolicy:
         # (duck-typed, defaults carried in _POLICY_FIELDS so a None settings still arms).
         self._policy: dict[FailureClass, tuple[int, float, HaltReason]] = {}
         self._hits: dict[FailureClass, "deque[float]"] = {}
+        # D-13 — the last-trip HaltReason wire string, surfaced (read-only) through the
+        # live facade get_status breaker snapshot. None until the tripwire first trips.
+        self._last_trip: Optional[str] = None
         for failure_class, (
             threshold_attr,
             window_attr,
@@ -249,8 +252,25 @@ class ErrorPolicy:
             now = time.monotonic()
         threshold, window, reason = self._policy[failure_class]
         if should_trip(self._hits[failure_class], threshold, window, now):
+            # Record the trip (D-13 get_status surface) regardless of whether ``halt`` is
+            # wired — the windowed threshold was reached; that IS the trip.
+            self._last_trip = reason.value
             if self._halt is not None:
                 self._halt(reason.value)
+
+    def breaker_snapshot(self) -> dict[str, Any]:
+        """Read-only CF-1 tripwire snapshot for the live facade get_status (D-13).
+
+        Returns a plain JSON-friendly dict — the current in-window hit count per
+        ``FailureClass`` plus the last-trip ``HaltReason`` wire string (``None`` until the
+        first trip). P8 scope is get_status ONLY; the SystemStore stats read-model is P9
+        (RTCFG-06). No lock: the live drain is single-threaded (engine thread), and this is
+        a best-effort observability read.
+        """
+        return {
+            "hits": {fc.value: len(self._hits[fc]) for fc in self._hits},
+            "last_trip_reason": self._last_trip,
+        }
 
     def on_handler_error(self, event: Any, handler: Any) -> None:
         """Live handler-failure policy (WR-05): publish an ErrorEvent, keep draining.

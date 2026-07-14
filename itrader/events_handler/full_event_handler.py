@@ -1,6 +1,6 @@
 import queue
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
@@ -9,29 +9,19 @@ from itrader.order_handler.order_handler import OrderHandler
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.events_handler.bus import EventBus
-from itrader.core.enums import ErrorSeverity, EventType
+from itrader.core.enums import EventType
 
 from itrader.logger import get_itrader_logger
 
 if TYPE_CHECKING:
-	# Type-only import: the events package pulls pandas at runtime, which
+	# Type-only imports: the events package pulls pandas at runtime, which
 	# must not be imported as a side effect of loading the dispatcher
-	# (keeps the module import light and stub-friendly in tests).
-	from itrader.events_handler.events import ErrorEvent, Event
-
-
-class _AlertSinkLike(Protocol):
-	"""Duck-typed alert-sink egress surface (D-06).
-
-	Structurally matches the ``AlertSink`` Protocol in the composition-root
-	layer WITHOUT a runtime dependency on it — a reverse layer edge would
-	invert the layering (the composition root wires that layer on TOP of the
-	event handler). The concrete ``LogAlertSink`` is injected at wiring; the
-	attribute stays ``None`` on the backtest path (no egress, inertness
-	preserved).
-	"""
-
-	def alert(self, event: "ErrorEvent") -> None: ...
+	# (keeps the module import light and stub-friendly in tests). The
+	# injected policy + consumer are also type-only here — the concretes are
+	# built in ``compose_engine`` and passed in (D-01/D-04/D-06).
+	from itrader.events_handler.events import Event
+	from itrader.events_handler.error_policy import HandlerErrorPolicy
+	from itrader.events_handler.error_handler import ErrorHandler
 
 
 class EventHandler(object):
@@ -65,6 +55,8 @@ class EventHandler(object):
 		execution_handler: ExecutionHandler,
 		bar_event_source: Callable[[Any], Any],
 		global_queue: "EventBus",
+		error_policy: "HandlerErrorPolicy",
+		error_handler: "ErrorHandler",
 	) -> None:
 		self.strategies_handler = strategies_handler
 		self.screeners_handler = screeners_handler
@@ -74,11 +66,17 @@ class EventHandler(object):
 		self.bar_event_source = bar_event_source
 		self.global_queue = global_queue
 
-		# D-06: optional CRITICAL/halt egress. Injected at live wiring (a
-		# LogAlertSink); ``None`` on the backtest path so the hot loop stays
-		# egress-free and inert. Duck-typed to avoid an events_handler →
-		# trading_system layer inversion.
-		self._alert_sink: "_AlertSinkLike | None" = None
+		# D-06: the injected handler-failure policy. ``_dispatch``'s except-block
+		# routes a raising handler through it — ``FailFastPolicy`` (bare re-raise,
+		# byte-exact oracle) on the backtest/replay path, the live
+		# publish-and-continue ``ErrorPolicy`` on the daemon path. Selected + built
+		# in ``compose_engine`` (the single mode-agnostic site), never here.
+		self._error_policy = error_policy
+		# D-01: the ERROR-route consumer. Owns severity-mapped logging + CRITICAL
+		# alert-sink escalation + ``last_error`` persistence + the FILL_TRANSLATION
+		# counting seam. Built in ``compose_engine`` with its injected collaborators
+		# (``None`` on the backtest path — logs only, no egress/persist/count).
+		self.error_handler = error_handler
 
 		self.logger = get_itrader_logger().bind(component="FullEventHandler")
 
@@ -113,7 +111,7 @@ class EventHandler(object):
 			EventType.STREAM_STATE: [],        # NEW (BUS-03) — CONTROL-plane connector stream up/down; live-only consumers wired in later phases (backtest stays inert)
 			EventType.CONNECTOR_FATAL: [],     # NEW (BUS-03) — CONTROL-plane connector fatal -> halt; live-only consumers wired in later phases (backtest stays inert)
 			EventType.CONFIG_UPDATE: [],       # NEW (BUS-03) — CONTROL-plane scoped runtime config change; live-only consumers wired in later phases (backtest stays inert)
-			EventType.ERROR: [self._log_error_event],   # D-16: real log consumer
+			EventType.ERROR: [self.error_handler.on_error],   # D-01: formalized ERROR-route consumer
 		}
 
 		self.logger.info('Event Handler initialized')
@@ -139,7 +137,9 @@ class EventHandler(object):
 
 		Unknown event types raise ``NotImplementedError`` (KB1 — silent
 		drops are a tampering risk, T-04-18). Unexpected handler
-		exceptions route through the ``_on_handler_error`` policy seam.
+		exceptions route through the injected ``_error_policy`` seam
+		(D-06: FailFastPolicy re-raises on backtest/replay, ErrorPolicy
+		publishes-and-continues on the live path).
 		"""
 		try:
 			handlers = self.routes[event.type]
@@ -151,75 +151,8 @@ class EventHandler(object):
 			try:
 				handler(event)
 			except Exception:
-				self._on_handler_error(event, handler)   # D-16 seam
-
-	def _on_handler_error(self, event: "Event", handler: Callable[[Any], Any]) -> None:
-		"""
-		Handler-failure policy seam (D-16).
-
-		Backtest policy is FAIL-FAST: re-raise the active exception
-		unchanged — a handler failure must abort the run rather than
-		silently corrupt state (T-04-15). The bare ``raise`` re-raises
-		the exception active in the calling ``except`` block (the
-		exception context propagates into calls made from except blocks).
-
-		D-live override seam: the live system replaces this policy with
-		publish-and-continue (emit an ErrorEvent onto the queue and keep
-		draining) by overriding THIS method — ``_dispatch`` stays
-		untouched.
-		"""
-		raise
-
-	def _log_error_event(self, event: "ErrorEvent") -> None:
-		"""
-		The ERROR route's real consumer (D-17): structured log sink.
-
-		Binds the ErrorEvent fields explicitly at a severity mapped from
-		``event.severity`` (WARNING/CRITICAL/anything else -> ERROR).
-		Never logs secrets — only the declared ErrorEvent fields.
-		"""
-		# WR-06: the ERROR route is TERMINAL. A failure WHILE consuming an
-		# ErrorEvent — a raising alert sink, a broken logger/structlog processor,
-		# or a future malformed/required field — must NEVER escape into _dispatch,
-		# whose live policy (_publish_and_continue) would republish a fresh
-		# ErrorEvent routed straight back here: an unbounded error->error feedback
-		# loop flooding the engine-thread queue. Log once (best-effort) and swallow;
-		# the consumer never re-raises into the dispatcher. (Part A guards the seam
-		# too; this is defense-in-depth so the recursion is impossible either way.)
-		try:
-			log_method = {
-				ErrorSeverity.WARNING: self.logger.warning,
-				ErrorSeverity.CRITICAL: self.logger.critical,
-			}.get(event.severity, self.logger.error)
-			context: dict[str, Any] = {
-				"source": event.source,
-				"error_type": event.error_type,
-				"error_message": event.error_message,
-				"operation": event.operation,
-				"correlation_id": event.correlation_id,
-			}
-			portfolio_id = getattr(event, "portfolio_id", None)
-			if portfolio_id is not None:
-				context["portfolio_id"] = portfolio_id
-			if event.details is not None:
-				context["details"] = event.details
-			log_method("Error event consumed", **context)
-
-			# D-06: escalate a CRITICAL/halt event through the injected alert-sink
-			# egress (RES-01), AFTER the existing log call. The sink re-binds only
-			# declared ErrorEvent fields — the same secret-scrub discipline as above,
-			# so no raw connector context / secret ever leaves (Pitfall 16, T-05-01).
-			# ``None`` on the backtest path (no egress wired) — a no-op branch.
-			if event.severity is ErrorSeverity.CRITICAL and self._alert_sink is not None:
-				self._alert_sink.alert(event)
-		except Exception:
-			# Last-resort recovery log is itself wrapped: if the primary logger is
-			# what failed, this inner attempt must not re-raise either.
-			try:
-				self.logger.error(
-					"ERROR-route consumer failed; swallowed to prevent "
-					"error->error recursion (WR-06)",
-					exc_info=True,
-				)
-			except Exception:
-				pass
+				# D-06: the injected policy owns the except-block decision. A bare
+				# ``raise`` from inside FailFastPolicy.on_handler_error re-raises the
+				# active exception identically (oracle byte-exact); ErrorPolicy emits
+				# an ErrorEvent and returns so the live loop keeps draining.
+				self._error_policy.on_handler_error(event, handler)

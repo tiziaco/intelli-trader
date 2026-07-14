@@ -429,7 +429,8 @@ def test_fatal_alert_carries_no_secret_substring(monkeypatch: Any) -> None:
     """
     system = _live_system(monkeypatch)
     sink = _RecordingSink()
-    system.event_handler._alert_sink = sink
+    # 08-03/D-03: the alert-sink rides on the injected ErrorHandler now.
+    system.event_handler.error_handler._alert_sink = sink
 
     exchange = OkxExchange(system.global_queue, MagicMock(name="connector"))
     _fast(exchange)
@@ -468,25 +469,25 @@ class _RaisingSink:
 def test_error_route_consumer_failure_does_not_recurse(monkeypatch: Any) -> None:
     """WR-06: a failure WHILE consuming an ErrorEvent must be terminal — no recursion.
 
-    If the ERROR-route consumer (``_log_error_event`` / its injected alert sink) raises,
+    If the ERROR-route consumer (``ErrorHandler.on_error`` / its injected alert sink) raises,
     the live publish-and-continue seam MUST NOT publish a fresh ErrorEvent routed straight
     back to the same failing consumer. That is an unbounded error->error feedback loop that
     floods the engine-thread queue (and, when the failure repeats on the re-consumed event,
     livelocks a single ``process_events()`` drain forever).
 
     Drives a CRITICAL ErrorEvent through ``process_events()`` with the live
-    ``_publish_and_continue`` policy bound (as ``start()`` binds it) and a raising alert sink.
-    The sink fires exactly once (the original event); the failure is logged and swallowed; and
-    crucially NO fresh ErrorEvent is enqueued by the failure path.
+    publish-and-continue policy already injected at construction (08-03/D-06 — no
+    monkeypatch) and a raising alert sink. The sink fires exactly once (the original event);
+    the failure is logged and swallowed; and crucially NO fresh ErrorEvent is enqueued by
+    the failure path.
     """
     system = _live_system(monkeypatch)
-    # Bind the live handler-failure policy exactly as start() does, without launching
-    # the daemon thread. 06-06 (RUN-02/D-07): the publish-and-continue policy moved
-    # VERBATIM out of the facade into the injected ErrorPolicy (WR-06 guard intact);
-    # start() now installs ``self._error_policy.on_handler_error``.
-    system.event_handler._on_handler_error = system._error_policy.on_handler_error  # type: ignore[method-assign]
+    # 08-03 (D-06): the live publish-and-continue policy is injected at EventHandler
+    # construction (build_live_system → compose_engine) — the old start() monkeypatch is
+    # gone, so no per-test policy install is needed. The alert-sink rides on the injected
+    # ErrorHandler (D-03).
     sink = _RaisingSink()
-    system.event_handler._alert_sink = sink
+    system.event_handler.error_handler._alert_sink = sink
 
     # The original CRITICAL ErrorEvent — enqueued BEFORE we start recording puts,
     # so only republished (recursion) events are captured.
