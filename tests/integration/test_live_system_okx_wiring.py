@@ -24,7 +24,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from itrader.core.enums import ExchangeConnectionStatus, SystemStatus
+from itrader.core.enums import ExchangeConnectionStatus, HaltReason, SystemStatus
+from itrader.events_handler.events import ConnectorFatalEvent, StreamStateEvent
 from itrader.execution_handler.result_objects import ConnectionResult
 from itrader.trading_system.live_trading_system import LiveTradingSystem
 
@@ -312,3 +313,63 @@ def test_link_venue_account_two_portfolios_fails_loud(monkeypatch) -> None:
     # venue account (each ``.account`` is an untouched auto-child mock, not it).
     assert p1.account is not system._venue_account
     assert p2.account is not system._venue_account
+
+
+# --- SAFE-03/§11c: connector stream/fatal arrive as CONTROL events on the engine ---
+# --- thread; the flag side-channel is deleted. -------------------------------------
+
+
+def test_connector_control_events_route_to_safety_and_recovery(monkeypatch) -> None:
+    """Connector callbacks emit CONTROL events routed on the engine thread (SAFE-03/§11c).
+
+    The three connector-loop callbacks (``_on_venue_stream_down`` / ``_on_venue_stream_up`` /
+    ``_request_connector_halt``) put ``StreamStateEvent(down/up)`` / ``ConnectorFatalEvent``
+    on the bus instead of flipping flags; the engine-thread STREAM_STATE / CONNECTOR_FATAL
+    routes actuate ``SafetyController.pause_submission`` (down), ``StreamRecoveryHandler.
+    on_reconnect`` (up), and ``SafetyController.halt`` (fatal). The ``_pending_*`` flag
+    side-channel is GONE — the connector handoff is CONTROL events only.
+    """
+    _set_okx_env(monkeypatch)
+    system = LiveTradingSystem.for_exchange("okx")
+    # Install the live routes (STREAM_STATE / CONNECTOR_FATAL onto the event handler),
+    # offline — no OKX connect (that lives in start()).
+    system._initialize_live_session()
+
+    # The flag side-channel is deleted (Pitfall 3) — no _pending_* fields exist.
+    assert not hasattr(system, "_pending_stream_resume")
+    assert not hasattr(system, "_pending_connector_halt")
+    assert not hasattr(system, "_pending_connector_halt_reason")
+
+    # Spy the collaborator route targets (the registrar holds these SAME objects).
+    system._safety.pause_submission = MagicMock(name="pause_submission")
+    system._stream_recovery.on_reconnect = MagicMock(name="on_reconnect")
+    system._safety.halt = MagicMock(name="halt")
+
+    # Drain any wiring-time events, then fire the three connector callbacks: each PUTS a
+    # CONTROL event (no flag flip, no blocking I/O).
+    while not system.global_queue.empty():
+        system.global_queue.get_nowait()
+    system._on_venue_stream_down("fills")
+    system._on_venue_stream_up("fills")
+    system._request_connector_halt("secret-bearing venue error")
+
+    # The queued events are the fixed-shape CONTROL facts — V7 scrub: the fatal reason is
+    # the FIXED literal, never the connector payload passed to the callback.
+    queued = []
+    while not system.global_queue.empty():
+        queued.append(system.global_queue.get_nowait())
+    down = next(e for e in queued if isinstance(e, StreamStateEvent) and not e.up)
+    up = next(e for e in queued if isinstance(e, StreamStateEvent) and e.up)
+    fatal = next(e for e in queued if isinstance(e, ConnectorFatalEvent))
+    assert down.stream_name == "fills" and up.stream_name == "fills"
+    assert fatal.reason == HaltReason.CONNECTOR_FATAL.value
+    assert "secret" not in fatal.reason
+
+    # Re-enqueue + drain through the engine-thread routing -> the collaborator targets.
+    for ev in queued:
+        system.global_queue.put(ev)
+    system.event_handler.process_events()
+
+    system._safety.pause_submission.assert_called_once_with("paused-on-disconnect")
+    system._stream_recovery.on_reconnect.assert_called_once_with()
+    system._safety.halt.assert_called_once_with(HaltReason.CONNECTOR_FATAL.value)
