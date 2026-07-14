@@ -187,7 +187,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 
 ### Safety + Reconciliation + Stream Recovery (P7)
 
-- [ ] **SAFE-01**: A `SafetyController` (pure state machine, no venue I/O) owns the status latch
+- [x] **SAFE-01**: A `SafetyController` (pure state machine, no venue I/O) owns the status latch
   (`VALID_STATUS_TRANSITIONS`, single `update_status` seam, `force=` reserved for `reset_halt`),
   `halt(reason)` (winner-only → CRITICAL `ErrorEvent` → durable `HaltRecordStore.record_halt`),
   `is_halted`/`reset_halt`, `pause_submission`/`resume_submission` + bounded deferred-protective queue,
@@ -197,7 +197,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   RUNNING on an unresolved durable halt, and re-latches from the persisted reason via `update_status`
   (no second durable write) (§11b).
 
-- [ ] **SAFE-03**: Connector stream up/down + fatal arrive as CONTROL events (`StreamStateEvent` →
+- [x] **SAFE-03**: Connector stream up/down + fatal arrive as CONTROL events (`StreamStateEvent` →
   pause / `StreamRecoveryHandler.on_reconnect`; `ConnectorFatalEvent` → `halt`) running on the engine
   thread — the flag side-channel (`_pending_stream_resume`/`_pending_connector_halt`/etc.) is deleted
   (concern 11/§11c).
@@ -211,7 +211,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   for venue-truth accounts → baseline guard), keyed on account *kind* not `exchange=='okx'`; the bare
   `str(matched["id"])` is guarded with a typed fail-loud error (CF-7) (§11d).
 
-- [ ] **SAFE-06**: A **pre-trade submit-rate + max-notional-per-order throttle** rejects order flow
+- [x] **SAFE-06**: A **pre-trade submit-rate + max-notional-per-order throttle** rejects order flow
   exceeding configured velocity/notional caps *before* submission (fires ahead of send; complements CF-1's
   post-error breaker and the per-order `EnhancedOrderValidator`); caps are runtime-mutable via the P9
   allowlist (research GAP / owner decision 2026-07-09).
@@ -399,12 +399,12 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | RUN-05 | P6 | Complete |
 | RUN-06 | P6 | Complete |
 | RUN-07 | P6 | Complete |
-| SAFE-01 | P7 | Pending |
+| SAFE-01 | P7 | Complete |
 | SAFE-02 | P7 | Pending |
-| SAFE-03 | P7 | Pending |
+| SAFE-03 | P7 | Complete |
 | SAFE-04 | P7 | Pending |
 | SAFE-05 | P7 | Pending |
-| SAFE-06 | P7 | Pending |
+| SAFE-06 | P7 | Complete |
 | ERR-01 | P8 | Pending |
 | ERR-02 | P8 | Pending |
 | ERR-03 | P8 | Pending |

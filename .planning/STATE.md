@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: — Live System Refactor & Live-Readiness Hardening
-current_phase: 7
+current_phase: 07
 current_phase_name: Safety + Reconciliation + Stream Recovery
 status: executing
-stopped_at: Phase 7 context gathered
-last_updated: "2026-07-14T13:38:58.963Z"
+stopped_at: Completed 07-01-PLAN.md
+last_updated: "2026-07-14T14:00:06.763Z"
 last_activity: 2026-07-14
-last_activity_desc: Phase 06.1 complete, transitioned to Phase 7
+last_activity_desc: Phase 07 execution started
 progress:
   total_phases: 9
   completed_phases: 6
-  total_plans: 26
-  completed_plans: 26
+  total_plans: 32
+  completed_plans: 27
   percent: 67
 ---
 
@@ -26,17 +26,17 @@ See: .planning/PROJECT.md (Current Milestone: v1.8 — Live System Refactor & Li
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct,
 deterministic, cross-validated numbers (oracle **134 / `46189.87730727451`**; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 shipped a live operating mode (paper-first on OKX) without disturbing that oracle.
-**Current focus:** Phase 06.1 — seam-cleanup-make-build-live-system-consume-the-shared-compo
+**Current focus:** Phase 07 — Safety + Reconciliation + Stream Recovery
 thin ~200-line facade over focused, venue-parametrized, FastAPI-ready collaborators — **without
 disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI itself is out of scope
 (LR-01). Full scope: core refactor (P1–P8 + P12) + the three ★ feature-adds (P9–P11).
 
 ## Current Position
 
-Phase: 7 — Safety + Reconciliation + Stream Recovery
-Plan: Not started
+Phase: 07 (Safety + Reconciliation + Stream Recovery) — EXECUTING
+Plan: 2 of 6
 Status: Ready to execute
-Last activity: 2026-07-14 — Phase 06.1 complete, transitioned to Phase 7
+Last activity: 2026-07-14 — Phase 07 execution started
 
 Progress: [████░░░░░░] 44%
 
@@ -168,6 +168,8 @@ P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 - [Phase 06.1]: 06.1-03 (SEAM-03/D-11): typed frozen VenueSpec (execution_venue/data_provider/account_id) + shared build_venue_spec builder replace the twice-written SimpleNamespace fake-spec; build_venue_spec is the SOLE home of the {okx,paper}->okx default-provider map, called by BOTH for_exchange and build_live_system (inline specs+maps at :274-283/:1605-1613 deleted, SimpleNamespace import dropped); feeds assemble_venue only, never compose_engine (spec-free since D-04); spec-equality unit test proves the two entry points cannot drift; oracle byte-exact 134/46189.87730727451 + inertness green, mypy clean
 - [Phase ?]: D-12: trading_system barrel drops the live surface entirely (backtest-only); live consumers import from the live submodule directly
 - [Phase ?]: D-13: pure imports (SessionInitializer/EngineContext/UniverseHandlerConfig) hoisted to live_trading_system module top; heavy ccxt.pro/SQL/venue imports stay lazy inside build_live_system
+- [Phase 07]: OrderRiskRole is enum-only in core/enums/order.py; classify() defers to SafetyController (Plan 03) — D-16 — one-source-of-truth risk vocabulary shared by gate + throttle
+- [Phase 07]: ConnectorFatalEvent.reason is a fixed-literal str, never a stringified exception/payload — V7 secret-scrub (T-07-01); enforced by grep-0 in control.py
 
 ### Pending Todos
 
@@ -225,6 +227,7 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 | Phase 06.1 P02 | 18 | 3 tasks | 1 files |
 | Phase 06.1 P03 | 4 | 3 tasks | 4 files |
 | Phase 06.1 P04 | 6 | 3 tasks | 3 files |
+| Phase 07 P01 | 12 min | 3 tasks | 10 files |
 
 ## Deferred Items
 
@@ -273,11 +276,11 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-14T12:49:38.982Z
-Stopped at: Phase 7 context gathered
+Last session: 2026-07-14T13:59:59.667Z
+Stopped at: Completed 07-01-PLAN.md
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
-Resume file: .planning/phases/07-safety-reconciliation-stream-recovery/07-CONTEXT.md
+Resume file: None
 Carried todo: 14 pending todos in `todos/pending/` (10 fold into v1.8 as CF-1..CF-10; `v17-residual-carryforward.md`
 is the index; the substantive open item is `margin-equity-double-counts-notional-wr01`, owner-gated).
 
