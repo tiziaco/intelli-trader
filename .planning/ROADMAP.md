@@ -321,7 +321,7 @@ Plans:
 **Wave 1** *(parallel — zero file overlap)*
 
 - [x] 07-01-PLAN.md — Shared primitives: `OrderRiskRole` enum (core/enums, TABS) + CONTROL events `StreamStateEvent`/`ConnectorFatalEvent` (msgspec) + `config/safety.py` (`ThrottleSettings`/`SafetySettings`) + eager `SystemConfig.safety` (SAFE-01/03/06, D-07/D-13/D-14/D-16)
-- [ ] 07-02-PLAN.md — `ReconciliationCoordinator` (keyed on account kind, injected halt) + CF-7 typed `ReconciliationError` guard at `venue_reconciler.py:411` (SAFE-05, D-17)
+- [x] 07-02-PLAN.md — `ReconciliationCoordinator` (keyed on account kind, injected halt) + CF-7 typed `ReconciliationError` guard at `venue_reconciler.py:411` (SAFE-05, D-17)
 
 **Wave 2** *(blocked on Wave 1)*
 
@@ -425,7 +425,7 @@ P1 and P2 have no dependencies and can start in parallel.
 | 5. Venue Registry + Bundle | v1.8 | 6/6 | Complete    | 2026-07-12 |
 | 6. LiveRunner + Factory + Facade Shrink | v1.8 | 7/7 | Complete    | 2026-07-13 |
 | 6.1 (INSERTED). Seam Cleanup | v1.8 | 4/4 | Complete    | 2026-07-14 |
-| 7. Safety + Reconciliation + Stream Recovery | v1.8 | 1/6 | In Progress|  |
+| 7. Safety + Reconciliation + Stream Recovery | v1.8 | 2/6 | In Progress|  |
 | 8. Error Subsystem | v1.8 | 0/TBD | Not started | - |
 | 9 ★. Runtime-Config Platform | v1.8 | 0/TBD | Not started | - |
 | 10 ★. Strategies Registry | v1.8 | 0/TBD | Not started | - |

@@ -207,7 +207,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   `backfill_on_resume` lands **loop-native** (connector loop via the reconnect callback), never a second
   concurrent engine-thread ring writer (§11c, CF-2).
 
-- [ ] **SAFE-05**: A `ReconciliationCoordinator` owns the startup sequence (rehydrate → venue reconcile
+- [x] **SAFE-05**: A `ReconciliationCoordinator` owns the startup sequence (rehydrate → venue reconcile
   for venue-truth accounts → baseline guard), keyed on account *kind* not `exchange=='okx'`; the bare
   `str(matched["id"])` is guarded with a typed fail-loud error (CF-7) (§11d).
 
@@ -403,7 +403,7 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | SAFE-02 | P7 | Pending |
 | SAFE-03 | P7 | Complete |
 | SAFE-04 | P7 | Pending |
-| SAFE-05 | P7 | Pending |
+| SAFE-05 | P7 | Complete |
 | SAFE-06 | P7 | Complete |
 | ERR-01 | P8 | Pending |
 | ERR-02 | P8 | Pending |
