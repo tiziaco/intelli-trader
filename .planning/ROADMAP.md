@@ -356,7 +356,7 @@ Plans:
 
 **Wave 2** *(blocked on 08-01)*
 
-- [ ] 08-02-PLAN.md — Relocate `ErrorPolicy` to `events_handler/` (D-02) + `HandlerErrorPolicy` Protocol + `FailFastPolicy` (D-06) + CF-1 tripwire (`should_trip`/`classify_failure`/`_POLICY`/`record_failure`, D-07/D-11) + `ErrorHandler` consumer with two-guard terminal safety + `state.last_error` persist (D-01/D-17) (ERR-01/02/03/04)
+- [x] 08-02-PLAN.md — Relocate `ErrorPolicy` to `events_handler/` (D-02) + `HandlerErrorPolicy` Protocol + `FailFastPolicy` (D-06) + CF-1 tripwire (`should_trip`/`classify_failure`/`_POLICY`/`record_failure`, D-07/D-11) + `ErrorHandler` consumer with two-guard terminal safety + `state.last_error` persist (D-01/D-17) (ERR-01/02/03/04)
 
 **Wave 3** *(blocked on 08-02)*
 
@@ -438,7 +438,7 @@ P1 and P2 have no dependencies and can start in parallel.
 | 6. LiveRunner + Factory + Facade Shrink | v1.8 | 7/7 | Complete    | 2026-07-13 |
 | 6.1 (INSERTED). Seam Cleanup | v1.8 | 4/4 | Complete    | 2026-07-14 |
 | 7. Safety + Reconciliation + Stream Recovery | v1.8 | 6/6 | Complete    | 2026-07-14 |
-| 8. Error Subsystem | v1.8 | 1/3 | In Progress|  |
+| 8. Error Subsystem | v1.8 | 2/3 | In Progress|  |
 | 9 ★. Runtime-Config Platform | v1.8 | 0/TBD | Not started | - |
 | 10 ★. Strategies Registry | v1.8 | 0/TBD | Not started | - |
 | 11 ★. Multi-Portfolio-Live | v1.8 | 0/TBD | Not started | - |
