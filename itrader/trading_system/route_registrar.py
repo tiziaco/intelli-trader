@@ -15,12 +15,17 @@ backtest ``EventHandler`` keeps the untouched base literal (empty ``UNIVERSE_*``
 so the backtest per-tick path is inert by construction (proven by
 ``tests/integration/test_okx_inertness.py``).
 
-Registered set = the BUSINESS/live routes ONLY (D-10/D-23): ``UNIVERSE_POLL``,
+Registered set = the BUSINESS/live routes (D-10/D-23): ``UNIVERSE_POLL``,
 ``UNIVERSE_UPDATE``, ``STRATEGY_COMMAND``, ``BARS_LOADED``, ``BARS_LOAD_FAILED``,
-and ``FILL`` (appended). The CONTROL-plane routes are deliberately NOT registered
-here — their consumers do not exist yet (P7 ``SafetyController`` / stream recovery,
-P9 config); they populate through THIS same declarative registrar when those
-consumers land (construction-time declaration, never runtime mutation — LR-16).
+and ``FILL`` (appended) — PLUS the CONTROL-plane routes ``STREAM_STATE`` /
+``CONNECTOR_FATAL`` (SAFE-03/§11c, P7). The connector's asyncio loop puts a
+``StreamStateEvent`` / ``ConnectorFatalEvent`` on the bus; these routes actuate them
+on the engine thread: ``STREAM_STATE(down) -> SafetyController.pause_submission``,
+``STREAM_STATE(up) -> StreamRecoveryHandler.on_reconnect``, ``CONNECTOR_FATAL ->
+SafetyController.halt``. The safety + stream-recovery collaborators are injected at
+construction (build_live_system, P7); routing stays a construction-time declaration,
+never a runtime mutation (LR-16). The P9 ``CONFIG_UPDATE`` route populates the same way
+when its consumer lands.
 
 Load-bearing ordering (D-03b):
 - ``BARS_LOADED`` = strategies FIRST (warm indicators) THEN universe (absorb ring +
@@ -35,7 +40,7 @@ Indentation: 4 SPACES (matches ``live_trading_system.py`` — the facade whose
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from itrader.core.enums import EventType
 
@@ -60,9 +65,18 @@ class LiveRouteRegistrar:
         self,
         strategies_handler: "StrategiesHandler",
         universe_handler: "UniverseHandler",
+        *,
+        safety: Any,
+        stream_recovery: Any,
     ) -> None:
         self._strategies_handler = strategies_handler
         self._universe_handler = universe_handler
+        # SAFE-03/§11c: the CONTROL-plane actuators (injected by build_live_system).
+        # ``safety`` is the SafetyController (pause_submission / halt); ``stream_recovery``
+        # is the StreamRecoveryHandler (on_reconnect). Held so the STREAM_STATE /
+        # CONNECTOR_FATAL routes below resolve to a bound method at install().
+        self._safety = safety
+        self._stream_recovery = stream_recovery
 
     def install(self, event_handler: "EventHandler") -> None:
         """Install the BUSINESS/live routes into ``event_handler`` ONCE (no runtime mutation).
@@ -99,7 +113,35 @@ class LiveRouteRegistrar:
         # already reflects the settled (flat) position for detach-on-flat.
         routes[EventType.FILL].append(self._universe_handler.on_fill)
 
-        # The CONTROL-plane routes are deliberately NOT registered here (D-23): their
-        # consumers do not exist yet (P7 safety/stream-recovery, P9 config). They
-        # populate through THIS same declarative registrar when those consumers land
-        # — a construction-time declaration, never a runtime mutation (LR-16).
+        # CONTROL-plane routes (SAFE-03/§11c, P7): the connector's asyncio loop puts a
+        # StreamStateEvent / ConnectorFatalEvent on the bus (never touching engine state
+        # directly); these engine-thread routes actuate them. LIST ORDER = EXECUTION ORDER
+        # (D-03b); SET entries, never runtime mutation (LR-16). Unrouted CONTROL types
+        # still raise NotImplementedError in EventHandler._dispatch (no silent drop).
+        routes[EventType.STREAM_STATE] = [self._on_stream_state]
+        routes[EventType.CONNECTOR_FATAL] = [self._on_connector_fatal]
+
+    def _on_stream_state(self, event: Any) -> None:
+        """STREAM_STATE CONTROL consumer (SAFE-03/§11c): up -> resume, down -> pause.
+
+        ``up=True`` (a venue stream reconnected) drives the engine-thread reconnect-resume
+        I/O (``StreamRecoveryHandler.on_reconnect`` — missed-fill catch-up + REST snapshot +
+        all-streams-healthy gate -> resume). ``up=False`` (a disconnect) reversibly pauses
+        NEW order submission (``SafetyController.pause_submission``). The connector loop only
+        emitted the event; all reaction (incl. any blocking venue I/O) runs HERE, on the
+        engine thread (BUS-03 / Pitfall 9).
+        """
+        if event.up:
+            self._stream_recovery.on_reconnect()
+        else:
+            self._safety.pause_submission('paused-on-disconnect')
+
+    def _on_connector_fatal(self, event: Any) -> None:
+        """CONNECTOR_FATAL CONTROL consumer (SAFE-03/§11c): freeze-in-place halt.
+
+        The connector hit an unrecoverable condition and put a ``ConnectorFatalEvent``
+        carrying a FIXED reason literal (V7 secret-scrub — never str(exc)). Actuated on the
+        engine thread as ``SafetyController.halt(reason)`` so the blocking durable
+        ``record_halt`` write runs off the connector asyncio loop (Pitfall 9).
+        """
+        self._safety.halt(event.reason)
