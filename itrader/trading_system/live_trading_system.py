@@ -1,12 +1,10 @@
 import threading
 from datetime import datetime, UTC
-from decimal import Decimal
 from typing import Optional, Dict, Any, Callable, TYPE_CHECKING
 
 from itrader.core.enums import HaltReason, SystemStatus
 from itrader.core.exceptions import StateError
 from itrader.outils.time_parser import to_timedelta
-from itrader.portfolio_handler.reconcile import is_within_single_unit_tolerance
 from itrader.trading_system.alert_sink import LogAlertSink
 from itrader.trading_system.venue_spec import build_venue_spec
 # 06.1-04 (SEAM-04/D-13): pure imports HOISTED to module top. Safe now because the
@@ -293,92 +291,6 @@ class LiveTradingSystem:
     def _on_loop_error(self, exc: BaseException) -> None:
         """LiveRunner loop catch-all hook (RUN-02/D-04): count a loop-level error."""
         self._increment_error_count()
-
-    def _link_venue_account_to_portfolios(self) -> None:
-        """Link the venue-cached account into the active live portfolio (WR-02).
-
-        The ``VenueAccount`` is a FIRST-CLASS KEYED entity — one venue sub-account
-        (AccountId), owning that sub-account's balance / available / positions
-        cache — NOT a shared singleton. Assigning the SAME ``self._venue_account``
-        instance to every active portfolio conflates their buying power and
-        positions (``_compare_symbol_drift`` would read one venue truth for all)
-        and silently discards each portfolio's prior ``SimulatedAccount`` ledger.
-
-        Real multi-portfolio-live needs a per-portfolio ``VenueAccount`` resolved
-        by venue sub-account, with position attribution by clOrdId/tag — a bigger
-        design, correctly DEFERRED. Until it exists, FAIL LOUD here on MORE THAN
-        ONE active portfolio: refuse to share one venue account across portfolios
-        so a second portfolio can never silently mis-attribute buying power /
-        positions or have its ``SimulatedAccount`` ledger discarded. A
-        ``RuntimeError`` (not a strippable ``assert``) is used so the guard holds
-        even under ``python -O``. Zero active portfolios is a benign no-op (a
-        system may start before any portfolio is added — nothing to attribute);
-        exactly one is the supported single-portfolio-live path (account linked).
-        """
-        active_portfolios = self.portfolio_handler.get_active_portfolios()
-        if len(active_portfolios) > 1:
-            raise RuntimeError(
-                'Live venue-account wiring supports at most one active portfolio '
-                f'(found {len(active_portfolios)}). Sharing one VenueAccount '
-                'across portfolios would conflate their buying power / positions '
-                'and discard each SimulatedAccount ledger. Multi-portfolio-live '
-                'requires a per-portfolio VenueAccount keyed by venue sub-account '
-                '(AccountId) with position attribution by clOrdId/tag — deferred '
-                'work; wire that before running more than one live portfolio.')
-        # Zero -> no-op; exactly one -> link the venue-cached account onto it.
-        for portfolio in active_portfolios:
-            portfolio.account = self._venue_account
-
-    def _run_session_baseline_guard(self) -> None:
-        """Session-start baseline guard (D-04, ARCH-2): HALT on unexplained residual.
-
-        Sequenced AFTER reconciliation and BEFORE the engine thread spawns. The
-        reconciler has already SYNCED every EXPLAINABLE delta (adopted external
-        fills, re-linked brackets, in-band adjustments); anything LEFT is a
-        base-asset residual of UNKNOWN origin — wrong sub-account wiring, a
-        crashed-session leftover, a forgotten manual deposit. Per ARCH-2
-        sub-decision 3 the engine must NEVER trade on exposure it cannot explain,
-        and it must NEVER auto-adopt that exposure. So compare the venue base-asset
-        holding against the engine's post-reconcile believed position within the
-        per-instrument dust epsilon (F/U-6 — the SAME drift.py band the on-fill
-        compare uses, resolved via the handler's instrument precision), and on ANY
-        residual mismatch call the LATCHED halt (D-05) so ``start()`` refuses
-        RUNNING. Quote-side cash is NOT asserted (deposits are legitimate funding).
-        The halt reason is a FIXED literal (never ``str(exc)`` — no venue secret can
-        leak, ASVS V7 / T-05.1-10).
-
-        The guard's halt is REAL only because 05.1-05 latched ``HALTED``: a guard
-        halt during session init cannot be clobbered back to RUNNING (the processing
-        loop's unconditional RUNNING stamp is gated by ``start()``'s ``_is_halted()``
-        refusal downstream of this call).
-        """
-        if self._venue_account is None:
-            return
-        from itrader import config as _system_config
-        symbol = _system_config.stream.okx_stream_symbol
-        venue_qty = self._venue_account.positions.get(symbol, Decimal('0'))
-        # F/U-6: reuse the per-instrument drift epsilon (the same band the on-fill
-        # drift compare keys off the wired instrument's quantity precision).
-        precision = self.portfolio_handler._drift_precision(symbol)
-        for portfolio in self.portfolio_handler.get_active_portfolios():
-            engine_position = portfolio.get_open_position(symbol)
-            engine_qty = (
-                engine_position.net_quantity if engine_position is not None
-                else Decimal('0')
-            )
-            if is_within_single_unit_tolerance(engine_qty, venue_qty, precision):
-                continue  # base-asset balance == believed position — trustworthy.
-            # Unexplained base-asset residual: NEVER auto-adopt exposure of unknown
-            # origin — latch HALT BEFORE trading (D-04/D-05). start()'s post-guard
-            # _is_halted() refusal keeps the engine from spawning the loop.
-            self.logger.error(
-                'Session-start baseline guard: unexplained base-asset residual — '
-                'halting before trading (venue exposure the engine cannot explain)',
-                symbol=symbol,
-                engine_qty=str(engine_qty),
-                venue_qty=str(venue_qty))
-            self.halt(HaltReason.BASELINE_RESIDUAL.value)
-            return
 
     # ---- Thin safety delegators (§11e) — the extracted donor bodies live on the
     # ---- injected SafetyController; the facade forwards so the ~45 external call

@@ -283,7 +283,13 @@ def test_link_venue_account_single_portfolio_assigns(monkeypatch) -> None:
     system.portfolio_handler.get_active_portfolios = MagicMock(  # type: ignore[method-assign]
         return_value=[portfolio])
 
-    system._link_venue_account_to_portfolios()
+    # WR-01/WR-03: the venue-link logic lives on the ReconciliationCoordinator now — the
+    # copy production actually runs via _build_reconciliation_coordinator()
+    # .run_startup_reconcile(). Exercise the coordinator the facade builds (mirrors the
+    # production call `account = self._venue_account; self._link_...(account)`), NOT the
+    # deleted facade copy.
+    coordinator = system._build_reconciliation_coordinator()
+    coordinator._link_venue_account_to_portfolios(venue_account)
 
     assert portfolio.account is venue_account
 
@@ -306,8 +312,11 @@ def test_link_venue_account_two_portfolios_fails_loud(monkeypatch) -> None:
     system.portfolio_handler.get_active_portfolios = MagicMock(  # type: ignore[method-assign]
         return_value=[p1, p2])
 
+    # WR-01/WR-03: fail-loud guard lives on the ReconciliationCoordinator (the copy
+    # production runs); exercise the coordinator the facade builds, not the deleted copy.
+    coordinator = system._build_reconciliation_coordinator()
     with pytest.raises(RuntimeError, match="at most one active portfolio"):
-        system._link_venue_account_to_portfolios()
+        coordinator._link_venue_account_to_portfolios(system._venue_account)
 
     # The guard raises BEFORE any assignment — no portfolio received the shared
     # venue account (each ``.account`` is an untouched auto-child mock, not it).
