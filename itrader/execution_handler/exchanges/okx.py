@@ -66,6 +66,16 @@ _CLORDID_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvw
 # reconcile, never double-settles. ccxt's okx caps a fetch_my_trades page at 100.
 _CATCHUP_TRADE_LIMIT = 100
 
+# D-10 (Phase 8): the FIXED literal message bound on the fill-translation
+# ErrorEvent emitted from BOTH drain paths (``_consume_fills`` and
+# ``catch_up_missed_fills``). Secret-scrub discipline (T-05-27 / V7): a raw venue
+# trade dict may carry request context / secrets, so the ErrorEvent binds
+# ``type(exc).__name__`` + this fixed literal ONLY — never ``str(exc)`` or the raw
+# trade payload. Classified FILL_TRANSLATION -> SETTLEMENT halt-on-first downstream
+# (08-02/08-03), closing the invisible "lost venue fill" hole (AUD-3 / T-08-03).
+_FILL_TRANSLATION_ERROR_MSG = (
+	"OKX fill translation failed — venue fill skipped, deferred to reconcile")
+
 # D-12: ccxt-unified terminal order statuses that reconcile the mirror via a
 # FillEvent — a venue-side cancel/expiry the engine did NOT itself command (an OKX
 # MMP cancel, a post-only reject, a GTD expiry). ``closed`` (FILLED) is deliberately
@@ -670,10 +680,22 @@ class OkxExchange(AbstractExchange):
 				# A single malformed trade must not abort the remaining catch-up.
 				try:
 					self._handle_trade(trade)
-				except Exception:
+				except Exception as exc:
+					# D-10: same counted-emit as the live ``_consume_fills`` drain
+					# path — a skipped catch-up fill is an equally silent settlement
+					# loss (AUD-3). Emit the FILL_TRANSLATION ErrorEvent (scrub
+					# T-05-27: TYPE + fixed literal only, never str(exc)/payload) so
+					# the miss is visible + trips SETTLEMENT halt-on-first downstream.
 					self.logger.error(
 						"OKX missed-fill catch-up translation failed — skipping trade",
 						exc_info=True)
+					self.global_queue.put(ErrorEvent(
+						time=datetime.now(timezone.utc),
+						source="okx_exchange",
+						error_type=type(exc).__name__,
+						error_message=_FILL_TRANSLATION_ERROR_MSG,
+						operation="fill-translation",
+						severity=ErrorSeverity.ERROR))
 		# Floor consumed — a subsequent disconnect re-arms it (idempotent re-run otherwise).
 		self._disconnect_ts_ms = None
 
@@ -760,9 +782,22 @@ class OkxExchange(AbstractExchange):
 				# matching the on_order boundary policy — the stream keeps draining.
 				try:
 					self._handle_trade(trade)
-				except Exception:
+				except Exception as exc:
+					# D-10: a skipped venue fill is a SILENT settlement loss (AUD-3) —
+					# emit a counted ErrorEvent onto the ERROR route (funnels to
+					# FILL_TRANSLATION -> SETTLEMENT halt-on-first, 08-02/08-03), not
+					# log-only. Off-thread (connector loop) MPSC-safe put (D-19). Scrub
+					# (T-05-27): bind the exception TYPE + a fixed literal ONLY, never
+					# str(exc) or the raw trade payload. Keep the local exc_info log.
 					self.logger.error(
 						"OKX fill translation failed — skipping trade", exc_info=True)
+					self.global_queue.put(ErrorEvent(
+						time=datetime.now(timezone.utc),
+						source="okx_exchange",
+						error_type=type(exc).__name__,
+						error_message=_FILL_TRANSLATION_ERROR_MSG,
+						operation="fill-translation",
+						severity=ErrorSeverity.ERROR))
 
 	async def _stream_orders(self) -> None:
 		"""Consume the order-status stream under the reconnect supervisor (status only).
