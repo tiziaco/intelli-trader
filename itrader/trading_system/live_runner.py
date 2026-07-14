@@ -13,14 +13,19 @@ Composition, not inheritance:
 - D-07: takes an injected ``ErrorPolicy`` (the minimal live publish-and-continue
   seam). LiveRunner HOLDS it for the wiring layer; it does NOT itself install the
   ``EventHandler._on_handler_error`` monkeypatch — that wiring is 06-05/D-07.
-- D-08: takes an injected ``dispatch_gate`` callback (wired in 06-05 to the
-  facade's untouched ``_dispatch_live``; P7 repoints it to ``SafetyController`` —
-  the D-04 method BODIES stay put).
-- D-04: the per-tick post-dispatch side-effects (dispatch-stats, record-bar-metrics,
-  resume-after-reconnect, halt-after-connector-fatal) are reached via INJECTED
-  CALLABLES, so the facade's ``_dispatch_live``/``_maybe_resume_after_reconnect``/
-  ``_maybe_halt_after_connector_fatal``/``_record_bar_metrics``/``_update_stats``
-  method BODIES stay in ``live_trading_system.py`` (this plan does NOT touch them).
+- D-08: takes an injected ``dispatch_gate`` callback (P7 repoints it to
+  ``SafetyController.gate_and_dispatch``).
+- D-06 (SAFE-03 / A3): takes an injected ``pre_submit(event) -> bool`` callable — the
+  ``PreTradeThrottle`` at the ORDER->execution boundary, invoked AHEAD of the dispatch
+  gate for ORDER events. When it returns ``False`` (the throttle rejected the order and
+  already emitted ``FillEvent(REFUSED)``) the runner SKIPS the dispatch gate for that event.
+- D-04: the surviving per-tick post-dispatch side-effects (dispatch-stats,
+  record-bar-metrics) are reached via INJECTED CALLABLES, so the facade's
+  ``_update_stats`` / ``_record_bar_metrics`` bodies stay in ``live_trading_system.py``.
+  P7 DELETED the ``resume-after-reconnect`` / ``halt-after-connector-fatal`` per-tick
+  drain hooks — the connector stream/fatal handoff is now CONTROL events (STREAM_STATE /
+  CONNECTOR_FATAL) that wake ``bus.get()`` naturally and route on the engine thread, so
+  the flag side-channel + its per-tick drains are gone (Pitfall 3).
 
 ``queue_timeout``/``max_idle_time`` are INJECTED config/spec values (D-06), read
 from config by the caller — NOT constructor knobs the caller must remember /
@@ -38,6 +43,7 @@ import threading
 from datetime import datetime, UTC
 from typing import Any, Callable, Optional
 
+from itrader.core.enums import EventType
 from itrader.events_handler.bus import EventBus
 from itrader.logger import get_itrader_logger
 from itrader.trading_system.error_policy import ErrorPolicy
@@ -62,12 +68,12 @@ class LiveRunner:
         dispatch_gate: Callable[[Any], None],
         update_stats: Callable[[str], None],
         record_bar_metrics: Callable[[Any], None],
-        resume_after_reconnect: Callable[[], None],
-        halt_after_connector_fatal: Callable[[], None],
+        pre_submit: Callable[[Any], bool],
         queue_timeout: float,
         max_idle_time: float,
         on_loop_start: Optional[Callable[[], None]] = None,
         on_loop_error: Optional[Callable[[BaseException], None]] = None,
+        on_order_throttle_rejected: Optional[Callable[[], None]] = None,
     ) -> None:
         """
         Parameters
@@ -85,10 +91,13 @@ class LiveRunner:
             The composed poll-timer worker (D-05, has-a). Started/stopped alongside
             the drain thread.
         dispatch_gate : Callable[[event], None]
-            The D-08 injected dispatch gate (06-05 -> facade ``_dispatch_live``;
-            P7 -> ``SafetyController``). Called per dequeued event.
-        update_stats, record_bar_metrics, resume_after_reconnect,
-        halt_after_connector_fatal : Callable
+            The D-08 injected dispatch gate (P7 -> ``SafetyController.gate_and_dispatch``).
+            Called per dequeued event (unless ``pre_submit`` rejected an ORDER).
+        pre_submit : Callable[[event], bool]
+            The D-06/A3 pre-submit throttle (``PreTradeThrottle.allow``), invoked for
+            ORDER events AHEAD of the dispatch gate. ``False`` == rejected (the throttle
+            already emitted ``FillEvent(REFUSED)``), so the runner SKIPS the gate for it.
+        update_stats, record_bar_metrics : Callable
             The D-04 per-tick post-dispatch hooks — the facade method BODIES stay
             put; the loop calls them via these injected callables.
         queue_timeout, max_idle_time : float
@@ -98,6 +107,11 @@ class LiveRunner:
             stamp). Injected so the facade status/stats bookkeeping stays put.
         on_loop_error : Callable[[BaseException], None], optional
             Loop catch-all hook (facade: ``_stats['errors_count'] += 1``).
+        on_order_throttle_rejected : Callable[[], None], optional
+            WR-02 hook: a pre-submit-throttle-REFUSED ORDER. Called INSTEAD of
+            ``update_stats`` for a rejected order so the facade counts it as processed
+            but NOT executed (facade: ``_stats['orders_throttle_rejected'] += 1``),
+            never bumping ``orders_executed`` for an order that never executed.
         """
         self.logger = get_itrader_logger().bind(component="LiveRunner")
         self._bus = bus
@@ -108,12 +122,12 @@ class LiveRunner:
         self._dispatch_gate = dispatch_gate
         self._update_stats = update_stats
         self._record_bar_metrics = record_bar_metrics
-        self._resume_after_reconnect = resume_after_reconnect
-        self._halt_after_connector_fatal = halt_after_connector_fatal
+        self._pre_submit = pre_submit
         self._queue_timeout = queue_timeout
         self._max_idle_time = max_idle_time
         self._on_loop_start = on_loop_start
         self._on_loop_error = on_loop_error
+        self._on_order_throttle_rejected = on_order_throttle_rejected
         self._thread: Optional[threading.Thread] = None
 
     def _run_loop(self) -> None:
@@ -138,42 +152,43 @@ class LiveRunner:
                     event = self._bus.get(timeout=self._queue_timeout)
                     last_event_time = datetime.now(UTC)
 
-                    # WR-09: dispatch the dequeued event DIRECTLY through the
-                    # event handler's routing (the injected D-08 dispatch gate).
-                    # 05-04 (D-02): the gate routes through the freeze-in-place halt
-                    # gate so a HALTED engine suppresses NEW order submission
-                    # (SIGNAL/ORDER) while BAR/FILL/ERROR streaming + reconciling +
-                    # persisting continue to drain.
-                    self._dispatch_gate(event)
-
-                    # Update statistics (D-04: facade _update_stats body stays put).
-                    self._update_stats(
-                        event.type.name if hasattr(event, 'type') else 'UNKNOWN')
+                    # D-06 (SAFE-03 / A3): the pre-submit throttle fires at the
+                    # ORDER->execution boundary, AHEAD of the dispatch gate. It meters
+                    # ONLY ORDER events (the throttle's own shared classifier bypasses
+                    # CANCEL/PROTECTIVE uncounted); a rejected ORDER already emitted a
+                    # FillEvent(REFUSED), so SKIP the dispatch gate for it. Non-ORDER
+                    # events go straight to the gate.
+                    rejected = (
+                        getattr(event, 'type', None) is EventType.ORDER
+                        and not self._pre_submit(event))
+                    if not rejected:
+                        # WR-09: dispatch the dequeued event through the event handler's
+                        # routing (the injected D-08 dispatch gate). 05-04 (D-02): the
+                        # gate routes through the freeze-in-place halt gate so a HALTED
+                        # engine suppresses NEW order submission (SIGNAL/ORDER) while
+                        # BAR/FILL/ERROR streaming + reconciling + persisting continue.
+                        self._dispatch_gate(event)
+                        # Update statistics (D-04: facade _update_stats body stays put).
+                        self._update_stats(
+                            event.type.name if hasattr(event, 'type') else 'UNKNOWN')
+                    elif self._on_order_throttle_rejected is not None:
+                        # WR-02: a throttle-REFUSED ORDER never executed (it emitted only
+                        # a FillEvent(REFUSED)); count it as processed-not-executed via the
+                        # dedicated hook so orders_executed is NEVER over-reported. The
+                        # hook is always wired by build_live_system; if absent, the order
+                        # is simply left uncounted (never mis-counted as executed).
+                        self._on_order_throttle_rejected()
 
                     # 05-06 (D-16 / WR-01): record the per-bar equity curve keyed on
                     # EventType.BAR (the async/best-effort path). Facade body stays
                     # put; reached via the injected hook (D-04).
                     self._record_bar_metrics(event)
 
-                    # 05-08 (D-19): resume submission on the ENGINE thread once a venue
-                    # stream reconnected — a fresh REST snapshot then clears the pause.
-                    # Facade body stays put; injected hook (D-04, Pitfall 9).
-                    self._resume_after_reconnect()
-
-                    # 05.3-08 (D-21 / WR-02): drain a pending connector-fatal escalation
-                    # on the ENGINE thread — the blocking durable record_halt write runs
-                    # in the facade body, never on the connector asyncio loop (Pitfall 9).
-                    self._halt_after_connector_fatal()
-
                 except queue.Empty:
-                    # 05-08 (D-19): drain a pending resume even when the queue is idle —
-                    # a reconnect during a quiet spell must still resume submission.
-                    self._resume_after_reconnect()
-
-                    # 05.3-08 (D-21 / WR-02): drain a pending connector-fatal even when
-                    # the queue is idle — a fatal during a quiet spell must still halt.
-                    self._halt_after_connector_fatal()
-
+                    # P7: the connector stream/fatal handoff is now CONTROL events
+                    # (STREAM_STATE / CONNECTOR_FATAL) that wake bus.get() naturally, so
+                    # there is no idle-spell flag to drain here (the old per-tick resume /
+                    # halt drains are deleted — Pitfall 3).
                     # No events in queue, check if we've been idle too long
                     current_time = datetime.now(UTC)
                     idle_time = (current_time - last_event_time).total_seconds()

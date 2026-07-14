@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from itrader.config.safety import SafetySettings
 from itrader.config.settings import Settings
 from itrader.config.stream import FeedProviderSettings, StreamSettings
 
@@ -111,6 +112,14 @@ class SystemConfig(BaseModel):
     # ``StreamSettings()`` / ``FeedProviderSettings()`` default-constructions.
     stream: StreamSettings = Field(default_factory=StreamSettings)
     feed_provider: FeedProviderSettings = Field(default_factory=FeedProviderSettings)
+
+    # SAFE-06 / D-07/D-13/D-14: eager config home for the pre-trade safety caps.
+    # config/safety.py imports only pydantic/stdlib (no ccxt/async/sql), so this
+    # eager field stays on the backtest import graph WITHOUT regressing inertness —
+    # exactly as the stream/feed_provider fields above. Static caps only here; the P9
+    # runtime-mutation allowlist SHAPES around SafetySettings (no ConfigUpdateEvent
+    # wiring in P7).
+    safety: SafetySettings = Field(default_factory=SafetySettings)
 
     # D-07: eager runtime env layer. Constructing Settings reads ITRADER_* env but
     # builds NO SqlSettings (Settings carries no DB fields — the DB surface lives

@@ -108,7 +108,7 @@ class PortfolioConfigurationError(ConfigurationError):
 
 class PortfolioValidationError(ValidationError):
     """Raised when portfolio validation fails."""
-    
+
     def __init__(self, portfolio_id: PortfolioIdLike, validation_type: str, details: Optional[str] = None):
         self.portfolio_id = portfolio_id
         self.validation_type = validation_type
@@ -117,3 +117,8 @@ class PortfolioValidationError(ValidationError):
         if details:
             message += f": {details}"
         super().__init__(validation_type, str(portfolio_id), message)
+
+
+class ReconciliationError(ITraderError):
+    """A venue resting-order payload is missing/uncoercible where reconciliation needs an id (CF-7/SAFE-05)."""
+    pass

@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: — Live System Refactor & Live-Readiness Hardening
-current_phase: 7
-current_phase_name: Safety + Reconciliation + Stream Recovery
+current_phase: 8
+current_phase_name: Error Subsystem
 status: verifying
-stopped_at: Completed 06.1-04-PLAN.md (final plan of phase 06.1)
-last_updated: "2026-07-14T11:52:36.465Z"
+stopped_at: Phase 07 complete (6/6 plans, verified 5/5)
+last_updated: "2026-07-14T18:45:52.655Z"
 last_activity: 2026-07-14
-last_activity_desc: Phase 06.1 complete, transitioned to Phase 7
+last_activity_desc: Phase 07 complete, transitioned to Phase 8
 progress:
   total_phases: 9
-  completed_phases: 6
-  total_plans: 26
-  completed_plans: 26
-  percent: 67
+  completed_phases: 7
+  total_plans: 32
+  completed_plans: 32
+  percent: 78
 ---
 
 # Project State
@@ -26,19 +26,19 @@ See: .planning/PROJECT.md (Current Milestone: v1.8 — Live System Refactor & Li
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct,
 deterministic, cross-validated numbers (oracle **134 / `46189.87730727451`**; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 shipped a live operating mode (paper-first on OKX) without disturbing that oracle.
-**Current focus:** Phase 06.1 — seam-cleanup-make-build-live-system-consume-the-shared-compo
+**Current focus:** Phase 07 — Safety + Reconciliation + Stream Recovery
 thin ~200-line facade over focused, venue-parametrized, FastAPI-ready collaborators — **without
 disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI itself is out of scope
 (LR-01). Full scope: core refactor (P1–P8 + P12) + the three ★ feature-adds (P9–P11).
 
 ## Current Position
 
-Phase: 7 — Safety + Reconciliation + Stream Recovery
+Phase: 8 — Error Subsystem
 Plan: Not started
 Status: Phase complete — ready for verification
-Last activity: 2026-07-14 — Phase 06.1 complete, transitioned to Phase 7
+Last activity: 2026-07-14 — Completed quick task 260714-v6n: Phase 07 review IN-01 (self-guard PreTradeThrottle)
 
-Progress: [████░░░░░░] 44%
+Progress: [███████░░░] 78%
 
 ## Milestone Gate (v1.8 — applies to EVERY phase)
 
@@ -168,6 +168,9 @@ P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 - [Phase 06.1]: 06.1-03 (SEAM-03/D-11): typed frozen VenueSpec (execution_venue/data_provider/account_id) + shared build_venue_spec builder replace the twice-written SimpleNamespace fake-spec; build_venue_spec is the SOLE home of the {okx,paper}->okx default-provider map, called by BOTH for_exchange and build_live_system (inline specs+maps at :274-283/:1605-1613 deleted, SimpleNamespace import dropped); feeds assemble_venue only, never compose_engine (spec-free since D-04); spec-equality unit test proves the two entry points cannot drift; oracle byte-exact 134/46189.87730727451 + inertness green, mypy clean
 - [Phase ?]: D-12: trading_system barrel drops the live surface entirely (backtest-only); live consumers import from the live submodule directly
 - [Phase ?]: D-13: pure imports (SessionInitializer/EngineContext/UniverseHandlerConfig) hoisted to live_trading_system module top; heavy ccxt.pro/SQL/venue imports stay lazy inside build_live_system
+- [Phase 07]: OrderRiskRole is enum-only in core/enums/order.py; classify() defers to SafetyController (Plan 03) — D-16 — one-source-of-truth risk vocabulary shared by gate + throttle
+- [Phase 07]: ConnectorFatalEvent.reason is a fixed-literal str, never a stringified exception/payload — V7 secret-scrub (T-07-01); enforced by grep-0 in control.py
+- [Phase 07]: PreTradeThrottle computes D-10 notional off OrderEvent.price (limit for LIMIT, decision-mark estimate for MARKET/STOP) — no separate feed injection — The order layer already stamps the mark onto OrderEvent.price, so a feed dependency would add untested surface for no correctness gain
 
 ### Pending Todos
 
@@ -214,6 +217,7 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 | 260713-ncq | Centralize live stream/feed/DB settings under SystemConfig — inject StreamSettings/FeedProviderSettings (kill 10 inline default-constructions + _STREAM_SETTINGS global); DB gate via lazy SqlSettings() probe instead of os.getenv | 2026-07-13 | 33390772 | [260713-ncq-centralize-live-stream-feed-db-settings-](./quick/260713-ncq-centralize-live-stream-feed-db-settings-/) |
 | 260713-wr1 | Delete vacuous WR-01 subscription/membership guard in session_initializer.py (unreachable dead code — membership is the sole subscription source since 06-02/D-05); replace with a TODO for the real future-feature guard condition | 2026-07-13 | dc1f5cb8 | (fast — no dir) |
 | 260713-phm | Fix Phase 06 review WR-02 (typed StateError guard above start() try-block so an un-wired LiveTradingSystem fails loudly, not masked as generic ERROR) + IN-02 (LiveRunner.stop() warns when the drain thread outlives the join timeout) | 2026-07-13 | a9f3b5ac | [260713-phm-fix-phase-06-review-findings-wr-02-typed](./quick/260713-phm-fix-phase-06-review-findings-wr-02-typed/) |
+| 260714-v6n | Fix Phase 07 review IN-01: self-guard PreTradeThrottle.allow() with an ORDER-only top-gate (Option B) + remove now-dead None-guard in _exceeds_notional (Option A) — throttle no longer relies on live_runner's call-site type gate for safety | 2026-07-14 | baa125f8 | [260714-v6n-fix-phase-07-review-in-01-make-pretradet](./quick/260714-v6n-fix-phase-07-review-in-01-make-pretradet/) |
 | Phase 06 P01 | 4 min | 2 tasks | 2 files |
 | Phase 06 P02 | 12 min | 3 tasks | 3 files |
 | Phase 06 P03 | 6min | 1 tasks | 1 files |
@@ -225,6 +229,12 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 | Phase 06.1 P02 | 18 | 3 tasks | 1 files |
 | Phase 06.1 P03 | 4 | 3 tasks | 4 files |
 | Phase 06.1 P04 | 6 | 3 tasks | 3 files |
+| Phase 07 P01 | 12 min | 3 tasks | 10 files |
+| Phase 07-safety-reconciliation-stream-recovery P02 | 15 min | 2 tasks | 7 files |
+| Phase 07-safety-reconciliation-stream-recovery P03 | 6min | 2 tasks | 4 files |
+| Phase 07 P04 | 6 min | 2 tasks | 4 files |
+| Phase 07 P05 | 20 min | 1 tasks | 2 files |
+| Phase 07 P06 | 45min | 3 tasks | 15 files |
 
 ## Deferred Items
 
@@ -273,11 +283,11 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-14T11:24:28.753Z
-Stopped at: Completed 06.1-04-PLAN.md (final plan of phase 06.1)
+Last session: 2026-07-14T15:29:45.425Z
+Stopped at: Completed 07-04-PLAN.md
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
-Resume file: .planning/phases/06.1-seam-cleanup-make-build-live-system-consume-the-shared-compo/06.1-CONTEXT.md
+Resume file: None
 Carried todo: 14 pending todos in `todos/pending/` (10 fold into v1.8 as CF-1..CF-10; `v17-residual-carryforward.md`
 is the index; the substantive open item is `margin-equity-double-counts-notional-wr01`, owner-gated).
 

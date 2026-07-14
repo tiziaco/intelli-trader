@@ -19,9 +19,19 @@ Fully offline: the connector's bounded ``fetch_my_trades`` page and the trade ro
 stubbed, so the real resume drain + the real ``catch_up_missed_fills`` run without a socket.
 """
 
+import queue
+import threading
+from datetime import timedelta
+from decimal import Decimal
 from unittest.mock import MagicMock
 
+import pandas as pd
+
+from itrader.price_handler.feed.live_bar_feed import LiveBarFeed
 from itrader.trading_system.live_trading_system import LiveTradingSystem
+from itrader.trading_system.safety.stream_recovery_handler import (
+    StreamRecoveryHandler,
+)
 
 
 def _set_okx_env(monkeypatch) -> None:
@@ -32,10 +42,11 @@ def _set_okx_env(monkeypatch) -> None:
 
 
 def test_resume_drain_recovers_fill_settled_during_disconnect(monkeypatch) -> None:
-    """_maybe_resume_after_reconnect re-fetches an outage-window fill, before snapshot (D-25).
+    """StreamRecoveryHandler.on_reconnect re-fetches an outage-window fill, before snapshot (D-25).
 
-    RED on current code: the resume drain never calls ``catch_up_missed_fills``, so the
-    settled trade is never routed through ``_handle_trade`` and the assertion FAILS.
+    P7 (§11c): the reconnect-resume I/O lives on the injected StreamRecoveryHandler,
+    reached by the STREAM_STATE(up) route. It calls ``catch_up_missed_fills`` BEFORE the
+    fresh REST snapshot, so the settled trade routes through ``_handle_trade`` on resume.
     """
     _set_okx_env(monkeypatch)
     system = LiveTradingSystem.for_exchange("okx")
@@ -64,14 +75,13 @@ def test_resume_drain_recovers_fill_settled_during_disconnect(monkeypatch) -> No
     venue_account = MagicMock(name="venue_account")
     venue_account.snapshot = MagicMock(
         name="snapshot", side_effect=lambda: call_order.append("snapshot"))
-    system._venue_account = venue_account
+    system._stream_recovery._venue_account = venue_account
 
-    # Stand the system in the reconnect-resume precondition: paused on disconnect, with
-    # the connector-loop reconnect callback having flagged an engine-thread resume.
+    # Stand the system in the reconnect-resume precondition: paused on disconnect, then
+    # drive the engine-thread reconnect-resume (the STREAM_STATE(up) route target).
     system.pause_submission("paused-on-disconnect")
-    system._pending_stream_resume.set()
 
-    system._maybe_resume_after_reconnect()
+    system._stream_recovery.on_reconnect()
 
     # The outage-window trade was recovered exactly once via the resume path.
     handle_trade_spy.assert_called_once_with(settled_trade)
@@ -80,7 +90,7 @@ def test_resume_drain_recovers_fill_settled_during_disconnect(monkeypatch) -> No
     # The disconnect floor was consumed by the catch-up (idempotent re-run otherwise).
     assert exchange._disconnect_ts_ms is None
     # Resume completed — the pause is cleared.
-    assert system._is_submission_paused() is False
+    assert system._safety.is_submission_paused() is False
 
 
 def test_resume_drain_skips_catchup_when_no_okx_exchange(monkeypatch) -> None:
@@ -91,14 +101,83 @@ def test_resume_drain_skips_catchup_when_no_okx_exchange(monkeypatch) -> None:
     _set_okx_env(monkeypatch)
     system = LiveTradingSystem.for_exchange("okx")
 
-    system._okx_exchange = None  # simulate the guard's None branch
+    system._stream_recovery._okx_exchange = None  # simulate the guard's None branch
     venue_account = MagicMock(name="venue_account")
-    system._venue_account = venue_account
+    system._stream_recovery._venue_account = venue_account
 
     system.pause_submission("paused-on-disconnect")
-    system._pending_stream_resume.set()
 
-    system._maybe_resume_after_reconnect()
+    system._stream_recovery.on_reconnect()
 
     venue_account.snapshot.assert_called_once()
-    assert system._is_submission_paused() is False
+    assert system._safety.is_submission_paused() is False
+
+
+# -- CF-2: the reconnect-resume path (StreamRecoveryHandler, Plan 04) writes NO ---
+# -- LiveBarFeed ring on the engine thread (the ring backfill is loop-native only). --
+
+
+class _PausedSafety:
+    """Minimal SafetyController stand-in: paused, records the resume."""
+
+    def __init__(self) -> None:
+        self._paused = True
+        self.resumed = False
+
+    def is_submission_paused(self) -> bool:
+        return self._paused
+
+    def resume_submission(self) -> None:
+        self._paused = False
+        self.resumed = True
+
+
+def test_on_reconnect_does_no_engine_thread_ring_write_cf2() -> None:
+    """StreamRecoveryHandler.on_reconnect (engine thread) writes NO LiveBarFeed ring (CF-2).
+
+    The reconnect-resume path does catch-up + snapshot + resume on the ENGINE thread; the
+    REST ring backfill is loop-native only (connector loop via spawn_gap_backfill). Driving
+    ``on_reconnect`` on a stand-in engine thread must therefore never reach the ring writer
+    — the single-writer contract's engine-side half. Spy the feed's ``_deliver`` and assert
+    it is never called, and that ``on_reconnect`` never claims ring ownership.
+    """
+    # A real feed with a spied ring-writer; the handler must never touch it.
+    feed = LiveBarFeed(provider=None, base_timeframe=timedelta(days=1))
+    feed.bind(queue.Queue(), ["BTC/USDT"])
+    deliver_calls: list[tuple] = []
+    original_deliver = feed._deliver
+
+    def _spy_deliver(*args, **kwargs):  # type: ignore[no-untyped-def]
+        deliver_calls.append(args)
+        return original_deliver(*args, **kwargs)
+
+    feed._deliver = _spy_deliver  # type: ignore[method-assign]
+
+    # A paused safety + healthy arms so on_reconnect runs the FULL resume (catch-up +
+    # snapshot + gate -> resume) — the path that would be tempted to backfill the ring.
+    safety = _PausedSafety()
+    exchange = MagicMock(name="okx_exchange")
+    exchange.is_streaming_healthy = MagicMock(return_value=True)
+    venue_account = MagicMock(name="venue_account")
+    provider = MagicMock(name="okx_data_provider")
+    provider.is_streaming_healthy = MagicMock(return_value=True)
+    handler = StreamRecoveryHandler(
+        safety=safety,
+        okx_exchange=exchange,
+        venue_account=venue_account,
+        okx_data_provider=provider,
+    )
+
+    # Run on a stand-in ENGINE thread (NOT the connector loop).
+    engine_thread = threading.Thread(target=handler.on_reconnect, name="engine")
+    engine_thread.start()
+    engine_thread.join()
+
+    # The resume completed on the engine thread ...
+    assert safety.resumed is True
+    exchange.catch_up_missed_fills.assert_called_once()
+    venue_account.snapshot.assert_called_once()
+    # ... and NOT a single ring write happened from the engine thread (CF-2).
+    assert deliver_calls == []
+    # on_reconnect never claimed ring ownership — the loop-native path owns that seam.
+    assert feed._loop_backfill_owner is None

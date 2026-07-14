@@ -70,7 +70,9 @@ def test_durably_halted_start_refuses_before_any_venue_io(monkeypatch) -> None:
     """A durably-halted ``start()`` refuses at the TOP with zero venue I/O (D-20/WR-01)."""
     _set_okx_env(monkeypatch)
     system = LiveTradingSystem.for_exchange("okx")
-    system._halt_record_store = _UnresolvedHaltStore("drift")
+    # P7 (§11b): the durable halt store + check_durable_halt_on_start live on the injected
+    # SafetyController now — inject the always-unresolved double there.
+    system._safety._halt_record_store = _UnresolvedHaltStore("drift")
 
     # Spy/stub EVERY call start() could make before the refusal. On the fixed (top-gate)
     # code none of these run; on the pre-fix (late-gate) code they all run before refusing.
@@ -81,8 +83,15 @@ def test_durably_halted_start_refuses_before_any_venue_io(monkeypatch) -> None:
     system._okx_exchange.connect = MagicMock(
         name="exchange.connect", return_value=SimpleNamespace(success=True))
     system._venue_account = MagicMock(name="venue_account")
-    system._link_venue_account_to_portfolios = MagicMock(name="_link_venue_account")
-    system._run_session_baseline_guard = MagicMock(name="_run_session_baseline_guard")
+    # WR-01/WR-03: the venue-link + baseline-guard logic no longer lives on the facade —
+    # production reconciles exclusively via _build_reconciliation_coordinator()
+    # .run_startup_reconcile() (the coordinator owns the link + guard copies). Spy the
+    # builder so we can assert the durable-halt top-gate short-circuits reconcile BEFORE
+    # the coordinator is ever constructed (a meaningful check; the old
+    # _link_venue_account_to_portfolios/_run_session_baseline_guard asserts were vacuous —
+    # production never called those dead facade methods).
+    system._build_reconciliation_coordinator = MagicMock(
+        name="_build_reconciliation_coordinator")
 
     try:
         started = system.start()
@@ -99,8 +108,9 @@ def test_durably_halted_start_refuses_before_any_venue_io(monkeypatch) -> None:
         system._okx_exchange.connect.assert_not_called()
         system._venue_account.snapshot.assert_not_called()
         system._venue_account.start_streaming.assert_not_called()
-        system._link_venue_account_to_portfolios.assert_not_called()
-        system._run_session_baseline_guard.assert_not_called()
+        # The top-gate refuses BEFORE reconcile: the coordinator is never even built, so
+        # its run_startup_reconcile (venue link + baseline guard) never runs (WR-03).
+        system._build_reconciliation_coordinator.assert_not_called()
     finally:
         system.stop()
 
@@ -115,7 +125,7 @@ def test_healthy_start_still_runs_session_init_when_no_durable_halt(monkeypatch)
     _set_okx_env(monkeypatch)
     system = LiveTradingSystem.for_exchange("okx")
     # No durable store -> the gate is skipped entirely (in-memory fallback).
-    system._halt_record_store = None
+    system._safety._halt_record_store = None
 
     system._okx_connector.connect = MagicMock(name="connector.connect")
     system.feed.warmup = MagicMock(name="feed.warmup")
@@ -123,8 +133,6 @@ def test_healthy_start_still_runs_session_init_when_no_durable_halt(monkeypatch)
     system._okx_exchange.connect = MagicMock(
         name="exchange.connect", return_value=SimpleNamespace(success=True))
     system._venue_account = MagicMock(name="venue_account")
-    system._link_venue_account_to_portfolios = MagicMock(name="_link_venue_account")
-    system._run_session_baseline_guard = MagicMock(name="_run_session_baseline_guard")
 
     try:
         started = system.start()

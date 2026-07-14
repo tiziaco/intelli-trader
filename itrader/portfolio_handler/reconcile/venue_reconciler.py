@@ -37,6 +37,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
+from itrader.core.exceptions import ReconciliationError
 from itrader.core.money import to_money
 from itrader.events_handler.events import FillEvent, OrderEvent
 from itrader.logger import get_itrader_logger
@@ -408,7 +409,15 @@ class VenueReconciler:
                 return False
             # Confident re-link: persist the venue id onto the leg (Open Question 3
             # population) so the next restart re-links by id, and resume OCO.
-            venue_id = str(matched["id"])
+            # CF-7/SAFE-05: fail loud (typed ReconciliationError) if the matched venue
+            # resting payload carries no coercible 'id' — never a silent KeyError, never
+            # a naked re-link. The message references ONLY the leg id, never the full
+            # matched dict, so no venue payload leaks (ASVS V7 / T-07-09).
+            raw_id = matched.get("id")
+            if raw_id is None:
+                raise ReconciliationError(
+                    f"venue resting order for leg {child.id} has no 'id' — cannot re-link OCO")
+            venue_id = str(raw_id)
             if child.venue_order_id != venue_id:
                 child.venue_order_id = venue_id
                 self._store.update_order(child)

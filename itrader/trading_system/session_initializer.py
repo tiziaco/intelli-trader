@@ -78,12 +78,20 @@ class SessionInitializer:
         venue_exchange: "AbstractExchange | None",
         data_provider: Any = None,
         freeze_gate: Callable[[], bool],
+        safety: Any,
+        stream_recovery: Any,
     ) -> None:
         self._engine = engine
         self._universe_config = universe_config
         self._venue_exchange = venue_exchange
         self._data_provider = data_provider
         self._freeze_gate = freeze_gate
+        # SAFE-03/§11c: the CONTROL-plane actuators threaded to the LiveRouteRegistrar so
+        # it can SET the STREAM_STATE / CONNECTOR_FATAL routes to the engine-thread
+        # SafetyController.pause_submission / StreamRecoveryHandler.on_reconnect /
+        # SafetyController.halt.
+        self._safety = safety
+        self._stream_recovery = stream_recovery
 
     def initialize(self) -> "UniverseHandler":
         """Wire the live session in donor order; return the built ``UniverseHandler``.
@@ -163,10 +171,15 @@ class SessionInitializer:
         # SafetyController in P7 (mirrors the D-08 dispatch-gate pattern).
         universe_handler.set_freeze_gate(self._freeze_gate)
 
-        # (5) Compose the BUSINESS/live routes via the central declarative registrar
-        # (06-05 Task 1) — list order = execution order; no runtime mutation (LR-16).
+        # (5) Compose the BUSINESS/live routes + the SAFE-03 CONTROL-plane routes via the
+        # central declarative registrar — list order = execution order; no runtime
+        # mutation (LR-16). The safety + stream_recovery collaborators resolve the
+        # STREAM_STATE / CONNECTOR_FATAL routes (§11c).
         LiveRouteRegistrar(
-            engine.strategies_handler, universe_handler).install(
-                engine.event_handler)
+            engine.strategies_handler,
+            universe_handler,
+            safety=self._safety,
+            stream_recovery=self._stream_recovery,
+        ).install(engine.event_handler)
 
         return universe_handler

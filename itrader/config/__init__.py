@@ -48,6 +48,10 @@ from .stream import (
     FeedProviderSettings,
     StreamSettings,
 )
+from .safety import (
+    SafetySettings,
+    ThrottleSettings,
+)
 from .merge import deep_merge
 from .exchange import (
     ConnectionSettings,
@@ -92,6 +96,9 @@ __all__ = [
     # Stream / feed-provider domain
     "StreamSettings",
     "FeedProviderSettings",
+    # Pre-trade safety domain
+    "SafetySettings",
+    "ThrottleSettings",
     # Shared config helpers
     "deep_merge",
     # System domain

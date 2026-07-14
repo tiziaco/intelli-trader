@@ -113,6 +113,17 @@ class LiveBarFeed(BarFeed):
         # ``_replaying_backfill`` property (getter/setter) so the three call sites
         # (read / set-True / set-False) stay unchanged.
         self._replay_local = threading.local()
+        # CF-2 (T-07-03, single-writer ring contract): the thread ident that OWNS an
+        # in-flight LOOP-NATIVE backfill replay, or None when no loop-native backfill is
+        # active. Unlike ``_replaying_backfill`` (thread-local, "IS THIS thread replaying"),
+        # this is a SHARED instance attr readable from ANY thread — so the ring-writer path
+        # (_deliver) can fail loud if a DIFFERENT (engine) thread reaches the ring append
+        # while the connector loop owns a backfill. Set on the connector-loop replay thread
+        # in _spawn_loop_native_gap_backfill and cleared in its finally. A plain attribute
+        # read/write is a GIL-atomic tripwire (a fail-loud assertion, not a correctness
+        # lock) — the whole feed is single-writer by contract; this catches a violation
+        # loudly rather than silently corrupting the bar stream (concurrent writers).
+        self._loop_backfill_owner: Optional[int] = None
         # Run-path bindings (mirror bar_feed.py:334-335); set via bind().
         self.global_queue: "Optional[queue.Queue[Any]]" = None
         self.membership: list[str] = []
@@ -530,6 +541,12 @@ class LiveBarFeed(BarFeed):
             # str(payload)) so it escalates to a connector halt instead. The _replaying_backfill
             # guard is the shape-independent backstop for a hole INSIDE the range.
             self._replaying_backfill = True
+            # CF-2 (T-07-03): publish THIS (connector loop) thread as the single ring
+            # writer for the duration of the loop-native replay. _deliver's
+            # _assert_ring_writer_single_thread reads this shared ident and fails loud if a
+            # DIFFERENT (engine) thread reaches the ring append while the backfill is
+            # in-flight — enforcing the single-writer contract. Cleared in the finally.
+            self._loop_backfill_owner = threading.get_ident()
             try:
                 first_replayed = False
                 for cb in bars:
@@ -569,6 +586,7 @@ class LiveBarFeed(BarFeed):
                 self._deliver(sym, tf_str, t, closed_bar)
             finally:
                 self._replaying_backfill = False
+                self._loop_backfill_owner = None
 
         self._provider.spawn_gap_backfill(
             sym, tf_str, since_ms, limit, _replay_and_deliver)
@@ -613,9 +631,41 @@ class LiveBarFeed(BarFeed):
         return (a.open == b.open and a.high == b.high and a.low == b.low
                 and a.close == b.close and a.volume == b.volume)
 
+    def _assert_ring_writer_single_thread(self, sym: str, tf_str: str) -> None:
+        """CF-2: fail loud on an engine-thread ring write during a loop-native backfill.
+
+        The single-writer ring contract (T-07-03): while a LOOP-NATIVE backfill replay is
+        in flight (owned by the connector loop thread, ``_loop_backfill_owner`` set), the
+        ONLY thread permitted to write the ring is that owning loop thread. If the current
+        thread differs, a second concurrent writer has reached the ring append — exactly
+        the tampering hazard CF-2 forbids (an engine-thread path racing the loop-native
+        backfill would interleave appends and corrupt the monotonic bar stream). Raise a
+        typed, secret-free ``StateError`` so it escalates loudly rather than silently
+        corrupting state.
+
+        Cheap and side-effect-free on the happy path: when no loop-native backfill is
+        active (``_loop_backfill_owner is None`` — every engine-thread warmup /
+        synchronous-``backfill_on_resume`` / offline-replay path, and the parity gate)
+        this is a single ``is None`` check; on the loop-native path the replayed writes run
+        on the owning thread so the idents match and it never fires.
+        """
+        owner = self._loop_backfill_owner
+        if owner is not None and threading.get_ident() != owner:
+            raise StateError(
+                "LiveBarFeed",
+                "concurrent-ring-writer",
+                required_state=(
+                    "ring writes single-threaded on the connector loop during a "
+                    "loop-native backfill (CF-2 single-writer contract)"),
+                operation=f"_deliver:{sym}/{tf_str}",
+            )
+
     def _deliver(self, sym: str, tf_str: str, t: pd.Timestamp,
                  cb: "ClosedBar") -> None:
         """Construct the Bar, append to the (lazily-sized) ring, and emit."""
+        # CF-2 (T-07-03): no engine-thread path may reach the ring writer while the
+        # connector loop owns an in-flight loop-native backfill (single-writer contract).
+        self._assert_ring_writer_single_thread(sym, tf_str)
         bar = self._build_bar(t, cb)
         ring = self._ring.get((sym, tf_str))
         if ring is None:

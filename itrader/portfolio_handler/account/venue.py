@@ -452,6 +452,16 @@ class VenueAccount(Account):
     # --- engine-thread reads (D-15 — surface unsnapshotted loud, never 0) -------
 
     @property
+    def is_venue_truth(self) -> bool:
+        """Venue-cached leaf: venue-truth KIND (SAFE-05 / A4) — the coordinator's discriminator.
+
+        Overrides the ``Account`` ABC default (``False``) so the startup
+        ``ReconciliationCoordinator`` keys the venue reconcile on account KIND rather than
+        ``exchange=='okx'``; only this venue-cached leaf reaches the venue reconcile.
+        """
+        return True
+
+    @property
     def balance(self) -> Decimal:
         """Settled cash balance — cached venue balance + local fill-delta (D-01/D-14).
 
