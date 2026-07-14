@@ -48,10 +48,11 @@ findings:
   warning: 3
   info: 2
   total: 5
-status: resolved
+status: fully_resolved
 warnings_resolved: 3
-info_deferred: 2
-resolution: "WR-01/WR-02/WR-03 fixed and independently re-verified on the main checkout (commits 9d600212, 8233315e): full suite 2201 passed / 6 skipped, mypy --strict clean (257 files), oracle byte-exact, OKX inertness green. IN-01/IN-02 reviewed and deferred by decision (documented, not fixed)."
+info_resolved: 1
+info_tracked: 1
+resolution: "FULLY RESOLVED. WR-01/WR-02/WR-03 fixed and independently re-verified (commits 9d600212, 8233315e): full suite 2201 passed / 6 skipped, mypy --strict clean, oracle byte-exact, OKX inertness green. IN-01 fixed in quick task 260714-v6n (commit baa125f8) — PreTradeThrottle self-guarding ORDER-only top-gate + dead None-guard removed; re-verified mypy --strict clean, 5/5 throttle tests, oracle byte-exact, OKX inertness green. IN-02 (correctness-neutral double startup snapshot) owner-approved deferral, tracked as pending todo .planning/todos/pending/07-double-startup-snapshot-in02.md for the end-of-milestone live-reconcile refactor. Every finding now has a disposition — nothing outstanding."
 ---
 
 # Phase 07: Code Review Report
@@ -59,7 +60,7 @@ resolution: "WR-01/WR-02/WR-03 fixed and independently re-verified on the main c
 **Reviewed:** 2026-07-14
 **Depth:** standard
 **Files Reviewed:** 41
-**Status:** issues_found
+**Status:** fully_resolved — WR-01/02/03 + IN-01 fixed and re-verified; IN-02 tracked as a pending todo (owner-approved deferral). Nothing outstanding.
 
 ## Summary
 
