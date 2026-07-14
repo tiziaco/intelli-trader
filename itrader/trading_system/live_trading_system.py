@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, UTC
 from decimal import Decimal
 from types import SimpleNamespace
-from typing import Optional, Dict, Any, Callable
+from typing import Optional, Dict, Any, Callable, TYPE_CHECKING
 
 # D-14 (V17-11): bound on the pause-window protective-order replay queue. During a
 # pause/halt, system-generated protective orders (bracket children, OCO/orphan
@@ -35,6 +35,13 @@ from itrader.universe import Universe
 from itrader.logger import get_itrader_logger
 from itrader.events_handler.bus import PriorityEventBus
 from itrader.events_handler.events import EventType, ErrorEvent, UniversePollEvent
+
+if TYPE_CHECKING:
+    # Pure forward-refs for the pure-injection facade signature (06.1-02/D-10) — under
+    # TYPE_CHECKING so importing this module pulls neither onto the graph (compose is a
+    # pure import; VenueLifecycle is import-inert). The facade module is mypy ignore_errors.
+    from itrader.trading_system.compose import Engine
+    from itrader.venues.lifecycle import VenueLifecycle
 
 # RUN-01/RUN-02 (D-06): the live drain-loop timing knobs. Formerly loose
 # ``__init__`` params (``queue_timeout``/``max_idle_time``); the pure-injection
@@ -100,39 +107,6 @@ _EXTERNALLY_ADMISSIBLE = frozenset({EventType.SIGNAL, EventType.STRATEGY_COMMAND
 # imported above; the ``SystemStatus.X`` usages below resolve unchanged.
 
 
-@dataclass
-class LiveSystemComponents:
-    """The pre-built live component graph injected into the facade (RUN-01/D-09).
-
-    ``build_live_system`` owns ALL live wiring and packs the resulting handlers /
-    storages / feed / venue bundle into this bundle; ``LiveTradingSystem.__init__``
-    is PURE INJECTION — it stores these fields verbatim and holds NO wiring logic
-    (the live analog of ``compose_engine -> Engine`` feeding ``BacktestRunner``).
-    Fields are loose (``Any``) — the facade module is mypy ``ignore_errors`` (D-live).
-    """
-
-    exchange: str
-    global_queue: Any
-    store: Any
-    feed: Any
-    screeners_handler: Any
-    portfolio_handler: Any
-    strategies_handler: Any
-    order_handler: Any
-    execution_handler: Any
-    event_handler: Any
-    signal_store: Any
-    system_db_backend: Any
-    halt_record_store: Any
-    order_storage: Any
-    venue_bundle: Any
-    venue_lifecycle: Any
-    okx_connector: Any
-    okx_exchange: Any
-    okx_data_provider: Any
-    venue_account: Any
-
-
 class LiveTradingSystem:
     """
     Encapsulates the settings and components for carrying out live trading.
@@ -144,21 +118,26 @@ class LiveTradingSystem:
     
     def __init__(
         self,
-        components: "LiveSystemComponents",
         *,
+        engine: "Engine",
+        lifecycle: "Optional[VenueLifecycle]" = None,
+        system_db_backend: Optional[Any] = None,
+        halt_record_store: Optional[Any] = None,
+        exchange: str,
         status_callback: Optional[Callable[[SystemStatus, Dict[str, Any]], None]] = None,
     ):
-        """Pure-injection facade constructor (RUN-01/RUN-03/D-09).
+        """Pure-injection facade constructor (RUN-01/RUN-03/D-09/D-10).
 
-        ``build_live_system`` owns ALL live wiring and hands in the pre-built
-        ``LiveSystemComponents`` graph; this constructor holds NO wiring logic — it
-        stores the injected components and initialises fresh per-instance RUNTIME
-        state (status/locks/flags/stats). Mirrors ``compose_engine -> Engine ->
-        BacktestRunner`` (the injected engine is the source of truth; the holder is
-        thin). ``status_callback`` is the sole surviving loose param; the former
-        ``exchange``/``to_sql``/``queue_timeout``/``max_idle_time`` params are SHED
-        (``exchange`` now rides on the components; the two loop knobs are injected
-        into the ``LiveRunner`` by the factory).
+        DIRECT pure injection over the pre-built collaborators — NO ``components``
+        bag: the compose ``engine`` (the single source of truth for the handler
+        graph + its handler-owned storages + ``store=None``), the single
+        ``VenueLifecycle`` holder (D-07 — the venue/connector cluster, sourced off it
+        with the paper ``connector``-None guard, D-08), and the SEPARATE SQL spine +
+        halt store (D-09 — storage/durable infra, NOT venue/connector). ``exchange``
+        (the venue-name string) + ``status_callback`` are the remaining loose params.
+        Holds NO wiring logic; initialises fresh per-instance RUNTIME state
+        (status/locks/flags/stats). Mirrors ``compose_engine -> Engine ->
+        BacktestRunner`` (the injected engine is the source of truth; the holder is thin).
 
         D-03 boundary honesty: the ~200-line facade is a P7-EXIT gate (P7 owns the
         ~500 lines of safety/reconcile/stream extraction). The interim P6 facade is
@@ -166,35 +145,62 @@ class LiveTradingSystem:
 
         Parameters
         ----------
-        components : LiveSystemComponents
-            The pre-built live component graph (handlers/storages/feed/venue bundle).
+        engine : Engine
+            The compose ``Engine`` — the wired handler graph (+ handler-owned storages,
+            ``store=None`` on live). Source of truth for ``_initialize_live_session``.
+        lifecycle : VenueLifecycle, optional
+            The single venue/connector holder ``assemble_venue`` returns (D-07). ``None``
+            when the venue is unregistered; paper carries a lifecycle with ``connector=None``.
+        system_db_backend, halt_record_store : optional
+            The SEPARATE SQL spine + durable halt-record store (D-09) — storage/durable
+            infra, never folded into the venue holder.
+        exchange : str
+            The venue-name string (``spec.execution_venue``-derived).
         status_callback : callable, optional
             Callback to notify status changes to external systems.
         """
         self.logger = get_itrader_logger().bind(component="LiveTradingSystem")
         self.status_callback = status_callback
 
-        # -- Injected component graph (build_live_system owns its construction) --
-        self.exchange = components.exchange
-        self.global_queue = components.global_queue
-        self.store = components.store
-        self.feed = components.feed
-        self.screeners_handler = components.screeners_handler
-        self.portfolio_handler = components.portfolio_handler
-        self.strategies_handler = components.strategies_handler
-        self.order_handler = components.order_handler
-        self.execution_handler = components.execution_handler
-        self.event_handler = components.event_handler
-        self._signal_store = components.signal_store
-        self._system_db_backend: Optional[Any] = components.system_db_backend
-        self._halt_record_store: Optional[Any] = components.halt_record_store
-        self._order_storage = components.order_storage
-        self._venue_bundle: Optional[Any] = components.venue_bundle
-        self._venue_lifecycle: Optional[Any] = components.venue_lifecycle
-        self._okx_connector: Optional[Any] = components.okx_connector
-        self._okx_exchange: Optional[Any] = components.okx_exchange
-        self._okx_data_provider: Optional[Any] = components.okx_data_provider
-        self._venue_account: Optional[Any] = components.venue_account
+        # -- Injected compose Engine: the SINGLE source of truth for the handler graph;
+        #    handlers/feed/storages are sourced OFF it (no duplicate fields, D-10). --
+        self._engine = engine
+        self.exchange = exchange
+        self.global_queue = engine.global_queue
+        # D-02: engine.store is None on live — HELD, never read as a real store.
+        self.store = engine.store
+        self.feed = engine.feed
+        self.screeners_handler = engine.screeners_handler
+        self.portfolio_handler = engine.portfolio_handler
+        self.strategies_handler = engine.strategies_handler
+        self.order_handler = engine.order_handler
+        self.execution_handler = engine.execution_handler
+        self.event_handler = engine.event_handler
+        self._signal_store = engine.strategies_handler.signal_store
+        self._order_storage = engine.order_handler.storage
+
+        # -- SQL spine + halt store: SEPARATE infra handles (D-09, NOT venue/connector). --
+        self._system_db_backend: Optional[Any] = system_db_backend
+        self._halt_record_store: Optional[Any] = halt_record_store
+
+        # -- Venue/connector handles sourced off the SINGLE VenueLifecycle holder
+        #    (D-07/D-08). The ``lifecycle.bundle.connector``-is-not-None guard is the
+        #    streaming-venue discriminator: paper (connector=None) keeps every ``_okx_*``
+        #    handle None — byte-identical to build_live_system's former guard. The
+        #    safety/reconcile/stream method bodies that read these fields stay UNCHURNED
+        #    (P7 extracts from a known baseline, D-08). --
+        self._venue_lifecycle: Optional[Any] = lifecycle
+        self._venue_bundle: Optional[Any] = (
+            lifecycle.bundle if lifecycle is not None else None)
+        self._okx_connector: Optional[Any] = (
+            lifecycle.bundle.connector if lifecycle is not None else None)
+        self._okx_exchange: Optional[Any] = None
+        self._venue_account: Optional[Any] = None
+        self._okx_data_provider: Optional[Any] = None
+        if lifecycle is not None and lifecycle.bundle.connector is not None:
+            self._okx_exchange = lifecycle.bundle.exchange
+            self._venue_account = lifecycle.bundle.account_factory()
+            self._okx_data_provider = lifecycle.provider
 
         # -- Fresh per-instance RUNTIME state (NOT wiring) ----------------------
         # System status tracking
@@ -1555,30 +1561,27 @@ def build_live_system(
     )
     engine = compose_engine(ctx, exchange_config=None, results_store=None)
 
-    # Source the graph OFF the engine — NO hand-rolled parallel construction. compose
-    # already wired portfolio_handler.set_order_storage(order_handler.storage) and the
-    # FeeModelCommissionEstimator admission gate (D-05), so the former inline commission
-    # closure + the duplicate set_order_storage call are gone.
-    store = engine.store
-    screeners_handler = engine.screeners_handler
-    portfolio_handler = engine.portfolio_handler
+    # compose already wired portfolio_handler.set_order_storage(order_handler.storage) and
+    # the FeeModelCommissionEstimator admission gate (D-05), so the former inline commission
+    # closure + the duplicate set_order_storage call are gone. build_live_system only needs
+    # the three handles its remaining venue + post-facade wiring touches; the facade sources
+    # the FULL graph (+ storages, store=None) off the engine in __init__ (D-10), so no
+    # duplicate locals are threaded through here.
     execution_handler = engine.execution_handler
-    strategies_handler = engine.strategies_handler
-    order_handler = engine.order_handler
+    portfolio_handler = engine.portfolio_handler
     event_handler = engine.event_handler
-    order_storage = engine.order_handler.storage
-    signal_store = engine.strategies_handler.signal_store
 
     # ------------------------------------------------------------------
     # Venue wiring (Plan 02-05, D-04 / CONN-04 — relocated P5 D-06 assemble_venue call).
     # The whole OKX/paper venue stack is LAZY-imported here so the BACKTEST import path
     # stays async/ccxt/credential-free (the hot-path inertness gate).
+    # The single VenueLifecycle holder (D-07) + the two streaming handles the post-facade
+    # halt-signal wiring still needs (okx_exchange/okx_connector). The facade __init__
+    # sources ALL venue/connector fields (bundle/account/provider) off the lifecycle (D-08)
+    # — build_live_system no longer field-by-field unpacks it.
+    venue_lifecycle: Optional[Any] = None
     okx_connector: Optional[Any] = None
     okx_exchange: Optional[Any] = None
-    okx_data_provider: Optional[Any] = None
-    venue_account: Optional[Any] = None
-    venue_bundle: Optional[Any] = None
-    venue_lifecycle: Optional[Any] = None
 
     from itrader.connectors.provider import ConnectorProvider
     from itrader.venues.assemble import assemble_venue
@@ -1630,49 +1633,36 @@ def build_live_system(
     if exchange in exec_registry:
         bundle, venue_lifecycle = assemble_venue(
             ctx, venue_spec, connectors, exec_registry, data_registry)
-        venue_bundle = bundle
         provider = venue_lifecycle.provider
 
         # bundle.connector is the STREAMING-venue discriminator (okx present, paper None).
-        # A paper (connector=None) bundle has no streaming okx exchange/account; its data
-        # provider is still wired to the feed below (the injected TEST 'replay' provider in
-        # tests, or the OKX data provider in production paper — D-21).
+        # A paper (connector=None) bundle has no streaming okx exchange; its data provider
+        # is still wired to the feed below (the injected TEST 'replay' provider in tests, or
+        # the OKX data provider in production paper — D-21). The facade __init__ sources
+        # _venue_bundle/_venue_account/_okx_data_provider off the lifecycle (D-08); only the
+        # streaming-venue execution_handler registration + the halt-signal handles stay here.
         okx_connector = bundle.connector
         if bundle.connector is not None:
             okx_exchange = bundle.exchange
             execution_handler.exchanges[exchange] = bundle.exchange
-            venue_account = bundle.account_factory()
-            okx_data_provider = provider
 
         # (4) UNIFORM provider->feed wiring (D-10) that needs NO facade method.
         feed.set_provider(provider)
         provider.set_bar_sink(feed.update)
         provider.set_global_queue(global_queue)
 
-    # Construct the facade via PURE INJECTION (RUN-03/D-09).
-    components = LiveSystemComponents(
-        exchange=exchange,
-        global_queue=global_queue,
-        store=store,
-        feed=feed,
-        screeners_handler=screeners_handler,
-        portfolio_handler=portfolio_handler,
-        strategies_handler=strategies_handler,
-        order_handler=order_handler,
-        execution_handler=execution_handler,
-        event_handler=event_handler,
-        signal_store=signal_store,
+    # Construct the facade via DIRECT PURE INJECTION (RUN-03/D-09/D-10): the compose Engine
+    # is the single source of truth for the handler graph; the VenueLifecycle is the single
+    # venue/connector holder (D-07); the SQL spine + halt store stay SEPARATE infra handles
+    # (D-09). No LiveSystemComponents bag — the facade sources everything off these directly.
+    facade = LiveTradingSystem(
+        engine=engine,
+        lifecycle=venue_lifecycle,
         system_db_backend=system_db_backend,
         halt_record_store=halt_record_store,
-        order_storage=order_storage,
-        venue_bundle=venue_bundle,
-        venue_lifecycle=venue_lifecycle,
-        okx_connector=okx_connector,
-        okx_exchange=okx_exchange,
-        okx_data_provider=okx_data_provider,
-        venue_account=venue_account,
+        exchange=exchange,
+        status_callback=status_callback,
     )
-    facade = LiveTradingSystem(components, status_callback=status_callback)
 
     # Facade-dependent wiring (references the constructed facade's own gate methods).
     # The provider halt-signal + stream-state listeners for a registered venue, and the
