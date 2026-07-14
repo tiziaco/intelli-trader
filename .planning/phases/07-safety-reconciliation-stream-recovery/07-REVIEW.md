@@ -200,7 +200,7 @@ the same contract.
 
 ### IN-02: `snapshot()` and store `rehydrate()` run twice on the startup reconcile path
 
-> **◻ DEFERRED** (documented, not fixed) — correctness-neutral (idempotent REST snapshot + rehydrate); a redundant round-trip only. Performance is out of review scope. Left as-is per the phase-close decision.
+> **◻ DEFERRED → tracked** — correctness-neutral (idempotent REST snapshot + rehydrate); a redundant round-trip only. Performance is out of review scope. Owner-approved deferral: filed as a pending todo (`.planning/todos/pending/07-double-startup-snapshot-in02.md`) to fold into the end-of-milestone `live_trading_system.py` / live-reconcile refactor rather than clean now.
 
 **File:** `itrader/portfolio_handler/reconcile/reconciliation_coordinator.py:125,145`;
 `itrader/portfolio_handler/reconcile/venue_reconciler.py:135,139`
