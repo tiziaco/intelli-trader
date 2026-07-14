@@ -325,7 +325,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1)*
 
-- [ ] 07-03-PLAN.md — Pure `SafetyController` byte-move (latch/halt/pause/resume/deferred-queue/gate + `check_durable_halt_on_start`) + shared `classify()` + D-11 overflow→HALT (SAFE-01/02, D-05/D-11/D-15/D-16)
+- [x] 07-03-PLAN.md — Pure `SafetyController` byte-move (latch/halt/pause/resume/deferred-queue/gate + `check_durable_halt_on_start`) + shared `classify()` + D-11 overflow→HALT (SAFE-01/02, D-05/D-11/D-15/D-16)
 
 **Wave 3** *(parallel — blocked on Wave 2)*
 
@@ -425,7 +425,7 @@ P1 and P2 have no dependencies and can start in parallel.
 | 5. Venue Registry + Bundle | v1.8 | 6/6 | Complete    | 2026-07-12 |
 | 6. LiveRunner + Factory + Facade Shrink | v1.8 | 7/7 | Complete    | 2026-07-13 |
 | 6.1 (INSERTED). Seam Cleanup | v1.8 | 4/4 | Complete    | 2026-07-14 |
-| 7. Safety + Reconciliation + Stream Recovery | v1.8 | 2/6 | In Progress|  |
+| 7. Safety + Reconciliation + Stream Recovery | v1.8 | 3/6 | In Progress|  |
 | 8. Error Subsystem | v1.8 | 0/TBD | Not started | - |
 | 9 ★. Runtime-Config Platform | v1.8 | 0/TBD | Not started | - |
 | 10 ★. Strategies Registry | v1.8 | 0/TBD | Not started | - |

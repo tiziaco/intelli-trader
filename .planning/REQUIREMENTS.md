@@ -193,7 +193,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   `is_halted`/`reset_halt`, `pause_submission`/`resume_submission` + bounded deferred-protective queue,
   and the dispatch gate (concern 12/§11a).
 
-- [ ] **SAFE-02**: `safety.check_durable_halt_on_start()` runs first (before any venue I/O), refuses
+- [x] **SAFE-02**: `safety.check_durable_halt_on_start()` runs first (before any venue I/O), refuses
   RUNNING on an unresolved durable halt, and re-latches from the persisted reason via `update_status`
   (no second durable write) (§11b).
 
@@ -400,7 +400,7 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | RUN-06 | P6 | Complete |
 | RUN-07 | P6 | Complete |
 | SAFE-01 | P7 | Complete |
-| SAFE-02 | P7 | Pending |
+| SAFE-02 | P7 | Complete |
 | SAFE-03 | P7 | Complete |
 | SAFE-04 | P7 | Pending |
 | SAFE-05 | P7 | Complete |
