@@ -25,7 +25,8 @@ from .portfolio import (
     InvalidPortfolioOperationError,
     PortfolioStateError,
     PortfolioConfigurationError,
-    PortfolioValidationError
+    PortfolioValidationError,
+    ReconciliationError
 )
 
 # Order exceptions
@@ -72,6 +73,7 @@ __all__ = [
     'PortfolioStateError',
     'PortfolioConfigurationError',
     'PortfolioValidationError',
+    'ReconciliationError',
 
     # Order exceptions
     'OrderError',
