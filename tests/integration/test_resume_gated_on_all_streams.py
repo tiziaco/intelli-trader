@@ -17,8 +17,16 @@ OKX live system fully offline, drops one arm, fires the resume flag, and asserts
 STAYS paused; only once BOTH arms report healthy does the next drain resume.
 """
 
+import queue
+import threading
+from datetime import timedelta
+from decimal import Decimal
 from unittest.mock import MagicMock
 
+import pandas as pd
+
+from itrader.core.exceptions import StateError
+from itrader.price_handler.feed.live_bar_feed import LiveBarFeed
 from itrader.trading_system.live_trading_system import LiveTradingSystem
 
 
@@ -113,3 +121,98 @@ def test_none_arm_never_blocks_resume(monkeypatch) -> None:
     system._pending_stream_resume.set()
     system._maybe_resume_after_reconnect()
     assert system._is_submission_paused() is False
+
+
+# -- CF-2: the LiveBarFeed ring writer is single-writer on resume (T-07-03). ----
+# -- A ring write from a non-owner (engine) thread during a loop-native backfill --
+# -- fails loud; the guard is inert on the happy loop-native + no-backfill paths. --
+
+
+def _closed_bar() -> dict:
+    """A well-formed Decimal-edge ClosedBar for a direct _deliver call."""
+    return {
+        "symbol": "BTC/USDT",
+        "timeframe": "1d",
+        "ts": 1_700_000_000_000,
+        "open": Decimal("1"),
+        "high": Decimal("2"),
+        "low": Decimal("1"),
+        "close": Decimal("2"),
+        "volume": Decimal("10"),
+    }
+
+
+def _bound_feed() -> LiveBarFeed:
+    feed = LiveBarFeed(provider=None, base_timeframe=timedelta(days=1))
+    feed.bind(queue.Queue(), ["BTC/USDT"])
+    return feed
+
+
+def test_cf2_engine_thread_ring_write_during_loop_backfill_fails_loud() -> None:
+    """A ring write from a NON-owner (engine) thread during a loop-native backfill raises (CF-2).
+
+    While the connector loop owns an in-flight backfill (``_loop_backfill_owner`` set to the
+    loop thread's ident), any OTHER thread reaching the ring writer is the concurrent-writer
+    tampering hazard CF-2 forbids — the guard fails loud with a typed ``StateError`` instead
+    of silently interleaving appends and corrupting the monotonic bar stream.
+    """
+    feed = _bound_feed()
+    cb = _closed_bar()
+    t = pd.Timestamp(cb["ts"], unit="ms", tz="UTC")
+
+    # The connector loop (= THIS/main thread here) owns the in-flight backfill.
+    feed._loop_backfill_owner = threading.get_ident()
+
+    # A ring write from a DIFFERENT (engine) thread must fail loud.
+    errors: list[BaseException] = []
+
+    def _engine_write() -> None:
+        try:
+            feed._deliver("BTC/USDT", "1d", t, cb)
+        except StateError as exc:
+            errors.append(exc)
+
+    engine_thread = threading.Thread(target=_engine_write, name="engine")
+    engine_thread.start()
+    engine_thread.join()
+
+    assert len(errors) == 1
+    assert isinstance(errors[0], StateError)
+    # No ring was actually written by the rejected engine-thread attempt.
+    assert feed.newest_bar("BTC/USDT") is None
+
+
+def test_cf2_owning_loop_thread_backfill_write_passes() -> None:
+    """A ring write on the OWNING loop thread during a backfill is fine (happy path)."""
+    feed = _bound_feed()
+    cb = _closed_bar()
+    t = pd.Timestamp(cb["ts"], unit="ms", tz="UTC")
+
+    # This thread owns the backfill; a same-thread ring write is the legitimate single writer.
+    feed._loop_backfill_owner = threading.get_ident()
+    feed._deliver("BTC/USDT", "1d", t, cb)
+
+    assert feed.newest_bar("BTC/USDT") is not None
+
+
+def test_cf2_guard_inert_when_no_backfill_active() -> None:
+    """No loop-native backfill active (owner None) → the guard never fires on any thread."""
+    feed = _bound_feed()
+    cb = _closed_bar()
+    t = pd.Timestamp(cb["ts"], unit="ms", tz="UTC")
+
+    # Owner is None (default) — a normal engine-thread delivery must NOT raise.
+    errors: list[BaseException] = []
+
+    def _engine_write() -> None:
+        try:
+            feed._deliver("BTC/USDT", "1d", t, cb)
+        except StateError as exc:  # pragma: no cover — must not happen
+            errors.append(exc)
+
+    engine_thread = threading.Thread(target=_engine_write, name="engine")
+    engine_thread.start()
+    engine_thread.join()
+
+    assert errors == []
+    assert feed.newest_bar("BTC/USDT") is not None
