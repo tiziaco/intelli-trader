@@ -202,7 +202,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   thread — the flag side-channel (`_pending_stream_resume`/`_pending_connector_halt`/etc.) is deleted
   (concern 11/§11c).
 
-- [ ] **SAFE-04**: `StreamRecoveryHandler` owns reconnect resume I/O (catch-up missed fills + account
+- [x] **SAFE-04**: `StreamRecoveryHandler` owns reconnect resume I/O (catch-up missed fills + account
   snapshot on the engine thread + all-streams-healthy gate → `resume_submission`); CF-2
   `backfill_on_resume` lands **loop-native** (connector loop via the reconnect callback), never a second
   concurrent engine-thread ring writer (§11c, CF-2).
@@ -402,7 +402,7 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | SAFE-01 | P7 | Complete |
 | SAFE-02 | P7 | Complete |
 | SAFE-03 | P7 | Complete |
-| SAFE-04 | P7 | Pending |
+| SAFE-04 | P7 | Complete |
 | SAFE-05 | P7 | Complete |
 | SAFE-06 | P7 | Complete |
 | ERR-01 | P8 | Pending |
