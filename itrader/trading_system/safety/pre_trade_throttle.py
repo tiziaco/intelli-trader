@@ -61,7 +61,7 @@ from typing import Any, Optional
 
 from itrader.config.safety import ThrottleSettings
 from itrader.core.clock import Clock
-from itrader.core.enums import ErrorSeverity, OrderRiskRole
+from itrader.core.enums import ErrorSeverity, EventType, OrderRiskRole
 from itrader.events_handler.events import ErrorEvent, FillEvent
 from itrader.logger import get_itrader_logger
 from itrader.trading_system.safety.safety_controller import classify
@@ -133,6 +133,12 @@ class PreTradeThrottle:
         The pre-submit gate (D-06), invoked by the runner ahead of the dispatch
         gate. The branch order is load-bearing:
 
+        0. ORDER-only top-gate (IN-01): any event whose ``type`` is not
+           ``EventType.ORDER`` returns ``True`` IMMEDIATELY — bypass, meters nothing
+           (no window append, no classify, no breach). Past this gate the classifier
+           branch provably sees an ``OrderEvent``, so the throttle meters ORDER
+           events only and no longer depends on the runner's call-site type gate
+           for safety.
         1. ``role = classify(event)`` (the shared D-05 predicate). A CANCEL or
            PROTECTIVE role returns ``True`` IMMEDIATELY — WITHOUT touching the
            window or the notional check — so a risk-reducing order is never counted
@@ -146,6 +152,15 @@ class PreTradeThrottle:
            (D-02), increment ``breach_count`` and emit the de-duped WARNING (D-09);
            return ``False``.
         """
+        # (0) IN-01: ORDER-only top-gate. Any non-ORDER event bypasses cleanly
+        # (allows submission, meters nothing) BEFORE classify() ever runs, so the
+        # throttle meters ORDER events only and no longer relies on the runner's
+        # call-site type gate for safety. Past this gate the ENTRY branch provably
+        # implies an OrderEvent. Mirrors classify()'s defensive idiom — no
+        # AttributeError on a typeless object.
+        if getattr(event, 'type', None) is not EventType.ORDER:
+            return True
+
         # (1) D-05/D-16: reuse the SINGLE shared classifier. CANCEL/PROTECTIVE bypass
         # uncounted — never metered, never rejected (the throttle physically cannot
         # touch a stop/bracket-child/cancel).
@@ -179,14 +194,13 @@ class PreTradeThrottle:
         the last mark / best-available — both carried on ``OrderEvent.price`` (the
         LIMIT price for LIMIT orders; the decision-bar-close mark estimate the order
         layer stamped for MARKET/STOP orders). ``size * price`` is computed in
-        ``Decimal`` end-to-end — no ``float`` coercion on this path (money policy). If either
-        field is absent (a defensive guard — the pre-submit boundary only ever sees
-        priced OrderEvents), the notional check is skipped (the rate cap still applies).
+        ``Decimal`` end-to-end — no ``float`` coercion on this path (money policy).
+        Any event reaching here is guaranteed an ``OrderEvent`` (by ``allow()``'s
+        ORDER-only top-gate), whose ``price``/``quantity`` are non-optional
+        ``Decimal`` by construction (``events/order.py``).
         """
-        price = getattr(event, "price", None)
-        quantity = getattr(event, "quantity", None)
-        if price is None or quantity is None:
-            return False
+        price = getattr(event, "price")
+        quantity = getattr(event, "quantity")
         notional = abs(price * quantity)
         return bool(notional > self._settings.max_notional_per_order)
 
