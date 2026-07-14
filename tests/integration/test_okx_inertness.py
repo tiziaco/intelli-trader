@@ -98,6 +98,21 @@ assert not leaked, (
     "stack: " + repr(leaked) + " (must be lazy-imported inside the live path only)"
 )
 
+# Phase 06.1 (SEAM-04, D-12): the trading_system barrel DROPPED the live surface
+# entirely — importing the backtest root (above) pulls ONLY the backtest composition
+# root, so the live module itself must be ABSENT from sys.modules at this point. Before
+# the barrel drop, `trading_system/__init__.py` eagerly imported LiveTradingSystem /
+# build_live_system, silently dragging the whole live module onto the backtest import
+# graph (the root cause of the pervasive lazy-imports-inside-methods). The later
+# explicit `from itrader.trading_system.live_trading_system import build_live_system`
+# (in the P6 register-vs-build block below) runs AFTER this assertion and legitimately
+# pulls the module for the register-vs-build check — it does not weaken this guard.
+assert "itrader.trading_system.live_trading_system" not in sys.modules, (
+    "SEAM-04/D-12 INERTNESS VIOLATION: importing the backtest root pulled "
+    "itrader.trading_system.live_trading_system onto the backtest import graph — the "
+    "trading_system barrel must NOT re-import (or re-export) the live module (D-12)"
+)
+
 # Phase 1 (CFG-02, D-05/D-06 register-vs-build): importing itrader runs
 # SystemConfig.default() (itrader/__init__.py). The lazy `sql` cached_property must
 # stay UNRESOLVED at import — its absence from the singleton's __dict__ proves zero
