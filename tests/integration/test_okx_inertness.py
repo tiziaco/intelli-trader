@@ -222,7 +222,7 @@ assert not _okx_leaked, (
 from itrader.trading_system.live_trading_system import build_live_system  # noqa: F401
 from itrader.trading_system.live_runner import LiveRunner  # noqa: F401
 from itrader.trading_system.worker_supervisor import WorkerSupervisor  # noqa: F401
-from itrader.trading_system.error_policy import ErrorPolicy  # noqa: F401
+from itrader.events_handler.error_policy import ErrorPolicy  # noqa: F401
 from itrader.trading_system.route_registrar import LiveRouteRegistrar  # noqa: F401
 from itrader.trading_system.session_initializer import SessionInitializer  # noqa: F401
 

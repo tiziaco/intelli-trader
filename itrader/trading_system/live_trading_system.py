@@ -1223,7 +1223,7 @@ def build_live_system(
     # throttle (PreTradeThrottle.allow) fires at the ORDER->execution boundary ahead of
     # it. The former resume/halt per-tick drain hooks are GONE (CONTROL events replace the
     # flag side-channel). The facade's error-policy install happens in start() (D-17).
-    from itrader.trading_system.error_policy import ErrorPolicy
+    from itrader.events_handler.error_policy import ErrorPolicy
     from itrader.trading_system.live_runner import LiveRunner
     from itrader.trading_system.worker_supervisor import WorkerSupervisor
 

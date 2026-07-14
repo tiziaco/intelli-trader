@@ -46,7 +46,7 @@ from typing import Any, Callable, Optional
 from itrader.core.enums import EventType
 from itrader.events_handler.bus import EventBus
 from itrader.logger import get_itrader_logger
-from itrader.trading_system.error_policy import ErrorPolicy
+from itrader.events_handler.error_policy import ErrorPolicy
 from itrader.trading_system.worker_supervisor import WorkerSupervisor
 
 
