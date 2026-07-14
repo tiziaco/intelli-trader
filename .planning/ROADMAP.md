@@ -298,7 +298,7 @@ Plans:
 
 **Plans**: 4 plans
 
-- [ ] 06.1-01-PLAN.md — SEAM-01: spec-free `compose_engine` + `EngineContext` store/feed seam + backtest pass-through (oracle-gated, isolated) (wave 1)
+- [x] 06.1-01-PLAN.md — SEAM-01: spec-free `compose_engine` + `EngineContext` store/feed seam + backtest pass-through (oracle-gated, isolated) (wave 1)
 - [ ] 06.1-02-PLAN.md — SEAM-01/02: `build_live_system` consumes `compose_engine`; collapse `LiveSystemComponents`; `VenueLifecycle` as the single venue holder; remove interim `Engine` (wave 2)
 - [ ] 06.1-03-PLAN.md — SEAM-03: shared `VenueSpec` builder (one home for the `{'okx':'okx','paper':'okx'}` map); `for_exchange` + `build_live_system` share it (wave 3)
 - [ ] 06.1-04-PLAN.md — SEAM-04: de-lazy the `trading_system` barrel (backtest-only) + hoist the pure imports; inertness backstop (wave 4)
@@ -406,7 +406,7 @@ P1 and P2 have no dependencies and can start in parallel.
 | 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 4/4 | Complete    | 2026-07-10 |
 | 5. Venue Registry + Bundle | v1.8 | 6/6 | Complete    | 2026-07-12 |
 | 6. LiveRunner + Factory + Facade Shrink | v1.8 | 7/7 | Complete    | 2026-07-13 |
-| 6.1 (INSERTED). Seam Cleanup | v1.8 | 0/TBD | Not started | - |
+| 6.1 (INSERTED). Seam Cleanup | v1.8 | 1/4 | In Progress|  |
 | 7. Safety + Reconciliation + Stream Recovery | v1.8 | 0/TBD | Not started | - |
 | 8. Error Subsystem | v1.8 | 0/TBD | Not started | - |
 | 9 ★. Runtime-Config Platform | v1.8 | 0/TBD | Not started | - |

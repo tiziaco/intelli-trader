@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: — Live System Refactor & Live-Readiness Hardening
-current_phase: 7
-current_phase_name: Safety + Reconciliation + Stream Recovery
+current_phase: 06.1
+current_phase_name: seam-cleanup-make-build-live-system-consume-the-shared-compo
 status: executing
 stopped_at: Phase 06.1 context gathered
-last_updated: "2026-07-14T10:16:41.174Z"
-last_activity: 2026-07-13
-last_activity_desc: "Completed quick task 260713-phm: fix Phase 06 review WR-02 + IN-02"
+last_updated: "2026-07-14T10:44:23.579Z"
+last_activity: 2026-07-14
+last_activity_desc: Phase 06.1 execution started
 progress:
   total_phases: 9
   completed_phases: 6
@@ -26,17 +26,17 @@ See: .planning/PROJECT.md (Current Milestone: v1.8 — Live System Refactor & Li
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct,
 deterministic, cross-validated numbers (oracle **134 / `46189.87730727451`**; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 shipped a live operating mode (paper-first on OKX) without disturbing that oracle.
-**Current focus:** Phase 06 — liverunner-factory-facade-shrink
+**Current focus:** Phase 06.1 — seam-cleanup-make-build-live-system-consume-the-shared-compo
 thin ~200-line facade over focused, venue-parametrized, FastAPI-ready collaborators — **without
 disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI itself is out of scope
 (LR-01). Full scope: core refactor (P1–P8 + P12) + the three ★ feature-adds (P9–P11).
 
 ## Current Position
 
-Phase: 7 — Safety + Reconciliation + Stream Recovery
-Plan: Not started
+Phase: 06.1 (seam-cleanup-make-build-live-system-consume-the-shared-compo) — EXECUTING
+Plan: 2 of 4
 Status: Ready to execute
-Last activity: 2026-07-13 — Completed quick task 260713-phm: fix Phase 06 review WR-02 + IN-02
+Last activity: 2026-07-14 — Phase 06.1 execution started
 
 Progress: [████░░░░░░] 44%
 
@@ -163,6 +163,7 @@ P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 - [Phase ?]: 06-06: build_live_system(spec) is the live composition root (RUN-01/D-09); facade __init__ is pure injection; live wires PriorityEventBus (D-23); LiveRunner owns the drain loop; D-12 construction-time session-init flip deferred to 06-07 — RUN-03 lands structurally
 - [Phase ?]: 06-07/TEST-01/D-18: relocated the whole replay harness to tests/support/replay_harness.py; production is replay-free (paper->OKX feed, D-21); paper EXECUTION venue untouched (D-20)
 - [Phase ?]: 06-07/D-16: TestRunner is behavior-preserving (calls _initialize_live_session before its per-bar drive); the D-12 construction-time flip stays DEFERRED per 06-06
+- [Phase ?]: 06.1-01 (SEAM-01/D-04): compose_engine spec-free; store/feed on EngineContext (D-01/D-02, LR-14 amended); bind+generate_bar_event lifted to base BarFeed ABC; precompute narrowed at backtest-only runner; oracle byte-exact 134/46189.87730727451 + inertness green
 
 ### Pending Todos
 
@@ -216,6 +217,7 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 | Phase 06 P05 | 9min | 3 tasks | 3 files |
 | Phase 06 P06 | 50min | 3 tasks | 26 files |
 | Phase 06 P07 | 70min | 3 tasks | 21 files |
+| Phase 06.1 P01 | 22min | 3 tasks | 7 files |
 
 ## Deferred Items
 
@@ -264,7 +266,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-14T08:04:15.048Z
+Last session: 2026-07-14T10:44:04.991Z
 Stopped at: Phase 06.1 context gathered
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
