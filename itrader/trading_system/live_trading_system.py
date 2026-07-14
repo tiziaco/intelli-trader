@@ -1474,12 +1474,12 @@ def build_live_system(
     # strict FIFO, so live behavior is unchanged in P6). LiveRunner drains it; CONTROL
     # routes are NOT registered (their P7/P9 consumers don't exist yet).
     global_queue = PriorityEventBus()
-    store = CsvPriceStore()
     # Phase 3 (FEED-05): LiveBarFeed is the live driver — LAZY-imported here so the
-    # BACKTEST import path never pulls live_bar_feed (inertness gate).
+    # BACKTEST import path never pulls live_bar_feed (inertness gate). D-02: live carries
+    # store=None (the LiveBarFeed reads no store); the whole handler graph — screeners
+    # included — now comes from compose_engine below, so no store/screeners are built here.
     from itrader.price_handler.feed.live_bar_feed import LiveBarFeed
     feed = LiveBarFeed(provider=None, base_timeframe=to_timedelta('1d'))
-    screeners_handler = ScreenersHandler(global_queue, feed)
 
     # ------------------------------------------------------------------
     # v1.6 operational store live-drive (05-06, RECON-04, D-10/D-11).
@@ -1498,78 +1498,76 @@ def build_live_system(
             "ITRADER_DATABASE_URL unset) — using in-memory order + signal storage "
             "(orders/signals will NOT survive a restart)"
         )
-        order_storage = OrderStorageFactory.create('backtest')
-        signal_store = SignalStorageFactory.create_in_memory()
+        # 06.1-02 (SEAM-01/D-05): the arm now selects ONLY the environment string + the
+        # shared SQL spine — compose_engine's handler-OWNED storage init derives the
+        # concrete backends from (environment, sql_engine). 'backtest' with sql_engine=None
+        # yields the in-memory order + signal stores byte-identical to the former explicit
+        # fallback construction (OrderStorageFactory.create('backtest') / create_in_memory()).
+        environment = 'backtest'
         system_db_backend: Optional[Any] = None
     else:
         # CR-01/RECON-04: honor the unified ITRADER_DATABASE_* Postgres surface — one
         # SqlEngine drives the whole v1.6 operational store (same source Alembic uses).
         from itrader.config.sql import SqlDriver, SqlSettings
         from itrader.storage import SqlEngine
-        from itrader.order_handler.storage.cached_sql_storage import (
-            CachedSqlOrderStorage,
-        )
-        from itrader.order_handler.storage.sql_storage import SqlOrderStorage
 
+        # 06.1-02 (SEAM-01/D-05): 'live' + the shared SqlEngine drive compose's
+        # handler-OWNED storage to the SAME durable path the former explicit construction
+        # built — orders via CachedSqlOrderStorage(SqlOrderStorage(backend)) (store-first
+        # working set, rehydrate() on restart), the signal store live-driven over the same
+        # spine (see OrderStorageFactory / SignalStorageFactory '.create('live', ...)').
         backend = SqlEngine(SqlSettings(driver=SqlDriver.POSTGRESQL_PSYCOPG2))
-        # D-10: store-first working set (persist-then-acknowledge) via the CachedSql
-        # wrapper over the untouched SqlOrderStorage; rehydrate() rebuilds it on restart.
-        order_storage = CachedSqlOrderStorage(SqlOrderStorage(backend))
+        environment = 'live'
         system_db_backend = backend
-        # D-11: signal store live-driven on the async/best-effort path over the SAME spine.
-        signal_store = SignalStorageFactory.create('live', sql_engine=backend)
-
-    # 05.2-05 (D-07): durable portfolio ledger when the Postgres spine is present.
-    if system_db_backend is not None:
-        portfolio_handler = PortfolioHandler(
-            global_queue, environment='live', sql_engine=system_db_backend)
-    else:
-        portfolio_handler = PortfolioHandler(global_queue)
 
     # 05.2-06 (D-10 / ARCH-4 Layer 2): durable halt-record store over the shared spine
     # (survives a process restart) — None on the in-memory fallback (degrade cleanly).
+    # D-09: the SQL spine (system_db_backend) + halt_record_store stay SEPARATE facade/
+    # infra handles — NOT folded into the venue holder (folding would recreate the bag).
     if system_db_backend is not None:
         from itrader.storage.halt_record_store import HaltRecordStore
         halt_record_store: Optional[Any] = HaltRecordStore(system_db_backend)
     else:
         halt_record_store = None
 
-    # Execution handler BEFORE the order handler (admission commission estimator, D-04).
-    execution_handler = ExecutionHandler(global_queue)
-    simulated_exchange = execution_handler.exchanges.get('simulated')
+    # ------------------------------------------------------------------
+    # 06.1-02 (SEAM-01 live consumption / D-05): obtain the live handler graph from the
+    # now spec-free compose_engine instead of hand-rolling a parallel copy. The shared
+    # EngineContext is the mode-injection seam: feed=the LiveBarFeed, store=None (the
+    # LiveBarFeed reads no store, D-02), and environment + sql_engine reflect the
+    # credential-probe arm so compose's handler-OWNED storage init lands the identical
+    # durable path (Postgres arm -> CachedSqlOrderStorage over the SQL spine; in-memory
+    # arm -> InMemoryOrderStorage). Live keeps exchange_config=None (the ExecutionHandler
+    # default today — byte-preserving) and results_store=None. compose_engine reuses the
+    # FeeModelCommissionEstimator admission adapter, retiring the re-inlined commission
+    # closure. compose_engine/EngineContext are PURE imports, taken lazily here to mirror
+    # the module's lazy-import discipline (inertness gate).
+    from itrader import config as _system_config
+    from itrader.trading_system.compose import compose_engine
+    from itrader.trading_system.engine_context import EngineContext
 
-    def _estimate_commission(quantity: Decimal, price: Decimal) -> Decimal:
-        if not isinstance(simulated_exchange, SimulatedExchange):
-            return Decimal("0")
-        return simulated_exchange.fee_model.calculate_fee(
-            quantity, price, side="buy", order_type="market")
-
-    # Plan 02-03 (D-09/D-14): thread the portfolio's margin settings into the order
-    # domain (mirrors compose_engine). SHORT-01/D-07: thread the shorts-enabling flags.
-    _trading_rules = portfolio_handler.config_data.trading_rules
-    strategies_handler = StrategiesHandler(
-        global_queue, feed, signal_store,
-        allow_short_selling=_trading_rules.allow_short_selling,
-        enable_margin=_trading_rules.enable_margin)
-
-    order_handler = OrderHandler(
-        global_queue, portfolio_handler, order_storage,
-        commission_estimator=_estimate_commission,
-        enable_margin=_trading_rules.enable_margin,
-        portfolio_max_leverage=_trading_rules.max_leverage)
-    # LIQ-03 (04-03): live-parity injection of the SAME order_storage into the portfolio
-    # handler so a BAR-route liquidation registers its Order in the shared mirror.
-    portfolio_handler.set_order_storage(order_storage)
-
-    event_handler = EventHandler(
-        strategies_handler,
-        screeners_handler,
-        portfolio_handler,
-        order_handler,
-        execution_handler,
-        feed.generate_bar_event,
-        global_queue,
+    ctx = EngineContext(
+        bus=global_queue,
+        config=_system_config,
+        environment=environment,
+        feed=feed, store=None,
+        sql_engine=system_db_backend,
     )
+    engine = compose_engine(ctx, exchange_config=None, results_store=None)
+
+    # Source the graph OFF the engine — NO hand-rolled parallel construction. compose
+    # already wired portfolio_handler.set_order_storage(order_handler.storage) and the
+    # FeeModelCommissionEstimator admission gate (D-05), so the former inline commission
+    # closure + the duplicate set_order_storage call are gone.
+    store = engine.store
+    screeners_handler = engine.screeners_handler
+    portfolio_handler = engine.portfolio_handler
+    execution_handler = engine.execution_handler
+    strategies_handler = engine.strategies_handler
+    order_handler = engine.order_handler
+    event_handler = engine.event_handler
+    order_storage = engine.order_handler.storage
+    signal_store = engine.strategies_handler.signal_store
 
     # ------------------------------------------------------------------
     # Venue wiring (Plan 02-05, D-04 / CONN-04 — relocated P5 D-06 assemble_venue call).
@@ -1582,9 +1580,7 @@ def build_live_system(
     venue_bundle: Optional[Any] = None
     venue_lifecycle: Optional[Any] = None
 
-    from itrader import config as _system_config
     from itrader.connectors.provider import ConnectorProvider
-    from itrader.trading_system.engine_context import EngineContext
     from itrader.venues.assemble import assemble_venue
     from itrader.venues.okx_plugin import (
         OkxConnectorPlugin,
@@ -1615,18 +1611,10 @@ def build_live_system(
         for _name, _plugin in data_plugins.items():
             data_registry.register(_name, _plugin)
 
-    # (2) D-23: the infra ctx wires live onto the PriorityEventBus (not the raw queue).
-    # 06.1-01 (D-01/D-02): the shared EngineContext now carries feed (required) + store
-    # (Optional). Live injects the LiveBarFeed and store=None (LiveBarFeed reads no
-    # store) — a construction-site fix only; the hand-rolled handler graph below is
-    # untouched this plan (the compose-consumption rewire is plan 06.1-02).
-    ctx = EngineContext(
-        bus=global_queue,
-        config=_system_config,
-        environment='live',
-        feed=feed, store=None,
-        sql_engine=system_db_backend,
-    )
+    # (2) The shared mode-injection EngineContext built above (06.1-02) is REUSED for
+    # venue assembly — the venue plugins read ctx.bus / ctx.config.stream (they never read
+    # ctx.environment / ctx.store / ctx.sql_engine), so the arm-dependent environment is
+    # transparent to venue assembly (D-23: live drains the PriorityEventBus ctx.bus wires).
     venue_spec = SimpleNamespace(
         execution_venue=exchange,
         # D-21: production paper re-points to the OKX live data feed (the offline replay
