@@ -629,3 +629,86 @@ def test_client_order_id_round_trip_correlation_resolves(
     fills = [e for e in drained if isinstance(e, FillEvent)]
     assert len(fills) == 1
     assert fills[0].order_id == order.order_id
+
+
+# --- D-10: fill-translation failure emits a counted, scrubbed ErrorEvent ------
+
+# The fixed literal bound on BOTH drain-path emits (never str(exc)/raw payload).
+_FILL_TRANSLATION_MSG = (
+    "OKX fill translation failed — venue fill skipped, deferred to reconcile"
+)
+
+
+def _assert_fill_translation_error_event(evt: Any, exc_type_name: str) -> None:
+    """A single scrubbed FILL_TRANSLATION ErrorEvent (D-10 / T-05-27)."""
+    assert isinstance(evt, ErrorEvent)
+    assert evt.source == "okx_exchange"
+    assert evt.operation == "fill-translation"
+    assert evt.severity is ErrorSeverity.ERROR
+    # error_type is the exception CLASS name — never str(exc).
+    assert evt.error_type == exc_type_name
+    # error_message is the FIXED literal — no secret / raw-trade payload leaked.
+    assert evt.error_message == _FILL_TRANSLATION_MSG
+    assert "boom-secret" not in evt.error_message
+
+
+def test_consume_fills_translation_failure_emits_counted_errorevent(
+    exchange: OkxExchange, queue: "Queue[Any]"
+) -> None:
+    """D-10: a per-trade translation failure in ``_consume_fills`` emits ONE scrubbed ErrorEvent.
+
+    Drives a single loop iteration: one malformed trade (``_handle_trade`` raises with a
+    secret-bearing message) then a sentinel that breaks the forever-loop. The except-arm
+    must emit exactly one FILL_TRANSLATION ErrorEvent binding the exception TYPE + a fixed
+    literal — never ``str(exc)`` — closing the invisible lost-fill hole (AUD-3).
+    """
+
+    class _Stop(Exception):
+        pass
+
+    def _raise(_trade: Any) -> None:
+        raise ValueError("boom-secret: leaked-api-key")
+
+    exchange._handle_trade = _raise  # type: ignore[method-assign]
+    exchange._connector.client.watch_my_trades = AsyncMock(  # type: ignore[attr-defined]
+        side_effect=[[{"order": "X"}], _Stop()]
+    )
+
+    loop = asyncio.new_event_loop()
+    try:
+        with pytest.raises(_Stop):
+            loop.run_until_complete(exchange._consume_fills("fills"))
+    finally:
+        loop.close()
+
+    events = [queue.get_nowait() for _ in range(queue.qsize())]
+    error_events = [e for e in events if isinstance(e, ErrorEvent)]
+    assert len(error_events) == 1
+    _assert_fill_translation_error_event(error_events[0], "ValueError")
+
+
+def test_catch_up_missed_fills_translation_failure_emits_counted_errorevent(
+    exchange: OkxExchange, queue: "Queue[Any]", fake_client: MagicMock
+) -> None:
+    """D-10: the second drain path (``catch_up_missed_fills``) emits the same scrubbed ErrorEvent.
+
+    A missed-fill catch-up whose per-trade translation raises must be equally visible: the
+    resume-path except-arm emits ONE FILL_TRANSLATION ErrorEvent (TYPE + fixed literal only).
+    """
+
+    def _raise(_trade: Any) -> None:
+        raise RuntimeError("boom-secret: leaked-api-key")
+
+    exchange._handle_trade = _raise  # type: ignore[method-assign]
+    exchange._active_symbols.add("BTC-USDT")
+    exchange._disconnect_ts_ms = 1_700_000_000_000
+    fake_client.fetch_my_trades = AsyncMock(
+        name="fetch_my_trades", return_value=[{"order": "X"}]
+    )
+
+    exchange.catch_up_missed_fills()
+
+    events = [queue.get_nowait() for _ in range(queue.qsize())]
+    error_events = [e for e in events if isinstance(e, ErrorEvent)]
+    assert len(error_events) == 1
+    _assert_fill_translation_error_event(error_events[0], "RuntimeError")

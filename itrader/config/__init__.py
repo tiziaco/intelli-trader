@@ -49,6 +49,7 @@ from .stream import (
     StreamSettings,
 )
 from .safety import (
+    FailureRateSettings,
     SafetySettings,
     ThrottleSettings,
 )
@@ -97,6 +98,7 @@ __all__ = [
     "StreamSettings",
     "FeedProviderSettings",
     # Pre-trade safety domain
+    "FailureRateSettings",
     "SafetySettings",
     "ThrottleSettings",
     # Shared config helpers
