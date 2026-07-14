@@ -359,10 +359,18 @@ def test_production_build_live_system_registers_no_replay_data_provider() -> Non
     the paper→okx system would require credentials, but the registration/selection SOURCE is
     the load-bearing invariant. A future edit that re-registers ``'replay'`` in production (or
     re-points the paper map back to ``'replay'``) reddens this loudly.
+
+    SEAM-03/D-11: the ``{'okx':'okx','paper':'okx'}`` default-provider map was centralized
+    into the shared ``build_venue_spec`` builder (``trading_system/venue_spec.py``) — its
+    SOLE home — which BOTH ``for_exchange`` and ``build_live_system`` call. The paper→okx
+    selection invariant is therefore asserted against ``build_venue_spec``'s source now (the
+    inline ``SimpleNamespace`` + map in ``build_live_system`` was deleted); the registration
+    assertions still inspect ``build_live_system`` where ``data_registry.register`` lives.
     """
     import inspect
 
     from itrader.trading_system import live_trading_system as _lts
+    from itrader.trading_system import venue_spec as _venue_spec
 
     source = inspect.getsource(_lts.build_live_system)
 
@@ -374,11 +382,13 @@ def test_production_build_live_system_registers_no_replay_data_provider() -> Non
         "production build_live_system must register NO 'replay' data provider — the replay "
         "harness left itrader for tests/ (D-18); a test fixture injects it via data_plugins"
     )
-    # The paper venue selects the OKX live data feed (D-21), never the replay feed.
-    assert "'paper': 'okx'" in source or '"paper": "okx"' in source, (
-        "production build_live_system must map paper→'okx' (the OKX live data feed, D-21)"
+    # The paper venue selects the OKX live data feed (D-21), never the replay feed. Since
+    # SEAM-03/D-11 the default-provider map lives in the shared build_venue_spec builder.
+    builder_source = inspect.getsource(_venue_spec.build_venue_spec)
+    assert "'paper': 'okx'" in builder_source or '"paper": "okx"' in builder_source, (
+        "build_venue_spec must map paper→'okx' (the OKX live data feed, D-21/D-11)"
     )
-    assert "'paper': 'replay'" not in source and '"paper": "replay"' not in source, (
-        "production build_live_system must NOT map paper→'replay' (the replay feed left "
-        "production for the test fixture, D-21)"
+    assert "'paper': 'replay'" not in builder_source and '"paper": "replay"' not in builder_source, (
+        "build_venue_spec must NOT map paper→'replay' (the replay feed left production for "
+        "the test fixture, D-21)"
     )

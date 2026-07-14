@@ -3,7 +3,6 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, UTC
 from decimal import Decimal
-from types import SimpleNamespace
 from typing import Optional, Dict, Any, Callable, TYPE_CHECKING
 
 # D-14 (V17-11): bound on the pause-window protective-order replay queue. During a
@@ -30,6 +29,7 @@ from itrader.portfolio_handler.reconcile import is_within_single_unit_tolerance
 from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.trading_system.alert_sink import LogAlertSink
+from itrader.trading_system.venue_spec import build_venue_spec
 from itrader.universe import Universe
 
 from itrader.logger import get_itrader_logger
@@ -277,12 +277,11 @@ class LiveTradingSystem:
         for a bespoke spec, or a ``data_plugins`` map for a TEST-only data provider
         injection (the paper↔replay pairing now lives ONLY in the test fixture, D-21).
         """
-        data_provider = overrides.pop('data_provider', None) or {
-            'okx': 'okx', 'paper': 'okx'}.get(exchange, 'okx')
         data_plugins = overrides.pop('data_plugins', None)
-        spec = SimpleNamespace(
-            execution_venue=exchange,
-            data_provider=data_provider,
+        # build_venue_spec owns the {okx,paper}->okx default-provider map (D-11 — one home).
+        spec = build_venue_spec(
+            exchange,
+            data_provider=overrides.pop('data_provider', None),
             account_id=overrides.pop('account_id', None),
         )
         return build_live_system(
@@ -1602,13 +1601,13 @@ def build_live_system(
     # venue assembly — the venue plugins read ctx.bus / ctx.config.stream (they never read
     # ctx.environment / ctx.store / ctx.sql_engine), so the arm-dependent environment is
     # transparent to venue assembly (D-23: live drains the PriorityEventBus ctx.bus wires).
-    venue_spec = SimpleNamespace(
-        execution_venue=exchange,
-        # D-21: production paper re-points to the OKX live data feed (the offline replay
-        # feed left production for tests/). A TEST fixture injects a 'replay' plugin via
-        # data_plugins and passes data_provider='replay' explicitly; production never does.
-        data_provider=(getattr(spec, 'data_provider', None) or {
-            'okx': 'okx', 'paper': 'okx'}.get(exchange, 'okx')),
+    # D-21: production paper re-points to the OKX live data feed (the offline replay
+    # feed left production for tests/). A TEST fixture injects a 'replay' plugin via
+    # data_plugins and passes data_provider='replay' explicitly; production never does.
+    # build_venue_spec owns the {okx,paper}->okx default-provider map (D-11 — one home).
+    venue_spec = build_venue_spec(
+        exchange,
+        data_provider=getattr(spec, 'data_provider', None),
         account_id=getattr(spec, 'account_id', None),
     )
 
