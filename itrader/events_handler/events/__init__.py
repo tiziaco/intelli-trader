@@ -45,6 +45,12 @@ from .error import (
     PortfolioErrorEvent,
 )
 
+# CONTROL-tier events (SAFE-03): connector → engine stream/fatal handoff
+from .control import (
+    StreamStateEvent,
+    ConnectorFatalEvent,
+)
+
 # Event type discriminator (single definition lives in core/enums)
 from itrader.core.enums import EventType
 
@@ -80,6 +86,10 @@ __all__ = [
     # Error events
     'ErrorEvent',
     'PortfolioErrorEvent',
+
+    # CONTROL-tier events
+    'StreamStateEvent',
+    'ConnectorFatalEvent',
 
     # Event type discriminator
     'EventType',
