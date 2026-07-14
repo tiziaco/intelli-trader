@@ -99,3 +99,9 @@ okx.py is under the deferred-typing mypy overrides (live subsystem), so it is no
 ## Known Stubs
 
 None — all three leaves are fully wired and reachable; no placeholder data or TODO stubs introduced.
+
+## Self-Check: PASSED
+
+- All created/modified source files present on disk.
+- All 5 task commits (3a34a1a5, c908e4b5, e1ffe4a7, 45f54ebf, 2b9bb52e) present in git history.
+- Worktree clean after the docs commit.
