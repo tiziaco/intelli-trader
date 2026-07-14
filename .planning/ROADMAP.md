@@ -330,11 +330,11 @@ Plans:
 **Wave 3** *(parallel — blocked on Wave 2)*
 
 - [x] 07-04-PLAN.md — `StreamRecoveryHandler.on_reconnect` (engine-thread catch-up+snapshot+health-gate→resume) + CF-2 loop-native backfill assertion (SAFE-04, D-12)
-- [ ] 07-05-PLAN.md — Net-new `PreTradeThrottle` (D-04 sliding window + max-notional, ENTRY-only via shared classifier, `FillEvent(REFUSED)`, breach counter + de-duped WARNING) (SAFE-06, D-01..D-10)
+- [x] 07-05-PLAN.md — Net-new `PreTradeThrottle` (D-04 sliding window + max-notional, ENTRY-only via shared classifier, `FillEvent(REFUSED)`, breach counter + de-duped WARNING) (SAFE-06, D-01..D-10)
 
 **Wave 4** *(blocked on Wave 3)*
 
-- [ ] 07-06-PLAN.md — Assembly: CONTROL routes via `LiveRouteRegistrar` + flag side-channel deleted + LiveRunner hook deletion + throttle pre-submit + facade delegators + `build_live_system` wiring of the 4 collaborators + gates (SAFE-03, D-06)
+- [x] 07-06-PLAN.md — Assembly: CONTROL routes via `LiveRouteRegistrar` + flag side-channel deleted + LiveRunner hook deletion + throttle pre-submit + facade delegators + `build_live_system` wiring of the 4 collaborators + gates (SAFE-03, D-06)
 
 ### Phase 8: Error Subsystem
 
@@ -425,7 +425,7 @@ P1 and P2 have no dependencies and can start in parallel.
 | 5. Venue Registry + Bundle | v1.8 | 6/6 | Complete    | 2026-07-12 |
 | 6. LiveRunner + Factory + Facade Shrink | v1.8 | 7/7 | Complete    | 2026-07-13 |
 | 6.1 (INSERTED). Seam Cleanup | v1.8 | 4/4 | Complete    | 2026-07-14 |
-| 7. Safety + Reconciliation + Stream Recovery | v1.8 | 4/6 | In Progress|  |
+| 7. Safety + Reconciliation + Stream Recovery | v1.8 | 6/6 | Complete   | 2026-07-14 |
 | 8. Error Subsystem | v1.8 | 0/TBD | Not started | - |
 | 9 ★. Runtime-Config Platform | v1.8 | 0/TBD | Not started | - |
 | 10 ★. Strategies Registry | v1.8 | 0/TBD | Not started | - |
