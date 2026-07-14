@@ -6,14 +6,14 @@ current_phase: 07
 current_phase_name: Safety + Reconciliation + Stream Recovery
 status: executing
 stopped_at: Completed 07-04-PLAN.md
-last_updated: "2026-07-14T14:38:43.724Z"
+last_updated: "2026-07-14T14:47:44.512Z"
 last_activity: 2026-07-14
 last_activity_desc: Phase 07 execution started
 progress:
   total_phases: 9
   completed_phases: 6
   total_plans: 32
-  completed_plans: 29
+  completed_plans: 30
   percent: 67
 ---
 
@@ -34,7 +34,7 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 ## Current Position
 
 Phase: 07 (Safety + Reconciliation + Stream Recovery) — EXECUTING
-Plan: 5 of 6
+Plan: 6 of 6
 Status: Ready to execute
 Last activity: 2026-07-14 — Phase 07 execution started
 
@@ -170,6 +170,7 @@ P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 - [Phase ?]: D-13: pure imports (SessionInitializer/EngineContext/UniverseHandlerConfig) hoisted to live_trading_system module top; heavy ccxt.pro/SQL/venue imports stay lazy inside build_live_system
 - [Phase 07]: OrderRiskRole is enum-only in core/enums/order.py; classify() defers to SafetyController (Plan 03) — D-16 — one-source-of-truth risk vocabulary shared by gate + throttle
 - [Phase 07]: ConnectorFatalEvent.reason is a fixed-literal str, never a stringified exception/payload — V7 secret-scrub (T-07-01); enforced by grep-0 in control.py
+- [Phase 07]: PreTradeThrottle computes D-10 notional off OrderEvent.price (limit for LIMIT, decision-mark estimate for MARKET/STOP) — no separate feed injection — The order layer already stamps the mark onto OrderEvent.price, so a feed dependency would add untested surface for no correctness gain
 
 ### Pending Todos
 
@@ -231,6 +232,7 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 | Phase 07-safety-reconciliation-stream-recovery P02 | 15 min | 2 tasks | 7 files |
 | Phase 07-safety-reconciliation-stream-recovery P03 | 6min | 2 tasks | 4 files |
 | Phase 07 P04 | 6 min | 2 tasks | 4 files |
+| Phase 07 P05 | 20 min | 1 tasks | 2 files |
 
 ## Deferred Items
 
@@ -279,7 +281,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-14T14:38:43.715Z
+Last session: 2026-07-14T14:47:36.249Z
 Stopped at: Completed 07-04-PLAN.md
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
