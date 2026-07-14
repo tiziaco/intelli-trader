@@ -5,10 +5,10 @@ milestone_name: — Live System Refactor & Live-Readiness Hardening
 current_phase: 8
 current_phase_name: Error Subsystem
 status: verifying
-stopped_at: Phase 07 complete (6/6 plans, verified 5/5)
-last_updated: "2026-07-14T18:45:52.655Z"
+stopped_at: Phase 8 context gathered
+last_updated: "2026-07-14T21:40:46.907Z"
 last_activity: 2026-07-14
-last_activity_desc: Phase 07 complete, transitioned to Phase 8
+last_activity_desc: "Completed quick task 260714-v6n: Phase 07 review IN-01 (self-guard PreTradeThrottle)"
 progress:
   total_phases: 9
   completed_phases: 7
@@ -283,11 +283,11 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-14T15:29:45.425Z
-Stopped at: Completed 07-04-PLAN.md
+Last session: 2026-07-14T21:40:46.899Z
+Stopped at: Phase 8 context gathered
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
-Resume file: None
+Resume file: .planning/phases/08-error-subsystem/08-CONTEXT.md
 Carried todo: 14 pending todos in `todos/pending/` (10 fold into v1.8 as CF-1..CF-10; `v17-residual-carryforward.md`
 is the index; the substantive open item is `margin-equity-double-counts-notional-wr01`, owner-gated).
 
