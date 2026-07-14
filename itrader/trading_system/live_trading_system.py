@@ -917,30 +917,14 @@ class LiveTradingSystem:
             # import path never pulls these onto its graph — the recurring inertness
             # gate (tests/integration/test_okx_inertness.py).
             from itrader import config as _system_config
-            from itrader.core.clock import BacktestClock
-            from itrader.trading_system.compose import Engine
             from itrader.trading_system.session_initializer import SessionInitializer
-            from itrader.trading_system.simulation.time_generator import TimeGenerator
             from itrader.universe.universe_handler import UniverseHandlerConfig
 
-            # INTERIM Engine holder (behavior-preserving): the facade still wires its
-            # own handlers directly this plan, so it assembles the compose ``Engine``
-            # holder from them for ``SessionInitializer`` / ``wire_universe``. ``clock``
-            # + ``time_generator`` are inert placeholders the live path never reads (only
-            # the handlers + feed + queue are consumed); 06-06's ``build_live_system``
-            # replaces this with the real ``compose_engine`` ``Engine``.
-            engine = Engine(
-                global_queue=self.global_queue,
-                clock=BacktestClock(),
-                store=self.store,
-                feed=self.feed,
-                strategies_handler=self.strategies_handler,
-                screeners_handler=self.screeners_handler,
-                portfolio_handler=self.portfolio_handler,
-                execution_handler=self.execution_handler,
-                order_handler=self.order_handler,
-                event_handler=self.event_handler,
-                time_generator=TimeGenerator())
+            # 06.1-02 (D-10): read the REAL compose Engine injected at construction
+            # (build_live_system now calls compose_engine and injects the result). The
+            # interim hand-assembled Engine holder (with its placeholder clock /
+            # time_generator) is gone — self._engine IS the compose graph.
+            engine = self._engine
 
             # The uniformly-resolved venue exchange (D-11): the OKX exchange when
             # present, else the paper 'simulated' exchange (permissive validate_symbol /
