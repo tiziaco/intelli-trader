@@ -4,9 +4,9 @@ milestone: v1.8
 milestone_name: — Live System Refactor & Live-Readiness Hardening
 current_phase: 8
 current_phase_name: Error Subsystem
-status: verifying
+status: executing
 stopped_at: Phase 8 context gathered
-last_updated: "2026-07-14T21:40:46.907Z"
+last_updated: "2026-07-14T22:23:28.775Z"
 last_activity: 2026-07-14
 last_activity_desc: "Completed quick task 260714-v6n: Phase 07 review IN-01 (self-guard PreTradeThrottle)"
 progress:
@@ -35,7 +35,7 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 
 Phase: 8 — Error Subsystem
 Plan: Not started
-Status: Phase complete — ready for verification
+Status: Ready to execute
 Last activity: 2026-07-14 — Completed quick task 260714-v6n: Phase 07 review IN-01 (self-guard PreTradeThrottle)
 
 Progress: [███████░░░] 78%
