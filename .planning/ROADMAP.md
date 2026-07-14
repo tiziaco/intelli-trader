@@ -348,7 +348,19 @@ Plans:
   3. `ErrorHandler` formalizes the ERROR-route consumer (severity-mapped structured logging, CRITICAL → the pluggable alert-sink seam CF-5, persist latest error → `SystemStore state.last_error`, WR-06 consumer guard); handler failures, `halt()` (CRITICAL), `PortfolioErrorEvent`, and `ConnectorFatalEvent` all funnel through the one ERROR route.
   4. `test_okx_inertness.py` stays green.
 
-**Plans**: TBD
+**Plans**: 3 plans (3 waves — linear dependency chain)
+
+**Wave 1**
+
+- [ ] 08-01-PLAN.md — Foundation primitives: `FailureClass` enum + 4 `HaltReason` members (D-08/D-16) + `FailureRateSettings` on `SafetySettings` (D-14/D-15) + okx FILL_TRANSLATION counted `ErrorEvent` on both drain paths (D-10) (ERR-03/ERR-04)
+
+**Wave 2** *(blocked on 08-01)*
+
+- [ ] 08-02-PLAN.md — Relocate `ErrorPolicy` to `events_handler/` (D-02) + `HandlerErrorPolicy` Protocol + `FailFastPolicy` (D-06) + CF-1 tripwire (`should_trip`/`classify_failure`/`_POLICY`/`record_failure`, D-07/D-11) + `ErrorHandler` consumer with two-guard terminal safety + `state.last_error` persist (D-01/D-17) (ERR-01/02/03/04)
+
+**Wave 3** *(blocked on 08-02)*
+
+- [ ] 08-03-PLAN.md — Wiring: `EventHandler` constructor injection (delete monkeypatch/`_log_error_event`/`_alert_sink`, D-01/03/06) + `compose_engine` `alert_sink`/`system_store`/`error_policy` kwargs (D-04) + `build_live_system` mints `SystemStore` over the shared `SqlEngine` (D-05) + late-bind `safety.halt` (D-12) + `get_status()` breaker surface (D-13) + retarget 4 existing tests; oracle byte-exact (ERR-01/02/03/04)
 
 ### Phase 9 ★: Runtime-Config Platform
 
@@ -426,7 +438,7 @@ P1 and P2 have no dependencies and can start in parallel.
 | 6. LiveRunner + Factory + Facade Shrink | v1.8 | 7/7 | Complete    | 2026-07-13 |
 | 6.1 (INSERTED). Seam Cleanup | v1.8 | 4/4 | Complete    | 2026-07-14 |
 | 7. Safety + Reconciliation + Stream Recovery | v1.8 | 6/6 | Complete    | 2026-07-14 |
-| 8. Error Subsystem | v1.8 | 0/TBD | Not started | - |
+| 8. Error Subsystem | v1.8 | 0/3 | Not started | - |
 | 9 ★. Runtime-Config Platform | v1.8 | 0/TBD | Not started | - |
 | 10 ★. Strategies Registry | v1.8 | 0/TBD | Not started | - |
 | 11 ★. Multi-Portfolio-Live | v1.8 | 0/TBD | Not started | - |
