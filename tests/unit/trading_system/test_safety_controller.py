@@ -19,14 +19,21 @@ Folder-derived ``unit`` marker.
 """
 
 from datetime import datetime, UTC
+from types import SimpleNamespace
 from typing import Any, List, NamedTuple, Optional
 
 import pytest
 
-from itrader.core.enums import ErrorSeverity, SystemStatus
+from itrader.core.enums import (
+    ErrorSeverity,
+    EventType,
+    OrderCommand,
+    SystemStatus,
+)
 from itrader.events_handler.events import ErrorEvent
 from itrader.trading_system.safety.safety_controller import (
     SafetyController,
+    _DEFERRED_PROTECTIVE_OVERFLOW_REASON,
     _DEFERRED_PROTECTIVE_REPLAY_MAX,
 )
 
@@ -225,3 +232,82 @@ def test_check_durable_halt_without_store_is_noop() -> None:
     controller = _controller(halt_store=None)
     assert controller.check_durable_halt_on_start() is False
     assert controller._status == SystemStatus.STOPPED
+
+
+# -- gate_and_dispatch + D-11 overflow (Task 2) ---------------------------------
+
+def _order(*, command: OrderCommand = OrderCommand.NEW, parent: Any = None) -> Any:
+    """An ORDER-typed event fake; ``parent`` set marks a protective bracket child."""
+    return SimpleNamespace(
+        type=EventType.ORDER, command=command, parent_order_id=parent)
+
+
+def _signal() -> Any:
+    """A raw SIGNAL-typed event fake (no command, no parent)."""
+    return SimpleNamespace(type=EventType.SIGNAL)
+
+
+def test_gate_passes_through_when_not_gated() -> None:
+    """When neither halted nor paused, every event passes straight through."""
+    dispatched: List[Any] = []
+    controller = _controller(dispatched=dispatched)
+    entry = _order()
+    controller.gate_and_dispatch(entry)
+    assert dispatched == [entry]
+
+
+def test_gate_cancel_always_dispatched_during_pause() -> None:
+    """A CANCEL role ALWAYS passes the gate mid-pause (risk-reducing, D-14)."""
+    dispatched: List[Any] = []
+    controller = _controller(dispatched=dispatched)
+    controller.pause_submission('paused-on-disconnect')
+    cancel = _order(command=OrderCommand.CANCEL)
+    controller.gate_and_dispatch(cancel)
+    assert dispatched == [cancel]
+
+
+def test_gate_protective_deferred_during_pause() -> None:
+    """A PROTECTIVE order is deferred (not dispatched) mid-pause (D-14)."""
+    dispatched: List[Any] = []
+    controller = _controller(dispatched=dispatched)
+    controller.pause_submission('paused-on-disconnect')
+    protective = _order(parent=object())
+    controller.gate_and_dispatch(protective)
+    assert dispatched == []
+    assert list(controller._deferred_protective) == [protective]
+
+
+def test_gate_entry_and_signal_suppressed_during_pause() -> None:
+    """A fresh ENTRY order and a raw SIGNAL stay suppressed mid-pause (D-14)."""
+    dispatched: List[Any] = []
+    controller = _controller(dispatched=dispatched)
+    controller.pause_submission('paused-on-disconnect')
+    controller.gate_and_dispatch(_order(parent=None))
+    controller.gate_and_dispatch(_signal())
+    assert dispatched == []
+    assert len(controller._deferred_protective) == 0
+
+
+def test_deferred_protective_overflow_escalates_to_halt() -> None:
+    """D-11: overflowing the deferred queue HALTs + CRITICAL, not silent drop-oldest."""
+    dispatched: List[Any] = []
+    controller = _controller(
+        halt_store=_FakeHaltStore(), dispatched=dispatched, deferred_maxlen=3)
+    controller.pause_submission('paused-on-disconnect')
+
+    # Fill the bounded queue exactly to maxlen (all deferred, no halt).
+    for _ in range(3):
+        controller.gate_and_dispatch(_order(parent=object()))
+    assert controller.is_halted() is False
+    assert len(controller._deferred_protective) == 3
+
+    # The maxlen+1-th protective order overflows → escalate to HALT + CRITICAL.
+    controller.gate_and_dispatch(_order(parent=object()))
+
+    assert controller.is_halted() is True
+    assert controller._halt_reason == _DEFERRED_PROTECTIVE_OVERFLOW_REASON
+    critical = [
+        e for e in controller._test_bus.events  # type: ignore[attr-defined]
+        if isinstance(e, ErrorEvent) and e.severity == ErrorSeverity.CRITICAL
+    ]
+    assert len(critical) == 1

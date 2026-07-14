@@ -34,6 +34,9 @@ from typing import Any, Callable, Optional
 
 from itrader.core.enums import (
     ErrorSeverity,
+    EventType,
+    OrderCommand,
+    OrderRiskRole,
     SystemStatus,
     VALID_STATUS_TRANSITIONS,
 )
@@ -46,6 +49,34 @@ from itrader.logger import get_itrader_logger
 # pathological stall. D-11 (Plan 02) changes the overflow policy from silent
 # drop-oldest to escalate-to-HALT — the ONE behavior change in this extraction.
 _DEFERRED_PROTECTIVE_REPLAY_MAX = 1000
+
+# D-11: the fixed machine-readable halt reason literal for a deferred-protective
+# queue overflow. A fixed literal (never str(exc) / connector payload) so the V7
+# secret-scrub holds when it crosses halt() -> record_halt / CRITICAL ErrorEvent.
+_DEFERRED_PROTECTIVE_OVERFLOW_REASON = "deferred-protective-overflow"
+
+
+def classify(event: Any) -> OrderRiskRole:
+    """Classify an event's risk role for the safety gate + throttle (D-05/D-16).
+
+    The SINGLE shared predicate — extracted ONCE from the inline
+    ``_dispatch_live`` classification so both ``SafetyController.gate_and_dispatch``
+    (here) and the ``PreTradeThrottle`` (Plan 05) consume one source of truth; no
+    divergent copy of "what counts as protective" can suppress a risk-reducing
+    order. Mirrors the donor branch order exactly:
+
+    - a ``CANCEL`` command → ``OrderRiskRole.CANCEL`` (only reduces risk);
+    - an ``ORDER`` with ``parent_order_id`` set → ``OrderRiskRole.PROTECTIVE``
+      (a bracket child / OCO leg — deferred, never dropped);
+    - everything else (a parentless NEW order, a raw SIGNAL) →
+      ``OrderRiskRole.ENTRY`` (opens new risk — metered/suppressed).
+    """
+    if getattr(event, 'command', None) is OrderCommand.CANCEL:
+        return OrderRiskRole.CANCEL
+    if (getattr(event, 'type', None) is EventType.ORDER
+            and getattr(event, 'parent_order_id', None) is not None):
+        return OrderRiskRole.PROTECTIVE
+    return OrderRiskRole.ENTRY
 
 
 class SafetyController:
@@ -294,8 +325,79 @@ class SafetyController:
         self.logger.info(
             'Replaying %d deferred protective order(s) on resume (D-14)', len(batch))
         for deferred in batch:
-            if self._dispatch_fn is not None:
-                self._dispatch_fn(deferred)
+            # Route back through the gate (not raw dispatch): with the pause flag
+            # already cleared it passes to _dispatch, but a re-halt raised during the
+            # replay re-defers onto the now-empty queue rather than sending blind (D-14).
+            self.gate_and_dispatch(deferred)
+
+    def gate_and_dispatch(
+        self,
+        event: Any,
+        dispatch_fn: Optional[Callable[[Any], None]] = None,
+    ) -> None:
+        """Dispatch one event through the live halt/pause gate (D-02/D-14/D-19).
+
+        The freeze-in-place gate: while HALTED (terminal) OR paused-on-disconnect
+        (reversible), NEW order submission (the SIGNAL and ORDER routes) is gated, while
+        BAR/FILL/ERROR streaming + reconciling + persisting continue to drain normally
+        (so the venue stays mirrored and the halt itself — a CRITICAL ErrorEvent — is
+        still consumed). Otherwise → a transparent pass-through.
+
+        D-14 (V17-11): the gate does not blanket-suppress SIGNAL+ORDER. It branches by
+        the shared ``classify`` risk role so risk-REDUCING commands are not silently
+        dropped during the pause:
+        (a) a CANCEL role ALWAYS passes through (a cancel only reduces risk);
+        (b) a PROTECTIVE order (a bracket child — ``parent_order_id`` set) is DEFERRED
+            onto the replay queue and replayed on resume (never left naked);
+        (c) an ENTRY role (a fresh parentless NEW order, or any SIGNAL) stays SUPPRESSED
+            — opening new risk while blind to the venue is what the pause exists to prevent.
+
+        D-11: when the deferred-protective replay queue is FULL, an overflow escalates to
+        ``halt`` + a CRITICAL alert (a 1000-deep backlog means something is deeply wrong)
+        instead of the pre-D-11 silent drop-oldest (which could un-protect a position).
+
+        ``dispatch_fn`` is the inner dispatch (the runner injects
+        ``event_handler._dispatch``, §11a); it defaults to the injected canonical fn.
+        """
+        dispatch = dispatch_fn if dispatch_fn is not None else self._dispatch_fn
+        if (self.is_halted() or self.is_submission_paused()) and getattr(
+                event, 'type', None) in (EventType.SIGNAL, EventType.ORDER):
+            event_type = getattr(getattr(event, 'type', None), 'name', 'UNKNOWN')
+            role = classify(event)
+            # (a) CANCEL always passes — a cancel only reduces risk (D-14).
+            if role is OrderRiskRole.CANCEL:
+                self.logger.info(
+                    'CANCEL dispatched during pause/halt (D-14) — cancels always pass the '
+                    'gate (risk-reducing)', event_type=event_type)
+                if dispatch is not None:
+                    dispatch(event)
+                return
+            # (b) a PROTECTIVE order (bracket child — parent set) is deferred for replay
+            # on resume, not dropped (D-14) — the just-filled position stays protected.
+            if role is OrderRiskRole.PROTECTIVE:
+                # D-11: overflow escalates to HALT + CRITICAL instead of silent drop-oldest.
+                # A full 1000-deep queue is pathological — convert the near-unreachable
+                # silent drop (which could leave a position un-protected) into a loud,
+                # latched stop. The offending order is NOT appended (no drop-oldest).
+                if len(self._deferred_protective) >= self._deferred_maxlen:
+                    self.logger.error(
+                        'Deferred-protective replay queue overflow (maxlen=%d) — escalating '
+                        'to HALT (D-11); a silently dropped protective order would leave a '
+                        'naked position', self._deferred_maxlen)
+                    self.halt(_DEFERRED_PROTECTIVE_OVERFLOW_REASON)
+                    return
+                self._deferred_protective.append(event)
+                self.logger.warning(
+                    'Protective order deferred during pause/halt (D-14) — replays on resume',
+                    event_type=event_type)
+                return
+            # (c) fresh ENTRY order + SIGNAL stay suppressed (don't open new risk blind).
+            self.logger.warning(
+                'New order submission suppressed (freeze-in-place / paused-on-disconnect)',
+                event_type=event_type)
+            return
+        if dispatch is not None:
+            dispatch(event)
 
     def update_status(
         self,

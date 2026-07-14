@@ -9,9 +9,11 @@ dispatch gate (Plan 03) and the PreTradeThrottle (Plan 05):
   4. Per D-16 ONLY the enum lives here — no ``classify()`` in core/enums/order.py.
 """
 
+from types import SimpleNamespace
+
 import pytest
 
-from itrader.core.enums import OrderRiskRole
+from itrader.core.enums import EventType, OrderCommand, OrderRiskRole
 
 pytestmark = pytest.mark.unit
 
@@ -43,3 +45,40 @@ def test_classify_does_not_live_in_enum_module():
     from itrader.core.enums import order as order_enums
 
     assert not hasattr(order_enums, "classify")
+
+
+# -- The shared classify() predicate (D-05/D-16; travels with SafetyController) --
+
+def test_classify_cancel_command_is_cancel_role():
+    """A CANCEL-command event → OrderRiskRole.CANCEL (risk-reducing)."""
+    from itrader.trading_system.safety.safety_controller import classify
+
+    event = SimpleNamespace(
+        type=EventType.ORDER, command=OrderCommand.CANCEL, parent_order_id=None)
+    assert classify(event) is OrderRiskRole.CANCEL
+
+
+def test_classify_order_with_parent_is_protective_role():
+    """An ORDER with parent_order_id set → OrderRiskRole.PROTECTIVE (bracket child)."""
+    from itrader.trading_system.safety.safety_controller import classify
+
+    event = SimpleNamespace(
+        type=EventType.ORDER, command=OrderCommand.NEW, parent_order_id=object())
+    assert classify(event) is OrderRiskRole.PROTECTIVE
+
+
+def test_classify_parentless_new_order_is_entry_role():
+    """A parentless NEW order → OrderRiskRole.ENTRY (opens new risk)."""
+    from itrader.trading_system.safety.safety_controller import classify
+
+    event = SimpleNamespace(
+        type=EventType.ORDER, command=OrderCommand.NEW, parent_order_id=None)
+    assert classify(event) is OrderRiskRole.ENTRY
+
+
+def test_classify_raw_signal_is_entry_role():
+    """A raw SIGNAL (no command, no parent) → OrderRiskRole.ENTRY."""
+    from itrader.trading_system.safety.safety_controller import classify
+
+    event = SimpleNamespace(type=EventType.SIGNAL)
+    assert classify(event) is OrderRiskRole.ENTRY
