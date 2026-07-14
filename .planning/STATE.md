@@ -4,9 +4,9 @@ milestone: v1.8
 milestone_name: — Live System Refactor & Live-Readiness Hardening
 current_phase: 06.1
 current_phase_name: seam-cleanup-make-build-live-system-consume-the-shared-compo
-status: executing
-stopped_at: Phase 06.1 context gathered
-last_updated: "2026-07-14T11:15:39.556Z"
+status: verifying
+stopped_at: Completed 06.1-04-PLAN.md (final plan of phase 06.1)
+last_updated: "2026-07-14T11:24:28.761Z"
 last_activity: 2026-07-14
 last_activity_desc: Phase 06.1 execution started
 progress:
@@ -35,7 +35,7 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 
 Phase: 06.1 (seam-cleanup-make-build-live-system-consume-the-shared-compo) — EXECUTING
 Plan: 4 of 4
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-07-14 — Phase 06.1 execution started
 
 Progress: [████░░░░░░] 44%
@@ -166,6 +166,8 @@ P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 - [Phase ?]: 06.1-01 (SEAM-01/D-04): compose_engine spec-free; store/feed on EngineContext (D-01/D-02, LR-14 amended); bind+generate_bar_event lifted to base BarFeed ABC; precompute narrowed at backtest-only runner; oracle byte-exact 134/46189.87730727451 + inertness green
 - [Phase ?]: 06.1-02 (SEAM-01/SEAM-02/D-05/D-10): build_live_system consumes compose_engine (hand-rolled 4-handler graph + commission closure deleted, FeeModelCommissionEstimator reused); credential-probe arm selects only environment('live'/'backtest')+shared SqlEngine so compose's handler-owned storage lands the identical durable path on both arms; LiveSystemComponents deleted, facade __init__ = pure injection over Engine+VenueLifecycle+separate SQL/halt handles (D-07/D-09); interim Engine reconstruction removed (reads self._engine); oracle byte-exact + inertness green, mypy clean, bodies untouched (D-08)
 - [Phase 06.1]: 06.1-03 (SEAM-03/D-11): typed frozen VenueSpec (execution_venue/data_provider/account_id) + shared build_venue_spec builder replace the twice-written SimpleNamespace fake-spec; build_venue_spec is the SOLE home of the {okx,paper}->okx default-provider map, called by BOTH for_exchange and build_live_system (inline specs+maps at :274-283/:1605-1613 deleted, SimpleNamespace import dropped); feeds assemble_venue only, never compose_engine (spec-free since D-04); spec-equality unit test proves the two entry points cannot drift; oracle byte-exact 134/46189.87730727451 + inertness green, mypy clean
+- [Phase ?]: D-12: trading_system barrel drops the live surface entirely (backtest-only); live consumers import from the live submodule directly
+- [Phase ?]: D-13: pure imports (SessionInitializer/EngineContext/UniverseHandlerConfig) hoisted to live_trading_system module top; heavy ccxt.pro/SQL/venue imports stay lazy inside build_live_system
 
 ### Pending Todos
 
@@ -222,6 +224,7 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 | Phase 06.1 P01 | 22min | 3 tasks | 7 files |
 | Phase 06.1 P02 | 18 | 3 tasks | 1 files |
 | Phase 06.1 P03 | 4 | 3 tasks | 4 files |
+| Phase 06.1 P04 | 6 | 3 tasks | 3 files |
 
 ## Deferred Items
 
@@ -270,8 +273,8 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-14T11:14:32.329Z
-Stopped at: Phase 06.1 context gathered
+Last session: 2026-07-14T11:24:28.753Z
+Stopped at: Completed 06.1-04-PLAN.md (final plan of phase 06.1)
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
 Resume file: .planning/phases/06.1-seam-cleanup-make-build-live-system-consume-the-shared-compo/06.1-CONTEXT.md
