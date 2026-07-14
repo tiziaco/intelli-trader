@@ -544,13 +544,13 @@ def test_pause_submission_suppresses_new_orders_but_not_bar_fill(monkeypatch: An
     for etype in (EventType.ORDER, EventType.SIGNAL):
         ev = MagicMock()
         ev.type = etype
-        system._dispatch_live(ev)
+        system._safety.gate_and_dispatch(ev)
     system.event_handler._dispatch.assert_not_called()
 
     for etype in (EventType.BAR, EventType.FILL):
         ev = MagicMock()
         ev.type = etype
-        system._dispatch_live(ev)
+        system._safety.gate_and_dispatch(ev)
     assert system.event_handler._dispatch.call_count == 2
 
 
@@ -571,16 +571,18 @@ def test_resume_after_reconnect_snapshots_then_clears_pause(monkeypatch: Any) ->
     """The engine-thread resume takes a fresh REST snapshot then clears the pause (D-19)."""
     system = _live_system(monkeypatch)
     venue = MagicMock(name="venue_account")
-    system._venue_account = venue
+    system._stream_recovery._venue_account = venue
     system.pause_submission("paused-on-disconnect")
 
-    # The connector-loop reconnect callback only flags a resume (no blocking I/O).
+    # The connector-loop reconnect callback only EMITS a STREAM_STATE(up) CONTROL event
+    # (no blocking I/O) — it does not resume on the connector thread.
     system._on_venue_stream_up("fills")
     assert system.get_status()["paused"] is True   # not resumed on the connector thread
     venue.snapshot.assert_not_called()
 
-    # The engine thread performs the fresh REST snapshot + reconcile, then resumes.
-    system._maybe_resume_after_reconnect()
+    # The engine-thread STREAM_STATE(up) route target performs the fresh REST snapshot,
+    # then resumes.
+    system._stream_recovery.on_reconnect()
     venue.snapshot.assert_called_once()            # don't trade when you can't see the venue
     assert system.get_status()["paused"] is False
 
@@ -609,24 +611,22 @@ def test_resume_snapshots_before_clearing_pause(monkeypatch: Any) -> None:
     """
     system = _live_system(monkeypatch)
     venue = MagicMock(name="venue_account")
-    system._venue_account = venue
+    system._stream_recovery._venue_account = venue
 
-    # Happy path: pause, flag a resume, drain it — snapshot runs, pause clears.
+    # Happy path: pause, drive the engine-thread reconnect-resume — snapshot runs, pause clears.
     system.pause_submission("paused-on-disconnect")
-    system._pending_stream_resume.set()
-    system._maybe_resume_after_reconnect()
+    system._stream_recovery.on_reconnect()
     venue.snapshot.assert_called_once()
     assert system.get_status()["paused"] is False
 
-    # Failure path: a snapshot that raises leaves the system paused and re-sets the flag.
+    # Failure path: a snapshot that raises leaves the system paused (D-12 — stay paused,
+    # retried on the NEXT STREAM_STATE(up) route fire; no flag side-channel any more).
     system.pause_submission("paused-on-disconnect")
     venue.snapshot.reset_mock()
     venue.snapshot.side_effect = RuntimeError("venue unreachable")
-    system._pending_stream_resume.set()
-    system._maybe_resume_after_reconnect()
+    system._stream_recovery.on_reconnect()
     venue.snapshot.assert_called_once()
     assert system.get_status()["paused"] is True          # never resume blind
-    assert system._pending_stream_resume.is_set()          # retried on next iteration
 
 
 # --- WR-01: concurrent halt fires exactly one CRITICAL alert ------------------
@@ -670,7 +670,9 @@ def test_concurrent_halt_fires_single_alert(monkeypatch: Any) -> None:
             critical_halts.append(ev)
 
     assert len(critical_halts) == 1
-    # First halt wins — the winning reason is one of the racers and matches halt_reason.
-    assert system._halt_reason in reasons
-    assert f"reason={system._halt_reason}" in critical_halts[0].error_message
+    # First halt wins — the winning reason is one of the racers and matches halt_reason
+    # (the machine-readable reason now lives on the injected SafetyController).
+    halt_reason = system.get_status()["halt_reason"]
+    assert halt_reason in reasons
+    assert f"reason={halt_reason}" in critical_halts[0].error_message
     assert system.get_status()["status"] == SystemStatus.HALTED.value

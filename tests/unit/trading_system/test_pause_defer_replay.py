@@ -79,7 +79,12 @@ def _order_event(
 
 
 def _record_dispatch(system: LiveTradingSystem) -> List[Any]:
-    """Replace the inner dispatch with a recorder; return the list it appends to."""
+    """Replace the inner dispatch with a recorder; return the list it appends to.
+
+    The injected SafetyController gate dispatches through a LATE-BOUND lambda over
+    ``event_handler._dispatch``, so patching it here is honoured by ``gate_and_dispatch``
+    (and by the deferred-protective replay on resume).
+    """
     dispatched: List[Any] = []
     system.event_handler._dispatch = MagicMock(  # type: ignore[method-assign]
         side_effect=lambda ev: dispatched.append(ev))
@@ -87,15 +92,13 @@ def _record_dispatch(system: LiveTradingSystem) -> List[Any]:
 
 
 def _resume_via_engine_thread(system: LiveTradingSystem) -> None:
-    """Drive the engine-thread resume: fresh REST snapshot then clear the pause (D-19).
+    """Drive the engine-thread reconnect-resume (§11c): the STREAM_STATE(up) route target.
 
-    This is the realistic resume path a reconnect takes — the connector-loop callback sets
-    ``_pending_stream_resume``; the engine loop drains it via ``_maybe_resume_after_reconnect``,
-    which snapshots the (mocked) venue and resumes. D-14's replay hooks onto this resume.
+    On a non-OKX venue the StreamRecoveryHandler's arms are all None (catch-up + snapshot
+    skipped, streams healthy), so ``on_reconnect`` resumes submission — which drains the
+    D-14 deferred-protective replay queue on the injected SafetyController.
     """
-    system._venue_account = MagicMock(name="venue_account")
-    system._pending_stream_resume.set()
-    system._maybe_resume_after_reconnect()
+    system._stream_recovery.on_reconnect()
 
 
 def test_pause_defer_replay_protective_order_replayed_on_resume(monkeypatch: Any) -> None:
@@ -110,7 +113,7 @@ def test_pause_defer_replay_protective_order_replayed_on_resume(monkeypatch: Any
     system.pause_submission("paused-on-disconnect")
 
     protective = _order_event(command=OrderCommand.NEW, parent=OrderId(uuid.uuid4()))
-    system._dispatch_live(protective)
+    system._safety.gate_and_dispatch(protective)
     # Suppressed WHILE paused (correct both now and after the fix — it is deferred, not sent).
     assert protective not in dispatched
 
@@ -136,7 +139,7 @@ def test_pause_defer_replay_entry_stays_suppressed(monkeypatch: Any) -> None:
     system.pause_submission("paused-on-disconnect")
 
     entry = _order_event(command=OrderCommand.NEW, parent=None)
-    system._dispatch_live(entry)
+    system._safety.gate_and_dispatch(entry)
     assert entry not in dispatched  # suppressed while paused
 
     _resume_via_engine_thread(system)
@@ -160,7 +163,7 @@ def test_pause_defer_replay_cancel_always_dispatched(monkeypatch: Any) -> None:
     system.pause_submission("paused-on-disconnect")
 
     cancel = _order_event(command=OrderCommand.CANCEL, parent=None)
-    system._dispatch_live(cancel)
+    system._safety.gate_and_dispatch(cancel)
 
     assert cancel in dispatched, (
         "A8/V17-11: a CANCEL command was suppressed during the pause — a cancel only REDUCES "

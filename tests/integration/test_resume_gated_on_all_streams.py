@@ -38,16 +38,23 @@ def _set_okx_env(monkeypatch) -> None:
 
 
 def _paused_offline_okx_system(monkeypatch) -> LiveTradingSystem:
-    """A paused OKX live system with both blocking resume legs stubbed offline."""
+    """A paused OKX live system with both blocking resume legs stubbed offline.
+
+    P7 (§11c): the reconnect-resume I/O + the all-streams-healthy gate live on the
+    injected StreamRecoveryHandler; the ``STREAM_STATE(up)`` route drives its
+    ``on_reconnect``. The tests drive that handler directly. The venue-account snapshot
+    leg is stubbed on the HANDLER (it captured the real account at build); the missed-fill
+    catch-up leg is stubbed on the real exchange object the handler shares.
+    """
     _set_okx_env(monkeypatch)
     system = LiveTradingSystem.for_exchange("okx")
     assert system._okx_exchange is not None
     assert system._okx_data_provider is not None
-    # Neutralize the two blocking venue-I/O legs the drain runs before the gate
+    # Neutralize the two blocking venue-I/O legs the resume runs before the gate
     # (missed-fill catch-up + REST snapshot) so the resume path runs socket-free.
     system._okx_exchange.catch_up_missed_fills = MagicMock(  # type: ignore[method-assign]
         name="catch_up_missed_fills")
-    system._venue_account = MagicMock(name="venue_account")
+    system._stream_recovery._venue_account = MagicMock(name="venue_account")
     system.pause_submission("paused-on-disconnect")
     return system
 
@@ -55,9 +62,8 @@ def _paused_offline_okx_system(monkeypatch) -> LiveTradingSystem:
 def test_resume_stays_paused_while_fill_arm_down(monkeypatch) -> None:
     """A candle-stream reconnect while the fill stream is down must NOT resume (D-28).
 
-    RED on current code: ``_on_venue_stream_up`` fired the resume flag on the candle arm's
-    up, and the drain resumed with no health gate → submission un-paused while blind to
-    fills. GREEN: ``_all_venue_streams_healthy()`` keeps the pause in place.
+    The all-streams-healthy gate (StreamRecoveryHandler._all_venue_streams_healthy) keeps
+    the pause in place until EVERY wired arm reports up.
     """
     system = _paused_offline_okx_system(monkeypatch)
 
@@ -65,19 +71,17 @@ def test_resume_stays_paused_while_fill_arm_down(monkeypatch) -> None:
     system._okx_exchange._supervisor._streams_down = {"fills"}
     system._okx_data_provider._supervisor._streams_down = set()
 
-    system._pending_stream_resume.set()
-    system._maybe_resume_after_reconnect()
+    system._stream_recovery.on_reconnect()
 
     # Still blind to fills → submission MUST remain paused.
-    assert system._is_submission_paused() is True
+    assert system._safety.is_submission_paused() is True
 
-    # The fill arm now recovers; the still-down arm's next up-event re-fires the flag.
+    # The fill arm now recovers; the still-down arm's next up-event re-fires on_reconnect.
     system._okx_exchange._supervisor._streams_down = set()
-    system._pending_stream_resume.set()
-    system._maybe_resume_after_reconnect()
+    system._stream_recovery.on_reconnect()
 
     # Both arms healthy → resume exactly once.
-    assert system._is_submission_paused() is False
+    assert system._safety.is_submission_paused() is False
 
 
 def test_resume_stays_paused_while_data_arm_down(monkeypatch) -> None:
@@ -88,14 +92,12 @@ def test_resume_stays_paused_while_data_arm_down(monkeypatch) -> None:
     system._okx_exchange._supervisor._streams_down = set()
     system._okx_data_provider._supervisor._streams_down = {"candle"}
 
-    system._pending_stream_resume.set()
-    system._maybe_resume_after_reconnect()
-    assert system._is_submission_paused() is True
+    system._stream_recovery.on_reconnect()
+    assert system._safety.is_submission_paused() is True
 
     system._okx_data_provider._supervisor._streams_down = set()
-    system._pending_stream_resume.set()
-    system._maybe_resume_after_reconnect()
-    assert system._is_submission_paused() is False
+    system._stream_recovery.on_reconnect()
+    assert system._safety.is_submission_paused() is False
 
 
 def test_resume_when_both_arms_healthy(monkeypatch) -> None:
@@ -105,9 +107,8 @@ def test_resume_when_both_arms_healthy(monkeypatch) -> None:
     system._okx_exchange._supervisor._streams_down = set()
     system._okx_data_provider._supervisor._streams_down = set()
 
-    system._pending_stream_resume.set()
-    system._maybe_resume_after_reconnect()
-    assert system._is_submission_paused() is False
+    system._stream_recovery.on_reconnect()
+    assert system._safety.is_submission_paused() is False
 
 
 def test_none_arm_never_blocks_resume(monkeypatch) -> None:
@@ -115,12 +116,11 @@ def test_none_arm_never_blocks_resume(monkeypatch) -> None:
     system = _paused_offline_okx_system(monkeypatch)
 
     # Simulate a non-OKX wiring where an arm is absent; the present arm is healthy.
-    system._okx_exchange = None
+    system._stream_recovery._okx_exchange = None
     system._okx_data_provider._supervisor._streams_down = set()
 
-    system._pending_stream_resume.set()
-    system._maybe_resume_after_reconnect()
-    assert system._is_submission_paused() is False
+    system._stream_recovery.on_reconnect()
+    assert system._safety.is_submission_paused() is False
 
 
 # -- CF-2: the LiveBarFeed ring writer is single-writer on resume (T-07-03). ----

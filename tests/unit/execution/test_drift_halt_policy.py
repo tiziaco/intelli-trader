@@ -230,13 +230,13 @@ def test_halt_suppresses_new_order_submission_but_not_bar_fill(monkeypatch):
     fill_event.type = EventType.FILL
 
     # SIGNAL/ORDER are suppressed (frozen in place) — never reach the dispatcher.
-    system._dispatch_live(order_event)
-    system._dispatch_live(signal_event)
+    system._safety.gate_and_dispatch(order_event)
+    system._safety.gate_and_dispatch(signal_event)
     system.event_handler._dispatch.assert_not_called()
 
     # BAR/FILL streaming + reconciling continue to drain.
-    system._dispatch_live(bar_event)
-    system._dispatch_live(fill_event)
+    system._safety.gate_and_dispatch(bar_event)
+    system._safety.gate_and_dispatch(fill_event)
     assert system.event_handler._dispatch.call_count == 2
 
 

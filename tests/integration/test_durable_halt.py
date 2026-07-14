@@ -94,7 +94,10 @@ def _build_paper_system(store: HaltRecordStore) -> LiveTradingSystem:
     restart model — RESEARCH Pitfall 7). No OKX network / credentials.
     """
     system, _ = build_paper_replay_system()
-    system._halt_record_store = store
+    # P7 (§11b): the durable halt store lives on the injected SafetyController now
+    # (halt/check_durable_halt_on_start own it) — inject the double there so a FRESH
+    # instance on the SAME store observes a prior halt (the restart model, Pitfall 7).
+    system._safety._halt_record_store = store
     strategy = SMAMACDStrategy(
         timeframe="1d",
         tickers=["BTCUSD"],

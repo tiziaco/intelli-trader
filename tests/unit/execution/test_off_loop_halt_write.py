@@ -1,21 +1,19 @@
-"""05.3-08 Task 2 (D-21 / WR-02) — the durable halt write runs OFF the connector loop thread.
+"""P7 (SAFE-03 / §11c) — the durable halt write runs OFF the connector loop thread.
 
 ``OkxExchange._supervisor._escalate_halt`` runs on the connector asyncio loop thread (it is
 reached from ``_run_stream_supervisor`` on a fatal error / exhausted retry ceiling / the
-unclassified catch-all). Pre-fix it invoked the injected halt signal = ``LiveTradingSystem.halt``
-SYNCHRONOUSLY, and ``halt()`` performs a BLOCKING ``HaltRecordStore.record_halt`` SQL write. A
-blocking SQL round-trip on the asyncio loop stalls EVERY stream sharing that loop (WR-02 /
-Pitfall 9).
+unclassified catch-all). It invokes the injected halt signal =
+``LiveTradingSystem._request_connector_halt``, which now only ``bus.put``s a
+``ConnectorFatalEvent`` CONTROL event (a fixed reason literal, V7 secret-scrub) — it does NOT
+run the blocking ``HaltRecordStore.record_halt`` SQL write on the loop.
 
-D-21 makes the escalation a thread-safe FLAG handoff (mirroring the pause/resume flags): the
-connector loop only flips a flag; the blocking durable write + status flip + CRITICAL alert run
-on the ENGINE thread when it drains the flag. Winner-only single-write + D-10 latch ordering +
-the V7 secret scrub are all preserved.
+The engine-thread ``CONNECTOR_FATAL`` route actuates ``SafetyController.halt(event.reason)``,
+which performs the blocking durable write + status flip + CRITICAL alert on the ENGINE thread.
+Winner-only single-write + D-10 latch ordering + the V7 secret scrub are all preserved.
 
-RED (current code): the production-wired connector-fatal signal is ``system.halt``, so driving
-``_escalate_connector_halt`` on a loop thread runs ``record_halt`` on THAT loop thread. GREEN
-(after the flag handoff): the loop thread records nothing; ``_maybe_halt_after_connector_fatal``
-on the engine thread does the durable write.
+RED (pre-P7): the connector-fatal signal drove ``halt()`` synchronously on the loop thread, so
+``record_halt`` ran on THAT loop thread. GREEN (after the CONTROL-event handoff): the loop
+thread only puts an event; ``SafetyController.halt`` on the engine thread does the durable write.
 
 Fully offline: dummy OKX creds build the okx arm with NO network. 4-space indentation
 (``tests/unit/execution/*``); folder-derived ``unit`` marker.
@@ -23,6 +21,7 @@ Fully offline: dummy OKX creds build the okx arm with NO network. 4-space indent
 
 import threading
 
+from itrader.events_handler.events import ConnectorFatalEvent
 from itrader.trading_system.live_trading_system import LiveTradingSystem
 
 
@@ -55,12 +54,27 @@ class _CapturingHaltStore:
         pass
 
 
+def _drain_connector_fatal(system: LiveTradingSystem) -> None:
+    """Engine-thread actuation of the queued CONNECTOR_FATAL event (the route target).
+
+    Mirrors what the ``CONNECTOR_FATAL`` route does on the engine thread —
+    ``SafetyController.halt(event.reason)`` — off the connector loop. Drains every queued
+    ConnectorFatalEvent, halting once (halt() is winner-only/idempotent).
+    """
+    drained = []
+    while not system.global_queue.empty():
+        drained.append(system.global_queue.get_nowait())
+    for ev in drained:
+        if isinstance(ev, ConnectorFatalEvent):
+            system._safety.halt(ev.reason)
+
+
 def test_connector_fatal_durable_write_runs_off_the_loop_thread(monkeypatch) -> None:
-    """A connector-fatal escalation writes the durable halt OFF the loop thread (D-21/WR-02)."""
+    """A connector-fatal escalation writes the durable halt OFF the loop thread (SAFE-03/§11c)."""
     _set_okx_env(monkeypatch)
     system = LiveTradingSystem.for_exchange("okx")
     store = _CapturingHaltStore()
-    system._halt_record_store = store
+    system._safety._halt_record_store = store
     try:
         # The PRODUCTION-wired connector-fatal signal (wired at construction on the okx arm).
         assert system._okx_exchange._halt_signal is not None
@@ -78,14 +92,15 @@ def test_connector_fatal_durable_write_runs_off_the_loop_thread(monkeypatch) -> 
         t.start()
         t.join()
 
-        # D-21/WR-02: the blocking durable write must NOT have run on the loop thread —
-        # the escalation is flag-only there.
+        # SAFE-03/§11c: the blocking durable write must NOT have run on the loop thread —
+        # the callback only put a CONNECTOR_FATAL CONTROL event there.
         assert store.record_threads == [], (
             "record_halt ran on the connector asyncio loop thread — a blocking SQL write on "
-            "the loop stalls every stream sharing it (WR-02 / Pitfall 9)")
+            "the loop stalls every stream sharing it (Pitfall 9)")
 
-        # The engine thread drains the flag -> the blocking record_halt runs HERE, off the loop.
-        system._maybe_halt_after_connector_fatal()
+        # The engine thread actuates the queued CONNECTOR_FATAL event -> the blocking
+        # record_halt runs HERE, off the loop.
+        _drain_connector_fatal(system)
         assert len(store.record_threads) == 1
         assert store.record_threads[0] == threading.get_ident()   # engine (this) thread
         assert store.record_threads[0] != loop_ident["id"]        # never the loop thread
@@ -98,12 +113,12 @@ def test_connector_fatal_winner_only_single_durable_write(monkeypatch) -> None:
     _set_okx_env(monkeypatch)
     system = LiveTradingSystem.for_exchange("okx")
     store = _CapturingHaltStore()
-    system._halt_record_store = store
+    system._safety._halt_record_store = store
     try:
         signal = system._okx_exchange._halt_signal
 
         def loop() -> None:
-            # Two escalations from the loop (e.g. both stream arms fail) only flip the flag.
+            # Two escalations from the loop (e.g. both stream arms fail) only put events.
             signal("connector-fatal")
             signal("connector-fatal")
 
@@ -112,9 +127,8 @@ def test_connector_fatal_winner_only_single_durable_write(monkeypatch) -> None:
         t.join()
         assert store.record_threads == []
 
-        # First drain writes; a second drain is a no-op (flag cleared + halt() winner-only).
-        system._maybe_halt_after_connector_fatal()
-        system._maybe_halt_after_connector_fatal()
+        # Actuating both queued events halts once (halt() winner-only + D-10 latch).
+        _drain_connector_fatal(system)
         assert len(store.record_threads) == 1, (
             "winner-only single-write violated: a second connector-fatal escalation "
             "double-wrote the durable halt record (D-10 latch)")

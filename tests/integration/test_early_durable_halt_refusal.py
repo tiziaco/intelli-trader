@@ -70,7 +70,9 @@ def test_durably_halted_start_refuses_before_any_venue_io(monkeypatch) -> None:
     """A durably-halted ``start()`` refuses at the TOP with zero venue I/O (D-20/WR-01)."""
     _set_okx_env(monkeypatch)
     system = LiveTradingSystem.for_exchange("okx")
-    system._halt_record_store = _UnresolvedHaltStore("drift")
+    # P7 (§11b): the durable halt store + check_durable_halt_on_start live on the injected
+    # SafetyController now — inject the always-unresolved double there.
+    system._safety._halt_record_store = _UnresolvedHaltStore("drift")
 
     # Spy/stub EVERY call start() could make before the refusal. On the fixed (top-gate)
     # code none of these run; on the pre-fix (late-gate) code they all run before refusing.
@@ -115,7 +117,7 @@ def test_healthy_start_still_runs_session_init_when_no_durable_halt(monkeypatch)
     _set_okx_env(monkeypatch)
     system = LiveTradingSystem.for_exchange("okx")
     # No durable store -> the gate is skipped entirely (in-memory fallback).
-    system._halt_record_store = None
+    system._safety._halt_record_store = None
 
     system._okx_connector.connect = MagicMock(name="connector.connect")
     system.feed.warmup = MagicMock(name="feed.warmup")

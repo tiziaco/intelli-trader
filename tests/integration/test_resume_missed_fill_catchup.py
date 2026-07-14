@@ -42,10 +42,11 @@ def _set_okx_env(monkeypatch) -> None:
 
 
 def test_resume_drain_recovers_fill_settled_during_disconnect(monkeypatch) -> None:
-    """_maybe_resume_after_reconnect re-fetches an outage-window fill, before snapshot (D-25).
+    """StreamRecoveryHandler.on_reconnect re-fetches an outage-window fill, before snapshot (D-25).
 
-    RED on current code: the resume drain never calls ``catch_up_missed_fills``, so the
-    settled trade is never routed through ``_handle_trade`` and the assertion FAILS.
+    P7 (§11c): the reconnect-resume I/O lives on the injected StreamRecoveryHandler,
+    reached by the STREAM_STATE(up) route. It calls ``catch_up_missed_fills`` BEFORE the
+    fresh REST snapshot, so the settled trade routes through ``_handle_trade`` on resume.
     """
     _set_okx_env(monkeypatch)
     system = LiveTradingSystem.for_exchange("okx")
@@ -74,14 +75,13 @@ def test_resume_drain_recovers_fill_settled_during_disconnect(monkeypatch) -> No
     venue_account = MagicMock(name="venue_account")
     venue_account.snapshot = MagicMock(
         name="snapshot", side_effect=lambda: call_order.append("snapshot"))
-    system._venue_account = venue_account
+    system._stream_recovery._venue_account = venue_account
 
-    # Stand the system in the reconnect-resume precondition: paused on disconnect, with
-    # the connector-loop reconnect callback having flagged an engine-thread resume.
+    # Stand the system in the reconnect-resume precondition: paused on disconnect, then
+    # drive the engine-thread reconnect-resume (the STREAM_STATE(up) route target).
     system.pause_submission("paused-on-disconnect")
-    system._pending_stream_resume.set()
 
-    system._maybe_resume_after_reconnect()
+    system._stream_recovery.on_reconnect()
 
     # The outage-window trade was recovered exactly once via the resume path.
     handle_trade_spy.assert_called_once_with(settled_trade)
@@ -90,7 +90,7 @@ def test_resume_drain_recovers_fill_settled_during_disconnect(monkeypatch) -> No
     # The disconnect floor was consumed by the catch-up (idempotent re-run otherwise).
     assert exchange._disconnect_ts_ms is None
     # Resume completed — the pause is cleared.
-    assert system._is_submission_paused() is False
+    assert system._safety.is_submission_paused() is False
 
 
 def test_resume_drain_skips_catchup_when_no_okx_exchange(monkeypatch) -> None:
@@ -101,17 +101,16 @@ def test_resume_drain_skips_catchup_when_no_okx_exchange(monkeypatch) -> None:
     _set_okx_env(monkeypatch)
     system = LiveTradingSystem.for_exchange("okx")
 
-    system._okx_exchange = None  # simulate the guard's None branch
+    system._stream_recovery._okx_exchange = None  # simulate the guard's None branch
     venue_account = MagicMock(name="venue_account")
-    system._venue_account = venue_account
+    system._stream_recovery._venue_account = venue_account
 
     system.pause_submission("paused-on-disconnect")
-    system._pending_stream_resume.set()
 
-    system._maybe_resume_after_reconnect()
+    system._stream_recovery.on_reconnect()
 
     venue_account.snapshot.assert_called_once()
-    assert system._is_submission_paused() is False
+    assert system._safety.is_submission_paused() is False
 
 
 # -- CF-2: the reconnect-resume path (StreamRecoveryHandler, Plan 04) writes NO ---

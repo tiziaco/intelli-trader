@@ -31,7 +31,15 @@ from tests.support.replay_harness import build_paper_replay_system
 
 
 class _StubVenueAccount:
-    """Minimal venue-account stand-in so the OKX venue block is entered offline."""
+    """Minimal venue-account stand-in so the venue-truth reconcile branch is entered offline.
+
+    P7 (§11d): the ReconciliationCoordinator keys the venue reconcile on account KIND
+    (``is_venue_truth``), so the stub declares itself venue-truth; ``positions`` is empty
+    so the post-reconcile baseline guard is a benign no-op (the reconciler halts instead).
+    """
+
+    is_venue_truth = True
+    positions: dict = {}
 
     def snapshot(self) -> None:  # noqa: D401 - no-op stub
         pass
@@ -41,13 +49,21 @@ class _StubVenueAccount:
 
 
 class _RecordingReconciler:
-    """Fake VenueReconciler recording that ``reconcile()`` ran (accepts any kwargs)."""
+    """Fake VenueReconciler recording that ``reconcile()`` ran (accepts any kwargs).
 
-    def __init__(self, calls: List[str], **_kwargs: Any) -> None:
+    Halts via the injected ``halt_signal`` (bound to SafetyController.halt) after recording,
+    so ``start()`` refuses RUNNING (spawns no thread) with the rehydrate->reconcile order
+    already captured — mirroring a reconcile that could not trust venue state.
+    """
+
+    def __init__(self, calls: List[str], **kwargs: Any) -> None:
         self._calls = calls
+        self._halt_signal = kwargs.get("halt_signal")
 
     def reconcile(self) -> None:
         self._calls.append("reconcile")
+        if self._halt_signal is not None:
+            self._halt_signal("test-stop-after-reconcile")
 
 
 def test_no_durable_store_falls_back_to_backtest(monkeypatch) -> None:

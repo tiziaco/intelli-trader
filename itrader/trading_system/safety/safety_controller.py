@@ -260,6 +260,25 @@ class SafetyController:
         with self._status_lock:
             return self._submission_paused
 
+    def status_snapshot(self) -> dict[str, Any]:
+        """Read-only snapshot of the safety-owned status fields (D-07/D-19).
+
+        The single read seam the facade's ``get_status`` merges with its stats + throttle
+        breach counter. Returns the raw ``SystemStatus`` (the caller renders ``.value``),
+        the machine-readable halt reason (``None`` unless HALTED), the reversible
+        pause-on-disconnect flag + reason (surfaced DISTINCTLY from a terminal halt), and
+        the last error string — all read under one ``_status_lock`` acquisition so the
+        snapshot is internally consistent.
+        """
+        with self._status_lock:
+            return {
+                'status': self._status,
+                'halt_reason': self._halt_reason,
+                'paused': self._submission_paused,
+                'paused_reason': self._paused_reason,
+                'last_error': self._last_error,
+            }
+
     def pause_submission(self, reason: str) -> None:
         """Reversibly pause NEW order submission on a venue-stream disconnect (D-19).
 
