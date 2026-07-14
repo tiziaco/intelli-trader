@@ -296,7 +296,12 @@ Plans:
 
 **Out of scope** (owned elsewhere): loop-lifecycle callback web (`_on_loop_start`/`_on_loop_error`) → P7/P8/P9; session-init→construction flip → blocked by test contract, enabled by P10; `UniverseHandler` setter-fold → P7; `wire_universe`/membership relocation → working-as-intended (shared by both runners; `UniverseHandler` is live-only).
 
-**Plans**: TBD (run /gsd-plan-phase 06.1 to break down)
+**Plans**: 4 plans
+
+- [ ] 06.1-01-PLAN.md — SEAM-01: spec-free `compose_engine` + `EngineContext` store/feed seam + backtest pass-through (oracle-gated, isolated) (wave 1)
+- [ ] 06.1-02-PLAN.md — SEAM-01/02: `build_live_system` consumes `compose_engine`; collapse `LiveSystemComponents`; `VenueLifecycle` as the single venue holder; remove interim `Engine` (wave 2)
+- [ ] 06.1-03-PLAN.md — SEAM-03: shared `VenueSpec` builder (one home for the `{'okx':'okx','paper':'okx'}` map); `for_exchange` + `build_live_system` share it (wave 3)
+- [ ] 06.1-04-PLAN.md — SEAM-04: de-lazy the `trading_system` barrel (backtest-only) + hoist the pure imports; inertness backstop (wave 4)
 
 ### Phase 7: Safety + Reconciliation + Stream Recovery
 
