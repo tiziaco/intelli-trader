@@ -48,7 +48,10 @@ findings:
   warning: 3
   info: 2
   total: 5
-status: issues_found
+status: resolved
+warnings_resolved: 3
+info_deferred: 2
+resolution: "WR-01/WR-02/WR-03 fixed and independently re-verified on the main checkout (commits 9d600212, 8233315e): full suite 2201 passed / 6 skipped, mypy --strict clean (257 files), oracle byte-exact, OKX inertness green. IN-01/IN-02 reviewed and deferred by decision (documented, not fixed)."
 ---
 
 # Phase 07: Code Review Report
@@ -88,6 +91,8 @@ stale test coverage that pins the dead facade methods alive.
 
 ### WR-01: Orphaned facade methods duplicate `ReconciliationCoordinator` and are dead in production
 
+> **✅ RESOLVED** — commit `9d600212` (atomic with WR-03). Deleted both dead facade methods (`_link_venue_account_to_portfolios`, `_run_session_baseline_guard`) and the two orphaned imports (`Decimal`, `is_within_single_unit_tolerance`); grep-verified 0 references remain in the facade. Re-verified on the main checkout (mypy --strict clean, full suite green).
+
 **File:** `itrader/trading_system/live_trading_system.py:297-381` (also imports at `:3`, `:9`)
 **Issue:** `LiveTradingSystem._link_venue_account_to_portfolios` (297-330) and
 `_run_session_baseline_guard` (332-381) are full method bodies that are byte-duplicates of
@@ -121,6 +126,8 @@ Consequences:
 
 ### WR-02: A throttle-REFUSED order is still counted as `orders_executed`
 
+> **✅ RESOLVED** — commit `8233315e`. A throttle-rejected ORDER now routes to a dedicated `on_order_throttle_rejected` facade hook that bumps a new `orders_throttle_rejected` counter (surfaced in `get_status()['statistics']`) and never touches `orders_executed`. Locked by `tests/unit/trading_system/test_live_runner_stats.py`. (Implemented via an injected hook matching the codebase's D-04 callback pattern rather than the magic-string suggested here — same observable outcome.)
+
 **File:** `itrader/trading_system/live_runner.py:154-167`; `itrader/trading_system/live_trading_system.py:499-509`
 **Issue:** In `LiveRunner._run_loop`, when the new pre-submit throttle rejects an ORDER
 (`rejected = ... and not self._pre_submit(event)`, `:154-156`), the loop correctly SKIPS
@@ -145,6 +152,8 @@ self._record_bar_metrics(event)
 ```
 
 ### WR-03: Tests assert against / stub the DEAD facade methods — false coverage
+
+> **✅ RESOLVED** — commit `9d600212` (atomic with WR-01). `test_early_durable_halt_refusal.py` now asserts `_build_reconciliation_coordinator.assert_not_called()` (proves the durable-halt top-gate short-circuits before venue I/O); `test_live_system_okx_wiring.py` exercises `ReconciliationCoordinator._link_venue_account_to_portfolios` (the copy production runs); `test_live_portfolio_durable_wiring.py` monkeypatches re-pointed to the coordinator class.
 
 **File:** `tests/integration/test_early_durable_halt_refusal.py:86-87,104-105,128-129`;
 `tests/integration/test_live_system_okx_wiring.py:286,310`;
@@ -174,6 +183,8 @@ durable-halt refusal test, assert that the coordinator's `run_startup_reconcile`
 
 ### IN-01: Asymmetric `None`-guard between `_exceeds_notional` and `_reject`
 
+> **◻ DEFERRED** (documented, not fixed) — harmless today: `_reject` only fires for an ENTRY `OrderEvent` whose `price`/`quantity` are non-optional `Decimal`. Left as-is per the phase-close decision.
+
 **File:** `itrader/trading_system/safety/pre_trade_throttle.py:186-191,217-222`
 **Issue:** `_exceeds_notional` defensively guards `price`/`quantity` being `None`
 (`:188-189`), but `_reject` reads `event.price`/`event.quantity` directly
@@ -188,6 +199,8 @@ consistency, or add a matching guard/typed precondition in `allow()` so both pat
 the same contract.
 
 ### IN-02: `snapshot()` and store `rehydrate()` run twice on the startup reconcile path
+
+> **◻ DEFERRED** (documented, not fixed) — correctness-neutral (idempotent REST snapshot + rehydrate); a redundant round-trip only. Performance is out of review scope. Left as-is per the phase-close decision.
 
 **File:** `itrader/portfolio_handler/reconcile/reconciliation_coordinator.py:125,145`;
 `itrader/portfolio_handler/reconcile/venue_reconciler.py:135,139`
