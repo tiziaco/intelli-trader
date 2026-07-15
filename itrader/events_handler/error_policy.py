@@ -294,8 +294,6 @@ class ErrorPolicy:
         self.logger.error(
             f'Handler {handler_name} failed on {getattr(event, "type", "UNKNOWN")}: {exc}'
         )
-        if self._error_counter is not None:
-            self._error_counter()
         # WR-06: the ERROR route is TERMINAL. If the FAILING event is itself an
         # ErrorEvent, publishing a fresh ErrorEvent would route it straight back to
         # the same failing ERROR-route consumer — an unbounded error->error feedback
@@ -304,8 +302,13 @@ class ErrorPolicy:
         # failure is already logged once above; stop here rather than republish. The
         # tripwire count/classify (Task 2) MUST sit AFTER this return so a
         # COSMETIC/ERROR-type failure is never counted.
+        # IN-01: the errors_count bump (below) also sits after this guard so a
+        # swallowed ERROR-route consumer failure is a COMPLETE bookkeeping no-op —
+        # it does not conflate primary-handler failures with terminal-route failures.
         if getattr(event, 'type', None) is EventType.ERROR:
             return
+        if self._error_counter is not None:
+            self._error_counter()
         self._bus.put(ErrorEvent(
             # WR-05: prefer the event's own business time; fall back to a
             # tz-aware UTC wall clock (never naive) to stay consistent with the
