@@ -264,8 +264,12 @@ class ErrorPolicy:
         Returns a plain JSON-friendly dict — the current in-window hit count per
         ``FailureClass`` plus the last-trip ``HaltReason`` wire string (``None`` until the
         first trip). P8 scope is get_status ONLY; the SystemStore stats read-model is P9
-        (RTCFG-06). No lock: the live drain is single-threaded (engine thread), and this is
-        a best-effort observability read.
+        (RTCFG-06). No lock: the *writes* to ``self._hits`` are single-threaded (engine
+        thread, via ``should_trip``/``record_failure``); this reader, however, runs on a
+        *different* thread — ``LiveTradingSystem.get_status`` is a public status API invoked
+        by external/web callers. Under CPython the GIL makes each ``len()``/``append`` atomic,
+        so this is a best-effort GIL-atomic cross-thread read: it cannot crash or corrupt, but
+        the per-class counts may be momentarily inconsistent with a concurrent trip (WR-01).
         """
         return {
             "hits": {fc.value: len(self._hits[fc]) for fc in self._hits},
