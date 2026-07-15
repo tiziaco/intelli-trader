@@ -61,7 +61,8 @@ from .trading import (
 from .system import (
     SystemStatus,
     VALID_STATUS_TRANSITIONS,
-    HaltReason
+    HaltReason,
+    FailureClass
 )
 
 # Error-severity enum
@@ -115,6 +116,7 @@ __all__ = [
     'SystemStatus',
     'VALID_STATUS_TRANSITIONS',
     'HaltReason',
+    'FailureClass',
 
     # Error-severity enum
     'ErrorSeverity'

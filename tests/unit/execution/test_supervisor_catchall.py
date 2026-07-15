@@ -177,7 +177,8 @@ def test_supervisor_catchall_order_arm_unexpected_error_halts(monkeypatch: Any) 
     """
     system = _live_system(monkeypatch)
     sink = _RecordingSink()
-    system.event_handler._alert_sink = sink
+    # 08-03/D-03: the alert-sink rides on the injected ErrorHandler now.
+    system.event_handler.error_handler._alert_sink = sink
 
     exchange = OkxExchange(system.global_queue, MagicMock(name="connector"))
     _fast(exchange)

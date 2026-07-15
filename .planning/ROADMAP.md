@@ -107,7 +107,7 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 - [x] **Phase 6: LiveRunner + Factory + Facade Shrink** - `build_live_system`, `LiveRunner`, shared `UniverseWiring` *(oracle-sensitive)*, `LiveRouteRegistrar`, ~200-line facade, replay-harness→`tests/` (`TestRunner`/`TestLiveDataProvider`; paper→OKX live feed) (RUN-01..07, TEST-01) (completed 2026-07-13)
 - [x] **Phase 6.1 (INSERTED): Seam Cleanup** - `build_live_system` consumes `compose_engine` (store/feed-agnostic seam, oracle byte-exact), collapse `LiveSystemComponents`, de-dup the `for_exchange` spec-builder, de-lazy the `trading_system` barrel — behavior-preserving, lands before P7 (SEAM-01..04) (completed 2026-07-14)
 - [x] **Phase 7: Safety + Reconciliation + Stream Recovery** - `SafetyController`, `ReconciliationCoordinator`, `StreamRecoveryHandler`, CONTROL routes, pre-trade throttle — flag machinery deleted (SAFE-01..06) (completed 2026-07-14)
-- [ ] **Phase 8: Error Subsystem** - Injected `ErrorPolicy`, formalized `ErrorHandler`, two-guard terminal safety, CF-1 aggregate circuit breaker (ERR-01..04)
+- [x] **Phase 8: Error Subsystem** - Injected `ErrorPolicy`, formalized `ErrorHandler`, two-guard terminal safety, CF-1 aggregate circuit breaker (ERR-01..04) (completed 2026-07-14)
 - [ ] **Phase 9 ★: Runtime-Config Platform** - `RuntimeConfig` overlay, scoped `ConfigUpdateEvent` + allowlist, restart layering, stats/state UI read-model (RTCFG-01..06)
 - [ ] **Phase 10 ★: Strategies Registry** - Durable `StrategyRegistryStore` rehydrate, enable/disable via `STRATEGY_COMMAND`, atomic strategy-param reconfiguration (STRAT-01..03)
 - [ ] **Phase 11 ★: Multi-Portfolio-Live** - Per-`account_id` account factory, distinct-`account_id` invariant (fail loud), per-portfolio reconcile, `clOrdId→client_order_id` (MPORT-01..06)
@@ -348,7 +348,19 @@ Plans:
   3. `ErrorHandler` formalizes the ERROR-route consumer (severity-mapped structured logging, CRITICAL → the pluggable alert-sink seam CF-5, persist latest error → `SystemStore state.last_error`, WR-06 consumer guard); handler failures, `halt()` (CRITICAL), `PortfolioErrorEvent`, and `ConnectorFatalEvent` all funnel through the one ERROR route.
   4. `test_okx_inertness.py` stays green.
 
-**Plans**: TBD
+**Plans**: 3 plans (3 waves — linear dependency chain)
+
+**Wave 1**
+
+- [x] 08-01-PLAN.md — Foundation primitives: `FailureClass` enum + 4 `HaltReason` members (D-08/D-16) + `FailureRateSettings` on `SafetySettings` (D-14/D-15) + okx FILL_TRANSLATION counted `ErrorEvent` on both drain paths (D-10) (ERR-03/ERR-04)
+
+**Wave 2** *(blocked on 08-01)*
+
+- [x] 08-02-PLAN.md — Relocate `ErrorPolicy` to `events_handler/` (D-02) + `HandlerErrorPolicy` Protocol + `FailFastPolicy` (D-06) + CF-1 tripwire (`should_trip`/`classify_failure`/`_POLICY`/`record_failure`, D-07/D-11) + `ErrorHandler` consumer with two-guard terminal safety + `state.last_error` persist (D-01/D-17) (ERR-01/02/03/04)
+
+**Wave 3** *(blocked on 08-02)*
+
+- [x] 08-03-PLAN.md — Wiring: `EventHandler` constructor injection (delete monkeypatch/`_log_error_event`/`_alert_sink`, D-01/03/06) + `compose_engine` `alert_sink`/`system_store`/`error_policy` kwargs (D-04) + `build_live_system` mints `SystemStore` over the shared `SqlEngine` (D-05) + late-bind `safety.halt` (D-12) + `get_status()` breaker surface (D-13) + retarget 4 existing tests; oracle byte-exact (ERR-01/02/03/04)
 
 ### Phase 9 ★: Runtime-Config Platform
 
@@ -426,7 +438,7 @@ P1 and P2 have no dependencies and can start in parallel.
 | 6. LiveRunner + Factory + Facade Shrink | v1.8 | 7/7 | Complete    | 2026-07-13 |
 | 6.1 (INSERTED). Seam Cleanup | v1.8 | 4/4 | Complete    | 2026-07-14 |
 | 7. Safety + Reconciliation + Stream Recovery | v1.8 | 6/6 | Complete    | 2026-07-14 |
-| 8. Error Subsystem | v1.8 | 0/TBD | Not started | - |
+| 8. Error Subsystem | v1.8 | 3/3 | Complete    | 2026-07-14 |
 | 9 ★. Runtime-Config Platform | v1.8 | 0/TBD | Not started | - |
 | 10 ★. Strategies Registry | v1.8 | 0/TBD | Not started | - |
 | 11 ★. Multi-Portfolio-Live | v1.8 | 0/TBD | Not started | - |

@@ -19,6 +19,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from itrader.core.enums import ErrorSeverity, EventType, SystemStatus
+from itrader.events_handler.error_handler import ErrorHandler
+from itrader.events_handler.error_policy import FailFastPolicy
 from itrader.events_handler.events import ErrorEvent, PortfolioErrorEvent
 from itrader.events_handler.full_event_handler import EventHandler
 from itrader.trading_system.alert_sink import AlertSink, LogAlertSink
@@ -40,9 +42,12 @@ class _RecordingSink:
 @pytest.fixture
 def handler():
     q: queue.Queue = queue.Queue()
+    # 08-03/D-06: the policy + consumer are injected at construction. The alert-sink now
+    # rides on the ErrorHandler (D-03) — tests set ``handler.error_handler._alert_sink``.
     h = EventHandler(
         MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock(),
         MagicMock(), q,
+        FailFastPolicy(), ErrorHandler(),
     )
     return h
 
@@ -67,7 +72,7 @@ def test_halted_is_a_distinct_system_status_member():
 
 def test_critical_error_event_reaches_injected_alert_sink(handler):
     sink = _RecordingSink()
-    handler._alert_sink = sink
+    handler.error_handler._alert_sink = sink
     err = ErrorEvent(
         time=_TIME,
         source="reconcile",
@@ -83,7 +88,7 @@ def test_critical_error_event_reaches_injected_alert_sink(handler):
 
 def test_non_critical_error_event_does_not_reach_alert_sink(handler):
     sink = _RecordingSink()
-    handler._alert_sink = sink
+    handler.error_handler._alert_sink = sink
     for severity in (ErrorSeverity.ERROR, ErrorSeverity.WARNING):
         err = ErrorEvent(
             time=_TIME,
@@ -99,7 +104,7 @@ def test_non_critical_error_event_does_not_reach_alert_sink(handler):
 
 def test_alert_sink_none_on_backtest_path_is_a_noop(handler):
     # Default: no egress wired — a CRITICAL event must not raise.
-    assert handler._alert_sink is None
+    assert handler.error_handler._alert_sink is None
     err = ErrorEvent(
         time=_TIME,
         source="reconcile",
@@ -124,7 +129,7 @@ def test_log_alert_sink_satisfies_alert_sink_protocol():
 
 def test_critical_egress_carries_no_secret_substring(handler):
     sink = _RecordingSink()
-    handler._alert_sink = sink
+    handler.error_handler._alert_sink = sink
     # A realistic portfolio halt event — the producer binds only declared
     # ErrorEvent fields; raw connector context / OKX_API secrets never enter.
     err = PortfolioErrorEvent(
@@ -201,7 +206,7 @@ def test_halt_sets_halted_status_and_machine_readable_reason(monkeypatch):
 def test_halt_emits_critical_alert_through_injected_sink(monkeypatch):
     system = _live_system(monkeypatch)
     sink = _RecordingSink()
-    system.event_handler._alert_sink = sink
+    system.event_handler.error_handler._alert_sink = sink
     system.halt("drift")
     # Drain the CRITICAL halt ErrorEvent through the ERROR route -> alert sink.
     system.event_handler.process_events()
@@ -212,7 +217,7 @@ def test_halt_emits_critical_alert_through_injected_sink(monkeypatch):
 def test_composition_root_wires_a_log_alert_sink(monkeypatch):
     system = _live_system(monkeypatch)
     # The live root injects a LogAlertSink (05-01's None default is the backtest path).
-    assert isinstance(system.event_handler._alert_sink, LogAlertSink)
+    assert isinstance(system.event_handler.error_handler._alert_sink, LogAlertSink)
 
 
 def test_halt_suppresses_new_order_submission_but_not_bar_fill(monkeypatch):

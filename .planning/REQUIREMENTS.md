@@ -218,23 +218,23 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 
 ### Error Subsystem (P8)
 
-- [ ] **ERR-01**: An `ErrorPolicy` is injected into `EventHandler` at construction (removes the
+- [x] **ERR-01**: An `ErrorPolicy` is injected into `EventHandler` at construction (removes the
   `_on_handler_error` monkeypatch): backtest/replay → fail-fast (re-raise; the parity gate can't
   false-green), live → publish-and-continue; per-handler granularity preserved; carries the WR-06 source
   guard (concern 19/§12a).
 
-- [ ] **ERR-02**: An `ErrorHandler` formalizes the ERROR-route consumer (severity-mapped structured
+- [x] **ERR-02**: An `ErrorHandler` formalizes the ERROR-route consumer (severity-mapped structured
   logging, CRITICAL → the pluggable alert sink, persist latest error → `SystemStore state.last_error`,
   WR-06 consumer guard); two-guard terminal safety (source + consumer). The alert-sink seam is threaded so
   a CRITICAL halt *can* reach a real sink (CF-5; substantive egress stays the FastAPI milestone) (§12b).
 
-- [ ] **ERR-03**: A **CF-1 aggregate circuit breaker** on the publish-and-continue seam — a
+- [x] **ERR-03**: A **CF-1 aggregate circuit breaker** on the publish-and-continue seam — a
   route-classified ring (SETTLEMENT halt-on-first, ORDER-IO N=3/60s, ADMISSION N=3/300s, LOOP-BACKSTOP
   N=5/60s) that **actually trips** (verified by a "money route failing every event" test), preserves the
   WR-06 terminal swallow, and leaves backtest fail-fast byte-for-byte unchanged (CF-1, hard acceptance
   criterion).
 
-- [ ] **ERR-04**: One error funnel — handler failures, `halt()` (CRITICAL), `PortfolioErrorEvent`,
+- [x] **ERR-04**: One error funnel — handler failures, `halt()` (CRITICAL), `PortfolioErrorEvent`,
   `ConnectorFatalEvent` all route through the ERROR route (§12b).
 
 ### ★ Runtime-Config Platform (P9)
@@ -405,10 +405,10 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | SAFE-04 | P7 | Complete |
 | SAFE-05 | P7 | Complete |
 | SAFE-06 | P7 | Complete |
-| ERR-01 | P8 | Pending |
-| ERR-02 | P8 | Pending |
-| ERR-03 | P8 | Pending |
-| ERR-04 | P8 | Pending |
+| ERR-01 | P8 | Complete |
+| ERR-02 | P8 | Complete |
+| ERR-03 | P8 | Complete |
+| ERR-04 | P8 | Complete |
 | RTCFG-01 | P9 | Pending |
 | RTCFG-02 | P9 | Pending |
 | RTCFG-03 | P9 | Pending |

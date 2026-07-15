@@ -385,6 +385,7 @@ def build_paper_replay_system(
     ``**overrides`` threads through to ``LiveTradingSystem.for_exchange`` (e.g. a bespoke
     ``account_id``); ``status_callback`` threads through unchanged.
     """
+    from itrader.events_handler.error_policy import FailFastPolicy
     from itrader.trading_system.live_trading_system import LiveTradingSystem
 
     plugin = TestDataPlugin()
@@ -395,6 +396,13 @@ def build_paper_replay_system(
         data_plugins={"replay": plugin},
         **overrides,
     )
+    # D-06/D-19 (08-03): the REPLAY parity gate is fail-fast BY DEFAULT — a handler failure
+    # must abort the replay loudly so the gate can't false-green. build_live_system now
+    # injects the live publish-and-continue ErrorPolicy at EventHandler construction (the
+    # old start()-only monkeypatch is gone, and TestRunner never calls start()), so the
+    # offline replay fixture OVERRIDES the injected policy back to a FailFastPolicy here —
+    # honouring D-06's "backtest/replay inject FailFastPolicy; live injects ErrorPolicy".
+    system.event_handler._error_policy = FailFastPolicy()
     assert plugin.provider is not None, (
         "TestDataPlugin.build_provider was never called — the paper data registry did not "
         "select the injected 'replay' plugin (check the data_plugins injection seam)")

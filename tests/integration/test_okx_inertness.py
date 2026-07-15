@@ -222,7 +222,7 @@ assert not _okx_leaked, (
 from itrader.trading_system.live_trading_system import build_live_system  # noqa: F401
 from itrader.trading_system.live_runner import LiveRunner  # noqa: F401
 from itrader.trading_system.worker_supervisor import WorkerSupervisor  # noqa: F401
-from itrader.trading_system.error_policy import ErrorPolicy  # noqa: F401
+from itrader.events_handler.error_policy import ErrorPolicy  # noqa: F401
 from itrader.trading_system.route_registrar import LiveRouteRegistrar  # noqa: F401
 from itrader.trading_system.session_initializer import SessionInitializer  # noqa: F401
 
@@ -310,6 +310,8 @@ def test_backtest_event_handler_phase7_routes_are_inert_empty() -> None:
         execution_handler=MagicMock(),
         bar_event_source=MagicMock(),
         global_queue=_queue.Queue(),
+        error_policy=MagicMock(),
+        error_handler=MagicMock(),
     )
 
     for route_name in _PHASE7_INERT_ROUTES:

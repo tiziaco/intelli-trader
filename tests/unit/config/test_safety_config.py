@@ -16,7 +16,7 @@ from decimal import Decimal
 import pydantic
 import pytest
 
-from itrader.config import SafetySettings, ThrottleSettings
+from itrader.config import FailureRateSettings, SafetySettings, ThrottleSettings
 from itrader.config.system import SystemConfig
 
 pytestmark = pytest.mark.unit
@@ -60,3 +60,53 @@ def test_system_config_safety_field_reachable():
     cfg = SystemConfig.default()
     assert cfg.safety.throttle.max_orders == 10
     assert cfg.safety.throttle.max_notional_per_order == Decimal("25000")
+
+
+# --- FailureRateSettings (D-14/D-15, Phase 8 CF-1 tripwire) -------------------
+
+
+def test_failure_rate_defaults_match_d14():
+    """D-14: per-FailureClass (threshold, window) defaults match the ROADMAP values.
+
+    SETTLEMENT 1 / halt-on-first, ORDER_IO 3/60s, ADMISSION 3/300s,
+    LOOP_BACKSTOP 5/60s. FILL_TRANSLATION reuses the SETTLEMENT threshold/window.
+    """
+    fr = FailureRateSettings.default()
+    assert (fr.settlement_threshold, fr.settlement_window_s) == (1, 60.0)
+    assert (fr.order_io_threshold, fr.order_io_window_s) == (3, 60.0)
+    assert (fr.admission_threshold, fr.admission_window_s) == (3, 300.0)
+    assert (fr.loop_backstop_threshold, fr.loop_backstop_window_s) == (5, 60.0)
+
+
+def test_failure_rate_fields_are_int_threshold_float_window():
+    """Windows/thresholds are int/float non-money supervisor tunables (matches ThrottleSettings)."""
+    fr = FailureRateSettings()
+    assert isinstance(fr.settlement_threshold, int)
+    assert isinstance(fr.settlement_window_s, float)
+    assert isinstance(fr.order_io_threshold, int)
+    assert isinstance(fr.order_io_window_s, float)
+    assert isinstance(fr.admission_threshold, int)
+    assert isinstance(fr.admission_window_s, float)
+    assert isinstance(fr.loop_backstop_threshold, int)
+    assert isinstance(fr.loop_backstop_window_s, float)
+
+
+def test_failure_rate_extra_forbid():
+    """extra=forbid: an unknown key raises pydantic ValidationError (mass-assign defense, T-04-01)."""
+    with pytest.raises(pydantic.ValidationError):
+        FailureRateSettings(bogus=1)
+
+
+def test_safety_settings_holds_failure_rate():
+    """SafetySettings gains a failure_rate field beside throttle."""
+    s = SafetySettings.default()
+    assert isinstance(s.failure_rate, FailureRateSettings)
+    assert s.failure_rate.settlement_threshold == 1
+
+
+def test_system_config_failure_rate_reachable():
+    """SystemConfig.default().safety.failure_rate is an eager, reachable, inertness-safe field."""
+    cfg = SystemConfig.default()
+    assert isinstance(cfg.safety.failure_rate, FailureRateSettings)
+    assert cfg.safety.failure_rate.order_io_threshold == 3
+    assert cfg.safety.failure_rate.admission_window_s == 300.0

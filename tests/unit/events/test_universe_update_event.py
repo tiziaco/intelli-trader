@@ -105,6 +105,7 @@ def _handler():
     handler = EventHandler(
         MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock(),
         MagicMock(), q,
+        MagicMock(), MagicMock(),   # 08-03: injected error_policy + error_handler
     )
     return SimpleNamespace(q=q, handler=handler)
 

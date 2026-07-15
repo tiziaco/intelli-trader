@@ -10,9 +10,10 @@ constructor P7/P8 fill in without re-touching.
 Composition, not inheritance:
 - D-05: COMPOSES ``WorkerSupervisor`` (has-a, constructor-injected) for the
   poll-timer worker — it does NOT subclass a shared runner base.
-- D-07: takes an injected ``ErrorPolicy`` (the minimal live publish-and-continue
-  seam). LiveRunner HOLDS it for the wiring layer; it does NOT itself install the
-  ``EventHandler._on_handler_error`` monkeypatch — that wiring is 06-05/D-07.
+- D-06/D-07 (08-03): the handler-failure policy is NO LONGER carried here. It is
+  injected at ``EventHandler.__init__`` in ``compose_engine`` (the live
+  publish-and-continue policy on the daemon path); LiveRunner never held or
+  installed it, so the dead handler-failure-policy constructor param was removed.
 - D-08: takes an injected ``dispatch_gate`` callback (P7 repoints it to
   ``SafetyController.gate_and_dispatch``).
 - D-06 (SAFE-03 / A3): takes an injected ``pre_submit(event) -> bool`` callable — the
@@ -46,7 +47,6 @@ from typing import Any, Callable, Optional
 from itrader.core.enums import EventType
 from itrader.events_handler.bus import EventBus
 from itrader.logger import get_itrader_logger
-from itrader.trading_system.error_policy import ErrorPolicy
 from itrader.trading_system.worker_supervisor import WorkerSupervisor
 
 
@@ -63,7 +63,6 @@ class LiveRunner:
         self,
         bus: EventBus,
         stop_event: threading.Event,
-        error_policy: ErrorPolicy,
         worker_supervisor: WorkerSupervisor,
         dispatch_gate: Callable[[Any], None],
         update_stats: Callable[[str], None],
@@ -83,10 +82,6 @@ class LiveRunner:
         stop_event : threading.Event
             The shared stop latch honoured by BOTH the drain loop and the composed
             ``WorkerSupervisor``. Cleared once here in ``start()``.
-        error_policy : ErrorPolicy
-            The minimal live publish-and-continue seam (D-07). HELD for the 06-05
-            wiring layer (which installs ``error_policy.on_handler_error`` on the
-            EventHandler); the loop itself does not install the monkeypatch.
         worker_supervisor : WorkerSupervisor
             The composed poll-timer worker (D-05, has-a). Started/stopped alongside
             the drain thread.
@@ -116,8 +111,6 @@ class LiveRunner:
         self.logger = get_itrader_logger().bind(component="LiveRunner")
         self._bus = bus
         self._stop_event = stop_event
-        # HELD for 06-05 wiring (installs it on the EventHandler); not called here.
-        self._error_policy = error_policy
         self._worker_supervisor = worker_supervisor
         self._dispatch_gate = dispatch_gate
         self._update_stats = update_stats

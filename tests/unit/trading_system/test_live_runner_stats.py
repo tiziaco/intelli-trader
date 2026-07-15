@@ -75,7 +75,6 @@ def _build_runner(*, event, pre_submit, host, dispatch_gate):
     return LiveRunner(
         bus=_OneShotBus(event, stop_event),
         stop_event=stop_event,
-        error_policy=MagicMock(name='error_policy'),
         worker_supervisor=MagicMock(name='worker_supervisor'),
         dispatch_gate=dispatch_gate,
         update_stats=host._update_stats,

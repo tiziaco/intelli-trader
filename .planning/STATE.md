@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: — Live System Refactor & Live-Readiness Hardening
-current_phase: 8
-current_phase_name: Error Subsystem
-status: verifying
-stopped_at: Phase 07 complete (6/6 plans, verified 5/5)
-last_updated: "2026-07-14T18:45:52.655Z"
-last_activity: 2026-07-14
-last_activity_desc: Phase 07 complete, transitioned to Phase 8
+current_phase: 9
+current_phase_name: Runtime-Config Platform
+status: executing
+stopped_at: Phase 08 complete + verified (next-phase pointer corrected 12→9; phase.complete dir-scan quirk)
+last_updated: "2026-07-15T00:00:00.000Z"
+last_activity: 2026-07-15
+last_activity_desc: "Phase 08 (Error Subsystem) complete + verified — 3/3 plans, 4/4 success criteria, CF-1 breaker trips end-to-end"
 progress:
   total_phases: 9
-  completed_phases: 7
-  total_plans: 32
-  completed_plans: 32
-  percent: 78
+  completed_phases: 8
+  total_plans: 35
+  completed_plans: 35
+  percent: 89
 ---
 
 # Project State
@@ -26,19 +26,22 @@ See: .planning/PROJECT.md (Current Milestone: v1.8 — Live System Refactor & Li
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct,
 deterministic, cross-validated numbers (oracle **134 / `46189.87730727451`**; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 shipped a live operating mode (paper-first on OKX) without disturbing that oracle.
-**Current focus:** Phase 07 — Safety + Reconciliation + Stream Recovery
+**Current focus:** Phase 08 (Error Subsystem) complete + verified — next: Phase 09 (Runtime-Config Platform ★). v1.8 delivers a
 thin ~200-line facade over focused, venue-parametrized, FastAPI-ready collaborators — **without
 disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI itself is out of scope
 (LR-01). Full scope: core refactor (P1–P8 + P12) + the three ★ feature-adds (P9–P11).
 
 ## Current Position
 
-Phase: 8 — Error Subsystem
-Plan: Not started
-Status: Phase complete — ready for verification
-Last activity: 2026-07-14 — Completed quick task 260714-v6n: Phase 07 review IN-01 (self-guard PreTradeThrottle)
+Phase: 9 — Runtime-Config Platform ★ (next; dependency-ready {P4,P7} — not yet planned)
+Plan: Not started (Phase 08 complete: 3/3 plans merged + verified)
+Status: Phase 08 complete + verified — ready to plan Phase 09
+Last activity: 2026-07-15 — Phase 08 (Error Subsystem) complete: CF-1 aggregate breaker trips end-to-end, WR-06 two-guard intact, oracle byte-exact
 
-Progress: [███████░░░] 78%
+Note: `phase.complete` advanced current_phase to 12 (its next-phase dir-scan skips the not-yet-created P9/P10/P11 ★ dirs);
+corrected to 9 per the roadmap sequence. P9/P10/P11 are all dependency-available now; P12 (core-final) depends on P11.
+
+Progress: [████████░░] 89% (8/9 core phases; the three ★ feature-adds P9–P11 are in scope on top)
 
 ## Milestone Gate (v1.8 — applies to EVERY phase)
 
@@ -283,11 +286,11 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-14T15:29:45.425Z
-Stopped at: Completed 07-04-PLAN.md
+Last session: 2026-07-14T21:40:46.899Z
+Stopped at: Phase 8 context gathered
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
-Resume file: None
+Resume file: .planning/phases/08-error-subsystem/08-CONTEXT.md
 Carried todo: 14 pending todos in `todos/pending/` (10 fold into v1.8 as CF-1..CF-10; `v17-residual-carryforward.md`
 is the index; the substantive open item is `margin-equity-double-counts-notional-wr01`, owner-gated).
 

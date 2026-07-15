@@ -8,7 +8,7 @@ here. This module imports stdlib ONLY (the core/enums dependency rule).
 
 from enum import Enum
 
-__all__ = ["SystemStatus", "VALID_STATUS_TRANSITIONS", "HaltReason"]
+__all__ = ["SystemStatus", "VALID_STATUS_TRANSITIONS", "HaltReason", "FailureClass"]
 
 
 class SystemStatus(Enum):
@@ -91,3 +91,42 @@ class HaltReason(Enum):
     RECONCILIATION_UNRESOLVED = "reconciliation-unresolved"
     DURABLE_HALT = "durable-halt"
     DRIFT = "drift"
+
+    # D-16 (Phase 8 error subsystem): one typed halt reason per ``FailureClass``
+    # for the CF-1 aggregate failure-rate tripwire. Each carries a NEW
+    # lowercase-hyphen wire string; the five members above are byte-unchanged
+    # (durable halt records persist those strings — additive, no migration).
+    # ``FailureClass.FILL_TRANSLATION`` reuses ``SETTLEMENT_FAILURE`` (a lost
+    # venue fill IS a settlement loss), so there is no FILL_TRANSLATION reason.
+    SETTLEMENT_FAILURE = "settlement-failure"
+    ORDER_ROUTE_ERRORS = "order-route-errors"
+    ADMISSION_ERRORS = "admission-errors"
+    LOOP_BACKSTOP = "loop-backstop"
+
+
+class FailureClass(Enum):
+    """Route-classification of live handler failures for the CF-1 tripwire (D-08 / D-10).
+
+    The CF-1 aggregate failure-rate tripwire (Phase 8, 08-02) classifies each
+    publish-and-continue handler failure into one of these five classes and
+    counts it against a per-class ``(threshold, window)`` policy
+    (``FailureRateSettings``, D-14). Each class maps 1:1 onto a tripwire
+    ``HaltReason``:
+
+      - ``SETTLEMENT``       -> ``HaltReason.SETTLEMENT_FAILURE``
+      - ``ORDER_IO``         -> ``HaltReason.ORDER_ROUTE_ERRORS``
+      - ``ADMISSION``        -> ``HaltReason.ADMISSION_ERRORS``
+      - ``LOOP_BACKSTOP``    -> ``HaltReason.LOOP_BACKSTOP``
+      - ``FILL_TRANSLATION`` -> ``HaltReason.SETTLEMENT_FAILURE`` (D-16 reuse: a
+        lost venue fill is a settlement loss, halt-on-first)
+
+    ``.value`` is a descriptive lowercase-hyphen literal in the ``HaltReason``
+    house style; these values are NOT persisted (unlike ``HaltReason``), so they
+    are chosen for readability only.
+    """
+
+    SETTLEMENT = "settlement"
+    ORDER_IO = "order-io"
+    ADMISSION = "admission"
+    LOOP_BACKSTOP = "loop-backstop"
+    FILL_TRANSLATION = "fill-translation"

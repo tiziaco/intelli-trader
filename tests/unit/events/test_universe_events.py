@@ -109,6 +109,7 @@ def handler():
     h = EventHandler(
         MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock(),
         MagicMock(), q,
+        MagicMock(), MagicMock(),   # 08-03: injected error_policy + error_handler
     )
     yield h
     while not q.empty():
