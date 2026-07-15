@@ -695,6 +695,8 @@ class OkxExchange(AbstractExchange):
 						"OKX missed-fill catch-up translation failed — skipping trade",
 						exc_info=True)
 					self.global_queue.put(ErrorEvent(
+						# IN-02: wall clock is intentional here — the trade did NOT translate,
+						# so no business ``time`` is recoverable for this operational error record.
 						time=datetime.now(timezone.utc),
 						source="okx_exchange",
 						error_type=type(exc).__name__,
@@ -797,6 +799,8 @@ class OkxExchange(AbstractExchange):
 					self.logger.error(
 						"OKX fill translation failed — skipping trade", exc_info=True)
 					self.global_queue.put(ErrorEvent(
+						# IN-02: wall clock is intentional here — the trade did NOT translate,
+						# so no business ``time`` is recoverable for this operational error record.
 						time=datetime.now(timezone.utc),
 						source="okx_exchange",
 						error_type=type(exc).__name__,
