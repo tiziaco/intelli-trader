@@ -660,10 +660,15 @@ class OkxExchange(AbstractExchange):
 		next reconcile sweep is the backstop); the resume path never crashes on catch-up.
 		Steady-state mid-session re-fetch is OUT of scope here (Phase-7 spec).
 		"""
-		since = self._disconnect_ts_ms
 		symbols = sorted(self._active_symbols)
 		if not symbols:
+			# IN-03: clear the floor unconditionally on the empty-symbols early return.
+			# ``_on_stream_down_with_floor`` only re-arms the floor when it is ``None``,
+			# so a stale non-``None`` value left here would suppress re-arming on the
+			# next disconnect. No active symbols means no missed fills, so nothing is lost.
+			self._disconnect_ts_ms = None
 			return
+		since = self._disconnect_ts_ms
 		client = self._connector.client
 		for symbol in symbols:
 			try:
