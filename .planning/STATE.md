@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: Live System Refactor & Live-Readiness Hardening
-current_phase: 12
-current_phase_name: Test Migration + Gates
+current_phase: 10
+current_phase_name: Strategies Registry
 status: planning
-stopped_at: Completed 09-04-PLAN.md
+stopped_at: Phase 09 complete (incl. code-review fixes)
 last_updated: "2026-07-16T12:09:02.082Z"
 last_activity: 2026-07-16
-last_activity_desc: Phase 09 complete, transitioned to Phase 12
+last_activity_desc: "Phase 09 (Runtime-Config Platform ★) complete + verified + review-fixed; next: Phase 10 (Strategies Registry ★)"
 progress:
   total_phases: 10
   completed_phases: 9
@@ -26,20 +26,20 @@ See: .planning/PROJECT.md (Current Milestone: v1.8 — Live System Refactor & Li
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct,
 deterministic, cross-validated numbers (oracle **134 / `46189.87730727451`**; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 shipped a live operating mode (paper-first on OKX) without disturbing that oracle.
-**Current focus:** Phase 09 — runtime-config-platform
+**Current focus:** Phase 09 (Runtime-Config Platform ★) complete + verified + review-fixed — next: Phase 10 (Strategies Registry ★). v1.8 delivers a
 thin ~200-line facade over focused, venue-parametrized, FastAPI-ready collaborators — **without
 disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI itself is out of scope
 (LR-01). Full scope: core refactor (P1–P8 + P12) + the three ★ feature-adds (P9–P11).
 
 ## Current Position
 
-Phase: 12 — Test Migration + Gates
+Phase: 10 — Strategies Registry ★ (next; deps {P4,P6} met — not yet planned)
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-07-16 — Phase 09 complete, transitioned to Phase 12
+Last activity: 2026-07-16 — Phase 09 (Runtime-Config Platform ★) complete + verified + review-fixed
 
-Note: `phase.complete` advanced current_phase to 12 (its next-phase dir-scan skips the not-yet-created P9/P10/P11 ★ dirs);
-corrected to 9 per the roadmap sequence. P9/P10/P11 are all dependency-available now; P12 (core-final) depends on P11.
+Note: `phase.complete` again advanced current_phase to 12 (its next-phase dir-scan skips the not-yet-created P10/P11 ★ dirs);
+corrected to 10 per the roadmap sequence. P10{P4,P6} + P11{P5,P7} are dependency-available now; P12 (core-final) depends on P11.
 
 Progress: [██████████] 100% (8/9 core phases; the three ★ feature-adds P9–P11 are in scope on top)
 
