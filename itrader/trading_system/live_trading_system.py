@@ -39,18 +39,22 @@ if TYPE_CHECKING:
 _LIVE_QUEUE_TIMEOUT = 1.0
 _LIVE_MAX_IDLE_TIME = 300.0
 
-# D-10 (WR — the primary external-surface security control): ``add_event`` is the
+# D-10/D-23 (WR — the primary external-surface security control): ``add_event`` is the
 # engine's PUBLIC external/web ingress. It is FAIL-CLOSED (default-deny, ASVS V4/V5):
-# ONLY the two sanctioned externally-originated event types are admissible — a
+# ONLY the THREE sanctioned externally-originated event types are admissible — a
 # ``SIGNAL`` (routes through ``OrderHandler.on_signal`` -> ``AdmissionManager`` for
-# validation + sizing + reservation + mirror) and a ``STRATEGY_COMMAND`` (an operator
-# add/remove-ticker command). EVERY other event type — every internal-fact type
+# validation + sizing + reservation + mirror), a ``STRATEGY_COMMAND`` (an operator
+# add/remove-ticker command), and (D-23) a ``CONFIG_UPDATE`` (a runtime-config mutation
+# routed on the engine thread to its owning store + handler, ingress-400-validated here
+# BEFORE the queue). EVERY other event type — every internal-fact type
 # (FILL / BAR / UNIVERSE_UPDATE / UNIVERSE_POLL / BARS_LOADED / BARS_LOAD_FAILED /
 # TIME / ORDER / ERROR / PORTFOLIO_UPDATE ...) — is rejected by default. Internal
 # order flow is UNAFFECTED: handlers put their events on ``global_queue`` directly,
 # never through this external ``add_event`` surface (RESEARCH OQ7: zero internal
 # production callers of ``add_event``).
-_EXTERNALLY_ADMISSIBLE = frozenset({EventType.SIGNAL, EventType.STRATEGY_COMMAND})
+_EXTERNALLY_ADMISSIBLE = frozenset(
+    {EventType.SIGNAL, EventType.STRATEGY_COMMAND, EventType.CONFIG_UPDATE}
+)
 
 # Live operational store credential surface (D-live wiring completed). The live order +
 # signal store is selected by ENV-PRESENCE of a Postgres credential on the unified
@@ -201,6 +205,12 @@ class LiveTradingSystem:
         self._safety: Optional[Any] = None
         self._stream_recovery: Optional[Any] = None
         self._throttle: Optional[Any] = None
+        # D-22/D-23 (Wave 3): the engine-thread ConfigRouter — the CONFIG_UPDATE consumer.
+        # ATTACHED by build_live_system after construction (it references the assembled
+        # stores + handler graph); threaded into SessionInitializer -> LiveRouteRegistrar
+        # so the CONFIG_UPDATE CONTROL route resolves to a live consumer. None on a facade
+        # built outside build_live_system (the route stays the pre-declared empty slot).
+        self._config_router: Optional[Any] = None
 
         # Threading control. The shared _stop_event is honoured by BOTH the injected
         # LiveRunner drain loop and its composed WorkerSupervisor (build_live_system
@@ -523,6 +533,7 @@ class LiveTradingSystem:
                     or self._safety.is_submission_paused()),
                 safety=self._safety,
                 stream_recovery=self._stream_recovery,
+                config_router=self._config_router,
             )
             self._universe_handler = initializer.initialize()
             # wire_universe set engine.universe; mirror it onto the facade (start()
@@ -868,13 +879,14 @@ class LiveTradingSystem:
         """
         Add an event to the global queue for processing.
 
-        D-10 (fail-closed, ASVS V4/V5): ``add_event`` is the engine's PUBLIC external/web
-        surface, so it is DEFAULT-DENY. Only the two sanctioned externally-originated event
+        D-10/D-23 (fail-closed, ASVS V4/V5): ``add_event`` is the engine's PUBLIC external/web
+        surface, so it is DEFAULT-DENY. Only the THREE sanctioned externally-originated event
         types in ``_EXTERNALLY_ADMISSIBLE`` are admitted — a ``SIGNAL`` (routes through
         ``OrderHandler.on_signal`` -> ``AdmissionManager`` so validation + sizing + cash
-        reservation + order-mirror engage before any ``OrderEvent`` is emitted) and a
-        ``STRATEGY_COMMAND`` (an operator add/remove-ticker command). EVERY other type is
-        rejected: every internal-fact type (FILL / BAR / UNIVERSE_UPDATE / UNIVERSE_POLL /
+        reservation + order-mirror engage before any ``OrderEvent`` is emitted), a
+        ``STRATEGY_COMMAND`` (an operator add/remove-ticker command), and a ``CONFIG_UPDATE``
+        (a runtime-config mutation — D-23 opens it as the third external type). EVERY other type
+        is rejected: every internal-fact type (FILL / BAR / UNIVERSE_UPDATE / UNIVERSE_POLL /
         BARS_LOADED / BARS_LOAD_FAILED / TIME / ORDER / ERROR / PORTFOLIO_UPDATE ...) is not
         admissible from the external surface — a raw ``OrderEvent`` here would otherwise reach
         the execution queue with NO admission control (elevation-of-privilege / input-validation
@@ -882,6 +894,11 @@ class LiveTradingSystem:
         the sanctioned entry stays SIGNAL-form. The internal order flow is UNAFFECTED —
         handlers emit ``OrderEvent``s by putting them on ``global_queue`` directly, never
         through ``add_event`` (RESEARCH OQ7: zero internal production callers).
+
+        D-23/D-16 (ingress 400-validation, defense-in-depth): a ``CONFIG_UPDATE`` gets a
+        SYNCHRONOUS fail-closed structural + type/range check HERE (a bad type/range on a KNOWN
+        field, or a malformed scope/key, returns ``False`` — the 400 once FastAPI exists) BEFORE
+        it reaches the queue, with the engine-thread ``ConfigRouter`` re-checking behind it.
 
         Parameters
         ----------
@@ -897,16 +914,24 @@ class LiveTradingSystem:
             self.logger.warning('Cannot add event: Live trading system is not running')
             return False
 
-        # D-10: FAIL-CLOSED allowlist. Admit ONLY the sanctioned externally-originated types
-        # (SIGNAL + STRATEGY_COMMAND); reject every other type by default (default-deny). This
-        # covers the prior narrow ORDER reject and every other internal-fact type in one gate.
+        # D-10/D-23: FAIL-CLOSED allowlist. Admit ONLY the sanctioned externally-originated
+        # types (SIGNAL + STRATEGY_COMMAND + CONFIG_UPDATE); reject every other type by default
+        # (default-deny). This covers the prior narrow ORDER reject and every other internal-fact
+        # type in one gate — a raw internal-fact event (e.g. OrderEvent) is still rejected.
         event_type = getattr(event, 'type', None)
         if event_type not in _EXTERNALLY_ADMISSIBLE:
             self.logger.warning(
                 'Rejected external add_event of type %s (D-10 fail-closed default-deny) — only '
-                'SIGNAL and STRATEGY_COMMAND are admissible from the external surface; every '
-                'internal-fact type (incl. raw ORDER injection) must route through the engine '
-                'internally, never the public queue directly', event_type)
+                'SIGNAL, STRATEGY_COMMAND and CONFIG_UPDATE are admissible from the external '
+                'surface; every internal-fact type (incl. raw ORDER injection) must route through '
+                'the engine internally, never the public queue directly', event_type)
+            return False
+
+        # D-23/D-16: ingress 400-style validation for CONFIG_UPDATE — a synchronous fail-closed
+        # reject at the admission boundary (bad type/range on a known field, or malformed
+        # scope/key). The engine-thread ConfigRouter re-checks (validate -> persist -> apply)
+        # behind it (defense-in-depth). Every other admitted type is unaffected.
+        if event_type is EventType.CONFIG_UPDATE and not self._validate_config_ingress(event):
             return False
 
         try:
@@ -915,9 +940,91 @@ class LiveTradingSystem:
         except Exception as e:
             self.logger.error(f'Failed to add event to queue: {e}')
             return False
-    
 
-    
+    def _validate_config_ingress(self, event) -> bool:
+        """Synchronous ingress 400-validation for a ``CONFIG_UPDATE`` (D-23/D-16).
+
+        Structural + type/range check WITHOUT persisting: resolves the ``(scope, key)`` to its
+        owning mutable sub-model on the imported ``config`` singleton (the structure IS the
+        allowlist — D-11/D-12) and dry-validates the value on a throwaway ``model_copy``
+        (``validate_assignment`` re-coerces). Returns ``False`` (the 400) on a malformed
+        scope/key or a bad type/range on a KNOWN field; the engine-thread ``ConfigRouter``
+        re-checks everything behind it (defense-in-depth). The ``venue`` / ``portfolio`` scopes
+        get a STRUCTURAL shape check only here — the venue-kind predicate (D-14) and
+        portfolio-existence + section resolution (D-21) are engine-thread state-dependent checks.
+        """
+        import uuid
+
+        from itrader import config as _config
+        from itrader.config.order import OrderConfig
+        from itrader.config.system import SystemSettings, UniverseConfig
+
+        scope = getattr(event, 'scope', None)
+        key = getattr(event, 'key', None)
+        value = getattr(event, 'value', None)
+        if not isinstance(scope, str) or not scope or not isinstance(key, str) or not key:
+            self.logger.warning(
+                'Rejected CONFIG_UPDATE ingress: malformed scope/key (%r/%r)', scope, key)
+            return False
+
+        if scope == 'system':
+            if key in SystemSettings.model_fields:
+                sub_model: Any = _config.system
+            elif key in UniverseConfig.model_fields:
+                sub_model = _config.universe
+            else:
+                self.logger.warning(
+                    'Rejected CONFIG_UPDATE ingress: unknown system key %r', key)
+                return False
+            return self._dry_validate_config_ingress(sub_model, key, value)
+
+        if scope == 'order':
+            if key not in OrderConfig.model_fields:
+                self.logger.warning(
+                    'Rejected CONFIG_UPDATE ingress: unknown order key %r', key)
+                return False
+            return self._dry_validate_config_ingress(_config.order, key, value)
+
+        if scope.startswith('venue:'):
+            venue_name = scope[len('venue:'):]
+            if not venue_name or key not in {'fee_model', 'slippage_model', 'enabled'}:
+                self.logger.warning(
+                    'Rejected CONFIG_UPDATE ingress: malformed venue scope/key (%r/%r)',
+                    scope, key)
+                return False
+            return True  # venue-kind is a state-dependent engine-thread predicate (D-14)
+
+        if scope.startswith('portfolio:'):
+            pid = scope[len('portfolio:'):]
+            try:
+                uuid.UUID(pid)
+            except (ValueError, AttributeError, TypeError):
+                self.logger.warning(
+                    'Rejected CONFIG_UPDATE ingress: malformed portfolio id %r', pid)
+                return False
+            return True  # portfolio-existence + section resolution are engine-thread (D-21)
+
+        self.logger.warning('Rejected CONFIG_UPDATE ingress: unrouted scope %r', scope)
+        return False
+
+    def _dry_validate_config_ingress(self, sub_model: Any, key: str, value: Any) -> bool:
+        """Dry-validate ``value`` against ``sub_model[key]`` on a throwaway copy (no live write).
+
+        ``validate_assignment=True`` on the mutable sub-models makes the ``setattr`` on the
+        copy re-run the field's own type coercion + ``Field(...)`` constraints — the SAME
+        source of truth the engine-thread router applies (one validator, no drift).
+        """
+        import pydantic
+
+        try:
+            candidate = sub_model.model_copy()
+            setattr(candidate, key, value)
+        except pydantic.ValidationError:
+            self.logger.warning(
+                'Rejected CONFIG_UPDATE ingress: bad type/range for known key %r', key)
+            return False
+        return True
+
     def __enter__(self):
         """Context manager entry."""
         self.start()
@@ -926,6 +1033,83 @@ class LiveTradingSystem:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit."""
         self.stop()
+
+
+def _layer_persisted_overrides(
+    config: Any,
+    *,
+    system_store: Any,
+    venue_store: Any,
+    order_handler: Any,
+    portfolio_handler: Any,
+    execution_handler: Any,
+) -> None:
+    """Boot restart-layering: apply each scope's persisted config from its OWN store (D-10/D-22).
+
+    The layering sequence is ``defaults <- YAML <- env <- persisted`` — the frozen base params
+    (``rng_seed`` / ``environment`` / identity) are already resolved at CONSTRUCTION and are NEVER
+    persisted-overridden at runtime (RTCFG-04 / D-10); persisted overrides apply ONLY to the
+    mutable sub-models, each read back from its OWNING module store (config is NEVER read back
+    from SystemStore for the order/portfolio scopes — D-21/D-25):
+
+    * ``system``    — ``SystemStore.read_all()`` rows keyed ``config.system.*`` / ``config.universe.*``
+      -> ``setattr`` field-wise into the owning mutable sub-model (``validate_assignment`` re-coerces).
+    * ``order``     — the ORDER store's ``load_config()`` -> ``setattr`` ``OrderConfig`` field(s) +
+      ``order_handler.update_config`` push (NOT SystemStore).
+    * ``venue``     — ``VenueStore.read_all()`` rows -> push each venue's fee/slippage to the
+      execution handler (real-venue rows were only ever accepted for simulated venues, D-14).
+    * ``portfolio`` — each Portfolio's OWN bound ``state_storage.load_config()`` -> apply via
+      ``portfolio.update_config(...)`` (NOT SystemStore).
+
+    This LOADING touches SQL and lives ONLY here (never at import — Pitfall 3 / GATE-01). It is a
+    pure module function so P9's restart-layering integration test can drive it directly.
+    """
+    from itrader.config.order import OrderConfig
+    from itrader.config.system import SystemSettings, UniverseConfig
+
+    # (system) — SystemStore.read_all() rows (config.system.* / config.universe.*).
+    for row in system_store.read_all():
+        key = row["key"]
+        value = row["value"]
+        stored = value.get("value") if isinstance(value, dict) else value
+        if key.startswith("config.system."):
+            field = key[len("config.system."):]
+            if field in SystemSettings.model_fields:
+                setattr(config.system, field, stored)
+        elif key.startswith("config.universe."):
+            field = key[len("config.universe."):]
+            if field in UniverseConfig.model_fields:
+                setattr(config.universe, field, stored)
+
+    # (order) — the ORDER store's own load_config (NOT SystemStore) + the handler push.
+    order_cfg = order_handler.storage.load_config()
+    if order_cfg:
+        applied = {
+            field: val
+            for field, val in order_cfg.items()
+            if field in OrderConfig.model_fields
+        }
+        for field, val in applied.items():
+            setattr(config.order, field, val)
+        if applied:
+            order_handler.update_config(applied)
+
+    # (venue) — VenueStore rows push their fee/slippage to the execution handler.
+    for row in venue_store.read_all():
+        venue_cfg = row.get("config") or {}
+        push = {
+            k: v
+            for k, v in venue_cfg.items()
+            if k in {"fee_model", "slippage_model"}
+        }
+        if push:
+            execution_handler.update_config(push)
+
+    # (portfolio) — each Portfolio's OWN bound store (NOT SystemStore); resolve via the handler.
+    for _pid, portfolio in portfolio_handler._portfolios.items():
+        portfolio_cfg = portfolio.state_storage.load_config()
+        if portfolio_cfg:
+            portfolio.update_config(portfolio_cfg)
 
 
 def build_live_system(
@@ -1177,6 +1361,53 @@ def build_live_system(
         exchange=exchange,
         status_callback=status_callback,
     )
+
+    # ------------------------------------------------------------------
+    # RUNTIME-CONFIG PLATFORM (Wave 3 — D-22/D-23/D-25). Construct VenueStore + the
+    # engine-thread ConfigRouter over the OWNING module stores per D-21 (system->SystemStore,
+    # order->the ORDER store via order_handler.storage, venue->VenueStore, portfolio->each
+    # Portfolio's OWN bound state_storage — NOT SystemStore), attach it to the facade so
+    # _initialize_live_session threads it into SessionInitializer -> LiveRouteRegistrar (the
+    # CONFIG_UPDATE CONTROL route). All storage/venue imports stay LAZY inside the gate
+    # (inertness-forbidden at module top). Degrades cleanly to no router / no layering when
+    # there is no SQL spine (in-memory fallback) — the CONFIG_UPDATE route stays the empty slot.
+    order_handler = engine.order_handler
+    if system_store is not None:
+        from itrader.core.clock import WallClock
+        from itrader.storage.venue_store import VenueStore
+        from itrader.trading_system.config_router import ConfigRouter
+
+        venue_store: Optional[Any] = VenueStore(system_db_backend)
+
+        def _venue_kind(venue_name: str) -> bool:
+            """(venue_name) -> True when the venue's execution arm is a SimulatedExchange (D-14)."""
+            from itrader.execution_handler.exchanges.simulated import SimulatedExchange
+            return isinstance(
+                execution_handler.exchanges.get(venue_name), SimulatedExchange)
+
+        facade._config_router = ConfigRouter(
+            config=_system_config,
+            system_store=system_store,
+            venue_store=venue_store,
+            order_handler=order_handler,
+            portfolio_handler=portfolio_handler,
+            execution_handler=execution_handler,
+            venue_kind=_venue_kind,
+            bus=global_queue,
+            clock=WallClock(),
+        )
+
+        # RESTART LAYERING (D-10/D-22): apply persisted overrides on boot from each OWNING
+        # store. Base params already resolved at construction (frozen); persisted overrides
+        # touch only the mutable sub-models.
+        _layer_persisted_overrides(
+            _system_config,
+            system_store=system_store,
+            venue_store=venue_store,
+            order_handler=order_handler,
+            portfolio_handler=portfolio_handler,
+            execution_handler=execution_handler,
+        )
 
     # ------------------------------------------------------------------
     # SAFE-01..06 (§11): construct + ATTACH the four safety collaborators (P7). All

@@ -96,10 +96,15 @@ def test_add_event_rejects_raw_order_injection(monkeypatch: Any) -> None:
     )
 
 
-def test_externally_admissible_is_exactly_signal_and_strategy_command() -> None:
-    """The D-10 allowlist is EXACTLY {SIGNAL, STRATEGY_COMMAND} — nothing else (fail-closed)."""
+def test_externally_admissible_is_exactly_signal_strategy_command_and_config_update() -> None:
+    """The D-10/D-23 allowlist is EXACTLY {SIGNAL, STRATEGY_COMMAND, CONFIG_UPDATE}.
+
+    D-23 opened ``CONFIG_UPDATE`` as the THIRD admitted external type (a runtime-config
+    mutation, ingress-400-validated in ``add_event`` before the queue). Nothing else is
+    admissible — the fail-closed default-deny posture is preserved.
+    """
     assert _EXTERNALLY_ADMISSIBLE == frozenset(
-        {EventType.SIGNAL, EventType.STRATEGY_COMMAND}
+        {EventType.SIGNAL, EventType.STRATEGY_COMMAND, EventType.CONFIG_UPDATE}
     )
 
 
