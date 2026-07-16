@@ -1171,14 +1171,27 @@ def _layer_persisted_overrides(
     store-read ``SQLAlchemyError`` is logged and layering is skipped (mirrors the None-backend skip
     at the call site). Never ``create_all`` here — the store stays schema-pure (WR-03/D-14).
     """
+    import pydantic
     from sqlalchemy.exc import SQLAlchemyError
 
     from itrader.config.order import OrderConfig
     from itrader.config.system import SystemSettings, UniverseConfig
+    from itrader.core.exceptions.base import ConfigurationError
 
     logger = get_itrader_logger().bind(component="build_live_system")
+
+    # WR-03 degrade-clean contract — each scope is layered under its OWN guard so a bad
+    # persisted override (a not-yet-provisioned schema -> SQLAlchemyError; OR a present-but-
+    # now-invalid stored value after schema evolution / model-field tightening / a poisoned
+    # row -> ConfigurationError / pydantic.ValidationError / ValueError) is LOGGED and SKIPPED
+    # rather than crashing build_live_system on boot. Per-scope isolation means one bad scope
+    # never aborts the others. NOT a bare Exception — a genuine programming error still
+    # surfaces. RTCFG-03 is a best-effort restore; a fresh/un-migrated DB simply has none.
+    _degrade_clean = (
+        SQLAlchemyError, ConfigurationError, pydantic.ValidationError, ValueError)
+
+    # (system) — SystemStore.read_all() rows (config.system.* / config.universe.*).
     try:
-        # (system) — SystemStore.read_all() rows (config.system.* / config.universe.*).
         for row in system_store.read_all():
             key = row["key"]
             value = row["value"]
@@ -1191,8 +1204,13 @@ def _layer_persisted_overrides(
                 field = key[len("config.universe."):]
                 if field in UniverseConfig.model_fields:
                     setattr(config.universe, field, stored)
+    except _degrade_clean as exc:
+        logger.warning(
+            "Skipping persisted SYSTEM-config restart layering — schema unavailable or a "
+            "stored override is invalid (%s); boot degrades clean", exc)
 
-        # (order) — the ORDER store's own load_config (NOT SystemStore) + the handler push.
+    # (order) — the ORDER store's own load_config (NOT SystemStore) + the handler push.
+    try:
         order_cfg = order_handler.storage.load_config()
         if order_cfg:
             applied = {
@@ -1204,8 +1222,13 @@ def _layer_persisted_overrides(
                 setattr(config.order, field, val)
             if applied:
                 order_handler.update_config(applied)
+    except _degrade_clean as exc:
+        logger.warning(
+            "Skipping persisted ORDER-config restart layering — schema unavailable or a "
+            "stored override is invalid (%s); boot degrades clean", exc)
 
-        # (venue) — VenueStore rows push their fee/slippage to the execution handler.
+    # (venue) — VenueStore rows push their fee/slippage to the execution handler.
+    try:
         for row in venue_store.read_all():
             venue_cfg = row.get("config") or {}
             push = {
@@ -1215,19 +1238,21 @@ def _layer_persisted_overrides(
             }
             if push:
                 execution_handler.update_config(push)
+    except _degrade_clean as exc:
+        logger.warning(
+            "Skipping persisted VENUE-config restart layering — schema unavailable or a "
+            "stored override is invalid (%s); boot degrades clean", exc)
 
-        # (portfolio) — each Portfolio's OWN bound store (NOT SystemStore); resolve via the handler.
+    # (portfolio) — each Portfolio's OWN bound store (NOT SystemStore); resolve via the handler.
+    try:
         for _pid, portfolio in portfolio_handler._portfolios.items():
             portfolio_cfg = portfolio.state_storage.load_config()
             if portfolio_cfg:
                 portfolio.update_config(portfolio_cfg)
-    except SQLAlchemyError as exc:
-        # The durable config schema is not provisioned yet (Alembic migration lands in Plan 04),
-        # or a store read failed — degrade clean, no persisted overrides applied (RTCFG-03 is a
-        # best-effort restore; a fresh/un-migrated DB simply has none). Never crash boot.
+    except _degrade_clean as exc:
         logger.warning(
-            "Skipping persisted-config restart layering — durable config schema unavailable "
-            "or unreadable (%s); the config-table migration lands in Plan 04", exc)
+            "Skipping persisted PORTFOLIO-config restart layering — schema unavailable or a "
+            "stored override is invalid (%s); boot degrades clean", exc)
 
 
 def build_live_system(
