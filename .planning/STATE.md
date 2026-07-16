@@ -36,7 +36,7 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 Phase: 10 — Strategies Registry ★ (next; deps {P4,P6} met — not yet planned)
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-07-16 — Completed quick task 260716-k7j: strip legacy config classes (Settings + SystemConfig)
+Last activity: 2026-07-16 — Completed quick task 260716-law: config-package cleanup (deep_merge→outils, presets→classmethods, drop models.py, RuntimeSettings→LogConfig)
 
 Note: `phase.complete` again advanced current_phase to 12 (its next-phase dir-scan skips the not-yet-created P10/P11 ★ dirs);
 corrected to 10 per the roadmap sequence. P10{P4,P6} + P11{P5,P7} are dependency-available now; P12 (core-final) depends on P11.
@@ -238,6 +238,7 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 | 260713-phm | Fix Phase 06 review WR-02 (typed StateError guard above start() try-block so an un-wired LiveTradingSystem fails loudly, not masked as generic ERROR) + IN-02 (LiveRunner.stop() warns when the drain thread outlives the join timeout) | 2026-07-13 | a9f3b5ac | [260713-phm-fix-phase-06-review-findings-wr-02-typed](./quick/260713-phm-fix-phase-06-review-findings-wr-02-typed/) |
 | 260714-v6n | Fix Phase 07 review IN-01: self-guard PreTradeThrottle.allow() with an ORDER-only top-gate (Option B) + remove now-dead None-guard in _exceeds_notional (Option A) — throttle no longer relies on live_runner's call-site type gate for safety | 2026-07-14 | baa125f8 | [260714-v6n-fix-phase-07-review-in-01-make-pretradet](./quick/260714-v6n-fix-phase-07-review-in-01-make-pretradet/) |
 | 260716-k7j | Strip legacy config classes: delete Settings + SystemConfig; move timezone to ITraderConfig frozen base ("Europe/Paris"); re-home log_level/disable_logs via new slim RuntimeSettings under config.logging (ITRADER_* env-parsing preserved); drop the runtime field. Oracle byte-exact (134 / 46189.87730727451), inertness + mypy clean | 2026-07-16 | 6e8e01e9 | [260716-k7j-strip-out-legacy-config-classes-delete-s](./quick/260716-k7j-strip-out-legacy-config-classes-delete-s/) |
+| 260716-law | Config-package cleanup (4 refactors): move deep_merge→outils/dict_merge.py::recursive_merge; exchange presets→ExchangeConfig.default()/.high_fee() classmethods (drop realistic/low_latency + string registry); delete redundant config/models.py barrel; rename RuntimeSettings→LogConfig (runtime.py→config/log.py, field stays config.logging). Oracle byte-exact (134/46189.87730727451), 2307 passed, mypy clean, 7 zero-grep gates | 2026-07-16 | 116ceb05 | [260716-law-config-package-cleanup-move-deep-merge-t](./quick/260716-law-config-package-cleanup-move-deep-merge-t/) |
 | Phase 06 P01 | 4 min | 2 tasks | 2 files |
 | Phase 06 P02 | 12 min | 3 tasks | 3 files |
 | Phase 06 P03 | 6min | 1 tasks | 1 files |
