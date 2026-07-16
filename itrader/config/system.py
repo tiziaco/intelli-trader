@@ -2,18 +2,20 @@
 
 Replaces the deleted hand-rolled ``config/system/`` package. Home of the ``Environment``
 /``LogLevel`` enums and — since P9 — the demoted ``SystemSettings`` (lifecycle knobs, D-08)
-and ``UniverseConfig`` (live universe poll cadence + remove policy, ex-``MonitoringSettings``
-2 used fields, D-09) mutable sub-models mounted on the frozen ``ITraderConfig`` root
+mutable sub-model mounted on the frozen ``ITraderConfig`` root
 (``config/itrader_config.py``). The oracle-critical determinism seed now lives on the frozen
 base as ``config.rng_seed`` (moved off the retired ``PerformanceSettings``, D-09).
 
+``UniverseConfig`` (live universe poll cadence + remove policy) was relocated to its own
+``config/universe.py`` to match the one-domain-per-file convention.
+
 ``ITraderConfig`` is the sole process config root; the legacy top-level aggregator has
-been removed — this module keeps only the shared enums + the two demoted sub-models.
+been removed — this module keeps only the shared enums + the demoted ``SystemSettings``.
 """
 
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 
 class Environment(str, Enum):
@@ -55,26 +57,3 @@ class SystemSettings(BaseModel):
     auto_restart_delay_seconds: int = 10
     enable_graceful_shutdown: bool = True
     shutdown_timeout_seconds: int = 30
-
-
-class UniverseConfig(BaseModel):
-    """Live dynamic-universe sub-model (ex-``MonitoringSettings`` 2 used fields, D-09).
-
-    Folds the only two consumed ``MonitoringSettings`` fields into a dedicated mutable
-    sub-model, dropping the redundant ``universe_`` prefix (the handler already calls the
-    param ``remove_policy``). Live/control-plane ONLY: read by the live-only universe
-    poll-timer daemon + ``UniverseHandler``, NEVER on the backtest hot path (the backtest
-    builds its own ``EventHandler`` with an empty ``UNIVERSE_UPDATE`` route and never
-    constructs the handler or starts the timer), so the oracle-critical config surface
-    stays untouched. Mutable overlay: ``validate_assignment=True`` (D-13); ``extra``
-    forbidden (D-11).
-
-    - ``poll_cadence_s`` — seconds between membership polls, decoupled from bars (D-02).
-    - ``remove_policy`` — the open-position-on-remove disposition (orphan-and-track vs
-      force-close, D-01).
-    """
-
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
-    poll_cadence_s: float = Field(default=60.0, gt=0.0)
-    remove_policy: str = "orphan-and-track"

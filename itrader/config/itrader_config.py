@@ -40,7 +40,8 @@ from itrader.config.order import OrderConfig
 from itrader.config.log import LogConfig
 from itrader.config.safety import SafetySettings
 from itrader.config.stream import FeedProviderSettings, StreamSettings
-from itrader.config.system import Environment, SystemSettings, UniverseConfig
+from itrader.config.system import Environment, SystemSettings
+from itrader.config.universe import UniverseConfig
 
 if TYPE_CHECKING:
     # Import here only to type the ``sql`` cached_property. The concrete import runs

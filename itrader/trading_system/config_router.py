@@ -70,7 +70,8 @@ from itrader.config.itrader_config import ITraderConfig
 from itrader.outils.dict_merge import recursive_merge
 from itrader.config.order import OrderConfig
 from itrader.config.portfolio import PortfolioConfig
-from itrader.config.system import SystemSettings, UniverseConfig
+from itrader.config.system import SystemSettings
+from itrader.config.universe import UniverseConfig
 from itrader.core.clock import Clock
 from itrader.core.enums import ErrorSeverity
 from itrader.core.exceptions.base import ConfigurationError

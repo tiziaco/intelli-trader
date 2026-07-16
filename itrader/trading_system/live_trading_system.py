@@ -1036,7 +1036,8 @@ class LiveTradingSystem:
         import uuid
 
         from itrader.config.order import OrderConfig
-        from itrader.config.system import SystemSettings, UniverseConfig
+        from itrader.config.system import SystemSettings
+        from itrader.config.universe import UniverseConfig
 
         # CR-01 (D-23 fail-closed): with no durable store there is no ConfigRouter wired
         # (build_live_system only constructs it when system_store is not None) and no target
@@ -1175,7 +1176,8 @@ def _layer_persisted_overrides(
     from sqlalchemy.exc import SQLAlchemyError
 
     from itrader.config.order import OrderConfig
-    from itrader.config.system import SystemSettings, UniverseConfig
+    from itrader.config.system import SystemSettings
+    from itrader.config.universe import UniverseConfig
     from itrader.core.exceptions.base import ConfigurationError
 
     logger = get_itrader_logger().bind(component="build_live_system")

@@ -37,8 +37,8 @@ from .system import (
     Environment,
     LogLevel,
     SystemSettings,
-    UniverseConfig,
 )
+from .universe import UniverseConfig
 from .itrader_config import ITraderConfig
 from .order import (
     OrderConfig,
