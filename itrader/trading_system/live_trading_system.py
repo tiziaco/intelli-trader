@@ -1063,53 +1063,71 @@ def _layer_persisted_overrides(
 
     This LOADING touches SQL and lives ONLY here (never at import — Pitfall 3 / GATE-01). It is a
     pure module function so P9's restart-layering integration test can drive it directly.
+
+    Degrade-clean contract: the durable config schema is Alembic-owned in production (the
+    ``order_config`` table + ``portfolio_account_state.config_json`` migration lands in Plan 04).
+    A boot against a not-yet-provisioned schema (a fresh DB, or the interim Plan-03/pre-migration
+    state) must NOT crash — a missing config table simply means "no persisted overrides yet". So a
+    store-read ``SQLAlchemyError`` is logged and layering is skipped (mirrors the None-backend skip
+    at the call site). Never ``create_all`` here — the store stays schema-pure (WR-03/D-14).
     """
+    from sqlalchemy.exc import SQLAlchemyError
+
     from itrader.config.order import OrderConfig
     from itrader.config.system import SystemSettings, UniverseConfig
 
-    # (system) — SystemStore.read_all() rows (config.system.* / config.universe.*).
-    for row in system_store.read_all():
-        key = row["key"]
-        value = row["value"]
-        stored = value.get("value") if isinstance(value, dict) else value
-        if key.startswith("config.system."):
-            field = key[len("config.system."):]
-            if field in SystemSettings.model_fields:
-                setattr(config.system, field, stored)
-        elif key.startswith("config.universe."):
-            field = key[len("config.universe."):]
-            if field in UniverseConfig.model_fields:
-                setattr(config.universe, field, stored)
+    logger = get_itrader_logger().bind(component="build_live_system")
+    try:
+        # (system) — SystemStore.read_all() rows (config.system.* / config.universe.*).
+        for row in system_store.read_all():
+            key = row["key"]
+            value = row["value"]
+            stored = value.get("value") if isinstance(value, dict) else value
+            if key.startswith("config.system."):
+                field = key[len("config.system."):]
+                if field in SystemSettings.model_fields:
+                    setattr(config.system, field, stored)
+            elif key.startswith("config.universe."):
+                field = key[len("config.universe."):]
+                if field in UniverseConfig.model_fields:
+                    setattr(config.universe, field, stored)
 
-    # (order) — the ORDER store's own load_config (NOT SystemStore) + the handler push.
-    order_cfg = order_handler.storage.load_config()
-    if order_cfg:
-        applied = {
-            field: val
-            for field, val in order_cfg.items()
-            if field in OrderConfig.model_fields
-        }
-        for field, val in applied.items():
-            setattr(config.order, field, val)
-        if applied:
-            order_handler.update_config(applied)
+        # (order) — the ORDER store's own load_config (NOT SystemStore) + the handler push.
+        order_cfg = order_handler.storage.load_config()
+        if order_cfg:
+            applied = {
+                field: val
+                for field, val in order_cfg.items()
+                if field in OrderConfig.model_fields
+            }
+            for field, val in applied.items():
+                setattr(config.order, field, val)
+            if applied:
+                order_handler.update_config(applied)
 
-    # (venue) — VenueStore rows push their fee/slippage to the execution handler.
-    for row in venue_store.read_all():
-        venue_cfg = row.get("config") or {}
-        push = {
-            k: v
-            for k, v in venue_cfg.items()
-            if k in {"fee_model", "slippage_model"}
-        }
-        if push:
-            execution_handler.update_config(push)
+        # (venue) — VenueStore rows push their fee/slippage to the execution handler.
+        for row in venue_store.read_all():
+            venue_cfg = row.get("config") or {}
+            push = {
+                k: v
+                for k, v in venue_cfg.items()
+                if k in {"fee_model", "slippage_model"}
+            }
+            if push:
+                execution_handler.update_config(push)
 
-    # (portfolio) — each Portfolio's OWN bound store (NOT SystemStore); resolve via the handler.
-    for _pid, portfolio in portfolio_handler._portfolios.items():
-        portfolio_cfg = portfolio.state_storage.load_config()
-        if portfolio_cfg:
-            portfolio.update_config(portfolio_cfg)
+        # (portfolio) — each Portfolio's OWN bound store (NOT SystemStore); resolve via the handler.
+        for _pid, portfolio in portfolio_handler._portfolios.items():
+            portfolio_cfg = portfolio.state_storage.load_config()
+            if portfolio_cfg:
+                portfolio.update_config(portfolio_cfg)
+    except SQLAlchemyError as exc:
+        # The durable config schema is not provisioned yet (Alembic migration lands in Plan 04),
+        # or a store read failed — degrade clean, no persisted overrides applied (RTCFG-03 is a
+        # best-effort restore; a fresh/un-migrated DB simply has none). Never crash boot.
+        logger.warning(
+            "Skipping persisted-config restart layering — durable config schema unavailable "
+            "or unreadable (%s); the config-table migration lands in Plan 04", exc)
 
 
 def build_live_system(
