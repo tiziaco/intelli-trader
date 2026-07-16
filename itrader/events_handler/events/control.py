@@ -27,7 +27,7 @@ barrel-exporting them is import-inertness-safe (msgspec-only, no live/ccxt/async
 import) — the OKX import-inertness gate stays green.
 """
 
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from itrader.core.enums import EventType
 
@@ -69,3 +69,37 @@ class ConnectorFatalEvent(Event, frozen=True, kw_only=True, gc=False):
 
     type: ClassVar[EventType] = EventType.CONNECTOR_FATAL
     reason: str
+
+
+class ConfigUpdateEvent(Event, frozen=True, kw_only=True, gc=False):
+    """A scoped runtime config change on the CONTROL plane (RTCFG-02 / D-23).
+
+    Put on the bus by the trusted app-layer caller (via ``LiveTradingSystem.add_event``,
+    the D-23 external-ingress opening) or an engine-internal source; consumed on the
+    engine thread via the CONFIG_UPDATE CONTROL route -> the injected ``ConfigRouter``,
+    which runs validate -> persist -> apply -> push (D-15) with default-deny scope->owner
+    dispatch (D-11/D-21). The route slot ``EventType.CONFIG_UPDATE: []`` was pre-declared
+    (BUS-03); the ``LiveRouteRegistrar`` populates its consumer in P9.
+
+    SECURITY — V7 secret-scrub (ASVS V7, T-9-secret): ``value`` must NEVER carry a venue
+    credential/secret to a config store. Credentials stay connector-owned (never routed
+    through a config update); the ``VenueStore`` recursive secret-denylist is the last-line
+    guard that rejects a secret-like key before any write.
+
+    Parameters
+    ----------
+    scope: `str`
+        The owning scope — one of ``{system, order, venue:{name}, portfolio:{id}}`` (D-21).
+        EXACT-string matched (no case-folding / normalization); an unrouted scope is
+        default-deny rejected.
+    key: `str`
+        The mutable sub-model field name to set (EXACT-string; a non-field is rejected).
+    value: `Any`
+        The new value (coerced + range-validated by the target sub-model's
+        ``validate_assignment``; money-typed values stay Decimal end-to-end).
+    """
+
+    type: ClassVar[EventType] = EventType.CONFIG_UPDATE
+    scope: str
+    key: str
+    value: Any

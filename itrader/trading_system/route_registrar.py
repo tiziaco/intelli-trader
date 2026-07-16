@@ -68,6 +68,7 @@ class LiveRouteRegistrar:
         *,
         safety: Any,
         stream_recovery: Any,
+        config_router: Any = None,
     ) -> None:
         self._strategies_handler = strategies_handler
         self._universe_handler = universe_handler
@@ -77,6 +78,11 @@ class LiveRouteRegistrar:
         # CONNECTOR_FATAL routes below resolve to a bound method at install().
         self._safety = safety
         self._stream_recovery = stream_recovery
+        # RTCFG-02/D-23/§13c: the engine-thread ConfigRouter (injected by
+        # build_live_system in Wave 3). Held so the CONFIG_UPDATE route below resolves
+        # to a bound method at install(); the registrar stays a thin delegator —
+        # validate/persist/apply/push logic lives in the ConfigRouter, not here.
+        self._config_router = config_router
 
     def install(self, event_handler: "EventHandler") -> None:
         """Install the BUSINESS/live routes into ``event_handler`` ONCE (no runtime mutation).
@@ -121,6 +127,12 @@ class LiveRouteRegistrar:
         routes[EventType.STREAM_STATE] = [self._on_stream_state]
         routes[EventType.CONNECTOR_FATAL] = [self._on_connector_fatal]
 
+        # RTCFG-02/D-23/§13c: populate the pre-declared empty CONFIG_UPDATE CONTROL slot
+        # with its consumer — a scoped runtime ConfigUpdateEvent is actuated HERE, on the
+        # engine thread, by delegating to the injected ConfigRouter (validate -> persist ->
+        # apply -> push, D-15). SET entry, never runtime mutation (LR-16).
+        routes[EventType.CONFIG_UPDATE] = [self._on_config_update]
+
     def _on_stream_state(self, event: Any) -> None:
         """STREAM_STATE CONTROL consumer (SAFE-03/§11c): up -> resume, down -> pause.
 
@@ -145,3 +157,14 @@ class LiveRouteRegistrar:
         ``record_halt`` write runs off the connector asyncio loop (Pitfall 9).
         """
         self._safety.halt(event.reason)
+
+    def _on_config_update(self, event: Any) -> None:
+        """CONFIG_UPDATE CONTROL consumer (RTCFG-02/D-23): delegate to the ConfigRouter.
+
+        A ``ConfigUpdateEvent`` (scope, key, value) is actuated on the engine thread by the
+        injected ``ConfigRouter.apply(event)`` — the single-writer validate -> persist ->
+        apply -> push path (D-15). The registrar stays a thin delegator (mirrors how
+        ``_on_stream_state`` delegates to the injected collaborators); no router business
+        logic lives here.
+        """
+        self._config_router.apply(event)
