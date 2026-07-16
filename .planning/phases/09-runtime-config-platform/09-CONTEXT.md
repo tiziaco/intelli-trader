@@ -132,7 +132,7 @@ the owner in favor of the aggregator model (D-05/D-06) — planners must NOT reb
 
 ### Stats/state read-model (Area 3 — RTCFG-06)
 
-- **D-17 (Read-model = domain stores + `state.*` + thin `system_stats`; NO entity duplication):** The UI
+- **D-17 (Read-model = domain stores + `state` keys + thin `system_stats`; NO entity duplication):** The UI
   reads entity data **directly from its own store** — equity/positions from `portfolio_account_state` +
   `equity_snapshots` (both already persist marked `total_equity`, latest + history), orders from the order
   store, halts from `halt_records`. **Do NOT copy portfolio equity into a stats blob** (it's already
@@ -144,14 +144,14 @@ the owner in favor of the aggregator model (D-05/D-06) — planners must NOT reb
   append-only table** (a breach/error time-series, mirroring `equity_snapshots`) — one new table + migration
   chained after P4's `strategy_registry`. Written **event-driven** by a **thin engine-thread stats writer**
   that snapshots counters it already holds in memory (no read-model aggregation needed).
-- **D-19 (`state.*` event-driven at source):** `state.status` on each SafetyController status transition,
+- **D-19 (`state` keys event-driven at source):** `state.status` on each SafetyController status transition,
   `state.halt_reason` on halt, `state.last_error` on `ErrorEvent`, `state.last_started_at` on start —
   written immediately at each event's own source into `SystemStore` (low-rate, discrete key-value). `config.*`
   + `state.*` stay in `SystemStore`; only `stats` splits out (D-18).
 
 ### P9 wiring scope (Area 4)
 
-- **D-20 (P9 is large → wave decomposition expected):** Restructure `ITraderConfig` (gated) + construct
+- **D-20 [informational] (P9 is large → wave decomposition expected):** Restructure `ITraderConfig` (gated) + construct
   stores in the live factory + wire the `ConfigUpdateEvent` router + restart layering + read-model writer &
   `system_stats` table. Likely 3 waves (config restructure → mutation path → read-model) — planning's call.
 - **D-21 (Scopes locked to `{system, order, venue, portfolio}`):** All four wired in P9 (success criterion
@@ -169,7 +169,7 @@ the owner in favor of the aggregator model (D-05/D-06) — planners must NOT reb
   tests **must drive the external `CONFIG_UPDATE` path directly** so it isn't untested surface; (3)
   "external" = the trusted app-layer caller — **auth is the future FastAPI layer's job, not the engine's**;
   the engine's guard is the structural mutation-surface + type/range + venue-kind validation.
-- **D-24 (Strategy config is OUT of `ConfigUpdateEvent`):** Strategy enable/disable + atomic param
+- **D-24 [informational] (Strategy config is OUT of `ConfigUpdateEvent`):** Strategy enable/disable + atomic param
   reconfiguration = STRAT-03 / Phase 10, driven by `STRATEGY_COMMAND` + `StrategyRegistryStore`. The
   RTCFG-02 allowlist mention of "strategy enable/disable + params" is a cross-reference to STRAT-03, not a
   P9 scope.
