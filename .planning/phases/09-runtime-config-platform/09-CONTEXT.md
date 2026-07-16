@@ -185,6 +185,15 @@ the owner in favor of the aggregator model (D-05/D-06) — planners must NOT reb
   restart layering; plus `state.*` upsert + append `system_stats` on `SystemStore`. Extend the EXISTING
   stores — the order/portfolio stores persist trading DATA today (orders / account state), so add a config
   surface to each (no new stores). Exact method names/signatures = planner discretion.
+  **Storage-mechanism refinement 2026-07-16 (owner decision):** the two module scopes persist their JSON
+  config differently, to minimize new schema: (a) `portfolio:{id}` config rides a NEW `config_json`
+  (`json_variant()`, nullable) COLUMN added to the EXISTING `portfolio_account_state` table (already
+  single-row-per-`portfolio_id`) — NO new portfolio-config table; `save_config`/`load_config` upsert/read
+  that column on the bound `portfolio_id` row. (b) `order` config lands in a NEW cardinality-1
+  `order_config` table (constant single-row PK, `config_json`, `updated_at`) — the order store has no
+  existing module-global row to ride. Order config is GLOBAL for now but the dedicated table leaves room to
+  expand to a per-portfolio/account key later without touching the account-state carrier. Both still store
+  a JSONB blob (`json_variant()`), mirroring `VenueStore.config_json`.
 
 ### Claude's Discretion
 - Exact construction/layering sequence resolving D-10 (subject to the byte-exact + inertness gates).
