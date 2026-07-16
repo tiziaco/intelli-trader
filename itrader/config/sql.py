@@ -145,7 +145,7 @@ class SqlSettings(BaseSettings):
         Path(self.database).parent.mkdir(parents=True, exist_ok=True)
 
     def engine_url(self) -> str:
-        """Build the SQLAlchemy engine URL for the selected driver (no Settings arg).
+        """Build the SQLAlchemy engine URL for the selected driver (self-contained).
 
         Guard-clause / early-exit (no cascading/nested if). Reads ``self.*`` only.
 

@@ -7,8 +7,8 @@ and ``UniverseConfig`` (live universe poll cadence + remove policy, ex-``Monitor
 (``config/itrader_config.py``). The oracle-critical determinism seed now lives on the frozen
 base as ``config.rng_seed`` (moved off the retired ``PerformanceSettings``, D-09).
 
-``ITraderConfig`` is the sole process config root; the legacy ``SystemConfig`` aggregator
-has been removed — this module keeps only the shared enums + the two demoted sub-models.
+``ITraderConfig`` is the sole process config root; the legacy top-level aggregator has
+been removed — this module keeps only the shared enums + the two demoted sub-models.
 """
 
 from enum import Enum
@@ -38,7 +38,7 @@ class LogLevel(str, Enum):
 class SystemSettings(BaseModel):
     """Demoted system-lifecycle sub-model (D-08).
 
-    The lifecycle knobs that used to live directly on the ``SystemConfig`` aggregator
+    The lifecycle knobs that used to live directly on the legacy top-level aggregator
     demote here so the new frozen ``ITraderConfig`` root carries only immutable
     identity/determinism base params + mutable domain sub-models. This is a MUTABLE
     overlay: ``validate_assignment=True`` (D-13) re-runs coercion + ``Field(...)``

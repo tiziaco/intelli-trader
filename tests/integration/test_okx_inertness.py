@@ -114,7 +114,7 @@ assert "itrader.trading_system.live_trading_system" not in sys.modules, (
 )
 
 # Phase 1 (CFG-02, D-05/D-06 register-vs-build): importing itrader runs
-# SystemConfig.default() (itrader/__init__.py). The lazy `sql` cached_property must
+# ITraderConfig() (itrader/__init__.py). The lazy `sql` cached_property must
 # stay UNRESOLVED at import — its absence from the singleton's __dict__ proves zero
 # SqlSettings (and thus no Postgres URL/credential resolution) was constructed at
 # import. cached_property provably populates __dict__ only on first access.
@@ -355,7 +355,7 @@ def test_new_store_registrars_are_register_vs_build() -> None:
     assert set(registry_tables) == {"strategy_registry", "strategy_subscriptions"}
 
     # The 3 registrars registered EXACTLY the 4 expected table names on the bare MetaData —
-    # no connection, no Settings(), no SqlEngine constructed anywhere in the call chain.
+    # no connection, no RuntimeSettings(), no SqlEngine constructed anywhere in the call chain.
     assert set(metadata.tables) == {
         "system_store",
         "venue_store",

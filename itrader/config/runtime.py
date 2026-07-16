@@ -1,9 +1,9 @@
-"""Slim runtime logging-knob env layer (successor to the removed ``Settings`` class).
+"""Slim runtime logging-knob env layer (successor to the removed legacy env layer).
 
-Purpose-built replacement for the deleted ``config/settings.py`` ``Settings`` env layer.
-It carries ONLY the two documented ``ITRADER_*`` logging knobs — ``log_level`` and
+Purpose-built replacement for the deleted ``config/settings.py`` env layer. It carries
+ONLY the two documented ``ITRADER_*`` logging knobs — ``log_level`` and
 ``disable_logs`` — so their environment-variable parsing (via ``BaseSettings``) is
-preserved after ``Settings`` was retired (user decision 4). ``environment`` and
+preserved after the legacy layer was retired (user decision 4). ``environment`` and
 ``timezone`` are NOT re-homed here: ``timezone`` moved to the frozen ``ITraderConfig``
 base and ``environment`` is already an ``Environment`` enum base field on the root.
 

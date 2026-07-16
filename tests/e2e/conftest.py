@@ -242,7 +242,7 @@ def _make_on_tick(spec, portfolio_id):
 
     def on_tick(system, time_event):
         # WR-03: anchor the date key to a FIXED frame (UTC), independent of the
-        # Settings.timezone default. csv_store localizes the bar index to TIMEZONE
+        # project TIMEZONE default. csv_store localizes the bar index to TIMEZONE
         # (Europe/Paris), so a naive strftime would couple action.bar_date to that
         # default and roll to the wrong day near a boundary. tz_convert("UTC") here
         # and the matching conversion in ScriptedEmitter keep both producers and the

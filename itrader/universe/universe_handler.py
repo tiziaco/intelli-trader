@@ -71,7 +71,7 @@ class UniverseHandlerConfig:
     Collapses the two former ctor params (``timeframe`` + ``remove_policy``) into the
     single injected ``config`` of the RUN-06 literal dep list ``(bus, universe, feed,
     config)`` — the handler reads BOTH values off this object, holding no OKX coupling
-    and no dependency on ``SystemConfig`` internals.
+    and no dependency on the config-root internals.
 
     Provenance (the live/monitoring plane — NEVER ``PerformanceSettings``, so the
     backtest oracle config is untouched, §8/D-01):
@@ -79,9 +79,9 @@ class UniverseHandlerConfig:
     - ``poll_timeframe`` — was ``_STREAM_SETTINGS.okx_stream_timeframe``; the bar
       timeframe passed to ``feed.warmup`` on add and used for the CR-01 re-warm
       cadence gate.
-    - ``remove_policy`` — was ``SystemConfig.monitoring.universe_remove_policy``; the
-      open-position-on-remove disposition (``"orphan-and-track"`` default vs
-      ``"force-close"``).
+    - ``remove_policy`` — was the legacy monitoring config's
+      ``universe_remove_policy``; the open-position-on-remove disposition
+      (``"orphan-and-track"`` default vs ``"force-close"``).
     """
 
     poll_timeframe: str
@@ -228,10 +228,10 @@ class UniverseHandler:
         config : UniverseHandlerConfig
             The RUN-06/D-11 live-plane config the handler reads the poll
             ``poll_timeframe`` (was ``_STREAM_SETTINGS.okx_stream_timeframe``) and
-            ``remove_policy`` (was ``SystemConfig.monitoring.universe_remove_policy``)
-            from. These knobs live on the LIVE/monitoring plane — NOT
-            ``SystemConfig.PerformanceSettings`` — so the backtest oracle is untouched
-            (§8, D-01).
+            ``remove_policy`` (was the legacy monitoring config's
+            ``universe_remove_policy``) from. These knobs live on the LIVE/monitoring
+            plane — NOT the retired performance config — so the backtest oracle is
+            untouched (§8, D-01).
         """
         self._bus = bus
         self._universe = universe

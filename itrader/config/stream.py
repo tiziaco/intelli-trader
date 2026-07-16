@@ -15,7 +15,7 @@ single typed home, following the ``config/order.py`` convention
   - ``FeedProviderSettings`` folds the warmup safety margin and the REST backfill page
     size.
 
-Pitfall 1 (D-08): this module is reachable from ``SystemConfig.default()`` on the
+Pitfall 1 (D-08): this module is reachable from ``ITraderConfig()`` on the
 backtest import graph, so it imports stdlib + pydantic ONLY — nothing live/ccxt/async
 — keeping the OKX import-inertness gate green. The field defaults equal the retired
 module constants byte-for-byte (a value drift would silently change live-supervisor

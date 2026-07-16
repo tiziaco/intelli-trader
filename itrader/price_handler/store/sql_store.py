@@ -153,7 +153,8 @@ class SqlHandler:
             )
         if "symbol" in df.columns:
             df = df.drop(columns=["symbol"])
-        # Use the authoritative project timezone (Settings.timezone) so this store's index
+        # Use the authoritative project timezone (the module-level TIMEZONE, sourced from
+        # ITraderConfig.timezone) so this store's index
         # tz matches its CsvPriceStore sibling and the rest of the system (WR-01). The two
         # stores were accidentally equal only because the default resolves to Europe/Paris.
         df.index = pd.to_datetime(df.index, utc=True).tz_convert(TIMEZONE)

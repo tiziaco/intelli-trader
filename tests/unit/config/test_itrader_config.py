@@ -18,12 +18,16 @@ Pins the load-bearing runtime-config foundation: the new ``frozen=True``
 Every test builds a fresh ``ITraderConfig()`` — the process singleton is never mutated.
 """
 
+import inspect
+from functools import cached_property
+
 import pytest
 
 import pydantic
 
+from itrader.config import TIMEZONE, RuntimeSettings
 from itrader.config.itrader_config import ITraderConfig
-from itrader.config.stream import StreamSettings
+from itrader.config.stream import FeedProviderSettings, StreamSettings
 from itrader.config.system import Environment
 
 pytestmark = pytest.mark.unit
@@ -125,3 +129,82 @@ def test_config_is_unhashable():
     config = ITraderConfig()
     with pytest.raises(TypeError):
         hash(config)
+
+
+# --- timezone re-home onto the frozen base (user decision 3) ------------------
+
+
+def test_timezone_reads_europe_paris_off_frozen_base():
+    """timezone reads 'Europe/Paris' off the frozen base (oracle-critical, D-03)."""
+    assert ITraderConfig().timezone == "Europe/Paris"
+
+
+def test_frozen_base_rejects_timezone_setattr():
+    """setattr on the frozen base timezone raises ValidationError (RTCFG-04)."""
+    config = ITraderConfig()
+    with pytest.raises(pydantic.ValidationError):
+        config.timezone = "UTC"
+    assert config.timezone == "Europe/Paris"
+
+
+def test_module_timezone_matches_frozen_base_default():
+    """config.TIMEZONE re-derives from the frozen-base default and stays 'Europe/Paris'."""
+    assert TIMEZONE == "Europe/Paris"
+    assert TIMEZONE == str(ITraderConfig.model_fields["timezone"].default)
+
+
+# --- logging: RuntimeSettings re-home (user decisions 4 + 5) ------------------
+
+
+def test_logging_is_a_runtime_settings_field():
+    """'logging' is a RuntimeSettings field carrying the documented default knobs (decision 4)."""
+    assert "logging" in ITraderConfig.model_fields
+    logging = ITraderConfig().logging
+    assert isinstance(logging, RuntimeSettings)
+    assert logging.log_level == "INFO"
+    assert logging.disable_logs is False
+
+
+def test_no_runtime_field_on_config_root():
+    """The legacy 'runtime' field is gone (user decision 5)."""
+    assert "runtime" not in ITraderConfig.model_fields
+
+
+def test_runtime_settings_parses_env(monkeypatch):
+    """RuntimeSettings preserves ITRADER_* env-parsing after the Settings retirement (decision 4)."""
+    monkeypatch.setenv("ITRADER_LOG_LEVEL", "DEBUG")
+    assert RuntimeSettings().log_level == "DEBUG"
+
+
+# --- migrated import-safety pins (ex-test_system_config.py) -------------------
+
+
+def test_stream_is_eager_field_with_unchanged_defaults():
+    """stream is an eager StreamSettings field carrying the D-08 defaults (IN-01)."""
+    assert "stream" in ITraderConfig.model_fields
+    stream = ITraderConfig().stream
+    assert isinstance(stream, StreamSettings)
+    assert stream.okx_stream_symbol == "BTC/USDC"
+    assert stream.okx_stream_timeframe == "1d"
+
+
+def test_feed_provider_is_eager_field_with_unchanged_defaults():
+    """feed_provider is an eager FeedProviderSettings field carrying the D-08 defaults (IN-01)."""
+    assert "feed_provider" in ITraderConfig.model_fields
+    feed_provider = ITraderConfig().feed_provider
+    assert isinstance(feed_provider, FeedProviderSettings)
+    assert feed_provider.warmup_margin == 5
+    assert feed_provider.backfill_page == 1000
+
+
+def test_sql_is_cached_property_not_a_field():
+    """sql is a functools.cached_property REGISTERED on the class, not a pydantic field (D-05/D-06)."""
+    assert isinstance(inspect.getattr_static(ITraderConfig, "sql"), cached_property)
+    assert "sql" not in ITraderConfig.model_fields
+
+
+def test_sql_is_unbuilt_at_import():
+    """The imported config singleton has not resolved sql -> no SqlSettings built at import (D-05)."""
+    from itrader import config as c
+
+    assert "sql" not in c.__dict__

@@ -1,7 +1,8 @@
 """Top-level frozen runtime-config aggregator (Pydantic v2, D-04..D-09).
 
-``ITraderConfig`` replaces ``SystemConfig`` as the ROOT config object (D-06). It is the
-single process-wide ``config`` singleton constructed once at import in
+``ITraderConfig`` is the ROOT config object (D-06), replacing the retired legacy
+top-level aggregator. It is the single process-wide ``config`` singleton constructed
+once at import in
 ``itrader/__init__.py`` and mutated in place, never reassigned (Pitfall 6 — the live
 factory in Wave 3 mutates ``config.<sub>.<field>`` in place so ``from itrader import
 config`` importers see every change).
@@ -20,7 +21,7 @@ Structure (D-07):
 
 Inertness (GATE-01, Pitfall 3): this module imports pydantic/stdlib ONLY; the DB surface
 stays behind the lazy ``sql`` ``@cached_property`` (ported verbatim from the retired
-``SystemConfig``), so ``config = ITraderConfig()`` at import pulls NO sqlalchemy/ccxt.
+top-level aggregator), so ``config = ITraderConfig()`` at import pulls NO sqlalchemy/ccxt.
 Persisted-override LOADING happens in the live factory (``build_live_system``), never at
 import.
 

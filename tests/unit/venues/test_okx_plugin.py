@@ -53,9 +53,9 @@ class _FakeConnectorProvider:
 
 def _fake_ctx() -> SimpleNamespace:
     """A fake ``EngineContext`` exposing the ``bus`` + ``config`` the plugin reads."""
-    from itrader.config.system import SystemConfig
+    from itrader.config import ITraderConfig
 
-    return SimpleNamespace(bus=object(), config=SystemConfig.default())
+    return SimpleNamespace(bus=object(), config=ITraderConfig())
 
 
 def _fake_spec(account_id: str | None = None) -> SimpleNamespace:

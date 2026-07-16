@@ -72,7 +72,7 @@ _EXTERNALLY_ADMISSIBLE = frozenset(
 # ``ValidationError`` (``_require_pg_credentials``) when no credential is present.
 
 # WR-03 / CFG-03 / D-08 / IN-01: the SINGLE wiring source for the live OKX subscription
-# now lives in ``config.stream`` (the eager ``SystemConfig.stream`` field, backed by
+# now lives in ``config.stream`` (the eager ``ITraderConfig.stream`` field, backed by
 # StreamSettings in config/stream.py). The OKX data provider stamps this
 # symbol/timeframe into every ClosedBar (the feed's ring key), the feed warms up on
 # the same pair, and universe membership is checked against it — so the

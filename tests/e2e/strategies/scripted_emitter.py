@@ -131,7 +131,7 @@ class ScriptedEmitter(Strategy):
             return None
         # D-04: key off the CURRENT (decision) bar's date, not len(bars).
         # WR-03: anchor the date key to a FIXED frame (UTC), independent of the
-        # Settings.timezone default, consistent with _make_on_tick in conftest.py.
+        # project TIMEZONE default, consistent with _make_on_tick in conftest.py.
         # csv_store localizes the bar time to TIMEZONE (Europe/Paris); converting
         # back to UTC here keeps the emitter's date key and the operator hook's key
         # in the same frame so scripted firings and operator actions agree on a

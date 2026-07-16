@@ -3,10 +3,9 @@
 Locks Plan 04-08 Task 1:
 
 * ``ITRADER_LOG_LEVEL`` / ``ITRADER_JSON_LOGS`` drive ``init_logger`` via
-  direct ``os.environ`` reads — never by constructing ``Settings()``
-  (Pitfall 8: ``ITRADER_DATABASE_URL`` is a required-no-default ``SecretStr``,
-  so ``Settings()`` at import time would raise ``ValidationError`` on every
-  ``import itrader``).
+  direct ``os.environ`` reads — never by constructing ``RuntimeSettings()``
+  (Pitfall 8: the logger must not instantiate any config/settings model at
+  import time, keeping ``import itrader`` side-effect-free).
 * Handler installation is guarded and idempotent: repeated setup never stacks
   duplicate handlers and never clobbers handlers installed by embedding
   applications or pytest.

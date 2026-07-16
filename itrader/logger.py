@@ -26,12 +26,11 @@ _ITRADER_HANDLER_FLAG = "_itrader_handler"
 def _env_log_level() -> str:
     """Resolve the log level from ``ITRADER_LOG_LEVEL`` (default ``INFO``).
 
-    Read directly from ``os.environ`` — do NOT construct a ``Settings`` instance here:
-    ``ITRADER_DATABASE_URL`` is a required-no-default ``SecretStr``, so
-    instantiating ``Settings`` at import time would raise ``ValidationError``
-    on every ``import itrader`` (Pitfall 8). The env name matches the
-    pydantic-settings ``ITRADER_`` prefix so ``Settings.log_level`` stays the
-    documented knob.
+    Read directly from ``os.environ`` — do NOT construct a ``RuntimeSettings``
+    instance here: the logger must not instantiate any config/settings model at
+    import time, keeping ``import itrader`` side-effect-free (Pitfall 8). The env
+    name matches the pydantic-settings ``ITRADER_`` prefix so
+    ``RuntimeSettings.log_level`` stays the documented knob.
     """
     return os.environ.get("ITRADER_LOG_LEVEL", "INFO")
 
@@ -46,11 +45,10 @@ def _env_disable_logs() -> bool:
     """Resolve the D-08 full-off kill-switch from ``ITRADER_DISABLE_LOGS`` (default off).
 
     Mirrors the ``_env_json_logs`` idiom: read ``os.environ`` directly and never
-    construct a ``Settings`` instance here — ``ITRADER_DATABASE_URL`` is a
-    required-no-default ``SecretStr`` so instantiating ``Settings`` at import time
-    would raise ``ValidationError`` on every ``import itrader`` (Pitfall 8). The env
-    name matches the pydantic-settings ``ITRADER_`` prefix so ``Settings.disable_logs``
-    stays the documented knob.
+    construct a ``RuntimeSettings`` instance here — the logger must not instantiate any
+    config/settings model at import time, keeping ``import itrader`` side-effect-free
+    (Pitfall 8). The env name matches the pydantic-settings ``ITRADER_`` prefix so
+    ``RuntimeSettings.disable_logs`` stays the documented knob.
     """
     raw = os.environ.get("ITRADER_DISABLE_LOGS", "false")
     return raw.strip().lower() in ("1", "true", "yes")
@@ -299,8 +297,8 @@ def init_logger(config: Any = None) -> "ITraderStructLogger":
     Log level and JSON rendering are environment-driven (M3-03 / D-20):
     ``ITRADER_LOG_LEVEL`` (default ``INFO``) and ``ITRADER_JSON_LOGS``
     (default off). Read via ``os.environ`` directly — never by constructing
-    a ``Settings`` instance, which would raise ``ValidationError`` at import time
-    whenever ``ITRADER_DATABASE_URL`` is unset (Pitfall 8).
+    a ``RuntimeSettings`` instance, keeping ``import itrader`` side-effect-free
+    (Pitfall 8).
 
     Args:
         config: Accepted for backward compatibility; ignored. Logging

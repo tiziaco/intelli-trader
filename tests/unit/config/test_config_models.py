@@ -7,10 +7,10 @@ Pins the M2-06 behaviors the config collapse delivers:
      the backtest-dict and the live-JSONB path.
   2. ``PortfolioConfig.default()`` returns the conservative-preset-equivalent model.
 
-NOTE (260629-l0q): the former Settings-secret tests (fail-loud + masking) were RELOCATED
+NOTE (260629-l0q): the former env-layer secret tests (fail-loud + masking) were RELOCATED
 to ``tests/unit/storage/test_sql_settings.py`` — the DB connection (and its required-secret
-fail-loud) now lives wholly on the unified ``SqlSettings``; ``Settings`` no longer carries
-any DB field or secret.
+fail-loud) now lives wholly on the unified ``SqlSettings``; the runtime env layer no longer
+carries any DB field or secret.
 
 NOTE (03-08): this file MOVES with the test tree into ``tests/unit/test_config/``
 during the 03-08 type-split — 03-08 must reconcile it there without duplicating it here.

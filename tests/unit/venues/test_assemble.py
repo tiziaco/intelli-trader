@@ -57,9 +57,9 @@ class _FakeSimulatedExchange:
 
 def _fake_ctx() -> SimpleNamespace:
     """A fake EngineContext exposing the ``bus`` + ``config`` the OKX plugin reads."""
-    from itrader.config.system import SystemConfig
+    from itrader.config import ITraderConfig
 
-    return SimpleNamespace(bus=object(), config=SystemConfig.default())
+    return SimpleNamespace(bus=object(), config=ITraderConfig())
 
 
 def _spec(execution_venue: str, data_provider: str, account_id: str | None = None) -> SimpleNamespace:
