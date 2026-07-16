@@ -236,6 +236,19 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 `margin-equity-double-counts-notional-wr01` (owner-gated), `unify-backtest-direct-bar-generation`
 (oracle-risky). `pair-strategy-live-reconfiguration` is folded into P10 (STRAT-03).
 
+- **`unify-config-store-save-interface` (deferred, not folded — owner-requested 2026-07-16):** make
+  `ConfigRouter` persist through ONE uniform `store.save_config(...)` seam for all four scopes instead of
+  today's split (`order`/`portfolio` → `save_config(config, at)`; `system`/`venue` → `upsert(...)`). Finding:
+  the four are TWO real shapes, not one — order/portfolio are bound single-record config stores (already
+  `save_config(config, at)`+`load_config()`); `system_store` is a GENERIC namespaced KV store used beyond
+  config (lifecycle/universe keys) and `venue_store` is multi-key (`venue_name`) + carries a non-config
+  `enabled` column. A blanket rename to `save_config` is therefore WRONG (would misrepresent system's KV
+  store + drop venue's key/`enabled`). Two viable paths: (A-light) a `ConfigStore` Protocol
+  (`save_config`/`load_config`) that order+portfolio already satisfy, system/venue left native; (B-full,
+  recommended) a thin per-scope config-adapter so the router always calls `save_config(...)` and delegates
+  to the native `upsert` underneath — B also lifts venue's key/`enabled` handling OUT of `ConfigRouter`,
+  dissolving the router's cross-store feature-envy smell. Real design work, not a rename.
+
 ### Blockers/Concerns
 
 - **P6 `UniverseWiring` = the highest oracle-risk seam** (analogous to v1.2 MOD-01): move as one intact
