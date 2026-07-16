@@ -5,8 +5,8 @@ milestone_name: Live System Refactor & Live-Readiness Hardening
 current_phase: 09
 current_phase_name: runtime-config-platform
 status: executing
-stopped_at: Completed 09-02-PLAN.md
-last_updated: "2026-07-16T10:37:33.028Z"
+stopped_at: Completed 09-03-PLAN.md
+last_updated: "2026-07-16T11:03:06.629Z"
 last_activity: 2026-07-16
 last_activity_desc: Phase 09 execution started
 progress:
@@ -34,7 +34,7 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 ## Current Position
 
 Phase: 09 (runtime-config-platform) — EXECUTING
-Plan: 3 of 4
+Plan: 4 of 4
 Status: Ready to execute
 Last activity: 2026-07-16 — Phase 09 execution started
 
@@ -98,6 +98,7 @@ trim boundary P1–P8+P12 core vs P9–P11 ★ is noted, not taken). Research fl
 |------|----------|-------|-------|
 | Phase 09 P01 | 25min | 3 tasks | 11 files |
 | Phase 09 P02 | 11min | 3 tasks | 5 files |
+| Phase 09 P03 | 21min | 3 tasks | 14 files |
 
 ## Accumulated Context
 
@@ -184,6 +185,8 @@ P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 - [Phase ?]: P9-01: SystemConfig kept as narrowed legacy aggregator (perf/monitoring+lifecycle stripped) to keep existing config tests green; SystemSettings/UniverseConfig demoted sub-models added
 - [Phase 9]: ConfigRouter: the config structure IS the allowlist (D-11/D-12) — routable keys resolved by live model_fields introspection, so the allowlist can never drift from the model
 - [Phase 9]: system idle/timeout knobs AND universe poll_cadence/remove_policy both route under the single 'system' scope (scopes locked to 4, D-21); owning sub-model resolved by introspection
+- [Phase ?]: P9-03: order-scope config persists to a dedicated order_config table + portfolio-scope config to a nullable config_json column on portfolio_account_state (D-25); each module owns its config, never SystemStore
+- [Phase ?]: P9-03: add_event admits CONFIG_UPDATE as the third default-deny external type with synchronous ingress 400-validation; restart-layering reapplies persisted overrides per-scope from each OWN store, degrade-clean when the (Plan-04) config migration is pending
 
 ### Pending Todos
 
@@ -296,8 +299,8 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-16T10:37:26.484Z
-Stopped at: Completed 09-02-PLAN.md
+Last session: 2026-07-16T11:02:59.891Z
+Stopped at: Completed 09-03-PLAN.md
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
 Resume file: None

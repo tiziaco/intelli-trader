@@ -251,7 +251,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   risk limits + sizing defaults; system poll_cadence + universe_remove_policy + idle/timeout knobs; strategy
   enable/disable + params (STRAT-03).
 
-- [ ] **RTCFG-03**: Persisted overrides survive restart — `build_live_system` layers them over defaults
+- [x] **RTCFG-03**: Persisted overrides survive restart — `build_live_system` layers them over defaults
   on boot (§6e).
 
 - [x] **RTCFG-04**: Immutable-at-runtime keys (`rng_seed`, money precision, SQL credentials, venue API
@@ -411,7 +411,7 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | ERR-04 | P8 | Complete |
 | RTCFG-01 | P9 | Complete |
 | RTCFG-02 | P9 | Complete |
-| RTCFG-03 | P9 | Pending |
+| RTCFG-03 | P9 | Complete |
 | RTCFG-04 | P9 | Complete |
 | RTCFG-05 | P9 | Complete |
 | RTCFG-06 | P9 | Pending |
