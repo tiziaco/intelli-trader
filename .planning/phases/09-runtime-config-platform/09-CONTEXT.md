@@ -154,9 +154,14 @@ the owner in favor of the aggregator model (D-05/D-06) — planners must NOT reb
 - **D-20 [informational] (P9 is large → wave decomposition expected):** Restructure `ITraderConfig` (gated) + construct
   stores in the live factory + wire the `ConfigUpdateEvent` router + restart layering + read-model writer &
   `system_stats` table. Likely 3 waves (config restructure → mutation path → read-model) — planning's call.
-- **D-21 (Scopes locked to `{system, order, venue, portfolio}`):** All four wired in P9 (success criterion
-  #2 — not a subset; RTCFG-05's sim-only venue fee/slippage is criterion #3). `system→SystemStore`,
-  `order→SystemStore`, `venue:{name}→VenueStore`, `portfolio:{id}→Portfolio+portfolio store`.
+- **D-21 (Scopes locked to `{system, order, venue, portfolio}`; each module's config persisted by its OWN store):** All four wired in P9 (success criterion
+  #2 — not a subset; RTCFG-05's sim-only venue fee/slippage is criterion #3). Scope → owning store:
+  `system→SystemStore`, `order→order store`, `venue:{name}→VenueStore`,
+  `portfolio:{id}→Portfolio + portfolio store`. **Owner refinement 2026-07-16:** the module owns its
+  config — `order` config persists to the ORDER store (`OrderStorage`, NOT SystemStore) and
+  `portfolio:{id}` config to the per-`{id}` PORTFOLIO store (`PortfolioStateStorage`, NOT SystemStore),
+  each via a NEW config method on the EXISTING store (no new stores — D-25); config is NEVER centralized
+  into SystemStore. Only global `system` config lives in SystemStore.
 - **D-22 (P9 owns store construction + restart layering — cashes P4 D-02):** P9 constructs
   `SystemStore`/`VenueStore` + the new `system_stats` table in the live factory and adds the
   `defaults ← YAML ← env ← persisted` layering to `build_live_system`. (P4 deferred construction + state
@@ -173,10 +178,13 @@ the owner in favor of the aggregator model (D-05/D-06) — planners must NOT reb
   reconfiguration = STRAT-03 / Phase 10, driven by `STRATEGY_COMMAND` + `StrategyRegistryStore`. The
   RTCFG-02 allowlist mention of "strategy enable/disable + params" is a cross-reference to STRAT-03, not a
   P9 scope.
-- **D-25 (Finalize P4 store method surface against the real consumer — cashes P4 D-09):** P9 adds the
-  `SystemStore`/`VenueStore` methods the config-mutation path + read-model actually need (upsert/read
-  `config.*` for restart layering, `state.*` upsert, append `system_stats`). Exact method names/signatures
-  = planner discretion.
+- **D-25 (Finalize the store method surface against the real consumer — cashes P4 D-09):** P9 adds the
+  config-persistence methods the mutation path + read-model actually need on the OWNING store for each
+  scope (D-21): a `save_config`/`load_config`-style upsert+read surface on `SystemStore` (`system`), the
+  ORDER store (`order`), `VenueStore` (`venue`), and the per-`{id}` PORTFOLIO store (`portfolio:{id}`) for
+  restart layering; plus `state.*` upsert + append `system_stats` on `SystemStore`. Extend the EXISTING
+  stores — the order/portfolio stores persist trading DATA today (orders / account state), so add a config
+  surface to each (no new stores). Exact method names/signatures = planner discretion.
 
 ### Claude's Discretion
 - Exact construction/layering sequence resolving D-10 (subject to the byte-exact + inertness gates).
