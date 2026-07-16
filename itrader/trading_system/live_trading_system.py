@@ -1035,9 +1035,19 @@ class LiveTradingSystem:
         """
         import uuid
 
-        from itrader import config as _config
         from itrader.config.order import OrderConfig
         from itrader.config.system import SystemSettings, UniverseConfig
+
+        # CR-01 (D-23 fail-closed): with no durable store there is no ConfigRouter wired
+        # (build_live_system only constructs it when system_store is not None) and no target
+        # to persist to. Reject the update at ingress so the external caller gets a truthful
+        # False instead of a silent enqueue-then-drop (the CONFIG_UPDATE route also stays the
+        # pre-declared empty slot in that wiring — route_registrar.install()).
+        if self._config_router is None:
+            self.logger.warning(
+                'Rejected CONFIG_UPDATE ingress: no durable config store wired (in-memory '
+                'fallback) — runtime config updates require a SQL spine (fail-closed)')
+            return False
 
         scope = getattr(event, 'scope', None)
         key = getattr(event, 'key', None)
@@ -1049,21 +1059,21 @@ class LiveTradingSystem:
 
         if scope == 'system':
             if key in SystemSettings.model_fields:
-                sub_model: Any = _config.system
+                model_cls: Any = SystemSettings
             elif key in UniverseConfig.model_fields:
-                sub_model = _config.universe
+                model_cls = UniverseConfig
             else:
                 self.logger.warning(
                     'Rejected CONFIG_UPDATE ingress: unknown system key %r', key)
                 return False
-            return self._dry_validate_config_ingress(sub_model, key, value)
+            return self._dry_validate_config_ingress(model_cls, key, value)
 
         if scope == 'order':
             if key not in OrderConfig.model_fields:
                 self.logger.warning(
                     'Rejected CONFIG_UPDATE ingress: unknown order key %r', key)
                 return False
-            return self._dry_validate_config_ingress(_config.order, key, value)
+            return self._dry_validate_config_ingress(OrderConfig, key, value)
 
         if scope.startswith('venue:'):
             venue_name = scope[len('venue:'):]
@@ -1071,6 +1081,12 @@ class LiveTradingSystem:
                 self.logger.warning(
                     'Rejected CONFIG_UPDATE ingress: malformed venue scope/key (%r/%r)',
                     scope, key)
+                return False
+            # WR-01: ``enabled`` is a real boolean — reject a truthy non-bool at ingress so
+            # the string "false" cannot silently enable a venue (mirrors the router's guard).
+            if key == 'enabled' and not isinstance(value, bool):
+                self.logger.warning(
+                    'Rejected CONFIG_UPDATE ingress: non-bool venue enabled value %r', value)
                 return False
             return True  # venue-kind is a state-dependent engine-thread predicate (D-14)
 
@@ -1087,17 +1103,21 @@ class LiveTradingSystem:
         self.logger.warning('Rejected CONFIG_UPDATE ingress: unrouted scope %r', scope)
         return False
 
-    def _dry_validate_config_ingress(self, sub_model: Any, key: str, value: Any) -> bool:
-        """Dry-validate ``value`` against ``sub_model[key]`` on a throwaway copy (no live write).
+    def _dry_validate_config_ingress(self, model_cls: Any, key: str, value: Any) -> bool:
+        """Dry-validate ``value`` against ``model_cls[key]`` on a FRESH default instance.
 
-        ``validate_assignment=True`` on the mutable sub-models makes the ``setattr`` on the
-        copy re-run the field's own type coercion + ``Field(...)`` constraints — the SAME
-        source of truth the engine-thread router applies (one validator, no drift).
+        W4/LR-12: this ingress check runs on the EXTERNAL caller thread, so it must NOT read
+        the live mutable ``config`` sub-models the ENGINE thread writes (a cross-thread read
+        of the single-writer overlay). Instead of copying the live singleton, it constructs a
+        FRESH default instance of the SAME sub-model TYPE and setattrs the value on THAT:
+        ``validate_assignment=True`` re-runs the field's own type coercion + ``Field(...)``
+        constraints — the SAME single source of truth the engine-thread router applies (one
+        validator, no drift), evaluated per-field so sibling field values are irrelevant.
         """
         import pydantic
 
         try:
-            candidate = sub_model.model_copy()
+            candidate = model_cls()  # fresh default — never the shared live sub-model
             setattr(candidate, key, value)
         except pydantic.ValidationError:
             self.logger.warning(

@@ -131,7 +131,15 @@ class LiveRouteRegistrar:
         # with its consumer — a scoped runtime ConfigUpdateEvent is actuated HERE, on the
         # engine thread, by delegating to the injected ConfigRouter (validate -> persist ->
         # apply -> push, D-15). SET entry, never runtime mutation (LR-16).
-        routes[EventType.CONFIG_UPDATE] = [self._on_config_update]
+        #
+        # CR-01: install the route ONLY when a ConfigRouter exists. build_live_system builds
+        # the router exclusively when there IS a durable store (system_store is not None);
+        # in the in-memory fallback the router is None and there is nothing to persist to, so
+        # the CONFIG_UPDATE route stays the pre-declared EMPTY slot (a stray CONFIG_UPDATE
+        # dispatches to [] as a no-op — never to a None router -> AttributeError). Ingress
+        # rejects the update fail-closed upstream (add_event), so this slot stays unreachable.
+        if self._config_router is not None:
+            routes[EventType.CONFIG_UPDATE] = [self._on_config_update]
 
     def _on_stream_state(self, event: Any) -> None:
         """STREAM_STATE CONTROL consumer (SAFE-03/§11c): up -> resume, down -> pause.
@@ -167,4 +175,10 @@ class LiveRouteRegistrar:
         ``_on_stream_state`` delegates to the injected collaborators); no router business
         logic lives here.
         """
+        # CR-01 defense-in-depth: with the route gated on a present router in install() this
+        # is unreachable when the router is None, but NEVER dereference a None router (an
+        # AttributeError on the engine thread would be caught by publish-and-continue and the
+        # update silently dropped). A missing router means no durable store — reject cleanly.
+        if self._config_router is None:
+            return
         self._config_router.apply(event)
