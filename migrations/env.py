@@ -29,10 +29,12 @@ from alembic import context
 
 from itrader.config.sql import SqlDriver, SqlSettings
 from itrader.order_handler.storage.models import build_order_tables
+from itrader.order_handler.storage.sql_storage import build_order_config_table
 from itrader.portfolio_handler.storage.models import build_portfolio_tables
 from itrader.storage.engine import NAMING_CONVENTION
 from itrader.storage.halt_record_store import build_halt_records_table
 from itrader.storage.strategy_registry_store import build_strategy_registry_tables
+from itrader.storage.system_stats_store import build_system_stats_table
 from itrader.storage.system_store import build_system_store_table
 from itrader.storage.venue_store import build_venue_store_table
 from itrader.strategy_handler.storage.models import build_signal_tables
@@ -77,6 +79,15 @@ build_halt_records_table(target_metadata)
 build_system_store_table(target_metadata)
 build_venue_store_table(target_metadata)
 build_strategy_registry_tables(target_metadata)
+# Phase 9 (09-04, D-25/D-18 migration-owner): the two NEW P9 registrars — the SAME single
+# sources of truth the stores' create_all uses — so autogenerate/parity sees ``order_config``
+# (module_config migration) and ``system_stats`` (system_stats migration) and never emits a
+# spurious drop. The ``portfolio_account_state.config_json`` column comes for free via the
+# already-registered ``build_portfolio_tables`` (Plan 03's extended registrar) at :64.
+# Register-vs-build (Pitfall 8 / GATE-01): each registrar only constructs ``Table`` objects
+# on this bare ``MetaData`` — no Engine, no ``Settings()``, no store — import-inert.
+build_order_config_table(target_metadata)
+build_system_stats_table(target_metadata)
 
 
 def _resolve_url() -> str:
