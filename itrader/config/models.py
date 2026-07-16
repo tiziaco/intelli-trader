@@ -37,7 +37,6 @@ from itrader.config.stream import (
 from itrader.config.system import (
     Environment,
     LogLevel,
-    SystemConfig,
     SystemSettings,
     UniverseConfig,
 )
@@ -48,7 +47,7 @@ __all__ = [
     "RiskManagement", "TradingRules", "ValidationSettings", "EventSettings",
     "get_portfolio_preset",
     # System
-    "SystemConfig", "SystemSettings", "UniverseConfig", "Environment", "LogLevel",
+    "SystemSettings", "UniverseConfig", "Environment", "LogLevel",
     # Stream / feed-provider
     "StreamSettings", "FeedProviderSettings",
     # Exchange

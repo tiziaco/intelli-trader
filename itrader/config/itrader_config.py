@@ -7,14 +7,14 @@ factory in Wave 3 mutates ``config.<sub>.<field>`` in place so ``from itrader im
 config`` importers see every change).
 
 Structure (D-07):
-  - The ``frozen=True`` BASE params (``rng_seed``, ``environment``, identity, dirs) are
-    the immutable determinism/identity guard — a runtime ``setattr`` on a base param
-    raises ``pydantic.ValidationError`` (RTCFG-04). ⚠ Pitfall 5: the frozen guard ONLY
-    protects fields placed DIRECTLY on this base; a field nested inside a mutable
-    sub-model is fully mutable (including whole-object swap). Every immutable-at-runtime
-    key MUST be a direct base field here.
+  - The ``frozen=True`` BASE params (``rng_seed``, ``environment``, ``timezone``,
+    identity, dirs) are the immutable determinism/identity guard — a runtime ``setattr``
+    on a base param raises ``pydantic.ValidationError`` (RTCFG-04). ⚠ Pitfall 5: the
+    frozen guard ONLY protects fields placed DIRECTLY on this base; a field nested inside
+    a mutable sub-model is fully mutable (including whole-object swap). Every
+    immutable-at-runtime key MUST be a direct base field here.
   - The domain sub-models (``system``/``universe``/``stream``/``feed_provider``/
-    ``safety``/``order``/``runtime``) are the MUTABLE overlay — each carries
+    ``safety``/``order``/``logging``) are the MUTABLE overlay — each carries
     ``validate_assignment=True`` (D-13) so every field ``setattr`` re-runs coercion +
     ``Field(...)`` constraints. This is the runtime-config mutation surface (Wave 2).
 
@@ -36,8 +36,8 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, ConfigDict, Field
 
 from itrader.config.order import OrderConfig
+from itrader.config.runtime import RuntimeSettings
 from itrader.config.safety import SafetySettings
-from itrader.config.settings import Settings
 from itrader.config.stream import FeedProviderSettings, StreamSettings
 from itrader.config.system import Environment, SystemSettings, UniverseConfig
 
@@ -66,6 +66,12 @@ class ITraderConfig(BaseModel):
     version: str = "1.0.0"
     debug_mode: bool = True
 
+    # Oracle-critical project timezone home (user decision 3). A frozen base param —
+    # a runtime ``setattr`` raises ValidationError. ``config.TIMEZONE`` re-derives from
+    # this default; it MUST stay "Europe/Paris" or the byte-exact backtest oracle (134
+    # trades / 46189.87730727451) breaks.
+    timezone: str = "Europe/Paris"
+
     data_dir: str = "data"
     log_dir: str = "logs"
     config_dir: str = "settings"
@@ -81,9 +87,11 @@ class ITraderConfig(BaseModel):
     safety: SafetySettings = Field(default_factory=SafetySettings)
     order: OrderConfig = Field(default_factory=OrderConfig)
 
-    # D-08: the env-var leaf stays a FIELD (never the root) so ``Settings``'s BaseSettings
-    # env-parsing does not leak into every nested field.
-    runtime: Settings = Field(default_factory=Settings)
+    # D-08: the env-var leaf stays a FIELD (never the root) so ``RuntimeSettings``'s
+    # BaseSettings env-parsing (ITRADER_LOG_LEVEL/ITRADER_DISABLE_LOGS) does not leak
+    # into every nested field. Named ``logging`` (user decision 4/5 — the legacy
+    # ``runtime`` field is gone).
+    logging: RuntimeSettings = Field(default_factory=RuntimeSettings)
 
     @cached_property
     def sql(self) -> "SqlSettings":

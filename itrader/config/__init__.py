@@ -3,8 +3,8 @@
 The hand-rolled registry/provider/validator/schema machinery and the getters
 (``get_config_registry``, ``get_*_config_provider``) were deleted in the M2-06 config
 collapse (D-01). Consumers now construct Pydantic models directly. This package is a
-clean re-export of those models plus the ``Settings`` env layer and the reference-data
-constants — mirroring the grouped-re-export style of ``itrader.core.enums``.
+clean re-export of those models plus the ``RuntimeSettings`` env layer and the
+reference-data constants — mirroring the grouped-re-export style of ``itrader.core.enums``.
 """
 
 # Reference-data + timezone re-exports (M2-06 / D-02/D-03).
@@ -12,14 +12,14 @@ constants — mirroring the grouped-re-export style of ``itrader.core.enums``.
 # The flat ``itrader/config.py`` shadow module (the M1-01 file-path loader workaround)
 # has been DELETED. Its public names are now sourced from their permanent homes:
 #   - FORBIDDEN_SYMBOLS / SUPPORTED_*  ->  itrader.core.constants (D-03)
-#   - TIMEZONE                         ->  Settings.timezone (D-02/D-07)
+#   - TIMEZONE                         ->  ITraderConfig.timezone (D-02/D-07)
 from itrader.core.constants import (
     FORBIDDEN_SYMBOLS,
     SUPPORTED_CURRENCIES,
     SUPPORTED_EXCHANGES,
 )
 
-from .settings import Settings
+from .runtime import RuntimeSettings
 
 # Domain models (Pydantic v2)
 from .portfolio import (
@@ -36,7 +36,6 @@ from .portfolio import (
 from .system import (
     Environment,
     LogLevel,
-    SystemConfig,
     SystemSettings,
     UniverseConfig,
 )
@@ -70,14 +69,14 @@ from .exchange import (
 )
 
 # Module-level TIMEZONE constant (value 'Europe/Paris' by default). Read from the
-# Settings field default rather than instantiating Settings (which requires the
-# fail-loud secret). Must match the TimeGenerator default + the CSV-branch index tz
-# (tz-consistency, D-07). A future live wiring would read Settings().timezone instead.
-TIMEZONE: str = str(Settings.model_fields["timezone"].default)
+# frozen ITraderConfig base-field default rather than constructing the config (avoids
+# any import-time side effect). Must match the TimeGenerator default + the CSV-branch
+# index tz (tz-consistency, D-07). A future live wiring would read config.timezone.
+TIMEZONE: str = str(ITraderConfig.model_fields["timezone"].default)
 
 __all__ = [
-    # Settings + reference data
-    "Settings",
+    # Runtime env layer + reference data
+    "RuntimeSettings",
     "FORBIDDEN_SYMBOLS",
     "SUPPORTED_CURRENCIES",
     "SUPPORTED_EXCHANGES",
@@ -106,7 +105,6 @@ __all__ = [
     "deep_merge",
     # System domain
     "ITraderConfig",
-    "SystemConfig",
     "SystemSettings",
     "UniverseConfig",
     "Environment",
