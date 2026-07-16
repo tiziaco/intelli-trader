@@ -183,3 +183,45 @@ def test_valid_system_scope_update_admitted(monkeypatch):
     event = _config_event("system", "auto_restart_delay_seconds", 25)
     assert system.add_event(event) is True
     assert not system.global_queue.empty()
+
+
+def test_config_update_rejected_when_no_router_wired_in_memory_fallback(monkeypatch):
+    """CR-01: in-memory-live (no SQL spine -> no ConfigRouter) rejects CONFIG_UPDATE fail-closed.
+
+    Without a durable store ``build_live_system`` never constructs a ``ConfigRouter``
+    (``facade._config_router`` stays None) and the CONFIG_UPDATE route is left the pre-declared
+    empty slot. An external ``add_event(ConfigUpdateEvent)`` must be REJECTED synchronously
+    (truthful False, never enqueued) rather than admitted then silently dropped with a
+    per-event AttributeError on the engine thread (None.apply).
+    """
+    system = _live_system(monkeypatch)
+    assert system._config_router is None  # in-memory fallback: no router wired
+
+    # An OTHERWISE-VALID order update — the only reason to reject is the missing durable store.
+    event = _config_event("order", "market_execution", "next_bar")
+    accepted = system.add_event(event)
+
+    assert accepted is False, "no durable store -> CONFIG_UPDATE must be rejected fail-closed"
+    assert system.global_queue.empty(), "a rejected CONFIG_UPDATE must never reach the queue"
+
+
+def test_config_update_route_not_installed_without_router():
+    """CR-01: LiveRouteRegistrar leaves CONFIG_UPDATE the empty slot when the router is None."""
+    from unittest.mock import MagicMock
+
+    from itrader.core.enums import EventType
+    from itrader.trading_system.route_registrar import LiveRouteRegistrar
+
+    routes = {EventType.CONFIG_UPDATE: [], EventType.FILL: []}
+    event_handler = SimpleNamespace(routes=routes)
+    registrar = LiveRouteRegistrar(
+        MagicMock(name="strategies_handler"),
+        MagicMock(name="universe_handler"),
+        safety=MagicMock(name="safety"),
+        stream_recovery=MagicMock(name="stream_recovery"),
+        config_router=None,  # in-memory fallback
+    )
+    registrar.install(event_handler)  # type: ignore[arg-type]
+
+    # The CONFIG_UPDATE route stays the pre-declared empty slot (no None-router consumer).
+    assert routes[EventType.CONFIG_UPDATE] == []

@@ -30,12 +30,14 @@ from datetime import datetime, timedelta, UTC
 from typing import Any, List, Optional
 
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
 
 from itrader.config.itrader_config import ITraderConfig
 from itrader.config.merge import deep_merge
 from itrader.config.portfolio import PortfolioConfig
 from itrader.core.enums import ErrorSeverity, MarketExecution
 from itrader.core.exceptions import ValidationError
+from itrader.core.exceptions.base import ConfigurationError
 from itrader.core.exceptions.portfolio import PortfolioNotFoundError
 from itrader.core.ids import PortfolioId
 from itrader.events_handler.events import ConfigUpdateEvent, ErrorEvent
@@ -154,17 +156,32 @@ class _VenueStoreDouble:
 
 
 class _HandlerSpy:
-    """A push-target double spying ``update_config`` (execution / order handlers, D-01)."""
+    """A push-target double spying ``update_config`` (execution / order handlers, D-01).
+
+    Also spies the CR-02 dry-validation twin ``validate_config`` (the pre-persist venue
+    fee/slippage validator). ``validate_raises=True`` makes it reject like the real
+    ``execution_handler.validate_config`` on a bad value (``ConfigurationError``), so a test
+    can assert nothing persists BEFORE the validating push.
+    """
 
     def __init__(self, call_log: List[str], label: str) -> None:
         self._log = call_log
         self._label = label
         self.updates: List[dict[str, Any]] = []
+        self.validate_calls: List[dict[str, Any]] = []
+        self.validate_raises = False
         self.storage: Any = None  # order handler carries its store here
 
     def update_config(self, updates: dict[str, Any]) -> None:
         self._log.append(f"push:{self._label}")
         self.updates.append(updates)
+
+    def validate_config(self, updates: dict[str, Any]) -> None:
+        # Dry twin (CR-02): recorded but NOT appended to call_log so the ordering
+        # assertions on call_log (persist -> push) stay unchanged for the happy path.
+        self.validate_calls.append(updates)
+        if self.validate_raises:
+            raise ConfigurationError(reason="invalid venue config (test)")
 
 
 class _FakePortfolio:
@@ -368,6 +385,80 @@ def test_venue_kind_enabled_flag_allowed_regardless_of_kind() -> None:
     assert b.venue_store.rows["okx"]["enabled"] is False
     assert b.execution_handler.updates == []  # enabled is persist-only, no push
     assert b.bus.warnings == []
+
+
+def test_venue_fee_slippage_dry_validated_before_persist_on_valid_value() -> None:
+    # CR-02: a fee/slippage update is dry-validated (execution_handler.validate_config)
+    # BEFORE the persist, then persisted, then pushed.
+    b = _Bundle(venue_simulated=True)
+
+    b.apply("venue:paper", "fee_model", {"type": "percent", "rate": "0.001"})
+
+    # the dry twin ran, and the value persisted + pushed.
+    assert b.execution_handler.validate_calls == [
+        {"fee_model": {"type": "percent", "rate": "0.001"}}
+    ]
+    assert b.venue_store.upsert_count == 1
+    assert b.execution_handler.updates == [
+        {"fee_model": {"type": "percent", "rate": "0.001"}}
+    ]
+    assert b.bus.warnings == []
+
+
+def test_venue_bad_fee_slippage_rejected_before_persist_not_poisoned() -> None:
+    # CR-02 BLOCKER: an invalid fee/slippage value is REJECTED at the pre-persist dry-validate
+    # so VenueStore is NEVER poisoned (the poisoned row would brick the next boot's layering).
+    b = _Bundle(venue_simulated=True)
+    b.execution_handler.validate_raises = True  # the real validate_config would raise
+
+    b.apply("venue:paper", "slippage_model", {"type": "bogus"})
+
+    # the dry twin was consulted, then the update was rejected BEFORE any persist/push.
+    assert b.execution_handler.validate_calls == [{"slippage_model": {"type": "bogus"}}]
+    assert b.venue_store.upsert_count == 0  # NOTHING persisted — store not poisoned
+    assert "paper" not in b.venue_store.rows
+    assert b.execution_handler.updates == []  # nothing pushed live
+    assert b.bus.warnings[0].details["reason"] == "validation-failed"
+    assert b.router.last_error == "validation-failed"
+
+
+def test_venue_enabled_non_bool_string_rejected_not_truthy_enabled() -> None:
+    # WR-01: bool("false") is True — a non-bool ``enabled`` value must be REJECTED, never
+    # silently enabling the venue the caller meant to disable.
+    b = _Bundle(venue_simulated=True)
+
+    b.apply("venue:paper", "enabled", "false")
+
+    assert b.venue_store.upsert_count == 0  # nothing persisted
+    assert "paper" not in b.venue_store.rows
+    assert b.bus.warnings[0].details["reason"] == "validation-failed"
+
+
+def test_venue_enabled_real_bool_still_applies() -> None:
+    # WR-01 regression guard: a genuine bool still works.
+    b = _Bundle(venue_simulated=True)
+
+    b.apply("venue:paper", "enabled", False)
+
+    assert b.venue_store.rows["paper"]["enabled"] is False
+    assert b.bus.warnings == []
+
+
+def test_unexpected_store_read_error_surfaced_as_deduped_warning_not_escape() -> None:
+    # WR-02: a store-read error OUTSIDE _persist (the venue get) must be converted into a
+    # deduped WARNING rejection, not escape apply() to the engine-boundary error policy.
+    b = _Bundle(venue_simulated=True)
+
+    def _boom(_name: str) -> None:
+        raise SQLAlchemyError("venue get boom")
+
+    b.venue_store.get = _boom  # type: ignore[method-assign]
+
+    b.apply("venue:paper", "enabled", True)  # get() is called before persist
+
+    assert b.venue_store.upsert_count == 0
+    assert b.bus.warnings[0].details["reason"] == "apply-failed"
+    assert b.router.last_error == "apply-failed"
 
 
 def test_venue_secret_value_rejected_by_store_no_apply() -> None:

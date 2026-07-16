@@ -212,3 +212,44 @@ def test_layering_is_a_noop_with_no_persisted_overrides(wiring):
     assert order_handler.pushed is None
     assert exec_handler.pushed is None
     assert portfolio.applied_config is None
+
+
+def test_boot_degrades_clean_on_invalid_persisted_override(wiring):
+    """WR-03: a present-but-INVALID persisted override is skipped, boot does NOT crash.
+
+    A stored value that no longer validates (schema evolution / model-field tightening / a
+    poisoned row) raises ``pydantic.ValidationError`` (a ValueError subclass) when the layering
+    ``setattr`` re-coerces it under ``validate_assignment`` — NOT a ``SQLAlchemyError``. The
+    per-scope degrade-clean guard must swallow it (log + skip) so build_live_system does not
+    hard-fail, and per-scope isolation means a good scope still applies.
+    """
+    # (system) persist a NOW-INVALID value — auto_restart_delay_seconds is an int; a
+    # non-coercible string fails validate_assignment on re-apply (poisoned-row analogue).
+    wiring.system_store.upsert(
+        "config.system.auto_restart_delay_seconds", {"value": "not-an-int"}, _NOW
+    )
+    # (order) a perfectly VALID override on a DIFFERENT scope — must still apply (isolation).
+    wiring.order_store.save_config({"market_execution": "next_bar"}, _NOW)
+
+    order_handler = _OrderHandlerDouble(wiring.order_store)
+    exec_handler = _ExecHandlerDouble()
+    portfolio = _PortfolioDouble(wiring.portfolio_id, wiring.portfolio_store)
+    portfolio_handler = _PortfolioHandlerDouble({wiring.portfolio_id: portfolio})
+
+    config = ITraderConfig()
+
+    # MUST NOT raise — the invalid system override degrades clean.
+    _layer_persisted_overrides(
+        config,
+        system_store=wiring.system_store,
+        venue_store=wiring.venue_store,
+        order_handler=order_handler,
+        portfolio_handler=portfolio_handler,
+        execution_handler=exec_handler,
+    )
+
+    # (system) the bad override was SKIPPED — the field kept its fresh default.
+    assert config.system.auto_restart_delay_seconds == 10
+    # (order) the good, isolated scope STILL applied despite the system scope failing.
+    assert config.order.market_execution is MarketExecution.NEXT_BAR
+    assert order_handler.pushed == {"market_execution": "next_bar"}
