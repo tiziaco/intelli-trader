@@ -31,7 +31,12 @@ findings:
   warning: 4
   info: 0
   total: 6
-status: issues_found
+status: resolved
+resolved: 2026-07-16
+resolution_note: >
+  All 6 findings addressed (WR-04 was a real finding, fixed — not a non-finding).
+  Fixes committed atomically (fix(09)/test(09)); full suite + oracle byte-exact +
+  inertness + migrations + mypy --strict all green.
 ---
 
 # Phase 9: Code Review Report
@@ -39,7 +44,7 @@ status: issues_found
 **Reviewed:** 2026-07-16T11:37:16Z
 **Depth:** standard
 **Files Reviewed:** 22
-**Status:** issues_found
+**Status:** resolved (all findings addressed 2026-07-16)
 
 ## Summary
 
@@ -63,7 +68,7 @@ BEFORE the only step that validates it.
 
 ## Critical Issues
 
-### CR-01: CONFIG_UPDATE route wired unconditionally, but the router is `None` in the in-memory wiring → `AttributeError` on every config update
+### [RESOLVED] CR-01: CONFIG_UPDATE route wired unconditionally, but the router is `None` in the in-memory wiring → `AttributeError` on every config update
 
 **File:** `itrader/trading_system/route_registrar.py:134` (and `:161-170`); root cause `itrader/trading_system/live_trading_system.py:1473-1496`
 
@@ -112,7 +117,7 @@ Unrouted CONFIG_UPDATE then hits the existing `NotImplementedError` guard in
 `add_event` when `self._config_router is None` so the caller gets a truthful
 `False`.
 
-### CR-02: venue-scope fee/slippage value is persisted with NO validation before the validating push — poisons `VenueStore` and crashes the next boot
+### [RESOLVED] CR-02: venue-scope fee/slippage value is persisted with NO validation before the validating push — poisons `VenueStore` and crashes the next boot
 
 **File:** `itrader/trading_system/config_router.py:284-309`; boot-crash mechanism `itrader/trading_system/live_trading_system.py:1188-1210`
 
@@ -164,7 +169,7 @@ if key in _VENUE_FEE_SLIPPAGE_KEYS:
 
 ## Warnings
 
-### WR-01: `enabled` is coerced with `bool(value)` — truthy strings like `"false"`/`"0"` become `True`
+### [RESOLVED] WR-01: `enabled` is coerced with `bool(value)` — truthy strings like `"false"`/`"0"` become `True`
 
 **File:** `itrader/trading_system/config_router.py:295-297`
 
@@ -179,7 +184,7 @@ the caller intended to disable.
 strict parser). e.g. `if not isinstance(value, bool): raise _RejectedUpdate(...)`
 in `_apply_venue`, and the matching structural check at ingress.
 
-### WR-02: non-`_RejectedUpdate` store/read exceptions escape `ConfigRouter.apply()` instead of surfacing a deduped rejection
+### [RESOLVED] WR-02: non-`_RejectedUpdate` store/read exceptions escape `ConfigRouter.apply()` instead of surfacing a deduped rejection
 
 **File:** `itrader/trading_system/config_router.py:293` (venue `get`), `:328-331` (portfolio resolve)
 
@@ -198,7 +203,7 @@ errors.
 reject-mapping guard, or broaden the `apply()` handler to convert unexpected
 exceptions into a surfaced rejection rather than an escape.
 
-### WR-03: restart layering catches only `SQLAlchemyError`, so a config-push validation error during boot crashes `build_live_system`
+### [RESOLVED] WR-03: restart layering catches only `SQLAlchemyError`, so a config-push validation error during boot crashes `build_live_system`
 
 **File:** `itrader/trading_system/live_trading_system.py:1176-1210`
 
@@ -216,7 +221,7 @@ not for a present-but-invalid row.
 validation/apply errors (per-scope, so one bad scope does not abort the others),
 consistent with the best-effort restart-restore intent.
 
-### WR-04: ingress `_validate_config_ingress` reads the mutable `config` singleton from the caller thread while the engine thread mutates it
+### [RESOLVED] WR-04: ingress `_validate_config_ingress` reads the mutable `config` singleton from the caller thread while the engine thread mutates it
 
 **File:** `itrader/trading_system/live_trading_system.py:1024-1106`
 
