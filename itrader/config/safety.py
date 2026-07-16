@@ -111,7 +111,7 @@ class SafetySettings(BaseModel):
     ``extra`` is forbidden.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     throttle: ThrottleSettings = Field(default_factory=ThrottleSettings)
     failure_rate: FailureRateSettings = Field(default_factory=FailureRateSettings)

@@ -38,7 +38,7 @@ class StreamSettings(BaseModel):
     the retired reconnect-supervisor family and the live OKX stream hardcodes.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     # Reconnect-supervisor tuning (retired reconnect family, ×3 duplicated).
     reconnect_debounce_s: float = 0.25
@@ -63,7 +63,7 @@ class FeedProviderSettings(BaseModel):
     size. ``extra`` is forbidden.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     warmup_margin: int = 5
     backfill_page: int = 1000

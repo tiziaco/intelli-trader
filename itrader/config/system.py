@@ -84,6 +84,51 @@ class MonitoringSettings(BaseModel):
     universe_remove_policy: str = "orphan-and-track"
 
 
+class SystemSettings(BaseModel):
+    """Demoted system-lifecycle sub-model (D-08).
+
+    The lifecycle knobs that used to live directly on the ``SystemConfig`` aggregator
+    demote here so the new frozen ``ITraderConfig`` root carries only immutable
+    identity/determinism base params + mutable domain sub-models. This is a MUTABLE
+    overlay: ``validate_assignment=True`` (D-13) re-runs coercion + ``Field(...)``
+    constraints on every ``setattr`` so the P9 runtime-config router can mutate these
+    keys via ``config.system.<field> = value``. ``extra`` is forbidden (mass-assignment
+    defense, D-11). Inventory pass (D-08): these four are the only lifecycle knobs — the
+    residual live-runner module tunables (``_LIVE_QUEUE_TIMEOUT``/``_LIVE_MAX_IDLE_TIME``)
+    are LiveRunner-local, not system-lifecycle config, so they are deliberately NOT folded.
+    """
+
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    enable_auto_restart: bool = False
+    auto_restart_delay_seconds: int = 10
+    enable_graceful_shutdown: bool = True
+    shutdown_timeout_seconds: int = 30
+
+
+class UniverseConfig(BaseModel):
+    """Live dynamic-universe sub-model (ex-``MonitoringSettings`` 2 used fields, D-09).
+
+    Folds the only two consumed ``MonitoringSettings`` fields into a dedicated mutable
+    sub-model, dropping the redundant ``universe_`` prefix (the handler already calls the
+    param ``remove_policy``). Live/control-plane ONLY: read by the live-only universe
+    poll-timer daemon + ``UniverseHandler``, NEVER on the backtest hot path (the backtest
+    builds its own ``EventHandler`` with an empty ``UNIVERSE_UPDATE`` route and never
+    constructs the handler or starts the timer), so the oracle-critical config surface
+    stays untouched. Mutable overlay: ``validate_assignment=True`` (D-13); ``extra``
+    forbidden (D-11).
+
+    - ``poll_cadence_s`` — seconds between membership polls, decoupled from bars (D-02).
+    - ``remove_policy`` — the open-position-on-remove disposition (orphan-and-track vs
+      force-close, D-01).
+    """
+
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    poll_cadence_s: float = Field(default=60.0, gt=0.0)
+    remove_policy: str = "orphan-and-track"
+
+
 class SystemConfig(BaseModel):
     """Main system configuration."""
 
