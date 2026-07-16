@@ -67,7 +67,7 @@ import pydantic
 from sqlalchemy.exc import SQLAlchemyError
 
 from itrader.config.itrader_config import ITraderConfig
-from itrader.config.merge import deep_merge
+from itrader.outils.dict_merge import recursive_merge
 from itrader.config.order import OrderConfig
 from itrader.config.portfolio import PortfolioConfig
 from itrader.config.system import SystemSettings, UniverseConfig
@@ -351,7 +351,7 @@ class ConfigRouter:
         candidate config (mirrors ``Portfolio.update_config``) so nothing persists on invalid
         input, persists to the Portfolio's OWN ``state_storage.save_config`` (already
         portfolio_id-scoped — NOT SystemStore, NO id-keying), then applies via
-        ``portfolio.update_config`` (deep_merge -> validate -> atomic-swap push, D-01).
+        ``portfolio.update_config`` (recursive_merge -> validate -> atomic-swap push, D-01).
         """
         try:
             portfolio_id = PortfolioId(uuid.UUID(pid))
@@ -371,7 +371,7 @@ class ConfigRouter:
         # Dry-validate the merged candidate (D-13/D-15) — nothing persists on invalid input.
         try:
             validated = PortfolioConfig.model_validate(
-                deep_merge(portfolio.config.model_dump(), update)
+                recursive_merge(portfolio.config.model_dump(), update)
             )
         except pydantic.ValidationError as exc:
             raise _RejectedUpdate(_REASON_VALIDATION_FAILED) from exc
@@ -383,7 +383,7 @@ class ConfigRouter:
             )
         )
 
-        # APPLY + PUSH — Portfolio.update_config does deep_merge -> validate -> atomic swap (D-01).
+        # APPLY + PUSH — Portfolio.update_config does recursive_merge -> validate -> atomic swap (D-01).
         portfolio.update_config(update)
 
     # -- Helpers -----------------------------------------------------------------------------

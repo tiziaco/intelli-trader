@@ -1,7 +1,7 @@
 """Canonical ``update_config`` contract tests for PortfolioHandler + Portfolio (COMP-02).
 
 Covers the D-07/D-08/D-09 contract: ``update_config(self, updates: dict) -> None``
-with deep_merge -> model_validate -> atomic-swap, wrapping pydantic ValidationError
+with recursive_merge -> model_validate -> atomic-swap, wrapping pydantic ValidationError
 into ConfigurationError, re-deriving cached internals after the swap (Pitfall 1).
 
 These methods are oracle-dark (never fire in the golden run) so they are validated
@@ -14,30 +14,30 @@ from queue import Queue
 
 import pytest
 
-from itrader.config import deep_merge
+from itrader.outils.dict_merge import recursive_merge
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.core.exceptions.base import ConfigurationError
 
 
-# --- shared deep_merge helper (WR-04 sibling preservation) -------------------
+# --- shared recursive_merge helper (WR-04 sibling preservation) -------------------
 
-def test_deep_merge_preserves_sibling_submodel_fields():
+def test_recursive_merge_preserves_sibling_submodel_fields():
     """A partial nested update must preserve sibling fields, not replace the submodel."""
-    merged = deep_merge({"limits": {"a": 1, "b": 2}}, {"limits": {"a": 9}})
+    merged = recursive_merge({"limits": {"a": 1, "b": 2}}, {"limits": {"a": 9}})
     assert merged == {"limits": {"a": 9, "b": 2}}
 
 
-def test_deep_merge_does_not_mutate_inputs():
+def test_recursive_merge_does_not_mutate_inputs():
     base = {"limits": {"a": 1, "b": 2}}
     updates = {"limits": {"a": 9}}
-    deep_merge(base, updates)
+    recursive_merge(base, updates)
     assert base == {"limits": {"a": 1, "b": 2}}
     assert updates == {"limits": {"a": 9}}
 
 
-def test_deep_merge_replaces_non_dict_values():
-    merged = deep_merge({"x": [1, 2], "y": 1}, {"x": [3]})
+def test_recursive_merge_replaces_non_dict_values():
+    merged = recursive_merge({"x": [1, 2], "y": 1}, {"x": [3]})
     assert merged == {"x": [3], "y": 1}
 
 
@@ -111,7 +111,7 @@ def test_portfolio_partial_nested_update_preserves_siblings(portfolio):
 
 
 def test_max_leverage_rides_update_config(handler):
-    """max_leverage survives deep_merge -> model_validate -> atomic-swap (D-15).
+    """max_leverage survives recursive_merge -> model_validate -> atomic-swap (D-15).
 
     It is a TradingRules field, so the uniform update_config seam carries it with
     no special-casing — the swapped config_data reflects the new max_leverage.

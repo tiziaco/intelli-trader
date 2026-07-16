@@ -53,7 +53,6 @@ from .safety import (
     SafetySettings,
     ThrottleSettings,
 )
-from .merge import deep_merge
 from .exchange import (
     ConnectionSettings,
     ExchangeConfig,
@@ -101,8 +100,6 @@ __all__ = [
     "FailureRateSettings",
     "SafetySettings",
     "ThrottleSettings",
-    # Shared config helpers
-    "deep_merge",
     # System domain
     "ITraderConfig",
     "SystemSettings",

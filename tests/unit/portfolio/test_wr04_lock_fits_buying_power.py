@@ -34,7 +34,8 @@ import pytest
 import uuid_utils.compat as uuid_compat
 
 from itrader import idgen
-from itrader.config import PortfolioConfig, get_portfolio_preset, deep_merge
+from itrader.config import PortfolioConfig, get_portfolio_preset
+from itrader.outils.dict_merge import recursive_merge
 from itrader.core.enums import TransactionType
 from itrader.core.exceptions import InsufficientFundsError
 from itrader.portfolio_handler.account import SimulatedMarginAccount
@@ -46,7 +47,7 @@ def _margin_config(max_leverage: str = "10") -> PortfolioConfig:
     """A PortfolioConfig with enable_margin=True (01-03 selects the account leaf
     at construction, so margin must be set in the constructor config — the old
     post-construction ``update_config`` toggle no longer rebuilds the leaf)."""
-    return PortfolioConfig.model_validate(deep_merge(
+    return PortfolioConfig.model_validate(recursive_merge(
         get_portfolio_preset("default").model_dump(),
         {"trading_rules": {"enable_margin": True, "max_leverage": Decimal(max_leverage)}},
     ))

@@ -33,7 +33,7 @@ import pytest
 from sqlalchemy.exc import SQLAlchemyError
 
 from itrader.config.itrader_config import ITraderConfig
-from itrader.config.merge import deep_merge
+from itrader.outils.dict_merge import recursive_merge
 from itrader.config.portfolio import PortfolioConfig
 from itrader.core.enums import ErrorSeverity, MarketExecution
 from itrader.core.exceptions import ValidationError
@@ -187,7 +187,7 @@ class _HandlerSpy:
 class _FakePortfolio:
     """A fake Portfolio carrying its OWN bound config-store double + an update_config push spy.
 
-    ``update_config`` mirrors the real ``Portfolio.update_config`` contract (deep_merge ->
+    ``update_config`` mirrors the real ``Portfolio.update_config`` contract (recursive_merge ->
     model_validate -> atomic swap) so the test can assert the field actually mutated.
     """
 
@@ -200,7 +200,7 @@ class _FakePortfolio:
     def update_config(self, updates: dict[str, Any]) -> None:
         self._log.append("push:portfolio")
         self.update_calls.append(updates)
-        merged = deep_merge(self.config.model_dump(), updates)
+        merged = recursive_merge(self.config.model_dump(), updates)
         self.config = PortfolioConfig.model_validate(merged)
 
 

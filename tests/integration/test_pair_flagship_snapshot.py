@@ -46,14 +46,15 @@ from itrader.strategy_handler.strategies.eth_btc_pair_strategy import (
     EthBtcPairStrategy,
 )
 from itrader.trading_system.backtest_trading_system import BacktestTradingSystem
-from itrader.config import PortfolioConfig, get_portfolio_preset, deep_merge
+from itrader.config import PortfolioConfig, get_portfolio_preset
+from itrader.outils.dict_merge import recursive_merge
 
 
 def _margin_config() -> PortfolioConfig:
     """enable_margin + short selling set in the CONSTRUCTOR config — 01-03 selects
     the account leaf (cash vs margin) at construction, so a post-construction
     config edit no longer rebuilds the leaf (the short leg needs the margin leaf)."""
-    return PortfolioConfig.model_validate(deep_merge(
+    return PortfolioConfig.model_validate(recursive_merge(
         get_portfolio_preset("default").model_dump(),
         {"trading_rules": {"enable_margin": True, "allow_short_selling": True}},
     ))

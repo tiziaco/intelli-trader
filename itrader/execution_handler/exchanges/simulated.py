@@ -22,7 +22,8 @@ from itrader.events_handler.bus import EventBus
 from itrader.events_handler.events import BarEvent, FillEvent, OrderEvent
 from itrader.logger import get_itrader_logger
 from itrader.universe import Universe
-from itrader.config import ExchangeConfig, get_exchange_preset, FeeModelConfig, SlippageModelConfig, ExchangeLimits, FailureSimulation, FeeModelType, SlippageModelType, deep_merge
+from itrader.config import ExchangeConfig, get_exchange_preset, FeeModelConfig, SlippageModelConfig, ExchangeLimits, FailureSimulation, FeeModelType, SlippageModelType
+from itrader.outils.dict_merge import recursive_merge
 from itrader.core.exceptions.base import ConfigurationError
 
 import pydantic
@@ -754,14 +755,14 @@ class SimulatedExchange(AbstractExchange):
 	def update_config(self, updates: Dict[str, Any]) -> None:
 		"""Update exchange configuration at runtime (D-07/D-08/D-09).
 
-		Canonical contract: deep_merge -> model_validate -> atomic-swap, wrapping
+		Canonical contract: recursive_merge -> model_validate -> atomic-swap, wrapping
 		pydantic ``ValidationError`` (which also rejects unknown keys via
 		``extra="forbid"``) into ``ConfigurationError``. Returns ``None`` and
 		RAISES on failure. After the swap every config-derived cache is
 		re-derived (Pitfall 1) so a stale fee model / size cache / symbol set
 		can never linger.
 		"""
-		merged = deep_merge(self.config.model_dump(), updates)
+		merged = recursive_merge(self.config.model_dump(), updates)
 		try:
 			new_config = ExchangeConfig.model_validate(merged)
 		except pydantic.ValidationError as e:
@@ -778,7 +779,7 @@ class SimulatedExchange(AbstractExchange):
 		self.failure_rate = float(self.config.failure_simulation.failure_rate)
 		# Trap 1 (REPLACEMENT): _supported_symbols is re-derived wholesale from
 		# config.limits — construction must seed the COMPLETE set (D-13). The
-		# deep_merge preserves supported_symbols when an update omits it.
+		# recursive_merge preserves supported_symbols when an update omits it.
 		self._supported_symbols = self.config.limits.supported_symbols
 		# DEC-02 / D-06: size limits carried as Decimal end-to-end (no float() —
 		# float money is a correctness defect; config.limits.* are already Decimal).
@@ -789,7 +790,7 @@ class SimulatedExchange(AbstractExchange):
 	def validate_config(self, updates: Dict[str, Any]) -> None:
 		"""Dry-validate a partial config update WITHOUT swapping (CR-02/D-15).
 
-		Runs the SAME deep_merge -> model_validate the canonical ``update_config``
+		Runs the SAME recursive_merge -> model_validate the canonical ``update_config``
 		runs, but DISCARDS the validated model — no atomic swap, no cache
 		re-derivation. Lets the ``ConfigRouter`` validate a venue fee/slippage value
 		BEFORE persisting it (nothing bad ever reaches ``VenueStore``). Returns
@@ -797,7 +798,7 @@ class SimulatedExchange(AbstractExchange):
 		``ValidationError``, incl. ``extra="forbid"`` unknown-key rejection) on a
 		bad value — the SAME raise contract as ``update_config``.
 		"""
-		merged = deep_merge(self.config.model_dump(), updates)
+		merged = recursive_merge(self.config.model_dump(), updates)
 		try:
 			ExchangeConfig.model_validate(merged)
 		except pydantic.ValidationError as e:

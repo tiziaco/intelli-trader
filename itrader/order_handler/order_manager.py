@@ -24,7 +24,8 @@ from ..core.ids import OrderId, PortfolioId
 from ..core.commission_estimator import CommissionEstimator
 from ..core.portfolio_read_model import PortfolioReadModel
 from ..core.exceptions.base import ConfigurationError
-from ..config import OrderConfig, deep_merge
+from ..config import OrderConfig
+from ..outils.dict_merge import recursive_merge
 from .base import OrderStorage
 from .brackets import BracketBook, BracketManager
 from .admission import AdmissionManager
@@ -189,13 +190,13 @@ class OrderManager:
 	def update_config(self, updates: dict[str, Any]) -> None:
 		"""Update order-domain configuration at runtime (D-05/D-07/D-08/D-09).
 
-		Canonical contract over ``OrderConfig``: deep_merge -> model_validate ->
+		Canonical contract over ``OrderConfig``: recursive_merge -> model_validate ->
 		atomic-swap, wrapping pydantic ``ValidationError`` (which also rejects
 		unknown keys via ``extra="forbid"``) into ``ConfigurationError``. Returns
 		``None`` and RAISES on failure. After the swap the cached
 		``self.market_execution`` is re-derived from the new config (Pitfall 1).
 		"""
-		merged = deep_merge(self.order_config.model_dump(), updates)
+		merged = recursive_merge(self.order_config.model_dump(), updates)
 		try:
 			new_config = OrderConfig.model_validate(merged)
 		except pydantic.ValidationError as e:

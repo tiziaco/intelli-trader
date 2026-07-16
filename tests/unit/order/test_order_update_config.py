@@ -1,6 +1,6 @@
 """Canonical ``update_config`` contract tests for OrderManager + OrderHandler (COMP-02).
 
-Covers the D-05/D-07/D-08/D-09 contract over ``OrderConfig``: deep_merge ->
+Covers the D-05/D-07/D-08/D-09 contract over ``OrderConfig``: recursive_merge ->
 model_validate -> atomic-swap, wrapping pydantic ValidationError into
 ConfigurationError, re-deriving the cached ``market_execution`` after the swap
 (Pitfall 1), and the thin-facade delegation from OrderHandler to OrderManager

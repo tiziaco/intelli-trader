@@ -5,7 +5,8 @@ from decimal import Decimal
 from itrader.portfolio_handler.transaction import Transaction
 from itrader.portfolio_handler.position import Position
 from itrader.events_handler.events import BarEvent
-from itrader.config import PortfolioConfig, get_portfolio_preset, deep_merge
+from itrader.config import PortfolioConfig, get_portfolio_preset
+from itrader.outils.dict_merge import recursive_merge
 
 import pydantic
 from itrader.core.enums import PortfolioState, PositionSide, TransactionType
@@ -211,13 +212,13 @@ class Portfolio(object):
 	def update_config(self, updates: Dict[str, Any]) -> None:
 		"""Update portfolio configuration at runtime (D-07/D-08/D-09).
 
-		Canonical contract: deep_merge -> model_validate -> atomic-swap, wrapping
+		Canonical contract: recursive_merge -> model_validate -> atomic-swap, wrapping
 		pydantic ``ValidationError`` (which also rejects unknown keys via
 		``extra="forbid"``) into ``ConfigurationError``. Returns ``None`` and
 		RAISES on failure. WR-04: the deep-merge preserves sibling submodel
 		fields a partial nested update did not intend to change.
 		"""
-		merged = deep_merge(self.config.model_dump(), updates)
+		merged = recursive_merge(self.config.model_dump(), updates)
 		try:
 			new_config = PortfolioConfig.model_validate(merged)
 		except pydantic.ValidationError as e:

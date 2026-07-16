@@ -89,7 +89,7 @@ class ExecutionHandler(AbstractExecutionHandler):
 		The handler owns no Pydantic config model of its own; the execution
 		config lives on the exchange. So the uniform ``update_config`` routes the
 		partial update to the simulated exchange's canonical ``update_config``
-		(deep_merge -> model_validate -> atomic-swap -> ConfigurationError),
+		(recursive_merge -> model_validate -> atomic-swap -> ConfigurationError),
 		keeping the single web-catchable raise contract. Returns ``None``; raises
 		``ConfigurationError`` on failure (including when no exchange is wired).
 		"""
@@ -104,7 +104,7 @@ class ExecutionHandler(AbstractExecutionHandler):
 		"""Dry-validate a partial config update WITHOUT applying it (CR-02/D-15).
 
 		Mirrors ``update_config`` but runs the exchange's dry twin
-		(``SimulatedExchange.validate_config``): deep_merge -> model_validate on a
+		(``SimulatedExchange.validate_config``): recursive_merge -> model_validate on a
 		THROWAWAY copy, discarding the result — no atomic swap, no cache
 		re-derivation. The ``ConfigRouter`` calls this BEFORE persisting a venue
 		fee/slippage value so an invalid value never lands in ``VenueStore`` (a
