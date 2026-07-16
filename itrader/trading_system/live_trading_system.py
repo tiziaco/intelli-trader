@@ -1,5 +1,6 @@
 import threading
 from datetime import datetime, UTC
+from decimal import Decimal
 from typing import Optional, Dict, Any, Callable, TYPE_CHECKING
 
 from itrader.core.enums import HaltReason, SystemStatus
@@ -212,6 +213,16 @@ class LiveTradingSystem:
         # built outside build_live_system (the route stays the pre-declared empty slot).
         self._config_router: Optional[Any] = None
 
+        # RTCFG-06 read-model sinks (D-18/D-19). ATTACHED by build_live_system after
+        # construction, gated on the SQL spine (None on backtest / in-memory fallback):
+        #   - _system_store: the durable KV where ``state.last_started_at`` is upserted at
+        #     start() (SafetyController writes state.status/state.halt_reason into the SAME
+        #     store at its own event source; the ErrorHandler writes state.last_error).
+        #   - _system_stats_store: the append-only engine-operational stats series the thin
+        #     stats writer snapshots into on each status transition (NO entity duplication).
+        self._system_store: Optional[Any] = None
+        self._system_stats_store: Optional[Any] = None
+
         # Threading control. The shared _stop_event is honoured by BOTH the injected
         # LiveRunner drain loop and its composed WorkerSupervisor (build_live_system
         # threads it into them); the facade owns it so stop() can latch shutdown.
@@ -421,7 +432,63 @@ class LiveTradingSystem:
                 self.status_callback(new_status, status_data)
             except Exception as e:
                 self.logger.error(f'Error in status callback: {e}')
-    
+
+        # D-18 (RTCFG-06): a status transition is a low-rate engine event — the thin stats
+        # writer snapshots the engine-operational counters it already holds and appends one
+        # row to the append-only ``system_stats`` series. Event-driven, no aggregation
+        # layer, NO domain-entity data (D-17 — equity/orders/halts read from their own
+        # stores). A no-op when no durable stats sink is wired (backtest / in-memory).
+        self._snapshot_system_stats()
+
+    def _snapshot_system_stats(self) -> None:
+        """Append one engine-operational counter row to ``system_stats`` (D-18/RTCFG-06).
+
+        Snapshots ONLY the counters the engine already holds in memory — the P7 throttle
+        breach counter, the facade error count, the event-bus queue depth, uptime, and
+        connector/stream health (derived from the safety latch). It copies NO domain-store
+        entity data (D-17 — no portfolio equity) and NO secret (V7). Best-effort: a durable
+        append failure (e.g. an un-migrated stats schema) is swallowed-and-logged so it can
+        never abort the engine event that triggered it. A no-op when no durable sink is
+        wired (backtest / in-memory fallback → ``_system_stats_store is None``).
+        """
+        if self._system_stats_store is None:
+            return
+        try:
+            with self._stats_lock:
+                errors = self._stats['errors_count']
+                uptime_start = self._stats['uptime_start']
+            uptime_seconds = Decimal('0')
+            if uptime_start is not None:
+                started = datetime.fromisoformat(uptime_start)
+                uptime_seconds = Decimal(
+                    str((datetime.now(UTC) - started).total_seconds()))
+            paused = (
+                self._safety.is_submission_paused()
+                if self._safety is not None else False)
+            halted = self._safety.is_halted() if self._safety is not None else False
+            row = {
+                # P7 breach counter (D-09/D-14) — 0 until the throttle is wired.
+                'throttle_breach_count': (
+                    self._throttle.breach_count if self._throttle is not None else 0),
+                # Error counts by severity (D-18, start minimal): the facade holds ONE
+                # aggregate error counter today — snapshot it into error_count_error; the
+                # per-severity split is a future extension the schema already leaves room
+                # for (warning/critical stay 0 until a per-severity surface exists).
+                'error_count_warning': 0,
+                'error_count_error': errors,
+                'error_count_critical': 0,
+                'queue_depth': self.get_queue_size(),
+                'uptime_seconds': uptime_seconds,
+                # Connector/stream health proxies from the safety latch (event-driven
+                # CONNECTOR_FATAL→halt / STREAM_STATE→pause_submission are the sources).
+                'connector_up': not halted,
+                'stream_up': not paused,
+            }
+            self._system_stats_store.append(row, at=datetime.now(UTC))
+        except Exception as exc:
+            self.logger.warning(
+                'Failed to append system_stats (swallowed): %s', exc)
+
     def _update_stats(self, event_type: Optional[str] = None):
         """Update internal statistics."""
         with self._stats_lock:
@@ -575,7 +642,20 @@ class LiveTradingSystem:
 
         self.logger.info('Starting live trading system')
         self._safety.update_status(SystemStatus.STARTING)
-        
+
+        # D-19 (RTCFG-06): record the read-model ``state.last_started_at`` at THIS event
+        # source (facade start()). Best-effort — a durable-write failure must not abort
+        # start (mirrors SafetyController._persist_state); a no-op with no durable sink.
+        if self._system_store is not None:
+            try:
+                self._system_store.upsert(
+                    'state.last_started_at',
+                    {'last_started_at': datetime.now(UTC).isoformat()},
+                    at=datetime.now(UTC))
+            except Exception as exc:
+                self.logger.warning(
+                    'Failed to persist state.last_started_at (swallowed): %s', exc)
+
         try:
             # SAFE-02/§11b (D-20 / WR-01): the DURABLE halt refusal gate runs FIRST —
             # right after STARTING and BEFORE any session init / OKX connect / feed warmup
@@ -1451,6 +1531,9 @@ def build_live_system(
         halt_record_store=halt_record_store,
         dispatch_fn=lambda ev: event_handler._dispatch(ev),
         notify_status_change=facade._notify_status_change,
+        # D-19 (RTCFG-06): the durable read-model KV sink for state.status/state.halt_reason
+        # at their event source. None on the in-memory fallback (degrade cleanly).
+        system_store=system_store,
     )
     # SAFE-04: engine-thread reconnect-resume I/O (catch-up + snapshot + all-streams gate
     # -> resume). Injected with the venue arms the facade sourced off the lifecycle; each
@@ -1475,6 +1558,19 @@ def build_live_system(
     facade._safety = safety
     facade._stream_recovery = stream_recovery
     facade._throttle = throttle
+
+    # RTCFG-06 read-model sinks (D-18/D-19). Attach the durable KV (state.last_started_at
+    # at start(); SafetyController/ErrorHandler own the other state.* keys) and construct
+    # the append-only system_stats series over the SAME SqlEngine — the thin stats writer
+    # (_snapshot_system_stats) appends on each status transition. Both gated on the SQL
+    # spine (import stays LAZY inside the gate — system_stats_store is inertness-_FORBIDDEN)
+    # and degrade to None on the in-memory fallback (backtest never reaches here).
+    facade._system_store = system_store
+    if system_db_backend is not None:
+        from itrader.storage.system_stats_store import SystemStatsStore
+        facade._system_stats_store = SystemStatsStore(system_db_backend)
+    else:
+        facade._system_stats_store = None
 
     # Facade-dependent wiring (references the constructed facade's own callbacks). The
     # provider/exchange/connector halt-signal + stream-state listeners for a registered
