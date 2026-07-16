@@ -5,8 +5,8 @@ milestone_name: Live System Refactor & Live-Readiness Hardening
 current_phase: 09
 current_phase_name: runtime-config-platform
 status: executing
-stopped_at: Completed 09-01-PLAN.md
-last_updated: "2026-07-16T10:21:30.297Z"
+stopped_at: Completed 09-02-PLAN.md
+last_updated: "2026-07-16T10:37:33.028Z"
 last_activity: 2026-07-16
 last_activity_desc: Phase 09 execution started
 progress:
@@ -34,7 +34,7 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 ## Current Position
 
 Phase: 09 (runtime-config-platform) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Ready to execute
 Last activity: 2026-07-16 — Phase 09 execution started
 
@@ -97,6 +97,7 @@ trim boundary P1–P8+P12 core vs P9–P11 ★ is noted, not taken). Research fl
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
 | Phase 09 P01 | 25min | 3 tasks | 11 files |
+| Phase 09 P02 | 11min | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -181,6 +182,8 @@ P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 - [Phase 07]: PreTradeThrottle computes D-10 notional off OrderEvent.price (limit for LIMIT, decision-mark estimate for MARKET/STOP) — no separate feed injection — The order layer already stamps the mark onto OrderEvent.price, so a feed dependency would add untested surface for no correctness gain
 - [Phase ?]: P9-01: ITraderConfig frozen root replaces SystemConfig as the process config singleton; rng_seed moved to config.rng_seed (frozen base), oracle byte-exact
 - [Phase ?]: P9-01: SystemConfig kept as narrowed legacy aggregator (perf/monitoring+lifecycle stripped) to keep existing config tests green; SystemSettings/UniverseConfig demoted sub-models added
+- [Phase 9]: ConfigRouter: the config structure IS the allowlist (D-11/D-12) — routable keys resolved by live model_fields introspection, so the allowlist can never drift from the model
+- [Phase 9]: system idle/timeout knobs AND universe poll_cadence/remove_policy both route under the single 'system' scope (scopes locked to 4, D-21); owning sub-model resolved by introspection
 
 ### Pending Todos
 
@@ -293,8 +296,8 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-16T10:21:30.286Z
-Stopped at: Completed 09-01-PLAN.md
+Last session: 2026-07-16T10:37:26.484Z
+Stopped at: Completed 09-02-PLAN.md
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
 Resume file: None
