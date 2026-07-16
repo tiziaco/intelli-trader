@@ -1,20 +1,20 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.8
-milestone_name: — Live System Refactor & Live-Readiness Hardening
+milestone_name: Live System Refactor & Live-Readiness Hardening
 current_phase: 9
 current_phase_name: Runtime-Config Platform
 status: executing
-stopped_at: Phase 08 complete + verified (next-phase pointer corrected 12→9; phase.complete dir-scan quirk)
-last_updated: "2026-07-15T00:00:00.000Z"
+stopped_at: Phase 9 context gathered
+last_updated: "2026-07-16T07:34:48.631Z"
 last_activity: 2026-07-15
-last_activity_desc: "Phase 08 (Error Subsystem) complete + verified — 3/3 plans, 4/4 success criteria, CF-1 breaker trips end-to-end"
+last_activity_desc: "Phase 08 (Error Subsystem) complete: CF-1 aggregate breaker trips end-to-end, WR-06 two-guard intact, oracle byte-exact"
 progress:
-  total_phases: 9
-  completed_phases: 8
-  total_plans: 35
-  completed_plans: 35
-  percent: 89
+  total_phases: 10
+  completed_phases: 9
+  total_plans: 39
+  completed_plans: 39
+  percent: 90
 ---
 
 # Project State
@@ -286,11 +286,11 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-14T21:40:46.899Z
-Stopped at: Phase 8 context gathered
+Last session: 2026-07-16T07:34:48.616Z
+Stopped at: Phase 9 context gathered
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
-Resume file: .planning/phases/08-error-subsystem/08-CONTEXT.md
+Resume file: .planning/phases/09-runtime-config-platform/09-CONTEXT.md
 Carried todo: 14 pending todos in `todos/pending/` (10 fold into v1.8 as CF-1..CF-10; `v17-residual-carryforward.md`
 is the index; the substantive open item is `margin-equity-double-counts-notional-wr01`, owner-gated).
 
