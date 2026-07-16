@@ -248,7 +248,7 @@ class ConfigRouter:
             raise _RejectedUpdate(_REASON_UNKNOWN_KEY)
 
         sub_model = getattr(self._config, sub_attr)
-        coerced = self._dry_validate_setattr(sub_model, key, value)
+        coerced = getattr(self._dry_validate_copy(sub_model, key, value), key)
 
         # PERSIST (D-15) — namespaced KV key on the SYSTEM store (system-global config only).
         self._persist(
@@ -272,11 +272,7 @@ class ConfigRouter:
             raise _RejectedUpdate(_REASON_UNKNOWN_KEY)
 
         # Dry-validate a throwaway copy so nothing persists on invalid input (D-15 ordering).
-        candidate = self._config.order.model_copy()
-        try:
-            setattr(candidate, key, value)
-        except pydantic.ValidationError as exc:
-            raise _RejectedUpdate(_REASON_VALIDATION_FAILED) from exc
+        candidate = self._dry_validate_copy(self._config.order, key, value)
 
         # PERSIST — the single global OrderConfig record on the ORDER store (D-25).
         self._persist(
@@ -403,19 +399,22 @@ class ConfigRouter:
         return None
 
     @staticmethod
-    def _dry_validate_setattr(sub_model: Any, key: str, value: Any) -> Any:
-        """Dry-validate ``value`` against ``sub_model.key`` on a throwaway copy; return coerced.
+    def _dry_validate_copy(sub_model: Any, key: str, value: Any) -> Any:
+        """Dry-validate ``value`` against ``sub_model.key`` on a throwaway copy; return the copy.
 
         The copy's ``validate_assignment=True`` re-runs the field's coercion + ``Field(...)``
         constraints WITHOUT touching the live object (D-13/D-15 — validate before persist). Raises
-        ``_RejectedUpdate(validation-failed)`` on a bad type/range.
+        ``_RejectedUpdate(validation-failed)`` on a bad type/range. Returns the validated candidate
+        copy so callers can read the coerced field (``getattr(candidate, key)``) or dump the whole
+        record (``candidate.model_dump(...)``) — the shared setattr-on-copy path for the ``system``
+        and ``order`` scopes (``portfolio`` deliberately uses a whole-model merge-validate instead).
         """
         candidate = sub_model.model_copy()
         try:
             setattr(candidate, key, value)
         except pydantic.ValidationError as exc:
             raise _RejectedUpdate(_REASON_VALIDATION_FAILED) from exc
-        return getattr(candidate, key)
+        return candidate
 
     @staticmethod
     def _persist(write: Callable[[], None]) -> None:
