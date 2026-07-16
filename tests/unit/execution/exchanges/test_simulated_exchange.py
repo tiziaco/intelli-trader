@@ -14,7 +14,7 @@ from decimal import Decimal
 
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.events_handler.events import OrderEvent, FillEvent
-from itrader.config import ExchangeConfig, get_exchange_preset
+from itrader.config import ExchangeConfig
 from itrader.config.exchange import (
     FeeModelConfig, SlippageModelConfig, ExchangeLimits, FailureSimulation,
     FeeModelType, SlippageModelType,
@@ -63,7 +63,7 @@ class TestSimulatedExchangeInitialization:
 
     def test_custom_config_initialization(self):
         """Test initialization with custom configuration."""
-        custom_config = get_exchange_preset('high_fee')
+        custom_config = ExchangeConfig.high_fee()
         exchange = SimulatedExchange(self.queue, config=custom_config)
         
         assert exchange.config is custom_config

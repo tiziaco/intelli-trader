@@ -22,7 +22,7 @@ from itrader.events_handler.bus import EventBus
 from itrader.events_handler.events import BarEvent, FillEvent, OrderEvent
 from itrader.logger import get_itrader_logger
 from itrader.universe import Universe
-from itrader.config import ExchangeConfig, get_exchange_preset, FeeModelConfig, SlippageModelConfig, ExchangeLimits, FailureSimulation, FeeModelType, SlippageModelType
+from itrader.config import ExchangeConfig, FeeModelConfig, SlippageModelConfig, ExchangeLimits, FailureSimulation, FeeModelType, SlippageModelType
 from itrader.outils.dict_merge import recursive_merge
 from itrader.core.exceptions.base import ConfigurationError
 
@@ -85,7 +85,7 @@ class SimulatedExchange(AbstractExchange):
 		self.matching_engine = MatchingEngine()
 
 		# Exchange configuration
-		self.config = config or get_exchange_preset('default')
+		self.config = config or ExchangeConfig.default()
 
 		# Initialize models
 		self.fee_model = self._init_fee_model()

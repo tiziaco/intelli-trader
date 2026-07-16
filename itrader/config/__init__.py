@@ -63,8 +63,6 @@ from .exchange import (
     FeeModelType,
     SlippageModelConfig,
     SlippageModelType,
-    get_exchange_preset,
-    list_available_exchange_presets,
 )
 
 # Module-level TIMEZONE constant (value 'Europe/Paris' by default). Read from the
@@ -116,6 +114,4 @@ __all__ = [
     "ExchangeLimits",
     "FailureSimulation",
     "ConnectionSettings",
-    "get_exchange_preset",
-    "list_available_exchange_presets",
 ]

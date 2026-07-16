@@ -7,7 +7,7 @@ from itrader.events_handler.bus import EventBus
 from itrader.events_handler.events import BarEvent, FillEvent, OrderEvent
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 
-from itrader.config import ExchangeConfig, get_exchange_preset
+from itrader.config import ExchangeConfig
 from itrader.core.exceptions.base import ConfigurationError
 from itrader.logger import get_itrader_logger
 
@@ -215,7 +215,7 @@ class ExecutionHandler(AbstractExecutionHandler):
 		BTCUSD. Wave 4 (04-05) removes this fallback once every construction site
 		passes a spec-derived config through the factory.
 		"""
-		config = get_exchange_preset('default')
+		config = ExchangeConfig.default()
 		config.limits.supported_symbols = set(config.limits.supported_symbols) | {'BTCUSD'}
 		return config
 
