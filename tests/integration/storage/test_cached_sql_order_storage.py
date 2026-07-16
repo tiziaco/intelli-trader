@@ -56,11 +56,17 @@ def _drop_operational_order_tables(pg_backend):
     container is left clean — the same pristine-container discipline ``test_migrations`` follows
     with its ``downgrade base``. This fixture's teardown runs before ``pg_backend`` disposes
     (LIFO), so the engine is still live.
+
+    ``SqlOrderStorage`` also registers the D-25 cardinality-1 ``order_config`` table (Plan 03),
+    which ``create_all`` builds on the shared container too. Since Phase 9's ``module_config``
+    migration now creates ``order_config`` during ``upgrade head``, a leftover would collide —
+    so it is dropped here as well (no FK, order-independent).
     """
     yield
     with pg_backend.engine.begin() as conn:
         conn.execute(text("DROP TABLE IF EXISTS order_state_changes CASCADE"))
         conn.execute(text("DROP TABLE IF EXISTS orders CASCADE"))
+        conn.execute(text("DROP TABLE IF EXISTS order_config CASCADE"))
 
 
 def _make_storage(pg_backend):
