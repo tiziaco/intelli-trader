@@ -29,10 +29,11 @@ indentation (mirrors the ``itrader/results`` SQL layer — D-05).
 """
 
 import uuid
+from datetime import datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import delete, func, insert, select
+from sqlalchemy import delete, func, insert, select, update
 
 from itrader.core.enums import CashOperationType, PositionSide, TransactionType
 from itrader.core.ids import PositionId, TransactionId
@@ -75,6 +76,10 @@ class SqlPortfolioStateStorage(PortfolioStateStorage):
         self.locked_margin = tables["locked_margin"]
         self.cash_operations = tables["cash_operations"]
         self.equity_snapshots = tables["equity_snapshots"]
+        # D-25 — the base SQL storage now OWNS the account-state carrier's config_json
+        # column (previously only the cached wrapper bound this table). The portfolio-scope
+        # runtime config rides the bound portfolio's single account-state row.
+        self._account_state = tables["portfolio_account_state"]
 
         # WR-03/D-14 — schema-pure: register the tables, never create them (Alembic-owned
         # in production; tests provision via tests.support.schema.provision_schema).
@@ -517,3 +522,54 @@ class SqlPortfolioStateStorage(PortfolioStateStorage):
         with self.engine.connect() as connection:
             row = connection.execute(statement).mappings().first()
         return None if row is None else self._row_to_snapshot(row)
+
+    # -- Runtime config (portfolio scope — config_json on the account-state row, D-25) --
+
+    def save_config(self, config: Dict[str, Any], at: datetime) -> None:
+        """Persist THIS portfolio's config on the bound account-state row's ``config_json``.
+
+        UPDATE-first, INSERT-with-zero-sentinel-accumulators-if-absent (NEVER a partial
+        INSERT). The restart-layering path only READS ``load_config``, so the FIRST write of
+        a portfolio's config is either construction-time or a runtime ``portfolio:{id}``
+        ConfigUpdateEvent — both can precede the portfolio's first fill, so an UPDATE-only
+        contract would silently drop it (RTCFG-03 fail). The zero-sentinel accumulators are
+        the exact no-trading-activity baseline the first real ``save_account_state``
+        overwrites, so no stale money can leak. Scoped to ``self._portfolio_id`` (V4).
+        """
+        with self.engine.begin() as connection:
+            result = connection.execute(
+                update(self._account_state)
+                .where(self._account_state.c.portfolio_id == self._portfolio_id)
+                .values(config_json=config, updated_time=at)
+            )
+            if result.rowcount == 0:
+                connection.execute(
+                    insert(self._account_state),
+                    [
+                        {
+                            "portfolio_id": self._portfolio_id,
+                            "cash_balance": Decimal("0"),
+                            "realized_pnl": Decimal("0"),
+                            "total_equity": Decimal("0"),
+                            "peak_equity": Decimal("0"),
+                            "open_positions_count": 0,
+                            "config_json": config,
+                            "updated_time": at,
+                        }
+                    ],
+                )
+
+    def load_config(self) -> Optional[Dict[str, Any]]:
+        """Return this portfolio's persisted config, or ``None`` when no row / NULL config.
+
+        Parameterized SELECT scoped to ``self._portfolio_id`` (V4 isolation).
+        """
+        statement = select(self._account_state.c.config_json).where(
+            self._account_state.c.portfolio_id == self._portfolio_id
+        )
+        with self.engine.connect() as connection:
+            row = connection.execute(statement).mappings().first()
+        if row is None or row["config_json"] is None:
+            return None
+        config: Dict[str, Any] = row["config_json"]
+        return config

@@ -29,8 +29,12 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import (
+    Column,
     Connection,
+    MetaData,
     RowMapping,
+    String,
+    Table,
     bindparam,
     delete,
     func,
@@ -48,7 +52,7 @@ from itrader.core.enums import (
 )
 from itrader.core.ids import OrderId, PortfolioId, StrategyId
 from itrader.logger import get_itrader_logger
-from itrader.storage import SqlEngine
+from itrader.storage import SqlEngine, UtcIsoText, json_variant
 
 from ..base import IdLike, OrderStorage
 from ..order import Order, OrderStateChange
@@ -60,6 +64,31 @@ _ACTIVE_STATUS_VALUES: list[str] = [
     OrderStatus.PENDING.value,
     OrderStatus.PARTIALLY_FILLED.value,
 ]
+
+# The constant single-row PK for the cardinality-1 ``order_config`` table (D-25). Order
+# config is a GLOBAL singleton for now — one record under this fixed key. The dedicated
+# table (not a column on an order row) is intentional: it leaves room to later expand to a
+# per-portfolio/account config key WITHOUT touching the account-state carrier.
+_ORDER_CONFIG_ROW_ID: str = "order_config"
+
+
+def build_order_config_table(metadata: MetaData) -> Table:
+    """Register (idempotently) the single ``order_config`` table on ``metadata`` and return it.
+
+    Mirrors ``build_venue_store_table`` (STORE-04): a schema-pure registrar (single source of
+    truth for BOTH the test-path ``create_all`` and Plan 04's Alembic autogenerate). A
+    cardinality-1 config table — a constant single-row String PK (``id``), the portable JSON
+    ``config_json`` blob, and the UTC-isoformat business ``updated_at`` (D-25 / D-07).
+    """
+    if "order_config" in metadata.tables:
+        return metadata.tables["order_config"]
+    return Table(
+        "order_config",
+        metadata,
+        Column("id", String, primary_key=True),
+        Column("config_json", json_variant(), nullable=False),
+        Column("updated_at", UtcIsoText, nullable=False),
+    )
 
 
 class SqlOrderStorage(OrderStorage):
@@ -81,6 +110,11 @@ class SqlOrderStorage(OrderStorage):
         tables = build_order_tables(sql_engine.metadata)
         self.orders = tables["orders"]
         self.state_changes = tables["order_state_changes"]
+
+        # D-25 — the order-scope config carrier (a NEW cardinality-1 ``order_config`` table).
+        # Registered here so ``provision_schema``/``create_all`` builds it for tests; the
+        # Alembic ``CREATE TABLE order_config`` lands in Plan 04 (the migration-owner).
+        self.order_config = build_order_config_table(sql_engine.metadata)
 
         # WR-03/D-14 — schema-pure: register the tables, never create them (Alembic-owned
         # in production; tests provision via tests.support.schema.provision_schema).
@@ -506,3 +540,40 @@ class SqlOrderStorage(OrderStorage):
         with self.engine.connect() as conn:
             rows = conn.execute(statement).all()
         return {OrderStatus(value).name: count for value, count in rows}
+
+    # ------------------------------------------------------------------ runtime config (D-25)
+    def save_config(self, config: Dict[str, Any], at: datetime) -> None:
+        """Persist the GLOBAL order-scope config singleton (delete-then-insert the ONE row).
+
+        Parameterized Core against the constant ``order_config`` ``Table`` in one
+        ``engine.begin()`` (SEC-01). The single global row under ``_ORDER_CONFIG_ROW_ID`` is
+        overwritten each time — order config is a global singleton (D-25).
+        """
+        with self.engine.begin() as conn:
+            conn.execute(
+                delete(self.order_config).where(
+                    self.order_config.c.id == _ORDER_CONFIG_ROW_ID
+                )
+            )
+            conn.execute(
+                insert(self.order_config),
+                [
+                    {
+                        "id": _ORDER_CONFIG_ROW_ID,
+                        "config_json": config,
+                        "updated_at": at,
+                    }
+                ],
+            )
+
+    def load_config(self) -> Optional[Dict[str, Any]]:
+        """Return the persisted global order-scope config dict, or ``None`` when none saved."""
+        statement = select(self.order_config.c.config_json).where(
+            self.order_config.c.id == _ORDER_CONFIG_ROW_ID
+        )
+        with self.engine.connect() as conn:
+            row = conn.execute(statement).mappings().first()
+        if row is None:
+            return None
+        config: Dict[str, Any] = row["config_json"]
+        return config

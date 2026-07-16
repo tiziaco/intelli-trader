@@ -270,3 +270,31 @@ class OrderStorage(ABC):
             Dictionary with status names as keys and counts as values
         """
         pass
+
+    # -- Runtime config (order scope — global singleton, D-21/D-25) -----------
+
+    @abstractmethod
+    def save_config(self, config: Dict[str, Any], at: datetime) -> None:
+        """Persist the GLOBAL order-scope config singleton (D-25 — order owns its config).
+
+        The order scope is a single global config record (not per-portfolio); the SQL
+        backend rides a dedicated cardinality-1 ``order_config`` table, the in-memory
+        backend a plain dict, the cached wrapper delegates. Overwrites any prior record.
+
+        Parameters
+        ----------
+        config : Dict[str, Any]
+            The order-scope config blob (JSON-serializable; Decimal-safe at the money edge).
+        at : datetime
+            The business ``time`` stamped as ``updated_at`` (clock-free, caller-supplied).
+        """
+        pass
+
+    @abstractmethod
+    def load_config(self) -> Optional[Dict[str, Any]]:
+        """Return the persisted global order-scope config, or ``None`` when none saved.
+
+        Read on restart layering so a persisted order override re-applies on boot from the
+        ORDER store (NOT SystemStore — D-21/D-25).
+        """
+        pass

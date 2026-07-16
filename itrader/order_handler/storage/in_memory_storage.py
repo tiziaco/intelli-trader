@@ -63,6 +63,8 @@ class InMemoryOrderStorage(OrderStorage):
         self._active_by_portfolio: Dict[uuid.UUID, Dict[uuid.UUID, None]] = {}   # derived cache (D-02)
         self._by_status: Dict['OrderStatus', Dict[uuid.UUID, None]] = {}         # derived cache, active-only (D-10)
         self._last_indexed_status: Dict[uuid.UUID, 'OrderStatus'] = {}           # shadow registry (D-03): one entry per LIVE order (active OR terminal)
+        # D-25: the GLOBAL order-scope config singleton (trivial dict impl; backtest-dark).
+        self._config: Optional[Dict[str, Any]] = None
 
     # --- index maintenance (derived caches over the flat dict) --------------
 
@@ -340,3 +342,13 @@ class InMemoryOrderStorage(OrderStorage):
             status_name = order.status.name
             status_counts[status_name] = status_counts.get(status_name, 0) + 1
         return status_counts
+
+    # -- Runtime config (order scope — global singleton, D-25) ---------------
+
+    def save_config(self, config: Dict[str, Any], at: datetime) -> None:
+        """Store the GLOBAL order-scope config singleton (trivial dict; ``at`` unused)."""
+        self._config = config
+
+    def load_config(self) -> Optional[Dict[str, Any]]:
+        """Return the stored global order-scope config, or ``None`` if never saved."""
+        return self._config
