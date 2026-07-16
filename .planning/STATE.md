@@ -96,6 +96,42 @@ trim boundary P1–P8+P12 core vs P9–P11 ★ is noted, not taken). Research fl
 
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
+| Phase 01 P01 | 12 | 3 tasks | 3 files |
+| Phase 01 P02 | 12 | 2 tasks | 4 files |
+| Phase 01 P03 | 4m | 1 tasks | 1 files |
+| Phase 01 P04 | 25min | 3 tasks | 15 files |
+| Phase 02 P01 | 3min | 3 tasks | 3 files |
+| Phase 02 P02 | 6min | 3 tasks | 4 files |
+| Phase 02 P03 | 18min | 3 tasks | 10 files |
+| Phase 03 P01 | 11min | 2 tasks | 41 files |
+| Phase 03 P02 | 2min | 1 tasks | 2 files |
+| Phase 04 P01 | 1min | 2 tasks | 4 files |
+| Phase 04 P02 | 6min | 3 tasks | 6 files |
+| Phase 04 P03 | 12min | 3 tasks | 6 files |
+| Phase 04 P04 | 20m | 3 tasks | 16 files |
+| Phase 05 P01 | 29min | 3 tasks | 17 files |
+| Phase 05 P02 | 6m | 3 tasks | 9 files |
+| Phase 05 P03 | 4min | 2 tasks | 4 files |
+| Phase 05 P04 | 5min | 3 tasks | 7 files |
+| Phase 05 P05 | 7min | 3 tasks | 5 files |
+| Phase 05 P06 | 11min | 3 tasks | 6 files |
+| Phase 06 P01 | 4 min | 2 tasks | 2 files |
+| Phase 06 P02 | 12 min | 3 tasks | 3 files |
+| Phase 06 P03 | 6min | 1 tasks | 1 files |
+| Phase 06 P04 | 13min | 2 tasks | 7 files |
+| Phase 06 P05 | 9min | 3 tasks | 3 files |
+| Phase 06 P06 | 50min | 3 tasks | 26 files |
+| Phase 06 P07 | 70min | 3 tasks | 21 files |
+| Phase 06.1 P01 | 22min | 3 tasks | 7 files |
+| Phase 06.1 P02 | 18 | 3 tasks | 1 files |
+| Phase 06.1 P03 | 4 | 3 tasks | 4 files |
+| Phase 06.1 P04 | 6 | 3 tasks | 3 files |
+| Phase 07 P01 | 12 min | 3 tasks | 10 files |
+| Phase 07 P02 | 15 min | 2 tasks | 7 files |
+| Phase 07 P03 | 6min | 2 tasks | 4 files |
+| Phase 07 P04 | 6 min | 2 tasks | 4 files |
+| Phase 07 P05 | 20 min | 1 tasks | 2 files |
+| Phase 07 P06 | 45min | 3 tasks | 15 files |
 | Phase 09 P01 | 25min | 3 tasks | 11 files |
 | Phase 09 P02 | 11min | 3 tasks | 5 files |
 | Phase 09 P03 | 21min | 3 tasks | 14 files |
@@ -260,25 +296,6 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 | Turso/libSQL | `sqlalchemy-libsql` opt-in backend — interface stays Turso-ready | Deferred | v2 (post-beta) |
 | Perf (v1.5) | Single-pass per-bar portfolio valuation (profile-first gated); PERF-09/PERF-10; advisory Nyquist VALIDATION gaps | Deferred | future perf phase |
 | D-multiasset | Multi-currency accounting, trading calendars, corporate actions | Deferred | indefinite (crypto-first) |
-| Phase 01 P01 | 12 | 3 tasks | 3 files |
-| Phase 01 P02 | 12 | 2 tasks | 4 files |
-| Phase 01 P03 | 4m | 1 tasks | 1 files |
-| Phase 01 P04 | 25min | 3 tasks | 15 files |
-| Phase 02 P01 | 3min | 3 tasks | 3 files |
-| Phase 02 P02 | 6min | 3 tasks | 4 files |
-| Phase 02 P03 | 18min | 3 tasks | 10 files |
-| Phase 03 P01 | 11min | 2 tasks | 41 files |
-| Phase 03 P02 | 2min | 1 tasks | 2 files |
-| Phase 04 P01 | 1min | 2 tasks | 4 files |
-| Phase 04 P02 | 6min | 3 tasks | 6 files |
-| Phase 04 P03 | 12min | 3 tasks | 6 files |
-| Phase 04 P04 | 20m | 3 tasks | 16 files |
-| Phase 05 P01 | 29min | 3 tasks | 17 files |
-| Phase 05 P03 | 4min | 2 tasks | 4 files |
-| Phase 05 P02 | 6m | 3 tasks | 9 files |
-| Phase 05 P04 | 5min | 3 tasks | 7 files |
-| Phase 05 P05 | 7min | 3 tasks | 5 files |
-| Phase 05 P06 | 11min | 3 tasks | 6 files |
 
 ## Bookkeeping
 
