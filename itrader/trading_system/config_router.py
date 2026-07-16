@@ -64,6 +64,7 @@ from datetime import datetime
 from typing import Any, Callable, Optional
 
 import pydantic
+from sqlalchemy.exc import SQLAlchemyError
 
 from itrader.config.itrader_config import ITraderConfig
 from itrader.config.merge import deep_merge
@@ -72,6 +73,7 @@ from itrader.config.portfolio import PortfolioConfig
 from itrader.config.system import SystemSettings, UniverseConfig
 from itrader.core.clock import Clock
 from itrader.core.enums import ErrorSeverity
+from itrader.core.exceptions.base import ConfigurationError
 from itrader.core.exceptions.portfolio import PortfolioNotFoundError
 from itrader.core.ids import PortfolioId
 from itrader.events_handler.events import ConfigUpdateEvent, ErrorEvent
@@ -84,6 +86,9 @@ _REASON_UNKNOWN_PORTFOLIO = "unknown-portfolio"
 _REASON_VALIDATION_FAILED = "validation-failed"
 _REASON_VENUE_KIND = "venue-kind-live-fee-slippage"
 _REASON_PERSIST_FAILED = "persist-failed"
+# WR-02: a store read / handler push / model-validate failure that escaped the per-scope
+# guards (NOT a _RejectedUpdate) — surfaced as a deduped WARNING rejection, never an escape.
+_REASON_APPLY_FAILED = "apply-failed"
 
 # --- WARNING ErrorEvent fixed egress literals (mirrors the PreTradeThrottle D-09 pattern) ----
 _ERROR_SOURCE = "config_router"
@@ -210,6 +215,17 @@ class ConfigRouter:
                 raise _RejectedUpdate(_REASON_UNROUTED_SCOPE)
         except _RejectedUpdate as rejected:
             self._surface_rejection(event, rejected.reason, now)
+        except (SQLAlchemyError, ConfigurationError, pydantic.ValidationError) as exc:
+            # WR-02/D-16: a KNOWN store-read / handler-push / model-validate failure that
+            # escaped the per-scope guards (e.g. an out-of-``_persist`` venue ``get``, a
+            # portfolio-store read error, a post-persist push raise) is converted into the
+            # SAME deduped WARNING rejection rather than escaping ``apply()`` to the
+            # engine-boundary error policy. NOT a bare ``except Exception`` — a genuine
+            # programming error (AttributeError/TypeError) still surfaces.
+            self.logger.warning(
+                "ConfigUpdate store/push error (scope=%s, key=%s): %s",
+                event.scope, event.key, exc)
+            self._surface_rejection(event, _REASON_APPLY_FAILED, now)
 
     # -- Scope handlers (each owns the full validate -> persist -> apply D-15 ordering) -------
 
@@ -284,9 +300,26 @@ class ConfigRouter:
         if key not in _VENUE_KEYS:
             raise _RejectedUpdate(_REASON_UNKNOWN_KEY)
 
+        # WR-01: ``enabled`` is a REAL boolean flag, not a truthy coercion. A non-bool value
+        # (e.g. the string "false", which ``bool(...)`` would evaluate to True and silently
+        # ENABLE a venue the caller meant to disable) is rejected BEFORE any persist.
+        if key == "enabled" and not isinstance(value, bool):
+            raise _RejectedUpdate(_REASON_VALIDATION_FAILED)
+
         # Venue-kind predicate (D-14) — checked at apply time on the venue's execution arm.
         if key in _VENUE_FEE_SLIPPAGE_KEYS and not self._venue_kind(venue_name):
             raise _RejectedUpdate(_REASON_VENUE_KIND)
+
+        # CR-02/D-15 — DRY-validate the fee/slippage value BEFORE persisting (restores the
+        # validate -> persist -> apply -> push ordering the venue scope was missing). The
+        # push (``execution_handler.update_config``) is the ONLY validator of a venue
+        # fee/slippage value; running its dry twin FIRST means an invalid value NEVER lands
+        # in VenueStore (a poisoned row would otherwise brick the next boot's layering).
+        if key in _VENUE_FEE_SLIPPAGE_KEYS:
+            try:
+                self._execution_handler.validate_config({key: value})
+            except ConfigurationError as exc:
+                raise _RejectedUpdate(_REASON_VALIDATION_FAILED) from exc
 
         # Merge onto the existing persisted venue row so a single-field update does not drop the
         # sibling config keys / enabled flag (last-writer-wins per field, D-15 arrival order).
@@ -294,7 +327,7 @@ class ConfigRouter:
         config: dict[str, Any] = dict(existing["config"]) if existing else {}
         enabled: bool = bool(existing["enabled"]) if existing else True
         if key == "enabled":
-            enabled = bool(value)
+            enabled = value  # already checked to be a real bool (WR-01)
         else:
             config[key] = value
 

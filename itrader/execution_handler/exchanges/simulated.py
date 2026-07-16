@@ -786,6 +786,23 @@ class SimulatedExchange(AbstractExchange):
 		self._max_order_size = self.config.limits.max_order_size
 		self._exchange_name = self.config.exchange_name
 
+	def validate_config(self, updates: Dict[str, Any]) -> None:
+		"""Dry-validate a partial config update WITHOUT swapping (CR-02/D-15).
+
+		Runs the SAME deep_merge -> model_validate the canonical ``update_config``
+		runs, but DISCARDS the validated model — no atomic swap, no cache
+		re-derivation. Lets the ``ConfigRouter`` validate a venue fee/slippage value
+		BEFORE persisting it (nothing bad ever reaches ``VenueStore``). Returns
+		``None`` and RAISES ``ConfigurationError`` (wrapping pydantic
+		``ValidationError``, incl. ``extra="forbid"`` unknown-key rejection) on a
+		bad value — the SAME raise contract as ``update_config``.
+		"""
+		merged = deep_merge(self.config.model_dump(), updates)
+		try:
+			ExchangeConfig.model_validate(merged)
+		except pydantic.ValidationError as e:
+			raise ConfigurationError(reason=str(e)) from e
+
 	def get_config_dict(self) -> Dict[str, Any]:
 		"""Get configuration as dictionary."""
 		return {

@@ -100,6 +100,25 @@ class ExecutionHandler(AbstractExecutionHandler):
 				reason='no simulated exchange wired to update')
 		exchange.update_config(updates)
 
+	def validate_config(self, updates: Dict[str, Any]) -> None:
+		"""Dry-validate a partial config update WITHOUT applying it (CR-02/D-15).
+
+		Mirrors ``update_config`` but runs the exchange's dry twin
+		(``SimulatedExchange.validate_config``): deep_merge -> model_validate on a
+		THROWAWAY copy, discarding the result — no atomic swap, no cache
+		re-derivation. The ``ConfigRouter`` calls this BEFORE persisting a venue
+		fee/slippage value so an invalid value never lands in ``VenueStore`` (a
+		poisoned row would otherwise brick the next boot's restart-layering).
+		Returns ``None``; RAISES ``ConfigurationError`` on failure (including when
+		no exchange is wired) — the SAME contract shape as ``update_config``.
+		"""
+		exchange = self.exchanges.get('simulated')
+		if not isinstance(exchange, SimulatedExchange):
+			raise ConfigurationError(
+				config_key='simulated',
+				reason='no simulated exchange wired to update')
+		exchange.validate_config(updates)
+
 
 	def on_order(self, event: OrderEvent) -> None:
 		"""Route an order event to the configured exchange's order router."""
