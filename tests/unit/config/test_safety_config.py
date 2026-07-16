@@ -7,7 +7,7 @@ Pins the pre-trade safety config home (config/safety.py):
   2. ``max_notional_per_order`` is Decimal (money end-to-end), rate fields int/float.
   3. ``extra="forbid"`` on both models: an unknown key raises pydantic ValidationError
      (mass-assignment defense, T-04-01).
-  4. ``SystemConfig.default().safety.throttle`` is reachable (eager inertness-safe field).
+  4. ``ITraderConfig().safety.throttle`` is reachable (eager inertness-safe field).
   5. Both models are importable from the ``itrader.config`` barrel.
 """
 
@@ -16,8 +16,7 @@ from decimal import Decimal
 import pydantic
 import pytest
 
-from itrader.config import FailureRateSettings, SafetySettings, ThrottleSettings
-from itrader.config.system import SystemConfig
+from itrader.config import FailureRateSettings, ITraderConfig, SafetySettings, ThrottleSettings
 
 pytestmark = pytest.mark.unit
 
@@ -56,8 +55,8 @@ def test_safety_settings_holds_throttle_and_forbids_extra():
 
 
 def test_system_config_safety_field_reachable():
-    """SystemConfig.default().safety.throttle is an eager, reachable field."""
-    cfg = SystemConfig.default()
+    """ITraderConfig().safety.throttle is an eager, reachable field."""
+    cfg = ITraderConfig()
     assert cfg.safety.throttle.max_orders == 10
     assert cfg.safety.throttle.max_notional_per_order == Decimal("25000")
 
@@ -105,8 +104,8 @@ def test_safety_settings_holds_failure_rate():
 
 
 def test_system_config_failure_rate_reachable():
-    """SystemConfig.default().safety.failure_rate is an eager, reachable, inertness-safe field."""
-    cfg = SystemConfig.default()
+    """ITraderConfig().safety.failure_rate is an eager, reachable, inertness-safe field."""
+    cfg = ITraderConfig()
     assert isinstance(cfg.safety.failure_rate, FailureRateSettings)
     assert cfg.safety.failure_rate.order_io_threshold == 3
     assert cfg.safety.failure_rate.admission_window_s == 300.0

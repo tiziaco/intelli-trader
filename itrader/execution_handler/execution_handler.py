@@ -7,7 +7,7 @@ from itrader.events_handler.bus import EventBus
 from itrader.events_handler.events import BarEvent, FillEvent, OrderEvent
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 
-from itrader.config import ExchangeConfig, get_exchange_preset
+from itrader.config import ExchangeConfig
 from itrader.core.exceptions.base import ConfigurationError
 from itrader.logger import get_itrader_logger
 
@@ -70,16 +70,18 @@ class ExecutionHandler(AbstractExecutionHandler):
 	def _resolve_rng_seed(self) -> int:
 		"""Resolve the determinism seed from the process-wide config singleton (D-16/W4-06).
 
-		Reads ``config.performance.rng_seed`` off the single process-wide
-		``SystemConfig`` initialised in ``itrader/__init__.py`` — NOT a second
-		duplicate ``SystemConfig`` construction (the W4-06 duplication this fix
-		removes). One run-wide determinism setting (default 42); a settings YAML
-		override applies to the singleton, making this read byte-identical or
-		strictly more correct (RESEARCH Trap 3 / A3). Seed stays 42 → the single
-		shared ``random.Random(42)`` is unchanged → byte-exact.
+		Reads ``config.rng_seed`` off the single process-wide ``ITraderConfig``
+		initialised in ``itrader/__init__.py`` — NOT a second duplicate config
+		construction (the W4-06 duplication this fix removes). P9 D-09 moved the
+		seed off the retired ``config.performance.rng_seed`` onto the frozen
+		``ITraderConfig`` base (``config.rng_seed``), immutable at runtime
+		(RTCFG-04). One run-wide determinism setting (default 42); a boot YAML/env
+		override resolves before construction, making this read byte-identical or
+		strictly more correct. Seed stays 42 → the single shared
+		``random.Random(42)`` is unchanged → byte-exact.
 		"""
 		from itrader import config
-		return int(config.performance.rng_seed)
+		return int(config.rng_seed)
 
 	def update_config(self, updates: Dict[str, Any]) -> None:
 		"""Update execution configuration at runtime (D-07/D-08/D-09).
@@ -87,7 +89,7 @@ class ExecutionHandler(AbstractExecutionHandler):
 		The handler owns no Pydantic config model of its own; the execution
 		config lives on the exchange. So the uniform ``update_config`` routes the
 		partial update to the simulated exchange's canonical ``update_config``
-		(deep_merge -> model_validate -> atomic-swap -> ConfigurationError),
+		(recursive_merge -> model_validate -> atomic-swap -> ConfigurationError),
 		keeping the single web-catchable raise contract. Returns ``None``; raises
 		``ConfigurationError`` on failure (including when no exchange is wired).
 		"""
@@ -97,6 +99,25 @@ class ExecutionHandler(AbstractExecutionHandler):
 				config_key='simulated',
 				reason='no simulated exchange wired to update')
 		exchange.update_config(updates)
+
+	def validate_config(self, updates: Dict[str, Any]) -> None:
+		"""Dry-validate a partial config update WITHOUT applying it (CR-02/D-15).
+
+		Mirrors ``update_config`` but runs the exchange's dry twin
+		(``SimulatedExchange.validate_config``): recursive_merge -> model_validate on a
+		THROWAWAY copy, discarding the result — no atomic swap, no cache
+		re-derivation. The ``ConfigRouter`` calls this BEFORE persisting a venue
+		fee/slippage value so an invalid value never lands in ``VenueStore`` (a
+		poisoned row would otherwise brick the next boot's restart-layering).
+		Returns ``None``; RAISES ``ConfigurationError`` on failure (including when
+		no exchange is wired) — the SAME contract shape as ``update_config``.
+		"""
+		exchange = self.exchanges.get('simulated')
+		if not isinstance(exchange, SimulatedExchange):
+			raise ConfigurationError(
+				config_key='simulated',
+				reason='no simulated exchange wired to update')
+		exchange.validate_config(updates)
 
 
 	def on_order(self, event: OrderEvent) -> None:
@@ -194,7 +215,7 @@ class ExecutionHandler(AbstractExecutionHandler):
 		BTCUSD. Wave 4 (04-05) removes this fallback once every construction site
 		passes a spec-derived config through the factory.
 		"""
-		config = get_exchange_preset('default')
+		config = ExchangeConfig.default()
 		config.limits.supported_symbols = set(config.limits.supported_symbols) | {'BTCUSD'}
 		return config
 

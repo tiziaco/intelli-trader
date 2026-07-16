@@ -80,6 +80,7 @@ class SessionInitializer:
         freeze_gate: Callable[[], bool],
         safety: Any,
         stream_recovery: Any,
+        config_router: Any = None,
     ) -> None:
         self._engine = engine
         self._universe_config = universe_config
@@ -92,6 +93,10 @@ class SessionInitializer:
         # SafetyController.halt.
         self._safety = safety
         self._stream_recovery = stream_recovery
+        # D-22/D-23 (Wave 3): the engine-thread ConfigRouter threaded to the
+        # LiveRouteRegistrar so it can SET the CONFIG_UPDATE CONTROL route to
+        # ConfigRouter.apply. None when there is no SQL spine (route stays the empty slot).
+        self._config_router = config_router
 
     def initialize(self) -> "UniverseHandler":
         """Wire the live session in donor order; return the built ``UniverseHandler``.
@@ -180,6 +185,7 @@ class SessionInitializer:
             universe_handler,
             safety=self._safety,
             stream_recovery=self._stream_recovery,
+            config_router=self._config_router,
         ).install(engine.event_handler)
 
         return universe_handler

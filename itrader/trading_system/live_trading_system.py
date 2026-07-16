@@ -1,5 +1,6 @@
 import threading
 from datetime import datetime, UTC
+from decimal import Decimal
 from typing import Optional, Dict, Any, Callable, TYPE_CHECKING
 
 from itrader.core.enums import HaltReason, SystemStatus
@@ -39,18 +40,22 @@ if TYPE_CHECKING:
 _LIVE_QUEUE_TIMEOUT = 1.0
 _LIVE_MAX_IDLE_TIME = 300.0
 
-# D-10 (WR — the primary external-surface security control): ``add_event`` is the
+# D-10/D-23 (WR — the primary external-surface security control): ``add_event`` is the
 # engine's PUBLIC external/web ingress. It is FAIL-CLOSED (default-deny, ASVS V4/V5):
-# ONLY the two sanctioned externally-originated event types are admissible — a
+# ONLY the THREE sanctioned externally-originated event types are admissible — a
 # ``SIGNAL`` (routes through ``OrderHandler.on_signal`` -> ``AdmissionManager`` for
-# validation + sizing + reservation + mirror) and a ``STRATEGY_COMMAND`` (an operator
-# add/remove-ticker command). EVERY other event type — every internal-fact type
+# validation + sizing + reservation + mirror), a ``STRATEGY_COMMAND`` (an operator
+# add/remove-ticker command), and (D-23) a ``CONFIG_UPDATE`` (a runtime-config mutation
+# routed on the engine thread to its owning store + handler, ingress-400-validated here
+# BEFORE the queue). EVERY other event type — every internal-fact type
 # (FILL / BAR / UNIVERSE_UPDATE / UNIVERSE_POLL / BARS_LOADED / BARS_LOAD_FAILED /
 # TIME / ORDER / ERROR / PORTFOLIO_UPDATE ...) — is rejected by default. Internal
 # order flow is UNAFFECTED: handlers put their events on ``global_queue`` directly,
 # never through this external ``add_event`` surface (RESEARCH OQ7: zero internal
 # production callers of ``add_event``).
-_EXTERNALLY_ADMISSIBLE = frozenset({EventType.SIGNAL, EventType.STRATEGY_COMMAND})
+_EXTERNALLY_ADMISSIBLE = frozenset(
+    {EventType.SIGNAL, EventType.STRATEGY_COMMAND, EventType.CONFIG_UPDATE}
+)
 
 # Live operational store credential surface (D-live wiring completed). The live order +
 # signal store is selected by ENV-PRESENCE of a Postgres credential on the unified
@@ -67,7 +72,7 @@ _EXTERNALLY_ADMISSIBLE = frozenset({EventType.SIGNAL, EventType.STRATEGY_COMMAND
 # ``ValidationError`` (``_require_pg_credentials``) when no credential is present.
 
 # WR-03 / CFG-03 / D-08 / IN-01: the SINGLE wiring source for the live OKX subscription
-# now lives in ``config.stream`` (the eager ``SystemConfig.stream`` field, backed by
+# now lives in ``config.stream`` (the eager ``ITraderConfig.stream`` field, backed by
 # StreamSettings in config/stream.py). The OKX data provider stamps this
 # symbol/timeframe into every ClosedBar (the feed's ring key), the feed warms up on
 # the same pair, and universe membership is checked against it — so the
@@ -201,6 +206,22 @@ class LiveTradingSystem:
         self._safety: Optional[Any] = None
         self._stream_recovery: Optional[Any] = None
         self._throttle: Optional[Any] = None
+        # D-22/D-23 (Wave 3): the engine-thread ConfigRouter — the CONFIG_UPDATE consumer.
+        # ATTACHED by build_live_system after construction (it references the assembled
+        # stores + handler graph); threaded into SessionInitializer -> LiveRouteRegistrar
+        # so the CONFIG_UPDATE CONTROL route resolves to a live consumer. None on a facade
+        # built outside build_live_system (the route stays the pre-declared empty slot).
+        self._config_router: Optional[Any] = None
+
+        # RTCFG-06 read-model sinks (D-18/D-19). ATTACHED by build_live_system after
+        # construction, gated on the SQL spine (None on backtest / in-memory fallback):
+        #   - _system_store: the durable KV where ``state.last_started_at`` is upserted at
+        #     start() (SafetyController writes state.status/state.halt_reason into the SAME
+        #     store at its own event source; the ErrorHandler writes state.last_error).
+        #   - _system_stats_store: the append-only engine-operational stats series the thin
+        #     stats writer snapshots into on each status transition (NO entity duplication).
+        self._system_store: Optional[Any] = None
+        self._system_stats_store: Optional[Any] = None
 
         # Threading control. The shared _stop_event is honoured by BOTH the injected
         # LiveRunner drain loop and its composed WorkerSupervisor (build_live_system
@@ -411,7 +432,63 @@ class LiveTradingSystem:
                 self.status_callback(new_status, status_data)
             except Exception as e:
                 self.logger.error(f'Error in status callback: {e}')
-    
+
+        # D-18 (RTCFG-06): a status transition is a low-rate engine event — the thin stats
+        # writer snapshots the engine-operational counters it already holds and appends one
+        # row to the append-only ``system_stats`` series. Event-driven, no aggregation
+        # layer, NO domain-entity data (D-17 — equity/orders/halts read from their own
+        # stores). A no-op when no durable stats sink is wired (backtest / in-memory).
+        self._snapshot_system_stats()
+
+    def _snapshot_system_stats(self) -> None:
+        """Append one engine-operational counter row to ``system_stats`` (D-18/RTCFG-06).
+
+        Snapshots ONLY the counters the engine already holds in memory — the P7 throttle
+        breach counter, the facade error count, the event-bus queue depth, uptime, and
+        connector/stream health (derived from the safety latch). It copies NO domain-store
+        entity data (D-17 — no portfolio equity) and NO secret (V7). Best-effort: a durable
+        append failure (e.g. an un-migrated stats schema) is swallowed-and-logged so it can
+        never abort the engine event that triggered it. A no-op when no durable sink is
+        wired (backtest / in-memory fallback → ``_system_stats_store is None``).
+        """
+        if self._system_stats_store is None:
+            return
+        try:
+            with self._stats_lock:
+                errors = self._stats['errors_count']
+                uptime_start = self._stats['uptime_start']
+            uptime_seconds = Decimal('0')
+            if uptime_start is not None:
+                started = datetime.fromisoformat(uptime_start)
+                uptime_seconds = Decimal(
+                    str((datetime.now(UTC) - started).total_seconds()))
+            paused = (
+                self._safety.is_submission_paused()
+                if self._safety is not None else False)
+            halted = self._safety.is_halted() if self._safety is not None else False
+            row = {
+                # P7 breach counter (D-09/D-14) — 0 until the throttle is wired.
+                'throttle_breach_count': (
+                    self._throttle.breach_count if self._throttle is not None else 0),
+                # Error counts by severity (D-18, start minimal): the facade holds ONE
+                # aggregate error counter today — snapshot it into error_count_error; the
+                # per-severity split is a future extension the schema already leaves room
+                # for (warning/critical stay 0 until a per-severity surface exists).
+                'error_count_warning': 0,
+                'error_count_error': errors,
+                'error_count_critical': 0,
+                'queue_depth': self.get_queue_size(),
+                'uptime_seconds': uptime_seconds,
+                # Connector/stream health proxies from the safety latch (event-driven
+                # CONNECTOR_FATAL→halt / STREAM_STATE→pause_submission are the sources).
+                'connector_up': not halted,
+                'stream_up': not paused,
+            }
+            self._system_stats_store.append(row, at=datetime.now(UTC))
+        except Exception as exc:
+            self.logger.warning(
+                'Failed to append system_stats (swallowed): %s', exc)
+
     def _update_stats(self, event_type: Optional[str] = None):
         """Update internal statistics."""
         with self._stats_lock:
@@ -500,11 +577,11 @@ class LiveTradingSystem:
                 else self.execution_handler.exchanges.get('simulated'))
 
             # RUN-06/D-11 live-plane config: poll timeframe + remove_policy READ FROM the
-            # LIVE/monitoring config (NOT PerformanceSettings — §8/D-01 keeps the
-            # backtest oracle config untouched).
+            # LIVE universe sub-model (NOT the frozen determinism base — P9 D-09 keeps the
+            # backtest oracle config untouched; ex-config.monitoring.universe_remove_policy).
             universe_config = UniverseHandlerConfig(
                 poll_timeframe=_system_config.stream.okx_stream_timeframe,
-                remove_policy=_system_config.monitoring.universe_remove_policy,
+                remove_policy=_system_config.universe.remove_policy,
             )
 
             # D-12: delegate the whole live session wiring to SessionInitializer
@@ -523,6 +600,7 @@ class LiveTradingSystem:
                     or self._safety.is_submission_paused()),
                 safety=self._safety,
                 stream_recovery=self._stream_recovery,
+                config_router=self._config_router,
             )
             self._universe_handler = initializer.initialize()
             # wire_universe set engine.universe; mirror it onto the facade (start()
@@ -564,7 +642,20 @@ class LiveTradingSystem:
 
         self.logger.info('Starting live trading system')
         self._safety.update_status(SystemStatus.STARTING)
-        
+
+        # D-19 (RTCFG-06): record the read-model ``state.last_started_at`` at THIS event
+        # source (facade start()). Best-effort — a durable-write failure must not abort
+        # start (mirrors SafetyController._persist_state); a no-op with no durable sink.
+        if self._system_store is not None:
+            try:
+                self._system_store.upsert(
+                    'state.last_started_at',
+                    {'last_started_at': datetime.now(UTC).isoformat()},
+                    at=datetime.now(UTC))
+            except Exception as exc:
+                self.logger.warning(
+                    'Failed to persist state.last_started_at (swallowed): %s', exc)
+
         try:
             # SAFE-02/§11b (D-20 / WR-01): the DURABLE halt refusal gate runs FIRST —
             # right after STARTING and BEFORE any session init / OKX connect / feed warmup
@@ -868,13 +959,14 @@ class LiveTradingSystem:
         """
         Add an event to the global queue for processing.
 
-        D-10 (fail-closed, ASVS V4/V5): ``add_event`` is the engine's PUBLIC external/web
-        surface, so it is DEFAULT-DENY. Only the two sanctioned externally-originated event
+        D-10/D-23 (fail-closed, ASVS V4/V5): ``add_event`` is the engine's PUBLIC external/web
+        surface, so it is DEFAULT-DENY. Only the THREE sanctioned externally-originated event
         types in ``_EXTERNALLY_ADMISSIBLE`` are admitted — a ``SIGNAL`` (routes through
         ``OrderHandler.on_signal`` -> ``AdmissionManager`` so validation + sizing + cash
-        reservation + order-mirror engage before any ``OrderEvent`` is emitted) and a
-        ``STRATEGY_COMMAND`` (an operator add/remove-ticker command). EVERY other type is
-        rejected: every internal-fact type (FILL / BAR / UNIVERSE_UPDATE / UNIVERSE_POLL /
+        reservation + order-mirror engage before any ``OrderEvent`` is emitted), a
+        ``STRATEGY_COMMAND`` (an operator add/remove-ticker command), and a ``CONFIG_UPDATE``
+        (a runtime-config mutation — D-23 opens it as the third external type). EVERY other type
+        is rejected: every internal-fact type (FILL / BAR / UNIVERSE_UPDATE / UNIVERSE_POLL /
         BARS_LOADED / BARS_LOAD_FAILED / TIME / ORDER / ERROR / PORTFOLIO_UPDATE ...) is not
         admissible from the external surface — a raw ``OrderEvent`` here would otherwise reach
         the execution queue with NO admission control (elevation-of-privilege / input-validation
@@ -882,6 +974,11 @@ class LiveTradingSystem:
         the sanctioned entry stays SIGNAL-form. The internal order flow is UNAFFECTED —
         handlers emit ``OrderEvent``s by putting them on ``global_queue`` directly, never
         through ``add_event`` (RESEARCH OQ7: zero internal production callers).
+
+        D-23/D-16 (ingress 400-validation, defense-in-depth): a ``CONFIG_UPDATE`` gets a
+        SYNCHRONOUS fail-closed structural + type/range check HERE (a bad type/range on a KNOWN
+        field, or a malformed scope/key, returns ``False`` — the 400 once FastAPI exists) BEFORE
+        it reaches the queue, with the engine-thread ``ConfigRouter`` re-checking behind it.
 
         Parameters
         ----------
@@ -897,16 +994,24 @@ class LiveTradingSystem:
             self.logger.warning('Cannot add event: Live trading system is not running')
             return False
 
-        # D-10: FAIL-CLOSED allowlist. Admit ONLY the sanctioned externally-originated types
-        # (SIGNAL + STRATEGY_COMMAND); reject every other type by default (default-deny). This
-        # covers the prior narrow ORDER reject and every other internal-fact type in one gate.
+        # D-10/D-23: FAIL-CLOSED allowlist. Admit ONLY the sanctioned externally-originated
+        # types (SIGNAL + STRATEGY_COMMAND + CONFIG_UPDATE); reject every other type by default
+        # (default-deny). This covers the prior narrow ORDER reject and every other internal-fact
+        # type in one gate — a raw internal-fact event (e.g. OrderEvent) is still rejected.
         event_type = getattr(event, 'type', None)
         if event_type not in _EXTERNALLY_ADMISSIBLE:
             self.logger.warning(
                 'Rejected external add_event of type %s (D-10 fail-closed default-deny) — only '
-                'SIGNAL and STRATEGY_COMMAND are admissible from the external surface; every '
-                'internal-fact type (incl. raw ORDER injection) must route through the engine '
-                'internally, never the public queue directly', event_type)
+                'SIGNAL, STRATEGY_COMMAND and CONFIG_UPDATE are admissible from the external '
+                'surface; every internal-fact type (incl. raw ORDER injection) must route through '
+                'the engine internally, never the public queue directly', event_type)
+            return False
+
+        # D-23/D-16: ingress 400-style validation for CONFIG_UPDATE — a synchronous fail-closed
+        # reject at the admission boundary (bad type/range on a known field, or malformed
+        # scope/key). The engine-thread ConfigRouter re-checks (validate -> persist -> apply)
+        # behind it (defense-in-depth). Every other admitted type is unaffected.
+        if event_type is EventType.CONFIG_UPDATE and not self._validate_config_ingress(event):
             return False
 
         try:
@@ -915,9 +1020,112 @@ class LiveTradingSystem:
         except Exception as e:
             self.logger.error(f'Failed to add event to queue: {e}')
             return False
-    
 
-    
+    def _validate_config_ingress(self, event) -> bool:
+        """Synchronous ingress 400-validation for a ``CONFIG_UPDATE`` (D-23/D-16).
+
+        Structural + type/range check WITHOUT persisting: resolves the ``(scope, key)`` to its
+        owning mutable sub-model on the imported ``config`` singleton (the structure IS the
+        allowlist — D-11/D-12) and dry-validates the value on a throwaway ``model_copy``
+        (``validate_assignment`` re-coerces). Returns ``False`` (the 400) on a malformed
+        scope/key or a bad type/range on a KNOWN field; the engine-thread ``ConfigRouter``
+        re-checks everything behind it (defense-in-depth). The ``venue`` / ``portfolio`` scopes
+        get a STRUCTURAL shape check only here — the venue-kind predicate (D-14) and
+        portfolio-existence + section resolution (D-21) are engine-thread state-dependent checks.
+        """
+        import uuid
+
+        from itrader.config.order import OrderConfig
+        from itrader.config.system import SystemSettings
+        from itrader.config.universe import UniverseConfig
+
+        # CR-01 (D-23 fail-closed): with no durable store there is no ConfigRouter wired
+        # (build_live_system only constructs it when system_store is not None) and no target
+        # to persist to. Reject the update at ingress so the external caller gets a truthful
+        # False instead of a silent enqueue-then-drop (the CONFIG_UPDATE route also stays the
+        # pre-declared empty slot in that wiring — route_registrar.install()).
+        if self._config_router is None:
+            self.logger.warning(
+                'Rejected CONFIG_UPDATE ingress: no durable config store wired (in-memory '
+                'fallback) — runtime config updates require a SQL spine (fail-closed)')
+            return False
+
+        scope = getattr(event, 'scope', None)
+        key = getattr(event, 'key', None)
+        value = getattr(event, 'value', None)
+        if not isinstance(scope, str) or not scope or not isinstance(key, str) or not key:
+            self.logger.warning(
+                'Rejected CONFIG_UPDATE ingress: malformed scope/key (%r/%r)', scope, key)
+            return False
+
+        if scope == 'system':
+            if key in SystemSettings.model_fields:
+                model_cls: Any = SystemSettings
+            elif key in UniverseConfig.model_fields:
+                model_cls = UniverseConfig
+            else:
+                self.logger.warning(
+                    'Rejected CONFIG_UPDATE ingress: unknown system key %r', key)
+                return False
+            return self._dry_validate_config_ingress(model_cls, key, value)
+
+        if scope == 'order':
+            if key not in OrderConfig.model_fields:
+                self.logger.warning(
+                    'Rejected CONFIG_UPDATE ingress: unknown order key %r', key)
+                return False
+            return self._dry_validate_config_ingress(OrderConfig, key, value)
+
+        if scope.startswith('venue:'):
+            venue_name = scope[len('venue:'):]
+            if not venue_name or key not in {'fee_model', 'slippage_model', 'enabled'}:
+                self.logger.warning(
+                    'Rejected CONFIG_UPDATE ingress: malformed venue scope/key (%r/%r)',
+                    scope, key)
+                return False
+            # WR-01: ``enabled`` is a real boolean — reject a truthy non-bool at ingress so
+            # the string "false" cannot silently enable a venue (mirrors the router's guard).
+            if key == 'enabled' and not isinstance(value, bool):
+                self.logger.warning(
+                    'Rejected CONFIG_UPDATE ingress: non-bool venue enabled value %r', value)
+                return False
+            return True  # venue-kind is a state-dependent engine-thread predicate (D-14)
+
+        if scope.startswith('portfolio:'):
+            pid = scope[len('portfolio:'):]
+            try:
+                uuid.UUID(pid)
+            except (ValueError, AttributeError, TypeError):
+                self.logger.warning(
+                    'Rejected CONFIG_UPDATE ingress: malformed portfolio id %r', pid)
+                return False
+            return True  # portfolio-existence + section resolution are engine-thread (D-21)
+
+        self.logger.warning('Rejected CONFIG_UPDATE ingress: unrouted scope %r', scope)
+        return False
+
+    def _dry_validate_config_ingress(self, model_cls: Any, key: str, value: Any) -> bool:
+        """Dry-validate ``value`` against ``model_cls[key]`` on a FRESH default instance.
+
+        W4/LR-12: this ingress check runs on the EXTERNAL caller thread, so it must NOT read
+        the live mutable ``config`` sub-models the ENGINE thread writes (a cross-thread read
+        of the single-writer overlay). Instead of copying the live singleton, it constructs a
+        FRESH default instance of the SAME sub-model TYPE and setattrs the value on THAT:
+        ``validate_assignment=True`` re-runs the field's own type coercion + ``Field(...)``
+        constraints — the SAME single source of truth the engine-thread router applies (one
+        validator, no drift), evaluated per-field so sibling field values are irrelevant.
+        """
+        import pydantic
+
+        try:
+            candidate = model_cls()  # fresh default — never the shared live sub-model
+            setattr(candidate, key, value)
+        except pydantic.ValidationError:
+            self.logger.warning(
+                'Rejected CONFIG_UPDATE ingress: bad type/range for known key %r', key)
+            return False
+        return True
+
     def __enter__(self):
         """Context manager entry."""
         self.start()
@@ -926,6 +1134,127 @@ class LiveTradingSystem:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit."""
         self.stop()
+
+
+def _layer_persisted_overrides(
+    config: Any,
+    *,
+    system_store: Any,
+    venue_store: Any,
+    order_handler: Any,
+    portfolio_handler: Any,
+    execution_handler: Any,
+) -> None:
+    """Boot restart-layering: apply each scope's persisted config from its OWN store (D-10/D-22).
+
+    The layering sequence is ``defaults <- YAML <- env <- persisted`` — the frozen base params
+    (``rng_seed`` / ``environment`` / identity) are already resolved at CONSTRUCTION and are NEVER
+    persisted-overridden at runtime (RTCFG-04 / D-10); persisted overrides apply ONLY to the
+    mutable sub-models, each read back from its OWNING module store (config is NEVER read back
+    from SystemStore for the order/portfolio scopes — D-21/D-25):
+
+    * ``system``    — ``SystemStore.read_all()`` rows keyed ``config.system.*`` / ``config.universe.*``
+      -> ``setattr`` field-wise into the owning mutable sub-model (``validate_assignment`` re-coerces).
+    * ``order``     — the ORDER store's ``load_config()`` -> ``setattr`` ``OrderConfig`` field(s) +
+      ``order_handler.update_config`` push (NOT SystemStore).
+    * ``venue``     — ``VenueStore.read_all()`` rows -> push each venue's fee/slippage to the
+      execution handler (real-venue rows were only ever accepted for simulated venues, D-14).
+    * ``portfolio`` — each Portfolio's OWN bound ``state_storage.load_config()`` -> apply via
+      ``portfolio.update_config(...)`` (NOT SystemStore).
+
+    This LOADING touches SQL and lives ONLY here (never at import — Pitfall 3 / GATE-01). It is a
+    pure module function so P9's restart-layering integration test can drive it directly.
+
+    Degrade-clean contract: the durable config schema is Alembic-owned in production (the
+    ``order_config`` table + ``portfolio_account_state.config_json`` migration lands in Plan 04).
+    A boot against a not-yet-provisioned schema (a fresh DB, or the interim Plan-03/pre-migration
+    state) must NOT crash — a missing config table simply means "no persisted overrides yet". So a
+    store-read ``SQLAlchemyError`` is logged and layering is skipped (mirrors the None-backend skip
+    at the call site). Never ``create_all`` here — the store stays schema-pure (WR-03/D-14).
+    """
+    import pydantic
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from itrader.config.order import OrderConfig
+    from itrader.config.system import SystemSettings
+    from itrader.config.universe import UniverseConfig
+    from itrader.core.exceptions.base import ConfigurationError
+
+    logger = get_itrader_logger().bind(component="build_live_system")
+
+    # WR-03 degrade-clean contract — each scope is layered under its OWN guard so a bad
+    # persisted override (a not-yet-provisioned schema -> SQLAlchemyError; OR a present-but-
+    # now-invalid stored value after schema evolution / model-field tightening / a poisoned
+    # row -> ConfigurationError / pydantic.ValidationError / ValueError) is LOGGED and SKIPPED
+    # rather than crashing build_live_system on boot. Per-scope isolation means one bad scope
+    # never aborts the others. NOT a bare Exception — a genuine programming error still
+    # surfaces. RTCFG-03 is a best-effort restore; a fresh/un-migrated DB simply has none.
+    _degrade_clean = (
+        SQLAlchemyError, ConfigurationError, pydantic.ValidationError, ValueError)
+
+    # (system) — SystemStore.read_all() rows (config.system.* / config.universe.*).
+    try:
+        for row in system_store.read_all():
+            key = row["key"]
+            value = row["value"]
+            stored = value.get("value") if isinstance(value, dict) else value
+            if key.startswith("config.system."):
+                field = key[len("config.system."):]
+                if field in SystemSettings.model_fields:
+                    setattr(config.system, field, stored)
+            elif key.startswith("config.universe."):
+                field = key[len("config.universe."):]
+                if field in UniverseConfig.model_fields:
+                    setattr(config.universe, field, stored)
+    except _degrade_clean as exc:
+        logger.warning(
+            "Skipping persisted SYSTEM-config restart layering — schema unavailable or a "
+            "stored override is invalid (%s); boot degrades clean", exc)
+
+    # (order) — the ORDER store's own load_config (NOT SystemStore) + the handler push.
+    try:
+        order_cfg = order_handler.storage.load_config()
+        if order_cfg:
+            applied = {
+                field: val
+                for field, val in order_cfg.items()
+                if field in OrderConfig.model_fields
+            }
+            for field, val in applied.items():
+                setattr(config.order, field, val)
+            if applied:
+                order_handler.update_config(applied)
+    except _degrade_clean as exc:
+        logger.warning(
+            "Skipping persisted ORDER-config restart layering — schema unavailable or a "
+            "stored override is invalid (%s); boot degrades clean", exc)
+
+    # (venue) — VenueStore rows push their fee/slippage to the execution handler.
+    try:
+        for row in venue_store.read_all():
+            venue_cfg = row.get("config") or {}
+            push = {
+                k: v
+                for k, v in venue_cfg.items()
+                if k in {"fee_model", "slippage_model"}
+            }
+            if push:
+                execution_handler.update_config(push)
+    except _degrade_clean as exc:
+        logger.warning(
+            "Skipping persisted VENUE-config restart layering — schema unavailable or a "
+            "stored override is invalid (%s); boot degrades clean", exc)
+
+    # (portfolio) — each Portfolio's OWN bound store (NOT SystemStore); resolve via the handler.
+    try:
+        for _pid, portfolio in portfolio_handler._portfolios.items():
+            portfolio_cfg = portfolio.state_storage.load_config()
+            if portfolio_cfg:
+                portfolio.update_config(portfolio_cfg)
+    except _degrade_clean as exc:
+        logger.warning(
+            "Skipping persisted PORTFOLIO-config restart layering — schema unavailable or a "
+            "stored override is invalid (%s); boot degrades clean", exc)
 
 
 def build_live_system(
@@ -1179,6 +1508,53 @@ def build_live_system(
     )
 
     # ------------------------------------------------------------------
+    # RUNTIME-CONFIG PLATFORM (Wave 3 — D-22/D-23/D-25). Construct VenueStore + the
+    # engine-thread ConfigRouter over the OWNING module stores per D-21 (system->SystemStore,
+    # order->the ORDER store via order_handler.storage, venue->VenueStore, portfolio->each
+    # Portfolio's OWN bound state_storage — NOT SystemStore), attach it to the facade so
+    # _initialize_live_session threads it into SessionInitializer -> LiveRouteRegistrar (the
+    # CONFIG_UPDATE CONTROL route). All storage/venue imports stay LAZY inside the gate
+    # (inertness-forbidden at module top). Degrades cleanly to no router / no layering when
+    # there is no SQL spine (in-memory fallback) — the CONFIG_UPDATE route stays the empty slot.
+    order_handler = engine.order_handler
+    if system_store is not None:
+        from itrader.core.clock import WallClock
+        from itrader.storage.venue_store import VenueStore
+        from itrader.trading_system.config_router import ConfigRouter
+
+        venue_store: Optional[Any] = VenueStore(system_db_backend)
+
+        def _venue_kind(venue_name: str) -> bool:
+            """(venue_name) -> True when the venue's execution arm is a SimulatedExchange (D-14)."""
+            from itrader.execution_handler.exchanges.simulated import SimulatedExchange
+            return isinstance(
+                execution_handler.exchanges.get(venue_name), SimulatedExchange)
+
+        facade._config_router = ConfigRouter(
+            config=_system_config,
+            system_store=system_store,
+            venue_store=venue_store,
+            order_handler=order_handler,
+            portfolio_handler=portfolio_handler,
+            execution_handler=execution_handler,
+            venue_kind=_venue_kind,
+            bus=global_queue,
+            clock=WallClock(),
+        )
+
+        # RESTART LAYERING (D-10/D-22): apply persisted overrides on boot from each OWNING
+        # store. Base params already resolved at construction (frozen); persisted overrides
+        # touch only the mutable sub-models.
+        _layer_persisted_overrides(
+            _system_config,
+            system_store=system_store,
+            venue_store=venue_store,
+            order_handler=order_handler,
+            portfolio_handler=portfolio_handler,
+            execution_handler=execution_handler,
+        )
+
+    # ------------------------------------------------------------------
     # SAFE-01..06 (§11): construct + ATTACH the four safety collaborators (P7). All
     # imports are LAZY in-body so importing this module (on the backtest import graph)
     # pulls no live safety stack — never barrel-exported (inertness Pitfall 5). Each is
@@ -1202,6 +1578,9 @@ def build_live_system(
         halt_record_store=halt_record_store,
         dispatch_fn=lambda ev: event_handler._dispatch(ev),
         notify_status_change=facade._notify_status_change,
+        # D-19 (RTCFG-06): the durable read-model KV sink for state.status/state.halt_reason
+        # at their event source. None on the in-memory fallback (degrade cleanly).
+        system_store=system_store,
     )
     # SAFE-04: engine-thread reconnect-resume I/O (catch-up + snapshot + all-streams gate
     # -> resume). Injected with the venue arms the facade sourced off the lifecycle; each
@@ -1226,6 +1605,19 @@ def build_live_system(
     facade._safety = safety
     facade._stream_recovery = stream_recovery
     facade._throttle = throttle
+
+    # RTCFG-06 read-model sinks (D-18/D-19). Attach the durable KV (state.last_started_at
+    # at start(); SafetyController/ErrorHandler own the other state.* keys) and construct
+    # the append-only system_stats series over the SAME SqlEngine — the thin stats writer
+    # (_snapshot_system_stats) appends on each status transition. Both gated on the SQL
+    # spine (import stays LAZY inside the gate — system_stats_store is inertness-_FORBIDDEN)
+    # and degrade to None on the in-memory fallback (backtest never reaches here).
+    facade._system_store = system_store
+    if system_db_backend is not None:
+        from itrader.storage.system_stats_store import SystemStatsStore
+        facade._system_stats_store = SystemStatsStore(system_db_backend)
+    else:
+        facade._system_stats_store = None
 
     # Facade-dependent wiring (references the constructed facade's own callbacks). The
     # provider/exchange/connector halt-signal + stream-state listeners for a registered
@@ -1269,7 +1661,7 @@ def build_live_system(
     from itrader.trading_system.live_runner import LiveRunner
     from itrader.trading_system.worker_supervisor import WorkerSupervisor
 
-    cadence = _system_config.monitoring.universe_poll_cadence_s
+    cadence = _system_config.universe.poll_cadence_s
     worker_supervisor = WorkerSupervisor(global_queue, facade._stop_event, cadence)
     live_runner = LiveRunner(
         bus=global_queue,

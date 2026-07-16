@@ -66,7 +66,8 @@ Three held bars (4, 5, 6) → THREE carry debits:
 import pathlib
 from decimal import Decimal
 
-from itrader.config import PortfolioConfig, deep_merge, get_portfolio_preset
+from itrader.config import PortfolioConfig, get_portfolio_preset
+from itrader.outils.dict_merge import recursive_merge
 from itrader.core.enums import Side
 from itrader.core.enums.order import OrderType
 from itrader.core.enums.portfolio import CashOperationType
@@ -142,7 +143,7 @@ def _build_carry_system():
         # refines the rest but no longer rebuilds the leaf — so margin must be on
         # in the constructor config to get a SimulatedMarginAccount.
         name="short_carry_pf", exchange="csv", cash=_CASH,
-        portfolio_config=PortfolioConfig.model_validate(deep_merge(
+        portfolio_config=PortfolioConfig.model_validate(recursive_merge(
             get_portfolio_preset("default").model_dump(),
             {"trading_rules": {"enable_margin": True}})))
     strategy.subscribe_portfolio(portfolio_id)

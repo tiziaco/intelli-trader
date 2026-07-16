@@ -13,7 +13,8 @@ from decimal import Decimal
 
 import uuid_utils.compat as uuid_compat
 
-from itrader.config import PortfolioConfig, get_portfolio_preset, deep_merge
+from itrader.config import PortfolioConfig, get_portfolio_preset
+from itrader.outils.dict_merge import recursive_merge
 from itrader.core.enums import CashOperationType
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.position import Position
@@ -23,7 +24,7 @@ from itrader.portfolio_handler.transaction import Transaction, TransactionType
 def _margin_config(max_leverage: str = "10") -> PortfolioConfig:
     """enable_margin=True config — borrow-carry lives on the margin leaf, which
     01-03 selects at construction (not via post-construction update_config)."""
-    return PortfolioConfig.model_validate(deep_merge(
+    return PortfolioConfig.model_validate(recursive_merge(
         get_portfolio_preset("default").model_dump(),
         {"trading_rules": {"enable_margin": True, "max_leverage": Decimal(max_leverage)}},
     ))

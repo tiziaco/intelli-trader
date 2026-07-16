@@ -1,7 +1,7 @@
 """Canonical ``update_config`` contract tests for SimulatedExchange + ExecutionHandler (COMP-02).
 
 Covers the D-07/D-08/D-09 contract: ``update_config(self, updates: dict) -> None``
-with deep_merge -> model_validate -> atomic-swap, ConfigurationError wrapping, the
+with recursive_merge -> model_validate -> atomic-swap, ConfigurationError wrapping, the
 Pitfall 1 cache re-derivations (fee/slippage models, size caches as Decimal,
 failure simulation, supported_symbols), the Pitfall 2 ``configure()`` fix, and the
 Trap 1 symbol-set replacement/sibling-preservation property.
@@ -87,7 +87,7 @@ def test_update_config_omitting_supported_symbols_preserves_the_set(exchange):
     """An update that omits supported_symbols must NOT wipe the construction-seeded set.
 
     _supported_symbols is re-derived from config.limits by REPLACEMENT, so the
-    deep_merge sibling-preservation is what keeps a known ticker admitting after
+    recursive_merge sibling-preservation is what keeps a known ticker admitting after
     an unrelated limits update (Trap 1 / T-04-08).
     """
     seeded = set(exchange.get_supported_symbols())

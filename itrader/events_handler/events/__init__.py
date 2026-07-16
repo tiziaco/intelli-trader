@@ -49,6 +49,7 @@ from .error import (
 from .control import (
     StreamStateEvent,
     ConnectorFatalEvent,
+    ConfigUpdateEvent,
 )
 
 # Event type discriminator (single definition lives in core/enums)
@@ -90,6 +91,7 @@ __all__ = [
     # CONTROL-tier events
     'StreamStateEvent',
     'ConnectorFatalEvent',
+    'ConfigUpdateEvent',
 
     # Event type discriminator
     'EventType',

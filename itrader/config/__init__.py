@@ -3,8 +3,8 @@
 The hand-rolled registry/provider/validator/schema machinery and the getters
 (``get_config_registry``, ``get_*_config_provider``) were deleted in the M2-06 config
 collapse (D-01). Consumers now construct Pydantic models directly. This package is a
-clean re-export of those models plus the ``Settings`` env layer and the reference-data
-constants — mirroring the grouped-re-export style of ``itrader.core.enums``.
+clean re-export of those models plus the ``LogConfig`` env layer and the
+reference-data constants — mirroring the grouped-re-export style of ``itrader.core.enums``.
 """
 
 # Reference-data + timezone re-exports (M2-06 / D-02/D-03).
@@ -12,14 +12,14 @@ constants — mirroring the grouped-re-export style of ``itrader.core.enums``.
 # The flat ``itrader/config.py`` shadow module (the M1-01 file-path loader workaround)
 # has been DELETED. Its public names are now sourced from their permanent homes:
 #   - FORBIDDEN_SYMBOLS / SUPPORTED_*  ->  itrader.core.constants (D-03)
-#   - TIMEZONE                         ->  Settings.timezone (D-02/D-07)
+#   - TIMEZONE                         ->  ITraderConfig.timezone (D-02/D-07)
 from itrader.core.constants import (
     FORBIDDEN_SYMBOLS,
     SUPPORTED_CURRENCIES,
     SUPPORTED_EXCHANGES,
 )
 
-from .settings import Settings
+from .log import LogConfig
 
 # Domain models (Pydantic v2)
 from .portfolio import (
@@ -36,10 +36,10 @@ from .portfolio import (
 from .system import (
     Environment,
     LogLevel,
-    MonitoringSettings,
-    PerformanceSettings,
-    SystemConfig,
+    SystemSettings,
 )
+from .universe import UniverseConfig
+from .itrader_config import ITraderConfig
 from .order import (
     OrderConfig,
     TrailType,
@@ -53,7 +53,6 @@ from .safety import (
     SafetySettings,
     ThrottleSettings,
 )
-from .merge import deep_merge
 from .exchange import (
     ConnectionSettings,
     ExchangeConfig,
@@ -64,19 +63,17 @@ from .exchange import (
     FeeModelType,
     SlippageModelConfig,
     SlippageModelType,
-    get_exchange_preset,
-    list_available_exchange_presets,
 )
 
 # Module-level TIMEZONE constant (value 'Europe/Paris' by default). Read from the
-# Settings field default rather than instantiating Settings (which requires the
-# fail-loud secret). Must match the TimeGenerator default + the CSV-branch index tz
-# (tz-consistency, D-07). A future live wiring would read Settings().timezone instead.
-TIMEZONE: str = str(Settings.model_fields["timezone"].default)
+# frozen ITraderConfig base-field default rather than constructing the config (avoids
+# any import-time side effect). Must match the TimeGenerator default + the CSV-branch
+# index tz (tz-consistency, D-07). A future live wiring would read config.timezone.
+TIMEZONE: str = str(ITraderConfig.model_fields["timezone"].default)
 
 __all__ = [
-    # Settings + reference data
-    "Settings",
+    # Runtime env layer + reference data
+    "LogConfig",
     "FORBIDDEN_SYMBOLS",
     "SUPPORTED_CURRENCIES",
     "SUPPORTED_EXCHANGES",
@@ -101,14 +98,12 @@ __all__ = [
     "FailureRateSettings",
     "SafetySettings",
     "ThrottleSettings",
-    # Shared config helpers
-    "deep_merge",
     # System domain
-    "SystemConfig",
+    "ITraderConfig",
+    "SystemSettings",
+    "UniverseConfig",
     "Environment",
     "LogLevel",
-    "PerformanceSettings",
-    "MonitoringSettings",
     # Exchange domain
     "ExchangeConfig",
     "ExchangeVenue",
@@ -119,6 +114,4 @@ __all__ = [
     "ExchangeLimits",
     "FailureSimulation",
     "ConnectionSettings",
-    "get_exchange_preset",
-    "list_available_exchange_presets",
 ]

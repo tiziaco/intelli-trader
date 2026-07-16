@@ -16,14 +16,15 @@ import pytest
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.portfolio_handler.portfolio import Portfolio, Position
 from itrader.core.enums import PortfolioState, PositionSide
-from itrader.config import PortfolioConfig, get_portfolio_preset, deep_merge
+from itrader.config import PortfolioConfig, get_portfolio_preset
+from itrader.outils.dict_merge import recursive_merge
 
 
 def _margin_config(max_leverage: str = "10") -> PortfolioConfig:
     """enable_margin=True config — maintenance_margin / margin_ratio delegate to
     the margin leaf, which 01-03 selects at construction (a spot leaf returns
     Decimal('0') for these); set margin in the constructor config."""
-    return PortfolioConfig.model_validate(deep_merge(
+    return PortfolioConfig.model_validate(recursive_merge(
         get_portfolio_preset("default").model_dump(),
         {"trading_rules": {"enable_margin": True, "max_leverage": Decimal(max_leverage)}},
     ))

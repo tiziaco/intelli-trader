@@ -15,7 +15,7 @@ single typed home, following the ``config/order.py`` convention
   - ``FeedProviderSettings`` folds the warmup safety margin and the REST backfill page
     size.
 
-Pitfall 1 (D-08): this module is reachable from ``SystemConfig.default()`` on the
+Pitfall 1 (D-08): this module is reachable from ``ITraderConfig()`` on the
 backtest import graph, so it imports stdlib + pydantic ONLY — nothing live/ccxt/async
 — keeping the OKX import-inertness gate green. The field defaults equal the retired
 module constants byte-for-byte (a value drift would silently change live-supervisor
@@ -38,7 +38,7 @@ class StreamSettings(BaseModel):
     the retired reconnect-supervisor family and the live OKX stream hardcodes.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     # Reconnect-supervisor tuning (retired reconnect family, ×3 duplicated).
     reconnect_debounce_s: float = 0.25
@@ -63,7 +63,7 @@ class FeedProviderSettings(BaseModel):
     size. ``extra`` is forbidden.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     warmup_margin: int = 5
     backfill_page: int = 1000

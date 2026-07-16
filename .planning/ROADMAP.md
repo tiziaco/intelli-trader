@@ -108,7 +108,7 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 - [x] **Phase 6.1 (INSERTED): Seam Cleanup** - `build_live_system` consumes `compose_engine` (store/feed-agnostic seam, oracle byte-exact), collapse `LiveSystemComponents`, de-dup the `for_exchange` spec-builder, de-lazy the `trading_system` barrel — behavior-preserving, lands before P7 (SEAM-01..04) (completed 2026-07-14)
 - [x] **Phase 7: Safety + Reconciliation + Stream Recovery** - `SafetyController`, `ReconciliationCoordinator`, `StreamRecoveryHandler`, CONTROL routes, pre-trade throttle — flag machinery deleted (SAFE-01..06) (completed 2026-07-14)
 - [x] **Phase 8: Error Subsystem** - Injected `ErrorPolicy`, formalized `ErrorHandler`, two-guard terminal safety, CF-1 aggregate circuit breaker (ERR-01..04) (completed 2026-07-14)
-- [ ] **Phase 9 ★: Runtime-Config Platform** - `RuntimeConfig` overlay, scoped `ConfigUpdateEvent` + allowlist, restart layering, stats/state UI read-model (RTCFG-01..06)
+- [x] **Phase 9 ★: Runtime-Config Platform** - `RuntimeConfig` overlay, scoped `ConfigUpdateEvent` + allowlist, restart layering, stats/state UI read-model (RTCFG-01..06) (completed 2026-07-16)
 - [ ] **Phase 10 ★: Strategies Registry** - Durable `StrategyRegistryStore` rehydrate, enable/disable via `STRATEGY_COMMAND`, atomic strategy-param reconfiguration (STRAT-01..03)
 - [ ] **Phase 11 ★: Multi-Portfolio-Live** - Per-`account_id` account factory, distinct-`account_id` invariant (fail loud), per-portfolio reconcile, `clOrdId→client_order_id` (MPORT-01..06)
 - [ ] **Phase 12: Test Migration + Gates** - live-smoke / config-restart / multi-portfolio-attribution gates (TEST-02..04; TEST-01 replay relocation pulled forward into P6)
@@ -375,7 +375,14 @@ Plans:
   4. Persisted overrides survive restart (`build_live_system` layers them over defaults on boot), and the `system_store` `stats.snapshot` + `state.*` (status / halt_reason / last_error / last_started_at) serve as the UI read-model without touching hot-path locks (RTCFG-06).
   5. The backtest oracle stays byte-exact and `test_okx_inertness.py` stays green.
 
-**Plans**: TBD
+> Note: success criteria #1/#2 are satisfied through the owner override in 09-CONTEXT.md (D-05/D-06/D-11): there is NO separate `RuntimeConfig` overlay and NO standalone allowlist artifact. The frozen `ITraderConfig` aggregator singleton (imported, not injected) IS the runtime config; the frozen-base + mutable-sub-model + `validate_assignment` structure IS the default-deny allowlist. `EngineContext.config` stays vestigial.
+
+**Plans**: 4 plans (waves 1→4)
+
+- [x] 09-01-PLAN.md — Config restructure: `ITraderConfig` frozen aggregator + `SystemSettings`/`UniverseConfig` sub-models, singleton flip, `rng_seed`/`universe.*` path moves, delete `Performance`/`Monitoring` (oracle + inertness gated) (RTCFG-01, RTCFG-04)
+- [x] 09-02-PLAN.md — Mutation core: `ConfigUpdateEvent` (CONTROL) + `ConfigRouter` (validate→persist→apply→push, default-deny, venue-kind predicate, deduped WARNING rejection) + CONFIG_UPDATE route (RTCFG-02, RTCFG-04, RTCFG-05)
+- [x] 09-03-PLAN.md — Ingress + durability: extend `add_event` allowlist + ingress 400, construct stores + inject router + restart layering in `build_live_system`, mandatory external-ingress test (RTCFG-01, RTCFG-02, RTCFG-03, RTCFG-04)
+- [x] 09-04-PLAN.md — Read-model: `system_stats` append-only store/table/migration + thin stats writer + `state.*` writers; lock-free domain-store reads, no entity duplication (RTCFG-06)
 
 ### Phase 10 ★: Strategies Registry
 

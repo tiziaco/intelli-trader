@@ -16,7 +16,7 @@ classmethod):
     ``ConfigUpdateEvent`` wiring lands here (that is P9).
 
 Inertness (mirrors ``config/stream.py``, D-13): this module is reachable from
-``SystemConfig.default()`` on the backtest import graph, so it imports stdlib + pydantic
+``ITraderConfig()`` on the backtest import graph, so it imports stdlib + pydantic
 ONLY — nothing live/ccxt/async/sql — keeping the OKX import-inertness gate green. Every
 cap is inert on the backtest path (the throttle is never constructed in backtest mode).
 """
@@ -111,7 +111,7 @@ class SafetySettings(BaseModel):
     ``extra`` is forbidden.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     throttle: ThrottleSettings = Field(default_factory=ThrottleSettings)
     failure_rate: FailureRateSettings = Field(default_factory=FailureRateSettings)

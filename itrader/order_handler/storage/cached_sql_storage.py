@@ -260,6 +260,15 @@ class CachedSqlOrderStorage(OrderStorage):
         """Status counts (span the full retained history) — read-through to the store."""
         return self._store.count_orders_by_status(portfolio_id)
 
+    # ------------------------------------------------------------------ runtime config (D-25)
+    def save_config(self, config: Dict[str, Any], at: datetime) -> None:
+        """Persist the global order-scope config — DELEGATE to the store (durable owner)."""
+        self._store.save_config(config, at)
+
+    def load_config(self) -> Optional[Dict[str, Any]]:
+        """Return the persisted global order-scope config — DELEGATE to the store."""
+        return self._store.load_config()
+
     # ------------------------------------------------------------------ rehydration (D-03)
     def rehydrate(self) -> None:
         """Load the open set (open-only) plus the parents of live children, on restart.

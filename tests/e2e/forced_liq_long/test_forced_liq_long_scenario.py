@@ -96,7 +96,8 @@ Price series (``bars.csv`` — daily, flat-OHLC so close == the unambiguous mark
 import pathlib
 from decimal import Decimal
 
-from itrader.config import PortfolioConfig, deep_merge, get_portfolio_preset
+from itrader.config import PortfolioConfig, get_portfolio_preset
+from itrader.outils.dict_merge import recursive_merge
 from itrader.core.enums import Side
 from itrader.core.enums.order import OrderStatus, OrderType, OrderTriggerSource
 from itrader.core.instrument import Instrument
@@ -196,7 +197,7 @@ def _build_liq_system():
         # refines the rest but no longer rebuilds the leaf — so margin must be on
         # in the constructor config to get a SimulatedMarginAccount.
         name="forced_liq_long_pf", exchange="csv", cash=_CASH,
-        portfolio_config=PortfolioConfig.model_validate(deep_merge(
+        portfolio_config=PortfolioConfig.model_validate(recursive_merge(
             get_portfolio_preset("default").model_dump(),
             {"trading_rules": {"enable_margin": True}})))
     strategy.subscribe_portfolio(portfolio_id)

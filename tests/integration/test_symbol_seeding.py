@@ -14,14 +14,14 @@ Indentation: 4 SPACES (``tests/`` convention).
 
 import pytest
 
-from itrader.config import get_exchange_preset
+from itrader.config import ExchangeConfig
 from itrader.trading_system.backtest_trading_system import build_backtest_system
 from itrader.trading_system.system_spec import SystemSpec
 
 pytestmark = pytest.mark.integration
 
 
-_DEFAULT_PRESET = set(get_exchange_preset("default").limits.supported_symbols)
+_DEFAULT_PRESET = set(ExchangeConfig.default().limits.supported_symbols)
 #: The committed golden BTCUSD dataset.
 _GOLDEN_CSV = "data/BTCUSD_1d_ohlcv_2018_2026.csv"
 

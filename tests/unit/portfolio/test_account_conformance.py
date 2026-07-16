@@ -40,7 +40,8 @@ import uuid_utils.compat as uuid_compat
 from itrader import idgen
 from itrader.core.exceptions import StateError
 from itrader.core.ids import OrderId
-from itrader.config import PortfolioConfig, get_portfolio_preset, deep_merge
+from itrader.config import PortfolioConfig, get_portfolio_preset
+from itrader.outils.dict_merge import recursive_merge
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
 from itrader.portfolio_handler.account.venue import VenueAccount
@@ -61,7 +62,7 @@ def _margin_config() -> PortfolioConfig:
     be set in the constructor config — the former post-construction ``update_config``
     toggle no longer rebuilds the leaf.
     """
-    return PortfolioConfig.model_validate(deep_merge(
+    return PortfolioConfig.model_validate(recursive_merge(
         get_portfolio_preset("default").model_dump(),
         {"trading_rules": {"enable_margin": True, "max_leverage": Decimal("10")}},
     ))

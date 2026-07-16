@@ -23,7 +23,7 @@ registering) an OKX plugin pulls no ``ccxt.pro`` / ``OkxConnector`` / ``OkxSetti
 
 Stream target: the OKX stream symbol/timeframe are read from the injected
 ``ctx.config.stream`` INSIDE ``build*`` (IN-01 — ``EngineContext.config`` is the
-process-wide ``SystemConfig`` singleton wired at the composition root; one wiring
+process-wide ``ITraderConfig`` singleton wired at the composition root; one wiring
 source, no inline default-construction). The account is a single default
 ``VenueAccount`` (D-07 — the per-portfolio ``account_id`` fan-out is P11).
 
@@ -81,7 +81,7 @@ class OkxVenuePlugin:
         from itrader.portfolio_handler.account import VenueAccount
         from itrader.venues.bundle import VenueBundle
 
-        # IN-01: read the live stream target from the injected SystemConfig
+        # IN-01: read the live stream target from the injected ITraderConfig
         # (EngineContext.config is the process-wide singleton wired at the composition
         # root) — one wiring source, no inline default-construction.
         stream = ctx.config.stream
@@ -131,7 +131,7 @@ class OkxDataPlugin:
         # D-04: OKX concretion lazy-imported inside the body (never module top).
         from itrader.price_handler.providers.okx_provider import OkxDataProvider
 
-        # IN-01: the injected SystemConfig stream target (one wiring source).
+        # IN-01: the injected ITraderConfig stream target (one wiring source).
         stream = ctx.config.stream
 
         # D-03: SAME memoized connector key as OkxVenuePlugin.build_bundle.

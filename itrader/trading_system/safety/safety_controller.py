@@ -120,6 +120,7 @@ class SafetyController:
         notify_status_change: Optional[
             Callable[[SystemStatus, SystemStatus, Optional[str]], None]
         ] = None,
+        system_store: Optional[Any] = None,
         deferred_maxlen: int = _DEFERRED_PROTECTIVE_REPLAY_MAX,
     ) -> None:
         self.logger = get_itrader_logger().bind(component="SafetyController")
@@ -127,6 +128,12 @@ class SafetyController:
         self._halt_record_store: Optional[Any] = halt_record_store
         self._dispatch_fn: Optional[Callable[[Any], None]] = dispatch_fn
         self._notify_status_change_cb = notify_status_change
+        # D-19 (RTCFG-06): the durable read-model KV sink. On a successful status
+        # transition ``state.status`` is upserted here, and ``state.halt_reason`` on a
+        # HALTED flip — the read-model surface the (future FastAPI) UI reads lock-free,
+        # alongside the ErrorHandler's ``state.last_error``. Optional/None so the
+        # backtest + in-memory-fallback wirings degrade cleanly (no durable sink).
+        self._system_store: Optional[Any] = system_store
         self._deferred_maxlen = deferred_maxlen
 
         # -- Status latch state (byte-moved from the facade's per-instance runtime). --
@@ -483,8 +490,36 @@ class SafetyController:
                 # machine-readable reason so get_status() no longer surfaces a stale one.
                 self._halt_reason = None
 
+        # D-19 (RTCFG-06): persist the read-model ``state.*`` KV at THIS event source —
+        # the winning transition only, OUTSIDE the lock (last-write-wins). ``state.status``
+        # on every transition; ``state.halt_reason`` on a HALTED flip (its own key so the
+        # UI reads the latched reason directly). Best-effort: a durable-write failure must
+        # NEVER abort a status transition (a halt above all), so it is swallowed-and-logged.
+        self._persist_state("state.status", {"status": new_status.value})
+        if new_status == SystemStatus.HALTED and halt_reason is not None:
+            self._persist_state("state.halt_reason", {"halt_reason": halt_reason})
+
         self._notify_status_change(old_status, new_status, error_msg)
         return True
+
+    def _persist_state(self, key: str, value: dict[str, Any]) -> None:
+        """Upsert a read-model ``state.*`` KV row (D-19) — best-effort, never raises.
+
+        A no-op when no durable ``SystemStore`` is injected (backtest / in-memory
+        fallback). A SQL-write failure (e.g. an un-migrated durable config schema) is
+        swallowed-and-logged so a status transition — a halt above all — is never aborted
+        by the read-model write (mirrors the ErrorHandler ``state.last_error`` discipline).
+        The caller-free timestamp is the wall clock at the event source (a low-rate,
+        discrete KV write, not a determinism-sensitive money value).
+        """
+        if self._system_store is None:
+            return
+        try:
+            self._system_store.upsert(key, value, at=datetime.now(UTC))
+        except Exception as exc:  # noqa: BLE001 — read-model write must never abort a transition.
+            self.logger.warning(
+                "Failed to persist read-model %s (swallowed — transition proceeds): %s",
+                key, exc)
 
     def _notify_status_change(
         self,

@@ -334,8 +334,22 @@ class CachedSqlPortfolioStateStorage(PortfolioStateStorage):
         The upsert body of ``save_account_state`` extracted so both the independent-commit
         path and the shared fill-transaction path execute byte-identical SQL scoped to
         ``self._portfolio_id``.
+
+        D-25 clobber-safety (config-preserving carry-forward): the delete-then-insert
+        rewrites the WHOLE row, so it would DROP a persisted ``config_json`` on the very next
+        fill and the portfolio config would silently vanish before restart (RTCFG-03 fail).
+        We SELECT the current ``config_json`` on THIS connection BEFORE the delete and carry
+        it forward into the re-INSERT. The two writers are sequential on the single-writer
+        engine thread and each owns disjoint columns — ``save_config`` → ``config_json``;
+        ``save_account_state`` → the six accumulators, carrying ``config_json`` through
+        unchanged.
         """
         table = self._account_state
+        existing_config = connection.execute(
+            select(table.c.config_json).where(
+                table.c.portfolio_id == self._portfolio_id
+            )
+        ).scalar()
         connection.execute(
             delete(table).where(table.c.portfolio_id == self._portfolio_id)
         )
@@ -350,6 +364,8 @@ class CachedSqlPortfolioStateStorage(PortfolioStateStorage):
                     "peak_equity": peak_equity,
                     "open_positions_count": open_positions_count,
                     "updated_time": updated_time,
+                    # Carry the persisted config forward — never dropped by a fill (D-25).
+                    "config_json": existing_config,
                 }
             ],
         )
@@ -375,6 +391,21 @@ class CachedSqlPortfolioStateStorage(PortfolioStateStorage):
             "open_positions_count": row["open_positions_count"],
             "updated_time": row["updated_time"],
         }
+
+    # -- Runtime config (portfolio scope — config_json, D-25) ----------------
+
+    def save_config(self, config: Dict[str, Any], at: datetime) -> None:
+        """Persist THIS portfolio's config — DELEGATE to the store (owns the config_json write).
+
+        The base SQL storage's UPDATE-first / zero-sentinel-INSERT-if-absent write is the
+        durable owner; a subsequent ``save_account_state`` carries ``config_json`` forward
+        across its delete-then-insert (clobber-safety in ``_upsert_account_state_on``).
+        """
+        self._store.save_config(config, at)
+
+    def load_config(self) -> Optional[Dict[str, Any]]:
+        """Return this portfolio's persisted config — DELEGATE to the store."""
+        return self._store.load_config()
 
     # -- Rehydration (open-only restart boot sequence — D-03) -----------------
 

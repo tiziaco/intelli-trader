@@ -1,20 +1,20 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.8
-milestone_name: — Live System Refactor & Live-Readiness Hardening
-current_phase: 9
-current_phase_name: Runtime-Config Platform
-status: executing
-stopped_at: Phase 08 complete + verified (next-phase pointer corrected 12→9; phase.complete dir-scan quirk)
-last_updated: "2026-07-15T00:00:00.000Z"
-last_activity: 2026-07-15
-last_activity_desc: "Phase 08 (Error Subsystem) complete + verified — 3/3 plans, 4/4 success criteria, CF-1 breaker trips end-to-end"
+milestone_name: Live System Refactor & Live-Readiness Hardening
+current_phase: 10
+current_phase_name: Strategies Registry
+status: planning
+stopped_at: Phase 09 complete (incl. code-review fixes)
+last_updated: "2026-07-16T12:09:02.082Z"
+last_activity: 2026-07-16
+last_activity_desc: "Phase 09 (Runtime-Config Platform ★) complete + verified + review-fixed; next: Phase 10 (Strategies Registry ★)"
 progress:
-  total_phases: 9
-  completed_phases: 8
-  total_plans: 35
-  completed_plans: 35
-  percent: 89
+  total_phases: 10
+  completed_phases: 9
+  total_plans: 39
+  completed_plans: 39
+  percent: 90
 ---
 
 # Project State
@@ -26,22 +26,22 @@ See: .planning/PROJECT.md (Current Milestone: v1.8 — Live System Refactor & Li
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct,
 deterministic, cross-validated numbers (oracle **134 / `46189.87730727451`**; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 shipped a live operating mode (paper-first on OKX) without disturbing that oracle.
-**Current focus:** Phase 08 (Error Subsystem) complete + verified — next: Phase 09 (Runtime-Config Platform ★). v1.8 delivers a
+**Current focus:** Phase 09 (Runtime-Config Platform ★) complete + verified + review-fixed — next: Phase 10 (Strategies Registry ★). v1.8 delivers a
 thin ~200-line facade over focused, venue-parametrized, FastAPI-ready collaborators — **without
 disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI itself is out of scope
 (LR-01). Full scope: core refactor (P1–P8 + P12) + the three ★ feature-adds (P9–P11).
 
 ## Current Position
 
-Phase: 9 — Runtime-Config Platform ★ (next; dependency-ready {P4,P7} — not yet planned)
-Plan: Not started (Phase 08 complete: 3/3 plans merged + verified)
-Status: Phase 08 complete + verified — ready to plan Phase 09
-Last activity: 2026-07-15 — Phase 08 (Error Subsystem) complete: CF-1 aggregate breaker trips end-to-end, WR-06 two-guard intact, oracle byte-exact
+Phase: 10 — Strategies Registry ★ (next; deps {P4,P6} met — not yet planned)
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-07-16 — Completed quick task 260716-mov: move UniverseConfig to its own config/universe.py module
 
-Note: `phase.complete` advanced current_phase to 12 (its next-phase dir-scan skips the not-yet-created P9/P10/P11 ★ dirs);
-corrected to 9 per the roadmap sequence. P9/P10/P11 are all dependency-available now; P12 (core-final) depends on P11.
+Note: `phase.complete` again advanced current_phase to 12 (its next-phase dir-scan skips the not-yet-created P10/P11 ★ dirs);
+corrected to 10 per the roadmap sequence. P10{P4,P6} + P11{P5,P7} are dependency-available now; P12 (core-final) depends on P11.
 
-Progress: [████████░░] 89% (8/9 core phases; the three ★ feature-adds P9–P11 are in scope on top)
+Progress: [██████████] 100% (8/9 core phases; the three ★ feature-adds P9–P11 are in scope on top)
 
 ## Milestone Gate (v1.8 — applies to EVERY phase)
 
@@ -92,6 +92,50 @@ trim boundary P1–P8+P12 core vs P9–P11 ★ is noted, not taken). Research fl
 - v1.8 plans completed: 0
 
 *Updated after each plan completion. Per-milestone velocity is archived in the respective MILESTONE-AUDIT.md.*
+**Per-Plan Metrics:**
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| Phase 01 P01 | 12 | 3 tasks | 3 files |
+| Phase 01 P02 | 12 | 2 tasks | 4 files |
+| Phase 01 P03 | 4m | 1 tasks | 1 files |
+| Phase 01 P04 | 25min | 3 tasks | 15 files |
+| Phase 02 P01 | 3min | 3 tasks | 3 files |
+| Phase 02 P02 | 6min | 3 tasks | 4 files |
+| Phase 02 P03 | 18min | 3 tasks | 10 files |
+| Phase 03 P01 | 11min | 2 tasks | 41 files |
+| Phase 03 P02 | 2min | 1 tasks | 2 files |
+| Phase 04 P01 | 1min | 2 tasks | 4 files |
+| Phase 04 P02 | 6min | 3 tasks | 6 files |
+| Phase 04 P03 | 12min | 3 tasks | 6 files |
+| Phase 04 P04 | 20m | 3 tasks | 16 files |
+| Phase 05 P01 | 29min | 3 tasks | 17 files |
+| Phase 05 P02 | 6m | 3 tasks | 9 files |
+| Phase 05 P03 | 4min | 2 tasks | 4 files |
+| Phase 05 P04 | 5min | 3 tasks | 7 files |
+| Phase 05 P05 | 7min | 3 tasks | 5 files |
+| Phase 05 P06 | 11min | 3 tasks | 6 files |
+| Phase 06 P01 | 4 min | 2 tasks | 2 files |
+| Phase 06 P02 | 12 min | 3 tasks | 3 files |
+| Phase 06 P03 | 6min | 1 tasks | 1 files |
+| Phase 06 P04 | 13min | 2 tasks | 7 files |
+| Phase 06 P05 | 9min | 3 tasks | 3 files |
+| Phase 06 P06 | 50min | 3 tasks | 26 files |
+| Phase 06 P07 | 70min | 3 tasks | 21 files |
+| Phase 06.1 P01 | 22min | 3 tasks | 7 files |
+| Phase 06.1 P02 | 18 | 3 tasks | 1 files |
+| Phase 06.1 P03 | 4 | 3 tasks | 4 files |
+| Phase 06.1 P04 | 6 | 3 tasks | 3 files |
+| Phase 07 P01 | 12 min | 3 tasks | 10 files |
+| Phase 07 P02 | 15 min | 2 tasks | 7 files |
+| Phase 07 P03 | 6min | 2 tasks | 4 files |
+| Phase 07 P04 | 6 min | 2 tasks | 4 files |
+| Phase 07 P05 | 20 min | 1 tasks | 2 files |
+| Phase 07 P06 | 45min | 3 tasks | 15 files |
+| Phase 09 P01 | 25min | 3 tasks | 11 files |
+| Phase 09 P02 | 11min | 3 tasks | 5 files |
+| Phase 09 P03 | 21min | 3 tasks | 14 files |
+| Phase 09 P04 | 30min | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -174,6 +218,14 @@ P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 - [Phase 07]: OrderRiskRole is enum-only in core/enums/order.py; classify() defers to SafetyController (Plan 03) — D-16 — one-source-of-truth risk vocabulary shared by gate + throttle
 - [Phase 07]: ConnectorFatalEvent.reason is a fixed-literal str, never a stringified exception/payload — V7 secret-scrub (T-07-01); enforced by grep-0 in control.py
 - [Phase 07]: PreTradeThrottle computes D-10 notional off OrderEvent.price (limit for LIMIT, decision-mark estimate for MARKET/STOP) — no separate feed injection — The order layer already stamps the mark onto OrderEvent.price, so a feed dependency would add untested surface for no correctness gain
+- [Phase ?]: P9-01: ITraderConfig frozen root replaces SystemConfig as the process config singleton; rng_seed moved to config.rng_seed (frozen base), oracle byte-exact
+- [Phase ?]: P9-01: SystemConfig kept as narrowed legacy aggregator (perf/monitoring+lifecycle stripped) to keep existing config tests green; SystemSettings/UniverseConfig demoted sub-models added
+- [Phase 9]: ConfigRouter: the config structure IS the allowlist (D-11/D-12) — routable keys resolved by live model_fields introspection, so the allowlist can never drift from the model
+- [Phase 9]: system idle/timeout knobs AND universe poll_cadence/remove_policy both route under the single 'system' scope (scopes locked to 4, D-21); owning sub-model resolved by introspection
+- [Phase ?]: P9-03: order-scope config persists to a dedicated order_config table + portfolio-scope config to a nullable config_json column on portfolio_account_state (D-25); each module owns its config, never SystemStore
+- [Phase ?]: P9-03: add_event admits CONFIG_UPDATE as the third default-deny external type with synchronous ingress 400-validation; restart-layering reapplies persisted overrides per-scope from each OWN store, degrade-clean when the (Plan-04) config migration is pending
+- [Phase ?]: P9-04: system_stats append-only table/store (engine-operational counters only, NO entity duplication D-17) + state.status/halt_reason/last_started_at written at their event sources into SystemStore (D-19); read-model is lock-free domain-store + state.* + system_stats reads (RTCFG-06)
+- [Phase ?]: P9-04: migration-owner finalized the phase chain single-head strategy_registry -> module_config (order_config table + portfolio_account_state.config_json column, NO portfolio_config table) -> system_stats; the hardcoded create_all/upgrade-head parity gate extended by hand (A3 dynamic-enumeration assumption was false)
 
 ### Pending Todos
 
@@ -183,6 +235,19 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 **not** folded (kept separate): `livebarfeed-depandas-time-model-datetime`, `mutable-instrument-refactor`,
 `margin-equity-double-counts-notional-wr01` (owner-gated), `unify-backtest-direct-bar-generation`
 (oracle-risky). `pair-strategy-live-reconfiguration` is folded into P10 (STRAT-03).
+
+- **`unify-config-store-save-interface` (deferred, not folded — owner-requested 2026-07-16):** make
+  `ConfigRouter` persist through ONE uniform `store.save_config(...)` seam for all four scopes instead of
+  today's split (`order`/`portfolio` → `save_config(config, at)`; `system`/`venue` → `upsert(...)`). Finding:
+  the four are TWO real shapes, not one — order/portfolio are bound single-record config stores (already
+  `save_config(config, at)`+`load_config()`); `system_store` is a GENERIC namespaced KV store used beyond
+  config (lifecycle/universe keys) and `venue_store` is multi-key (`venue_name`) + carries a non-config
+  `enabled` column. A blanket rename to `save_config` is therefore WRONG (would misrepresent system's KV
+  store + drop venue's key/`enabled`). Two viable paths: (A-light) a `ConfigStore` Protocol
+  (`save_config`/`load_config`) that order+portfolio already satisfy, system/venue left native; (B-full,
+  recommended) a thin per-scope config-adapter so the router always calls `save_config(...)` and delegates
+  to the native `upsert` underneath — B also lifts venue's key/`enabled` handling OUT of `ConfigRouter`,
+  dissolving the router's cross-store feature-envy smell. Real design work, not a rename.
 
 ### Blockers/Concerns
 
@@ -221,23 +286,11 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 | 260713-wr1 | Delete vacuous WR-01 subscription/membership guard in session_initializer.py (unreachable dead code — membership is the sole subscription source since 06-02/D-05); replace with a TODO for the real future-feature guard condition | 2026-07-13 | dc1f5cb8 | (fast — no dir) |
 | 260713-phm | Fix Phase 06 review WR-02 (typed StateError guard above start() try-block so an un-wired LiveTradingSystem fails loudly, not masked as generic ERROR) + IN-02 (LiveRunner.stop() warns when the drain thread outlives the join timeout) | 2026-07-13 | a9f3b5ac | [260713-phm-fix-phase-06-review-findings-wr-02-typed](./quick/260713-phm-fix-phase-06-review-findings-wr-02-typed/) |
 | 260714-v6n | Fix Phase 07 review IN-01: self-guard PreTradeThrottle.allow() with an ORDER-only top-gate (Option B) + remove now-dead None-guard in _exceeds_notional (Option A) — throttle no longer relies on live_runner's call-site type gate for safety | 2026-07-14 | baa125f8 | [260714-v6n-fix-phase-07-review-in-01-make-pretradet](./quick/260714-v6n-fix-phase-07-review-in-01-make-pretradet/) |
-| Phase 06 P01 | 4 min | 2 tasks | 2 files |
-| Phase 06 P02 | 12 min | 3 tasks | 3 files |
-| Phase 06 P03 | 6min | 1 tasks | 1 files |
-| Phase 06 P04 | 13min | 2 tasks | 7 files |
-| Phase 06 P05 | 9min | 3 tasks | 3 files |
-| Phase 06 P06 | 50min | 3 tasks | 26 files |
-| Phase 06 P07 | 70min | 3 tasks | 21 files |
-| Phase 06.1 P01 | 22min | 3 tasks | 7 files |
-| Phase 06.1 P02 | 18 | 3 tasks | 1 files |
-| Phase 06.1 P03 | 4 | 3 tasks | 4 files |
-| Phase 06.1 P04 | 6 | 3 tasks | 3 files |
-| Phase 07 P01 | 12 min | 3 tasks | 10 files |
-| Phase 07-safety-reconciliation-stream-recovery P02 | 15 min | 2 tasks | 7 files |
-| Phase 07-safety-reconciliation-stream-recovery P03 | 6min | 2 tasks | 4 files |
-| Phase 07 P04 | 6 min | 2 tasks | 4 files |
-| Phase 07 P05 | 20 min | 1 tasks | 2 files |
-| Phase 07 P06 | 45min | 3 tasks | 15 files |
+| 260716-k7j | Strip legacy config classes: delete Settings + SystemConfig; move timezone to ITraderConfig frozen base ("Europe/Paris"); re-home log_level/disable_logs via new slim RuntimeSettings under config.logging (ITRADER_* env-parsing preserved); drop the runtime field. Oracle byte-exact (134 / 46189.87730727451), inertness + mypy clean | 2026-07-16 | 6e8e01e9 | [260716-k7j-strip-out-legacy-config-classes-delete-s](./quick/260716-k7j-strip-out-legacy-config-classes-delete-s/) |
+| 260716-law | Config-package cleanup (4 refactors): move deep_merge→outils/dict_merge.py::recursive_merge; exchange presets→ExchangeConfig.default()/.high_fee() classmethods (drop realistic/low_latency + string registry); delete redundant config/models.py barrel; rename RuntimeSettings→LogConfig (runtime.py→config/log.py, field stays config.logging). Oracle byte-exact (134/46189.87730727451), 2307 passed, mypy clean, 7 zero-grep gates | 2026-07-16 | 116ceb05 | [260716-law-config-package-cleanup-move-deep-merge-t](./quick/260716-law-config-package-cleanup-move-deep-merge-t/) |
+| 260716-mov | Move UniverseConfig into its own itrader/config/universe.py (config/ one-domain-per-file convention); system.py keeps only Environment/LogLevel/SystemSettings; barrel re-exports unchanged. Byte-identical behavior; 2307 passed, oracle byte-exact, inertness + mypy clean | 2026-07-16 | d5a9deac | [260716-mov-move-universeconfig-into-its-own-config-](./quick/260716-mov-move-universeconfig-into-its-own-config-/) |
+| 260716-fast | Sync CLAUDE.md "Configuration system" section (+ Import side effects, config Layers, tech-stack/config prose) to ITraderConfig reality — drop SystemConfig/Settings/PerformanceSettings/MonitoringSettings, document frozen base + mutable sub-models + LogConfig + lazy sql, outils.recursive_merge, ExchangeConfig classmethods, config/models.py removal | 2026-07-16 | 03fdf3fd | (fast — no dir) |
+| 260716-cfg | Unify dry-validate-on-a-copy pattern in config_router.py: _dry_validate_setattr→_dry_validate_copy returns the validated candidate copy; system/order scopes share it (order drops its inline model_copy+try/except); portfolio merge-validate untouched. Behavior-preserving; 30 tests pass, mypy clean | 2026-07-16 | 4e40f379 | (fast — no dir) |
 
 ## Deferred Items
 
@@ -256,25 +309,6 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 | Turso/libSQL | `sqlalchemy-libsql` opt-in backend — interface stays Turso-ready | Deferred | v2 (post-beta) |
 | Perf (v1.5) | Single-pass per-bar portfolio valuation (profile-first gated); PERF-09/PERF-10; advisory Nyquist VALIDATION gaps | Deferred | future perf phase |
 | D-multiasset | Multi-currency accounting, trading calendars, corporate actions | Deferred | indefinite (crypto-first) |
-| Phase 01 P01 | 12 | 3 tasks | 3 files |
-| Phase 01 P02 | 12 | 2 tasks | 4 files |
-| Phase 01 P03 | 4m | 1 tasks | 1 files |
-| Phase 01 P04 | 25min | 3 tasks | 15 files |
-| Phase 02 P01 | 3min | 3 tasks | 3 files |
-| Phase 02 P02 | 6min | 3 tasks | 4 files |
-| Phase 02 P03 | 18min | 3 tasks | 10 files |
-| Phase 03 P01 | 11min | 2 tasks | 41 files |
-| Phase 03 P02 | 2min | 1 tasks | 2 files |
-| Phase 04 P01 | 1min | 2 tasks | 4 files |
-| Phase 04 P02 | 6min | 3 tasks | 6 files |
-| Phase 04 P03 | 12min | 3 tasks | 6 files |
-| Phase 04 P04 | 20m | 3 tasks | 16 files |
-| Phase 05 P01 | 29min | 3 tasks | 17 files |
-| Phase 05 P03 | 4min | 2 tasks | 4 files |
-| Phase 05 P02 | 6m | 3 tasks | 9 files |
-| Phase 05 P04 | 5min | 3 tasks | 7 files |
-| Phase 05 P05 | 7min | 3 tasks | 5 files |
-| Phase 05 P06 | 11min | 3 tasks | 6 files |
 
 ## Bookkeeping
 
@@ -286,11 +320,11 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-14T21:40:46.899Z
-Stopped at: Phase 8 context gathered
+Last session: 2026-07-16T11:22:55.409Z
+Stopped at: Completed 09-04-PLAN.md
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
-Resume file: .planning/phases/08-error-subsystem/08-CONTEXT.md
+Resume file: None
 Carried todo: 14 pending todos in `todos/pending/` (10 fold into v1.8 as CF-1..CF-10; `v17-residual-carryforward.md`
 is the index; the substantive open item is `margin-equity-double-counts-notional-wr01`, owner-gated).
 

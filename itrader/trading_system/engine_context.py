@@ -17,7 +17,7 @@ Design invariants (D-05, LR-14 — **consciously amended by D-01**):
   mode-injection seam — ``sql_engine`` already rides here real-in-live / ``None``-in-
   backtest, and ``store`` follows the IDENTICAL idiom real-in-backtest / ``None``-in-live
   (D-02). Field types still only TIGHTEN downstream (``config: Any`` narrows to the
-  concrete ``SystemConfig`` in P9), never widen.
+  concrete ``ITraderConfig`` in P9), never widen.
 * **Field order — required before defaulted.** ``bus`` / ``config`` / ``environment`` /
   ``feed`` (all required) precede ``store`` / ``sql_engine`` (both default ``None``) so
   the frozen dataclass does not raise "non-default argument follows default argument".
@@ -67,9 +67,9 @@ class EngineContext:
 		The shared event transport (``FifoEventBus`` for backtest, byte-exact;
 		``PriorityEventBus`` is a live-only fast-follow — never wired here, D-11).
 	config : Any
-		The process ``SystemConfig`` carried through composition. Loose-typed
+		The process ``ITraderConfig`` carried through composition. Loose-typed
 		``Any`` deliberately (D-05): it is CARRIED but UNREAD on the backtest path
-		until P9 tightens it to the concrete ``SystemConfig``.
+		until P9 tightens it to the concrete ``ITraderConfig``.
 	environment : str
 		The run-mode selector (``"backtest"`` here) the handlers use to pick their
 		own storage backends (CTX-02 handler-owned storage).

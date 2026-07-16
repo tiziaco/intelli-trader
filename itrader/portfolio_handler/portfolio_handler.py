@@ -34,7 +34,8 @@ from itrader.core.portfolio_read_model import PositionView
 from itrader.core.money import to_money, quantize
 from itrader.portfolio_handler.transaction import Transaction
 from itrader.events_handler.events import BarEvent, FillEvent, PortfolioUpdateEvent, PortfolioErrorEvent
-from itrader.config import PortfolioConfig, get_portfolio_preset, deep_merge
+from itrader.config import PortfolioConfig, get_portfolio_preset
+from itrader.outils.dict_merge import recursive_merge
 from itrader.core.exceptions.base import ConfigurationError
 
 import pydantic
@@ -1302,27 +1303,27 @@ class PortfolioHandler:
     # input); the per-portfolio variants were never wired on the backtest path.
     @staticmethod
     def _deep_merge(base: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
-        """Thin delegate to the shared ``config.deep_merge`` helper (WR-04).
+        """Thin delegate to the shared ``recursive_merge`` helper (WR-04).
 
         Kept as a static method so any existing caller keeps working; the
-        recursion now lives in ``itrader/config/merge.py`` (promoted to a single
-        shared helper — do NOT re-derive a fresh merge per handler).
+        recursion now lives in ``itrader/outils/dict_merge.py`` (promoted to a
+        single shared helper — do NOT re-derive a fresh merge per handler).
         """
-        return deep_merge(base, updates)
+        return recursive_merge(base, updates)
 
     def update_config(self, updates: Dict[str, Any]) -> None:
         """Update PortfolioHandler configuration at runtime (D-07/D-08/D-09).
 
-        Canonical contract: deep_merge -> model_validate -> atomic-swap, wrapping
+        Canonical contract: recursive_merge -> model_validate -> atomic-swap, wrapping
         pydantic ``ValidationError`` (which also rejects unknown keys via
         ``extra="forbid"``) into ``ConfigurationError``. Returns ``None`` and
         RAISES on failure (no longer returns ``bool``). After the swap the
         cached ``max_portfolios`` is re-derived (Pitfall 1).
         """
-        # WR-04: deep-merge so a partial nested update (e.g. a single limits
+        # WR-04: recursive-merge so a partial nested update (e.g. a single limits
         # field) preserves the other fields of that submodel instead of
         # replacing the whole submodel via a shallow `{**a, **b}`.
-        merged = deep_merge(self.config_data.model_dump(), updates)
+        merged = recursive_merge(self.config_data.model_dump(), updates)
         try:
             new_config = PortfolioConfig.model_validate(merged)
         except pydantic.ValidationError as e:

@@ -12,7 +12,7 @@ ONLY (Pitfall 3 / determinism): it stamps ONLY the control-plane
 ``UniversePollEvent``, and NEVER a bar/fill business ``time`` (business ``time``
 stays venue-sourced). ``stop_event.wait(cadence)`` doubles as the interruptible
 sleep so ``stop()`` unblocks it immediately. The cadence is INJECTED (read from
-``monitoring.universe_poll_cadence_s`` by the caller), never a module literal.
+``config.universe.poll_cadence_s`` by the caller), never a module literal.
 
 Live-only and import-inert: imports only stdlib ``threading``/``datetime`` + the
 events package + the ``EventBus`` seam (no ccxt.pro / no SQL on the backtest

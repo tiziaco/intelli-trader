@@ -239,11 +239,11 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 
 ### ★ Runtime-Config Platform (P9)
 
-- [ ] **RTCFG-01**: A `RuntimeConfig` overlay (`defaults ← YAML ← env ← persisted runtime overrides`) is
+- [x] **RTCFG-01**: A `RuntimeConfig` overlay (`defaults ← YAML ← env ← persisted runtime overrides`) is
   built by the live factory and injected as `EngineContext.config` — engine-thread-write, snapshot-read;
   handlers read it so they see runtime changes (LR-04/§6c).
 
-- [ ] **RTCFG-02**: A scoped `ConfigUpdateEvent(scope, key, value)` (CONTROL plane) is validated against an
+- [x] **RTCFG-02**: A scoped `ConfigUpdateEvent(scope, key, value)` (CONTROL plane) is validated against an
   **allowlist** of runtime-mutable keys + type/range check, routed on the engine thread to the owning store
   (`system`→SystemStore, `portfolio:{id}`→Portfolio+portfolio store, `venue:{name}`→VenueStore,
   `order`→SystemStore), applied to the overlay + relevant `handler.update_config(...)`, and persisted
@@ -251,17 +251,17 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   risk limits + sizing defaults; system poll_cadence + universe_remove_policy + idle/timeout knobs; strategy
   enable/disable + params (STRAT-03).
 
-- [ ] **RTCFG-03**: Persisted overrides survive restart — `build_live_system` layers them over defaults
+- [x] **RTCFG-03**: Persisted overrides survive restart — `build_live_system` layers them over defaults
   on boot (§6e).
 
-- [ ] **RTCFG-04**: Immutable-at-runtime keys (`rng_seed`, money precision, SQL credentials, venue API
+- [x] **RTCFG-04**: Immutable-at-runtime keys (`rng_seed`, money precision, SQL credentials, venue API
   credentials, `environment`, IDs) are rejected by the allowlist (§6e / owner decision).
 
-- [ ] **RTCFG-05**: Fee/slippage config keys are runtime-mutable **only for simulated venues**; a
+- [x] **RTCFG-05**: Fee/slippage config keys are runtime-mutable **only for simulated venues**; a
   `ConfigUpdateEvent` targeting a *live* venue's fee/slippage is rejected (venue-kind-aware validation —
   real-venue fees/slippage come from actual venue fills, not engine config) (owner decision 2026-07-09).
 
-- [ ] **RTCFG-06**: The `system_store` `stats.snapshot` + `state.*` (status / halt_reason / last_error /
+- [x] **RTCFG-06**: The `system_store` `stats.snapshot` + `state.*` (status / halt_reason / last_error /
   last_started_at) double as the UI read-model — readable without touching hot-path locks (concerns 22/23,
   §6d). *(Ships regardless of the mutation-path scope.)*
 
@@ -409,12 +409,12 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | ERR-02 | P8 | Complete |
 | ERR-03 | P8 | Complete |
 | ERR-04 | P8 | Complete |
-| RTCFG-01 | P9 | Pending |
-| RTCFG-02 | P9 | Pending |
-| RTCFG-03 | P9 | Pending |
-| RTCFG-04 | P9 | Pending |
-| RTCFG-05 | P9 | Pending |
-| RTCFG-06 | P9 | Pending |
+| RTCFG-01 | P9 | Complete |
+| RTCFG-02 | P9 | Complete |
+| RTCFG-03 | P9 | Complete |
+| RTCFG-04 | P9 | Complete |
+| RTCFG-05 | P9 | Complete |
+| RTCFG-06 | P9 | Complete |
 | STRAT-01 | P10 | Pending |
 | STRAT-02 | P10 | Pending |
 | STRAT-03 | P10 | Pending |

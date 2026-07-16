@@ -24,19 +24,31 @@ from alembic.script import ScriptDirectory
 
 from itrader.config.sql import SqlSettings
 from itrader.order_handler.storage.models import build_order_tables
+from itrader.order_handler.storage.sql_storage import build_order_config_table
 from itrader.portfolio_handler.storage.models import build_portfolio_tables
 from itrader.storage import SqlEngine
 from itrader.storage.engine import NAMING_CONVENTION
 from itrader.storage.halt_record_store import build_halt_records_table
 from itrader.storage.strategy_registry_store import build_strategy_registry_tables
+from itrader.storage.system_stats_store import build_system_stats_table
 from itrader.storage.system_store import build_system_store_table
 from itrader.storage.venue_store import build_venue_store_table
 from itrader.strategy_handler.storage.models import build_signal_tables
 
-# The four tables Plan 04-03's 3-revision chain adds on top of the operational baseline —
-# the SQL-02 gate asserts they exist after ``upgrade head`` and that their columns match
-# the registrar-built (``create_all``) schema.
-_NEW_TABLES = ("system_store", "venue_store", "strategy_registry", "strategy_subscriptions")
+# The NEW tables the migration chain adds on top of the operational baseline — the SQL-02 /
+# RTCFG-06 gate asserts they exist after ``upgrade head`` and that their columns match the
+# registrar-built (``create_all``) schema. Plan 04-03 added the first four; Phase 9's
+# migration-owner plan (09-04) chains ``module_config`` (creates ``order_config``) then
+# ``system_stats`` on top (D-25/D-18). The ``portfolio_account_state.config_json`` column is
+# NOT a new table — it is an ADD COLUMN checked separately below.
+_NEW_TABLES = (
+    "system_store",
+    "venue_store",
+    "strategy_registry",
+    "strategy_subscriptions",
+    "order_config",
+    "system_stats",
+)
 
 # Repo-root-anchored paths so the Alembic Config is cwd-INDEPENDENT: Alembic resolves a
 # RELATIVE ``script_location`` against the process cwd (not the ini location), so the test
@@ -170,25 +182,27 @@ def test_alembic_chain_applies_operational_baseline_postgres(engine) -> None:
 
 
 def test_migration_chain_is_single_head() -> None:
-    """SQL-02: the relocated chain has exactly ONE head — ``strategy_registry``.
+    """SQL-02/RTCFG-06: the relocated chain has exactly ONE head — ``system_stats``.
 
     A branched/forked chain (two heads) would make ``upgrade head`` ambiguous and let the
     deploy schema drift. The 04-03 revisions chain linearly off ``d10_halt_records``
-    (``system_store`` → ``venue_config`` → ``strategy_registry``), so the single head is the
-    last link. ``get_heads()`` returns a list; a tuple compare pins the exact singleton.
+    (``system_store`` → ``venue_config`` → ``strategy_registry``); Phase 9's migration-owner
+    plan chains ``module_config`` → ``system_stats`` on top, so the single head is the last
+    link. ``get_heads()`` returns a list; a tuple compare pins the exact singleton.
     """
     url = "sqlite+pysqlite:///:memory:"  # URL is unused for a script-only head read
     heads = ScriptDirectory.from_config(_alembic_config(url)).get_heads()
-    assert tuple(heads) == ("strategy_registry",)
+    assert tuple(heads) == ("system_stats",)
 
 
 def test_full_chain_upgrade_creates_new_stores_sqlite(tmp_path: pathlib.Path) -> None:
-    """SQL-02: ``upgrade head`` on a clean SQLite DB creates the 4 new store tables.
+    """SQL-02/RTCFG-06: ``upgrade head`` on a clean SQLite DB creates every new store table.
 
     A file-backed SQLite DB (not ``:memory:``) so the schema survives after the
     Alembic-internal engine is disposed and can be inspected on a fresh connection. After
-    the full chain the 4 new tables are present and ``alembic_version`` holds exactly ONE
-    row (stamped at the single head ``strategy_registry``).
+    the full chain every new table (incl. Phase 9's ``order_config`` + ``system_stats``) is
+    present, the ``portfolio_account_state.config_json`` ADD COLUMN is applied, and
+    ``alembic_version`` holds exactly ONE row (stamped at the single head ``system_stats``).
     """
     db_path = tmp_path / "full_chain.db"
     url = f"sqlite+pysqlite:///{db_path}"
@@ -197,13 +211,16 @@ def test_full_chain_upgrade_creates_new_stores_sqlite(tmp_path: pathlib.Path) ->
     engine = create_engine(url)
     try:
         names = set(inspect(engine).get_table_names())
-        assert set(_NEW_TABLES) <= names  # the 3-revision chain built all 4 new tables
+        assert set(_NEW_TABLES) <= names  # the chain built every new table
+        # D-25: the portfolio-scope config carrier rides the EXISTING account-state table.
+        pas_cols = {c["name"] for c in inspect(engine).get_columns("portfolio_account_state")}
+        assert "config_json" in pas_cols
         with engine.connect() as conn:
             applied = conn.execute(
                 text("SELECT version_num FROM alembic_version")
             ).fetchall()
         assert len(applied) == 1  # single head — one stamped revision row ...
-        assert applied[0][0] == "strategy_registry"  # ... exactly the new single head
+        assert applied[0][0] == "system_stats"  # ... exactly the new single head
     finally:
         engine.dispose()
 
@@ -225,12 +242,21 @@ def test_create_all_vs_migration_parity(tmp_path: pathlib.Path) -> None:
     a_url = f"sqlite+pysqlite:///{a_path}"
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
     build_order_tables(metadata)
+    # build_portfolio_tables already carries the D-25 ``config_json`` column on
+    # ``portfolio_account_state`` (Plan 03's extended registrar), so engine A's account-state
+    # table matches the ``module_config`` ADD COLUMN with NO separate portfolio registrar.
     build_portfolio_tables(metadata)
     build_signal_tables(metadata)
     build_halt_records_table(metadata)
     build_system_store_table(metadata)
     build_venue_store_table(metadata)
     build_strategy_registry_tables(metadata)
+    # Phase 9 (09-04): the two NEW P9 registrars — ``order_config`` (module_config migration)
+    # + ``system_stats`` (system_stats migration). Their inclusion here makes the
+    # ``tables_a == tables_b`` set-equality AND the per-``_NEW_TABLES`` column loop cover
+    # both new tables (registrar == migration).
+    build_order_config_table(metadata)
+    build_system_stats_table(metadata)
     engine_a = create_engine(a_url)
 
     # Engine B — migration-built schema via upgrade head.
@@ -252,6 +278,18 @@ def test_create_all_vs_migration_parity(tmp_path: pathlib.Path) -> None:
             cols_a = {c["name"] for c in inspector_a.get_columns(table)}
             cols_b = {c["name"] for c in inspector_b.get_columns(table)}
             assert cols_a == cols_b, f"column drift on {table}: {cols_a} != {cols_b}"
+
+        # D-25 ADD COLUMN parity: ``config_json`` is added to the EXISTING
+        # ``portfolio_account_state`` (NOT a new table) — create_all built it from the
+        # extended registrar; ``upgrade head`` built it via the ``module_config``
+        # ``op.add_column``. Assert the column is present on BOTH engines so parity accounts
+        # for the column-add, not just the new tables.
+        pas_cols_a = {c["name"] for c in inspector_a.get_columns("portfolio_account_state")}
+        pas_cols_b = {c["name"] for c in inspector_b.get_columns("portfolio_account_state")}
+        assert "config_json" in pas_cols_a
+        assert "config_json" in pas_cols_b
+        assert pas_cols_a == pas_cols_b, (
+            f"portfolio_account_state column drift: {pas_cols_a} != {pas_cols_b}")
     finally:
         engine_a.dispose()
         engine_b.dispose()

@@ -12,6 +12,7 @@ machinery — settlements are validate-first atomic, no in-flight context.
 """
 
 from collections import deque
+from datetime import datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
@@ -52,6 +53,8 @@ class InMemoryPortfolioStateStorage(PortfolioStateStorage):
         # The maxlen IS the retention trim now (the per-bar slice-copy trim in
         # MetricsManager.record_snapshot is removed).
         self._snapshots: deque[Any] = deque(maxlen=max_snapshots)
+        # D-25: this portfolio's runtime-config blob (trivial dict impl; backtest-dark).
+        self._config: Optional[Dict[str, Any]] = None
 
     # -- Positions -----------------------------------------------------------
 
@@ -150,3 +153,13 @@ class InMemoryPortfolioStateStorage(PortfolioStateStorage):
         # D-06: last-only accessor — the metrics-manager per-tick read needs only
         # the most-recent snapshot, never the whole copied list.
         return self._snapshots[-1] if self._snapshots else None
+
+    # -- Runtime config (portfolio scope — bound-portfolio, D-25) ------------
+
+    def save_config(self, config: Dict[str, Any], at: datetime) -> None:
+        """Store this portfolio's config (trivial dict; ``at`` unused in-memory)."""
+        self._config = config
+
+    def load_config(self) -> Optional[Dict[str, Any]]:
+        """Return this portfolio's stored config, or ``None`` if never saved."""
+        return self._config

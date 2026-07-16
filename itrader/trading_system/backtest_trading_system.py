@@ -30,7 +30,7 @@ from typing import Any, Callable, Optional
 import pandas as pd
 
 from itrader import config, idgen
-from itrader.config import ExchangeConfig, OrderConfig, get_exchange_preset
+from itrader.config import ExchangeConfig, OrderConfig
 from itrader.core.exceptions import ConfigurationError
 from itrader.events_handler.bus import FifoEventBus
 from itrader.outils.time_parser import to_timedelta
@@ -59,7 +59,7 @@ from itrader.logger import get_itrader_logger
 #: The default preset exchange symbols (the *USDT set) the complete supported-set
 #: union starts from (D-13/Trap 1). BTCUSD (the golden ticker) is always unioned.
 _DEFAULT_PRESET_SYMBOLS: frozenset[str] = frozenset(
-	get_exchange_preset('default').limits.supported_symbols)
+	ExchangeConfig.default().limits.supported_symbols)
 
 
 def _seed_supported_symbols(
@@ -129,7 +129,7 @@ class BacktestTradingSystem(object):
 			# {BTCUSD}, byte-identical to the old ExecutionHandler no-config fallback.
 			tickers = {str(t).upper() for t in (csv_paths or {}).keys()}
 			exchange_config = _seed_supported_symbols(
-				get_exchange_preset('default'), tickers)
+				ExchangeConfig.default(), tickers)
 			# 02-03 (D-06/Pitfall 1): the oracle runs through THIS spec-LESS legacy
 			# arm, so it is folded to the two-arg compose seam too. Synthesize a
 			# minimal frozen SystemSpec — ticker/starting_cash are PLACEHOLDERS
@@ -400,7 +400,7 @@ class BacktestTradingSystem(object):
 				start_date=self.start_date,
 				end_date=self.end_date,
 				starting_cash=starting_cash_total,
-				rng_seed=config.performance.rng_seed)
+				rng_seed=config.rng_seed)
 
 			record = RunRecord(
 				run_id=run_id,
@@ -458,7 +458,7 @@ def build_backtest_system(spec: SystemSpec) -> BacktestTradingSystem:
 	#    ``dataclasses.replace`` — compose reads ``spec.exchange`` (02-03 A1). The
 	#    handlers now OWN their storage backends (from environment='backtest'), so
 	#    the factory no longer selects order/signal storage concretes here (02-02).
-	exchange_config = spec.exchange if spec.exchange is not None else get_exchange_preset('default')
+	exchange_config = spec.exchange if spec.exchange is not None else ExchangeConfig.default()
 	tickers = {str(t) for t in spec.data.keys()}
 	exchange_config = _seed_supported_symbols(exchange_config, tickers)
 	spec = dataclasses.replace(spec, exchange=exchange_config)

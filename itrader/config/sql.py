@@ -3,8 +3,8 @@
 ONE self-contained ``BaseSettings`` (``env_prefix="ITRADER_DATABASE_"``) that owns the SQL
 connection surface end-to-end: the driver switch, the connection params, the conditional
 Postgres validation, and the engine-URL builder. There is deliberately NO separate
-``DatabaseSettings`` and NO DB fields on ``Settings`` — a single cohesive class is the whole
-DB config (260629-l0q — supersedes 260629-jh2, and transitively IN-02).
+``DatabaseSettings`` and no DB fields anywhere else in the config surface — a single cohesive
+class is the whole DB config (260629-l0q — supersedes 260629-jh2, and transitively IN-02).
 
 Connection model: on the Postgres arm the URL is PRIMARILY assembled from the component-level
 ``ITRADER_DATABASE_*`` env vars (host/port/user/name/password, default port ``5544`` — NOT
@@ -145,7 +145,7 @@ class SqlSettings(BaseSettings):
         Path(self.database).parent.mkdir(parents=True, exist_ok=True)
 
     def engine_url(self) -> str:
-        """Build the SQLAlchemy engine URL for the selected driver (no Settings arg).
+        """Build the SQLAlchemy engine URL for the selected driver (self-contained).
 
         Guard-clause / early-exit (no cascading/nested if). Reads ``self.*`` only.
 

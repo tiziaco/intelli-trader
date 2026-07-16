@@ -1,5 +1,6 @@
 import uuid
 from abc import ABC, abstractmethod
+from datetime import datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
 
@@ -384,6 +385,37 @@ class PortfolioStateStorage(ABC):
         -------
         Optional[Any]
             The most-recent snapshot, or ``None`` if no snapshot is recorded.
+        """
+        pass
+
+    # -- Runtime config (portfolio scope — bound-portfolio_id, D-21/D-25) -----
+    # The ABC deliberately has NO portfolio_id parameter (Pitfall 1) — the SQL
+    # backend binds it and scopes the config_json read/write to that row; the
+    # in-memory backend is one-instance-per-Portfolio.
+
+    @abstractmethod
+    def save_config(self, config: Dict[str, Any], at: datetime) -> None:
+        """Persist THIS portfolio's config (D-25 — each portfolio owns its config).
+
+        The SQL backend rides a nullable ``config_json`` column on the bound portfolio's
+        ``portfolio_account_state`` row (NO new table); the in-memory backend a plain dict;
+        the cached wrapper delegates. Config is NEVER centralized into ``SystemStore``.
+
+        Parameters
+        ----------
+        config : Dict[str, Any]
+            The portfolio-scope config blob (JSON-serializable; Decimal-safe at the money edge).
+        at : datetime
+            The business ``time`` stamped as ``updated_time`` (clock-free, caller-supplied).
+        """
+        pass
+
+    @abstractmethod
+    def load_config(self) -> Optional[Dict[str, Any]]:
+        """Return this portfolio's persisted config, or ``None`` when none saved.
+
+        Read on restart layering so a persisted portfolio override re-applies on boot from
+        the Portfolio's OWN bound store (NOT SystemStore — D-21/D-25).
         """
         pass
 	

@@ -1,10 +1,14 @@
 """Exchange domain configuration (Pydantic v2, M2-06 / D-01..D-03).
 
 Replaces the deleted hand-rolled ``config/exchange/`` package. Field names, the
-nested-model shape, the ``to_kwargs`` / ``to_exchange_kwargs`` helpers, and the
-``get_exchange_preset`` factory (4 presets: default / realistic / high_fee /
-low_latency, behavior-preserving against the deleted ``presets.py``) are preserved so
-``SimulatedExchange`` keeps its attribute access unchanged.
+nested-model shape, and the ``to_kwargs`` / ``to_exchange_kwargs`` helpers are
+preserved so ``SimulatedExchange`` keeps its attribute access unchanged.
+
+The former preset-registry dict + lookup/list helpers (4 presets) are folded
+into named ``ExchangeConfig`` classmethods. Only the two referenced presets
+survive — ``ExchangeConfig.default()`` (zero fee / no slippage — ORACLE-CRITICAL;
+the byte-exact backtest seed) and ``ExchangeConfig.high_fee()``; the unreferenced
+``realistic`` / ``low_latency`` presets were dropped.
 """
 
 from decimal import Decimal
@@ -174,168 +178,72 @@ class ExchangeConfig(BaseModel):
 
     @classmethod
     def default(cls) -> "ExchangeConfig":
-        """The default simulated-exchange preset (zero fee, no slippage)."""
-        return get_exchange_preset("default")
+        """The default simulated-exchange preset: zero fee, no slippage, no failures.
 
-
-def _default_preset() -> ExchangeConfig:
-    """Default exchange config: zero fee, no slippage, no failures."""
-    return ExchangeConfig(
-        exchange_name="SimulatedExchange",
-        exchange_type=ExchangeVenue.SIMULATED,
-        fee_model=FeeModelConfig(model_type=FeeModelType.ZERO, fee_rate=Decimal("0.0")),
-        slippage_model=SlippageModelConfig(
-            model_type=SlippageModelType.NONE,
-            base_slippage_pct=Decimal("0.0"),
-            size_impact_factor=Decimal("0.0"),
-            max_slippage_pct=Decimal("0.0"),
-        ),
-        limits=ExchangeLimits(
-            supported_symbols={"BTCUSDT", "ETHUSDT", "ADAUSDT", "DOTUSDT", "SOLUSDT"},
-            min_order_size=Decimal("0.001"),
-            max_order_size=Decimal("1000000.0"),
-            max_price=Decimal("1000000.0"),
-        ),
-        failure_simulation=FailureSimulation(
-            simulate_failures=False,
-            failure_rate=Decimal("0.0"),
-            enabled_scenarios=["network_timeout", "exchange_maintenance"],
-        ),
-        connection=ConnectionSettings(
-            auto_connect=True,
-            connection_timeout=Decimal("30.0"),
-            retry_attempts=3,
-            retry_delay=Decimal("1.0"),
-        ),
-    )
-
-
-def _realistic_preset() -> ExchangeConfig:
-    """Realistic exchange config with fees and slippage."""
-    return ExchangeConfig(
-        exchange_name="RealisticSimulatedExchange",
-        exchange_type=ExchangeVenue.SIMULATED,
-        fee_model=FeeModelConfig(
-            model_type=FeeModelType.PERCENT, fee_rate=Decimal("0.001")
-        ),
-        slippage_model=SlippageModelConfig(
-            model_type=SlippageModelType.LINEAR,
-            base_slippage_pct=Decimal("0.01"),
-            size_impact_factor=Decimal("0.00001"),
-            max_slippage_pct=Decimal("0.1"),
-        ),
-        limits=ExchangeLimits(
-            supported_symbols={"BTCUSDT", "ETHUSDT", "ADAUSDT", "DOTUSDT", "SOLUSDT"},
-            min_order_size=Decimal("0.001"),
-            max_order_size=Decimal("1000000.0"),
-            max_price=Decimal("1000000.0"),
-        ),
-        failure_simulation=FailureSimulation(
-            simulate_failures=True,
-            failure_rate=Decimal("0.01"),
-            enabled_scenarios=["network_timeout", "exchange_maintenance", "rate_limit"],
-        ),
-        connection=ConnectionSettings(
-            auto_connect=True,
-            connection_timeout=Decimal("30.0"),
-            retry_attempts=3,
-            retry_delay=Decimal("1.0"),
-        ),
-    )
-
-
-def _high_fee_preset() -> ExchangeConfig:
-    """High-fee exchange config."""
-    return ExchangeConfig(
-        exchange_name="HighFeeSimulatedExchange",
-        exchange_type=ExchangeVenue.SIMULATED,
-        fee_model=FeeModelConfig(
-            model_type=FeeModelType.MAKER_TAKER,
-            maker_rate=Decimal("0.008"),
-            taker_rate=Decimal("0.010"),
-        ),
-        slippage_model=SlippageModelConfig(
-            model_type=SlippageModelType.FIXED,
-            slippage_pct=Decimal("0.02"),
-            random_variation=True,
-        ),
-        limits=ExchangeLimits(
-            supported_symbols={"BTCUSDT", "ETHUSDT", "ADAUSDT"},
-            min_order_size=Decimal("0.01"),
-            max_order_size=Decimal("100000.0"),
-            max_price=Decimal("1000000.0"),
-        ),
-        failure_simulation=FailureSimulation(
-            simulate_failures=False,
-            failure_rate=Decimal("0.0"),
-            enabled_scenarios=[],
-        ),
-        connection=ConnectionSettings(
-            auto_connect=True,
-            connection_timeout=Decimal("30.0"),
-            retry_attempts=3,
-            retry_delay=Decimal("1.0"),
-        ),
-    )
-
-
-def _low_latency_preset() -> ExchangeConfig:
-    """Low-latency exchange config."""
-    return ExchangeConfig(
-        exchange_name="LowLatencySimulatedExchange",
-        exchange_type=ExchangeVenue.SIMULATED,
-        fee_model=FeeModelConfig(
-            model_type=FeeModelType.PERCENT, fee_rate=Decimal("0.0005")
-        ),
-        slippage_model=SlippageModelConfig(
-            model_type=SlippageModelType.NONE,
-            base_slippage_pct=Decimal("0.0"),
-            size_impact_factor=Decimal("0.0"),
-            max_slippage_pct=Decimal("0.0"),
-        ),
-        limits=ExchangeLimits(
-            supported_symbols={"BTCUSDT", "ETHUSDT", "ADAUSDT", "DOTUSDT", "SOLUSDT"},
-            min_order_size=Decimal("0.001"),
-            max_order_size=Decimal("1000000.0"),
-            max_price=Decimal("1000000.0"),
-        ),
-        failure_simulation=FailureSimulation(
-            simulate_failures=False,
-            failure_rate=Decimal("0.0"),
-            enabled_scenarios=[],
-        ),
-        connection=ConnectionSettings(
-            auto_connect=True,
-            connection_timeout=Decimal("10.0"),
-            retry_attempts=1,
-            retry_delay=Decimal("0.5"),
-        ),
-    )
-
-
-_EXCHANGE_PRESETS = {
-    "default": _default_preset,
-    "realistic": _realistic_preset,
-    "high_fee": _high_fee_preset,
-    "low_latency": _low_latency_preset,
-}
-
-
-def get_exchange_preset(preset_name: str) -> ExchangeConfig:
-    """Get a predefined exchange configuration preset (behavior-preserving).
-
-    Replaces the deleted ``config/exchange/presets.py::get_exchange_preset``. Unknown
-    names raise ``ValueError`` (matching the prior contract).
-    """
-    factory = _EXCHANGE_PRESETS.get(preset_name)
-    if factory is None:
-        raise ValueError(
-            f"Unknown exchange preset: {preset_name}. "
-            f"Available: {list(_EXCHANGE_PRESETS)}"
+        ORACLE-CRITICAL — this constructs the byte-identical config the deleted
+        ``_default_preset()`` produced (the SimulatedExchange default seed). Do NOT
+        "clean up" any of these literal values.
+        """
+        return cls(
+            exchange_name="SimulatedExchange",
+            exchange_type=ExchangeVenue.SIMULATED,
+            fee_model=FeeModelConfig(model_type=FeeModelType.ZERO, fee_rate=Decimal("0.0")),
+            slippage_model=SlippageModelConfig(
+                model_type=SlippageModelType.NONE,
+                base_slippage_pct=Decimal("0.0"),
+                size_impact_factor=Decimal("0.0"),
+                max_slippage_pct=Decimal("0.0"),
+            ),
+            limits=ExchangeLimits(
+                supported_symbols={"BTCUSDT", "ETHUSDT", "ADAUSDT", "DOTUSDT", "SOLUSDT"},
+                min_order_size=Decimal("0.001"),
+                max_order_size=Decimal("1000000.0"),
+                max_price=Decimal("1000000.0"),
+            ),
+            failure_simulation=FailureSimulation(
+                simulate_failures=False,
+                failure_rate=Decimal("0.0"),
+                enabled_scenarios=["network_timeout", "exchange_maintenance"],
+            ),
+            connection=ConnectionSettings(
+                auto_connect=True,
+                connection_timeout=Decimal("30.0"),
+                retry_attempts=3,
+                retry_delay=Decimal("1.0"),
+            ),
         )
-    return factory()
 
-
-def list_available_exchange_presets() -> List[str]:
-    """List all available exchange configuration presets."""
-    return ["default", "realistic", "high_fee", "low_latency"]
+    @classmethod
+    def high_fee(cls) -> "ExchangeConfig":
+        """High-fee simulated-exchange preset (maker/taker fees + fixed slippage)."""
+        return cls(
+            exchange_name="HighFeeSimulatedExchange",
+            exchange_type=ExchangeVenue.SIMULATED,
+            fee_model=FeeModelConfig(
+                model_type=FeeModelType.MAKER_TAKER,
+                maker_rate=Decimal("0.008"),
+                taker_rate=Decimal("0.010"),
+            ),
+            slippage_model=SlippageModelConfig(
+                model_type=SlippageModelType.FIXED,
+                slippage_pct=Decimal("0.02"),
+                random_variation=True,
+            ),
+            limits=ExchangeLimits(
+                supported_symbols={"BTCUSDT", "ETHUSDT", "ADAUSDT"},
+                min_order_size=Decimal("0.01"),
+                max_order_size=Decimal("100000.0"),
+                max_price=Decimal("1000000.0"),
+            ),
+            failure_simulation=FailureSimulation(
+                simulate_failures=False,
+                failure_rate=Decimal("0.0"),
+                enabled_scenarios=[],
+            ),
+            connection=ConnectionSettings(
+                auto_connect=True,
+                connection_timeout=Decimal("30.0"),
+                retry_attempts=3,
+                retry_delay=Decimal("1.0"),
+            ),
+        )

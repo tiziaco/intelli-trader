@@ -15,7 +15,8 @@ from decimal import Decimal
 import pytest
 import uuid_utils.compat as uuid_compat
 
-from itrader.config import PortfolioConfig, get_portfolio_preset, deep_merge
+from itrader.config import PortfolioConfig, get_portfolio_preset
+from itrader.outils.dict_merge import recursive_merge
 from itrader.core.exceptions import PortfolioError
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.position import Position
@@ -28,7 +29,7 @@ _TIME = datetime(2024, 1, 1)
 
 def _at_limit_portfolio() -> Portfolio:
     """A portfolio at ``max_positions=1`` with transaction validation enabled."""
-    config = PortfolioConfig.model_validate(deep_merge(
+    config = PortfolioConfig.model_validate(recursive_merge(
         get_portfolio_preset("default").model_dump(),
         {"limits": {"max_positions": 1}, "validation": {"validate_transactions": True}},
     ))

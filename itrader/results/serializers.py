@@ -4,8 +4,9 @@ Turns post-run engine state into the typed inputs the store persists:
 
 * ``curate_run_settings`` — the curated ``runs.settings`` envelope (D-11): a
   hand-picked, flat, JSON-safe dict of the result-relevant run knobs. It is NOT a
-  ``model_dump`` of ``SystemConfig`` and it NEVER reads ``Settings.database_url`` or
-  any ``SecretStr`` (credential-leak guard, T-02-03).
+  ``model_dump`` of ``ITraderConfig`` and it NEVER reads any DB URL or
+  ``SecretStr`` (credential-leak guard, T-02-03). The runtime env layer no longer
+  carries DB fields — the DB surface lives wholly on ``SqlSettings``.
 * ``curate_portfolio_params`` — the per-strategy ``run_portfolios.params`` envelope
   (D-06/D-11): reads ``strategy.to_dict()`` (the existing JSON-safe introspection
   seam) and keeps only the result-relevant knobs.
@@ -120,13 +121,13 @@ def curate_run_settings(
     Hand-picks a flat, JSON-safe dict of the result-relevant run knobs — run window,
     ``rng_seed``, the fee/slippage model ``{"type","params"}`` envelopes,
     ``market_execution``, the exchange limits, and the failure-sim config. This is a
-    CURATED serializer, NOT a ``model_dump``: it MUST NOT read ``Settings.database_url``
+    CURATED serializer, NOT a ``model_dump``: it MUST NOT read any DB URL
     or any ``SecretStr`` (credential-leak guard, T-02-03).
     """
     # Hand-picked, flat envelope — NOT a ``model_dump`` (D-11). Every value is narrowed
     # to a JSON-safe scalar at this serialization edge. The fee/slippage models are read
     # off the LIVE exchange at persist time (late values), then enveloped as
-    # ``{"type","params"}``. No ``Settings``/``database_url``/``SecretStr`` is ever read.
+    # ``{"type","params"}``. No DB URL / ``SecretStr`` is ever read.
     return {
         "tickers": list(tickers),
         "timeframe": timeframe,

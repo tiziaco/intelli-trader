@@ -48,7 +48,7 @@ from sqlalchemy import (
     Table,
 )
 
-from itrader.storage import Uuid, UtcIsoText
+from itrader.storage import Uuid, UtcIsoText, json_variant
 
 
 def build_portfolio_tables(metadata: MetaData) -> dict[str, Table]:
@@ -217,6 +217,13 @@ def build_portfolio_tables(metadata: MetaData) -> dict[str, Table]:
             Column("peak_equity", Numeric, nullable=False),
             Column("open_positions_count", Integer, nullable=False),
             Column("updated_time", UtcIsoText, nullable=False),
+            # D-25 — the portfolio-scope runtime-config carrier rides THIS account-state
+            # row (NO new portfolio_config table). Nullable so an account-state row can
+            # exist with no config yet, AND a config row can exist before any account-state
+            # write (the save_config UPDATE-first / zero-sentinel-INSERT-if-absent arm).
+            # A JSONB blob mirroring VenueStore.config_json. The ALTER ... ADD config_json
+            # migration lands in Plan 04 (the migration-owner).
+            Column("config_json", json_variant(), nullable=True),
         )
 
     return tables

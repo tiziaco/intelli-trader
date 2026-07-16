@@ -53,7 +53,7 @@ class OrderConfig(BaseModel):
     T-04-01) rather than silently absorbed.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     market_execution: MarketExecution = MarketExecution.IMMEDIATE
 
