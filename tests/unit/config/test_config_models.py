@@ -18,7 +18,7 @@ during the 03-08 type-split — 03-08 must reconcile it there without duplicatin
 
 from decimal import Decimal
 
-from itrader.config.models import PortfolioConfig
+from itrader.config import PortfolioConfig
 
 
 def test_portfolio_config_model_dump_json_round_trips():
