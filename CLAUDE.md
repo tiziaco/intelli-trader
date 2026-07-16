@@ -89,9 +89,9 @@ Both wire up the identical component graph around one shared queue in their `__i
 
 ### Configuration system
 
-`itrader/config/` is now a **Pydantic** config system. The old `ConfigRegistry` / `ConfigProvider` / convenience-getter layer was removed (M2-06); `SystemConfig.default()` is constructed directly. `SystemConfig` (`config/system.py`) carries `PerformanceSettings` (note `rng_seed`, default 42) and `MonitoringSettings`, alongside `PortfolioConfig`, `ExchangeConfig`, and other domain models. Optional YAML overrides still load from `settings/` (gitignored in prod; `*.default.yaml` defaults tracked under `settings/domains/`).
+`itrader/config/` is a **Pydantic** config system rooted on `ITraderConfig` (`config/itrader_config.py`), a frozen `BaseModel` constructed directly (the old `ConfigRegistry` / `ConfigProvider` / convenience-getter layer was removed in M2-06; the former `SystemConfig` root, `Settings` env class, and the `PerformanceSettings` / `MonitoringSettings` sub-models were all removed during v1.8 Phase 9 + the config-cleanup follow-ups). `ITraderConfig` carries **frozen base params** — the determinism/identity guard — `rng_seed` (default 42), `environment`, `name`, `version`, `debug_mode`, `timezone` (default `"Europe/Paris"`, oracle-critical), and `data_dir`/`log_dir`/`config_dir`/`cache_dir`; plus **mutable overlay sub-models** (each `validate_assignment=True`) `system` (`SystemSettings`), `universe` (`UniverseConfig`), `stream`, `feed_provider`, `safety`, `order`, and `logging` (`LogConfig` — the slim `ITRADER_*` env layer carrying `log_level`/`disable_logs`). The SQL surface stays behind a lazy `sql` `@cached_property` (`SqlSettings`) so `import itrader` pulls no sqlalchemy (GATE-01 inertness). Domain models `PortfolioConfig`/`ExchangeConfig` live in their own `config/` modules; `ExchangeConfig` presets are classmethods (`ExchangeConfig.default()` / `.high_fee()`), not a string registry. The shared config-update deep-merge helper is `itrader/outils/dict_merge.py::recursive_merge` (it lives in `outils/`, not `config/`). Optional YAML overrides still load from `settings/` (gitignored in prod; `*.default.yaml` defaults tracked under `settings/domains/`).
 
-**Import side effects:** `itrader/__init__.py` initializes process-wide singletons on import — `config = SystemConfig.default()`, `logger` (structlog, via `init_logger`), and `idgen` (`IDGenerator`). Modules import these directly (`from itrader import config, idgen`). Get a bound logger with `get_itrader_logger().bind(component="...")`.
+**Import side effects:** `itrader/__init__.py` initializes process-wide singletons on import — `config = ITraderConfig()`, `logger` (structlog, via `init_logger`), and `idgen` (`IDGenerator`). Modules import these directly (`from itrader import config, idgen`). Get a bound logger with `get_itrader_logger().bind(component="...")`.
 
 ### Determinism & money
 
@@ -204,7 +204,7 @@ must import, run, and yield trustworthy results.
 - pandas-ta 0.4.71b0 (pinned, beta) - Extended TA library used in strategy filters and SLTP models
 - uuid-utils ^0.16.0 - Rust-backed UUIDv7 generation; `uuid_utils.compat.uuid7()` returns native `uuid.UUID` (`itrader/outils/id_generator.py`)
 - pydantic ^2.13 - Domain config models (`itrader/config/*.py`)
-- pydantic-settings ^2.14 - `Settings(BaseSettings)` env-var layer with `env_prefix="ITRADER_"` (`itrader/config/settings.py`)
+- pydantic-settings ^2.14 - `BaseSettings` env-var layers with `env_prefix="ITRADER_"` — `LogConfig` (`itrader/config/log.py`, `log_level`/`disable_logs`) and `SqlSettings` (`itrader/config/sql.py`, `ITRADER_DATABASE_*`)
 - Decimal (stdlib) - Money is Decimal end-to-end (locked project decision); float-for-money is a correctness defect
 - sqlalchemy ^2.0.50 - ORM/engine for PostgreSQL price database (`itrader/price_handler/store/sql_store.py`)
 - sqlalchemy-utils ^0.41.2 - `database_exists`, `create_database` helpers
@@ -221,7 +221,7 @@ must import, run, and yield trustworthy results.
 ## Configuration
 
 - `.env` file at repo root (present; loaded by `Makefile` via `include .env` + `.EXPORT_ALL_VARIABLES`). Contains DB URLs and exchange API credentials — see INTEGRATIONS.md for key names.
-- `pydantic-settings` `Settings` reads vars with prefix `ITRADER_` (`itrader/config/settings.py`, `extra="ignore"`)
+- `pydantic-settings` `LogConfig` (`itrader/config/log.py`, `extra="ignore"`) reads logging vars with prefix `ITRADER_`; `SqlSettings` (`itrader/config/sql.py`) reads `ITRADER_DATABASE_*`
 - Domain YAML configs loaded from `settings/` (gitignored in production); defaults shipped as `settings/domains/{domain}.default.yaml`
 - Process-wide singletons (`config`, `logger`, `idgen`) initialized in `itrader/__init__.py` on import
 - `pyproject.toml` - Single source of truth for dependencies, pytest config, and mypy config
@@ -261,11 +261,11 @@ must import, run, and yield trustworthy results.
 - `snake_case` always.
 - The shared event queue is always named `global_queue` (constructor parameter) or `events_queue`.
 - Bound logger is always `self.logger`.
-- Config is always `self.config` (or a typed config object such as `SystemConfig`).
+- Config is always `self.config` (or a typed config object such as `ITraderConfig`).
 - Classes: `PascalCase` — `OrderHandler`, `SimulatedExchange`, `MatchingEngine`, `CashManager`.
 - Handler/Manager split: `<Domain>Handler` (thin interface) + `<Domain>Manager` (business logic).
 - Abstract bases: `Abstract<Name>` — `AbstractExchange`, `AbstractExecutionHandler`.
-- Config classes: `<Domain>Config` — `PortfolioConfig`, `SystemConfig`, `ExchangeConfig`.
+- Config classes: `<Domain>Config` — `PortfolioConfig`, `ExchangeConfig`, `LogConfig` (frozen root: `ITraderConfig`).
 - Exception classes: `<Specific><Category>Error` — `PortfolioNotFoundError`, `InsufficientFundsError`, `SizingPolicyViolation`.
 - Enum names `PascalCase`, members `UPPER_CASE` — `OrderStatus.PENDING`, `FillStatus.EXECUTED`, `Side.BUY`.
 - String-to-enum maps: `<domain>_<type>_map` — `order_type_map`, `order_status_map`.
@@ -404,11 +404,11 @@ must import, run, and yield trustworthy results.
 - Used by: All handlers.
 - Purpose: Pydantic-modelled system configuration.
 - Location: `itrader/config/`
-- Contains: `SystemConfig` (+ `PerformanceSettings`, `MonitoringSettings`), `PortfolioConfig`, `ExchangeConfig`, domain models. The registry/provider getters were removed (M2-06); `SystemConfig.default()` is constructed directly.
+- Contains: `ITraderConfig` (frozen root — `rng_seed`/`timezone`/identity base params + `system`/`universe`/`stream`/`feed_provider`/`safety`/`order`/`logging` sub-models + lazy `sql`), `PortfolioConfig`, `ExchangeConfig`, `SystemSettings`/`UniverseConfig`/`LogConfig`, domain models. The registry/provider getters were removed (M2-06) and the former `SystemConfig`/`Settings`/`PerformanceSettings`/`MonitoringSettings` were removed (v1.8 Phase 9 + follow-ups); `ITraderConfig()` is constructed directly.
 - Depends on: `pydantic`, `pydantic-settings`, optional YAML in `settings/`.
 - Used by: `itrader/__init__.py`, `ExecutionHandler`, `PortfolioHandler`.
 - Location: `itrader/__init__.py`
-- Initialised on import: `config = SystemConfig.default()`, `logger = init_logger(config)`, `idgen = IDGenerator()`.
+- Initialised on import: `config = ITraderConfig()`, `logger = init_logger(config)`, `idgen = IDGenerator()`.
 - Import idiom: `from itrader import config, idgen` / `from itrader import logger`.
 
 ## Data Flow
