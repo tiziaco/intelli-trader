@@ -400,7 +400,7 @@ class BacktestTradingSystem(object):
 				start_date=self.start_date,
 				end_date=self.end_date,
 				starting_cash=starting_cash_total,
-				rng_seed=config.performance.rng_seed)
+				rng_seed=config.rng_seed)
 
 			record = RunRecord(
 				run_id=run_id,

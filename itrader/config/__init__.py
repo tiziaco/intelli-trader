@@ -36,8 +36,6 @@ from .portfolio import (
 from .system import (
     Environment,
     LogLevel,
-    MonitoringSettings,
-    PerformanceSettings,
     SystemConfig,
     SystemSettings,
     UniverseConfig,
@@ -113,8 +111,6 @@ __all__ = [
     "UniverseConfig",
     "Environment",
     "LogLevel",
-    "PerformanceSettings",
-    "MonitoringSettings",
     # Exchange domain
     "ExchangeConfig",
     "ExchangeVenue",

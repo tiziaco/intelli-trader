@@ -70,16 +70,18 @@ class ExecutionHandler(AbstractExecutionHandler):
 	def _resolve_rng_seed(self) -> int:
 		"""Resolve the determinism seed from the process-wide config singleton (D-16/W4-06).
 
-		Reads ``config.performance.rng_seed`` off the single process-wide
-		``SystemConfig`` initialised in ``itrader/__init__.py`` — NOT a second
-		duplicate ``SystemConfig`` construction (the W4-06 duplication this fix
-		removes). One run-wide determinism setting (default 42); a settings YAML
-		override applies to the singleton, making this read byte-identical or
-		strictly more correct (RESEARCH Trap 3 / A3). Seed stays 42 → the single
-		shared ``random.Random(42)`` is unchanged → byte-exact.
+		Reads ``config.rng_seed`` off the single process-wide ``ITraderConfig``
+		initialised in ``itrader/__init__.py`` — NOT a second duplicate config
+		construction (the W4-06 duplication this fix removes). P9 D-09 moved the
+		seed off the retired ``config.performance.rng_seed`` onto the frozen
+		``ITraderConfig`` base (``config.rng_seed``), immutable at runtime
+		(RTCFG-04). One run-wide determinism setting (default 42); a boot YAML/env
+		override resolves before construction, making this read byte-identical or
+		strictly more correct. Seed stays 42 → the single shared
+		``random.Random(42)`` is unchanged → byte-exact.
 		"""
 		from itrader import config
-		return int(config.performance.rng_seed)
+		return int(config.rng_seed)
 
 	def update_config(self, updates: Dict[str, Any]) -> None:
 		"""Update execution configuration at runtime (D-07/D-08/D-09).

@@ -500,11 +500,11 @@ class LiveTradingSystem:
                 else self.execution_handler.exchanges.get('simulated'))
 
             # RUN-06/D-11 live-plane config: poll timeframe + remove_policy READ FROM the
-            # LIVE/monitoring config (NOT PerformanceSettings — §8/D-01 keeps the
-            # backtest oracle config untouched).
+            # LIVE universe sub-model (NOT the frozen determinism base — P9 D-09 keeps the
+            # backtest oracle config untouched; ex-config.monitoring.universe_remove_policy).
             universe_config = UniverseHandlerConfig(
                 poll_timeframe=_system_config.stream.okx_stream_timeframe,
-                remove_policy=_system_config.monitoring.universe_remove_policy,
+                remove_policy=_system_config.universe.remove_policy,
             )
 
             # D-12: delegate the whole live session wiring to SessionInitializer
@@ -1269,7 +1269,7 @@ def build_live_system(
     from itrader.trading_system.live_runner import LiveRunner
     from itrader.trading_system.worker_supervisor import WorkerSupervisor
 
-    cadence = _system_config.monitoring.universe_poll_cadence_s
+    cadence = _system_config.universe.poll_cadence_s
     worker_supervisor = WorkerSupervisor(global_queue, facade._stop_event, cadence)
     live_runner = LiveRunner(
         bus=global_queue,

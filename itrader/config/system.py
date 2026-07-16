@@ -1,8 +1,15 @@
-"""System domain configuration (Pydantic v2, M2-06 / D-01..D-03).
+"""System domain configuration (Pydantic v2, M2-06 / D-01..D-03; P9 D-08/D-09).
 
-Replaces the deleted hand-rolled ``config/system/`` package. The runtime-critical
-surface is ``SystemConfig.performance.rng_seed`` (read by ``ExecutionHandler`` for
-determinism). ``from_dict`` is a thin wrapper over ``model_validate`` so a partial /
+Replaces the deleted hand-rolled ``config/system/`` package. Home of the ``Environment``
+/``LogLevel`` enums and — since P9 — the demoted ``SystemSettings`` (lifecycle knobs, D-08)
+and ``UniverseConfig`` (live universe poll cadence + remove policy, ex-``MonitoringSettings``
+2 used fields, D-09) mutable sub-models mounted on the frozen ``ITraderConfig`` root
+(``config/itrader_config.py``). The oracle-critical determinism seed now lives on the frozen
+base as ``config.rng_seed`` (moved off the retired ``PerformanceSettings``, D-09).
+
+``SystemConfig`` is retained as a narrowed legacy aggregator (its ``performance``/
+``monitoring`` sub-models + lifecycle fields removed); it is no longer the process root —
+``ITraderConfig`` is. ``from_dict`` is a thin wrapper over ``model_validate`` so a partial /
 empty dict still yields documented defaults.
 """
 
@@ -41,47 +48,6 @@ class LogLevel(str, Enum):
     WARNING = "WARNING"
     ERROR = "ERROR"
     CRITICAL = "CRITICAL"
-
-
-class PerformanceSettings(BaseModel):
-    """Performance tuning settings."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    max_threads: int = 10
-    max_processes: int = 4
-    enable_multiprocessing: bool = False
-    enable_async: bool = True
-    connection_pool_size: int = 20
-    timeout_seconds: int = 30
-    # Determinism seed for stochastic components (D-11, #5/PERF2). Constant default;
-    # drives only failure-simulation + slippage jitter, never a security value.
-    rng_seed: int = 42
-
-
-class MonitoringSettings(BaseModel):
-    """Monitoring and metrics settings."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    enable_metrics: bool = True
-    metrics_port: int = 9090
-    enable_health_check: bool = True
-    health_check_port: int = 8080
-    enable_profiling: bool = False
-    profiling_port: int = 8081
-    enable_tracing: bool = False
-    # Live/control-plane ONLY (Phase 06-05, D-01/D-02): the dynamic-universe poll
-    # cadence (seconds between membership polls, decoupled from bars per D-02) and
-    # the open-position-on-remove disposition (orphan-and-track vs force-close,
-    # D-01). These live on the monitoring/live plane, NEVER on PerformanceSettings
-    # (which carries the oracle-critical rng_seed): they are read only by the
-    # live-only poll-timer daemon + UniverseHandler, never on the backtest hot path
-    # (the backtest builds its own EventHandler with an empty UNIVERSE_UPDATE route
-    # and never constructs the handler or starts the timer), so the oracle-critical
-    # config surface stays untouched.
-    universe_poll_cadence_s: float = Field(default=60.0, gt=0.0)
-    universe_remove_policy: str = "orphan-and-track"
 
 
 class SystemSettings(BaseModel):
@@ -147,9 +113,6 @@ class SystemConfig(BaseModel):
     config_dir: str = "settings"
     cache_dir: str = "cache"
 
-    performance: PerformanceSettings = Field(default_factory=PerformanceSettings)
-    monitoring: MonitoringSettings = Field(default_factory=MonitoringSettings)
-
     # IN-01 / D-08: eager config home for the live stream + feed-provider settings.
     # config/stream.py imports only pydantic/stdlib (no ccxt/async/sql), so these
     # eager fields stay on the backtest import graph WITHOUT regressing inertness —
@@ -170,11 +133,6 @@ class SystemConfig(BaseModel):
     # builds NO SqlSettings (Settings carries no DB fields — the DB surface lives
     # wholly on the lazy `sql` accessor below), so this stays import-safe.
     runtime: Settings = Field(default_factory=Settings)
-
-    enable_auto_restart: bool = False
-    auto_restart_delay_seconds: int = 10
-    enable_graceful_shutdown: bool = True
-    shutdown_timeout_seconds: int = 30
 
     @cached_property
     def sql(self) -> "SqlSettings":
