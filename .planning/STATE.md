@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: Live System Refactor & Live-Readiness Hardening
-current_phase: 9
-current_phase_name: Runtime-Config Platform
+current_phase: 09
+current_phase_name: runtime-config-platform
 status: executing
-stopped_at: Phase 9 context gathered
-last_updated: "2026-07-16T08:37:41.304Z"
-last_activity: 2026-07-15
-last_activity_desc: "Phase 08 (Error Subsystem) complete: CF-1 aggregate breaker trips end-to-end, WR-06 two-guard intact, oracle byte-exact"
+stopped_at: Completed 09-01-PLAN.md
+last_updated: "2026-07-16T10:21:30.297Z"
+last_activity: 2026-07-16
+last_activity_desc: Phase 09 execution started
 progress:
   total_phases: 10
   completed_phases: 9
@@ -26,22 +26,22 @@ See: .planning/PROJECT.md (Current Milestone: v1.8 — Live System Refactor & Li
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct,
 deterministic, cross-validated numbers (oracle **134 / `46189.87730727451`**; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 shipped a live operating mode (paper-first on OKX) without disturbing that oracle.
-**Current focus:** Phase 08 (Error Subsystem) complete + verified — next: Phase 09 (Runtime-Config Platform ★). v1.8 delivers a
+**Current focus:** Phase 09 — runtime-config-platform
 thin ~200-line facade over focused, venue-parametrized, FastAPI-ready collaborators — **without
 disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI itself is out of scope
 (LR-01). Full scope: core refactor (P1–P8 + P12) + the three ★ feature-adds (P9–P11).
 
 ## Current Position
 
-Phase: 9 — Runtime-Config Platform ★ (next; dependency-ready {P4,P7} — not yet planned)
-Plan: Not started (Phase 08 complete: 3/3 plans merged + verified)
+Phase: 09 (runtime-config-platform) — EXECUTING
+Plan: 2 of 4
 Status: Ready to execute
-Last activity: 2026-07-15 — Phase 08 (Error Subsystem) complete: CF-1 aggregate breaker trips end-to-end, WR-06 two-guard intact, oracle byte-exact
+Last activity: 2026-07-16 — Phase 09 execution started
 
 Note: `phase.complete` advanced current_phase to 12 (its next-phase dir-scan skips the not-yet-created P9/P10/P11 ★ dirs);
 corrected to 9 per the roadmap sequence. P9/P10/P11 are all dependency-available now; P12 (core-final) depends on P11.
 
-Progress: [████████░░] 89% (8/9 core phases; the three ★ feature-adds P9–P11 are in scope on top)
+Progress: [██████████] 100% (8/9 core phases; the three ★ feature-adds P9–P11 are in scope on top)
 
 ## Milestone Gate (v1.8 — applies to EVERY phase)
 
@@ -92,6 +92,11 @@ trim boundary P1–P8+P12 core vs P9–P11 ★ is noted, not taken). Research fl
 - v1.8 plans completed: 0
 
 *Updated after each plan completion. Per-milestone velocity is archived in the respective MILESTONE-AUDIT.md.*
+**Per-Plan Metrics:**
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| Phase 09 P01 | 25min | 3 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -174,6 +179,8 @@ P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 - [Phase 07]: OrderRiskRole is enum-only in core/enums/order.py; classify() defers to SafetyController (Plan 03) — D-16 — one-source-of-truth risk vocabulary shared by gate + throttle
 - [Phase 07]: ConnectorFatalEvent.reason is a fixed-literal str, never a stringified exception/payload — V7 secret-scrub (T-07-01); enforced by grep-0 in control.py
 - [Phase 07]: PreTradeThrottle computes D-10 notional off OrderEvent.price (limit for LIMIT, decision-mark estimate for MARKET/STOP) — no separate feed injection — The order layer already stamps the mark onto OrderEvent.price, so a feed dependency would add untested surface for no correctness gain
+- [Phase ?]: P9-01: ITraderConfig frozen root replaces SystemConfig as the process config singleton; rng_seed moved to config.rng_seed (frozen base), oracle byte-exact
+- [Phase ?]: P9-01: SystemConfig kept as narrowed legacy aggregator (perf/monitoring+lifecycle stripped) to keep existing config tests green; SystemSettings/UniverseConfig demoted sub-models added
 
 ### Pending Todos
 
@@ -286,11 +293,11 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-16T07:34:48.616Z
-Stopped at: Phase 9 context gathered
+Last session: 2026-07-16T10:21:30.286Z
+Stopped at: Completed 09-01-PLAN.md
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
-Resume file: .planning/phases/09-runtime-config-platform/09-CONTEXT.md
+Resume file: None
 Carried todo: 14 pending todos in `todos/pending/` (10 fold into v1.8 as CF-1..CF-10; `v17-residual-carryforward.md`
 is the index; the substantive open item is `margin-equity-double-counts-notional-wr01`, owner-gated).
 

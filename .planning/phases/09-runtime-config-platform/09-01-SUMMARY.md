@@ -147,6 +147,11 @@ None - no external service configuration required. Zero new dependencies (STATE 
 - Wave 2 (mutation path) has its target structure: the frozen-base allowlist (immutable keys reject) + the seven `validate_assignment` mutable sub-models to `setattr`-route `(scope, key)` into, and the create-once/mutate-in-place singleton `build_live_system` will layer persisted overrides into.
 - Per-plan gates green: backtest oracle byte-exact `134 / 46189.87730727451`, OKX inertness green, `mypy --strict` clean (259 files), full suite `2259 passed / 6 skipped`.
 
+## Self-Check: PASSED
+
+- Created files verified present: `itrader/config/itrader_config.py`, `tests/unit/config/test_itrader_config.py`, `09-01-SUMMARY.md`
+- Task commits verified in git log: `a86ec283`, `d3cddcee`, `4cddd845` (+ SUMMARY `5b4683c9`)
+
 ---
 *Phase: 09-runtime-config-platform*
 *Completed: 2026-07-16*

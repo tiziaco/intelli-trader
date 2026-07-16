@@ -239,7 +239,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 
 ### ★ Runtime-Config Platform (P9)
 
-- [ ] **RTCFG-01**: A `RuntimeConfig` overlay (`defaults ← YAML ← env ← persisted runtime overrides`) is
+- [x] **RTCFG-01**: A `RuntimeConfig` overlay (`defaults ← YAML ← env ← persisted runtime overrides`) is
   built by the live factory and injected as `EngineContext.config` — engine-thread-write, snapshot-read;
   handlers read it so they see runtime changes (LR-04/§6c).
 
@@ -254,7 +254,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 - [ ] **RTCFG-03**: Persisted overrides survive restart — `build_live_system` layers them over defaults
   on boot (§6e).
 
-- [ ] **RTCFG-04**: Immutable-at-runtime keys (`rng_seed`, money precision, SQL credentials, venue API
+- [x] **RTCFG-04**: Immutable-at-runtime keys (`rng_seed`, money precision, SQL credentials, venue API
   credentials, `environment`, IDs) are rejected by the allowlist (§6e / owner decision).
 
 - [ ] **RTCFG-05**: Fee/slippage config keys are runtime-mutable **only for simulated venues**; a
@@ -409,10 +409,10 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | ERR-02 | P8 | Complete |
 | ERR-03 | P8 | Complete |
 | ERR-04 | P8 | Complete |
-| RTCFG-01 | P9 | Pending |
+| RTCFG-01 | P9 | Complete |
 | RTCFG-02 | P9 | Pending |
 | RTCFG-03 | P9 | Pending |
-| RTCFG-04 | P9 | Pending |
+| RTCFG-04 | P9 | Complete |
 | RTCFG-05 | P9 | Pending |
 | RTCFG-06 | P9 | Pending |
 | STRAT-01 | P10 | Pending |
