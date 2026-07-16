@@ -4,9 +4,9 @@ milestone: v1.8
 milestone_name: Live System Refactor & Live-Readiness Hardening
 current_phase: 09
 current_phase_name: runtime-config-platform
-status: executing
-stopped_at: Completed 09-03-PLAN.md
-last_updated: "2026-07-16T11:03:06.629Z"
+status: verifying
+stopped_at: Completed 09-04-PLAN.md
+last_updated: "2026-07-16T11:22:55.419Z"
 last_activity: 2026-07-16
 last_activity_desc: Phase 09 execution started
 progress:
@@ -35,7 +35,7 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 
 Phase: 09 (runtime-config-platform) — EXECUTING
 Plan: 4 of 4
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-07-16 — Phase 09 execution started
 
 Note: `phase.complete` advanced current_phase to 12 (its next-phase dir-scan skips the not-yet-created P9/P10/P11 ★ dirs);
@@ -99,6 +99,7 @@ trim boundary P1–P8+P12 core vs P9–P11 ★ is noted, not taken). Research fl
 | Phase 09 P01 | 25min | 3 tasks | 11 files |
 | Phase 09 P02 | 11min | 3 tasks | 5 files |
 | Phase 09 P03 | 21min | 3 tasks | 14 files |
+| Phase 09 P04 | 30min | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -187,6 +188,8 @@ P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 - [Phase 9]: system idle/timeout knobs AND universe poll_cadence/remove_policy both route under the single 'system' scope (scopes locked to 4, D-21); owning sub-model resolved by introspection
 - [Phase ?]: P9-03: order-scope config persists to a dedicated order_config table + portfolio-scope config to a nullable config_json column on portfolio_account_state (D-25); each module owns its config, never SystemStore
 - [Phase ?]: P9-03: add_event admits CONFIG_UPDATE as the third default-deny external type with synchronous ingress 400-validation; restart-layering reapplies persisted overrides per-scope from each OWN store, degrade-clean when the (Plan-04) config migration is pending
+- [Phase ?]: P9-04: system_stats append-only table/store (engine-operational counters only, NO entity duplication D-17) + state.status/halt_reason/last_started_at written at their event sources into SystemStore (D-19); read-model is lock-free domain-store + state.* + system_stats reads (RTCFG-06)
+- [Phase ?]: P9-04: migration-owner finalized the phase chain single-head strategy_registry -> module_config (order_config table + portfolio_account_state.config_json column, NO portfolio_config table) -> system_stats; the hardcoded create_all/upgrade-head parity gate extended by hand (A3 dynamic-enumeration assumption was false)
 
 ### Pending Todos
 
@@ -299,8 +302,8 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-16T11:02:59.891Z
-Stopped at: Completed 09-03-PLAN.md
+Last session: 2026-07-16T11:22:55.409Z
+Stopped at: Completed 09-04-PLAN.md
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
 Resume file: None

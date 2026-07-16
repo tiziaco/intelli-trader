@@ -261,7 +261,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   `ConfigUpdateEvent` targeting a *live* venue's fee/slippage is rejected (venue-kind-aware validation —
   real-venue fees/slippage come from actual venue fills, not engine config) (owner decision 2026-07-09).
 
-- [ ] **RTCFG-06**: The `system_store` `stats.snapshot` + `state.*` (status / halt_reason / last_error /
+- [x] **RTCFG-06**: The `system_store` `stats.snapshot` + `state.*` (status / halt_reason / last_error /
   last_started_at) double as the UI read-model — readable without touching hot-path locks (concerns 22/23,
   §6d). *(Ships regardless of the mutation-path scope.)*
 
@@ -414,7 +414,7 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | RTCFG-03 | P9 | Complete |
 | RTCFG-04 | P9 | Complete |
 | RTCFG-05 | P9 | Complete |
-| RTCFG-06 | P9 | Pending |
+| RTCFG-06 | P9 | Complete |
 | STRAT-01 | P10 | Pending |
 | STRAT-02 | P10 | Pending |
 | STRAT-03 | P10 | Pending |

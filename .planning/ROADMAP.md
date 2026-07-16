@@ -382,7 +382,7 @@ Plans:
 - [x] 09-01-PLAN.md — Config restructure: `ITraderConfig` frozen aggregator + `SystemSettings`/`UniverseConfig` sub-models, singleton flip, `rng_seed`/`universe.*` path moves, delete `Performance`/`Monitoring` (oracle + inertness gated) (RTCFG-01, RTCFG-04)
 - [x] 09-02-PLAN.md — Mutation core: `ConfigUpdateEvent` (CONTROL) + `ConfigRouter` (validate→persist→apply→push, default-deny, venue-kind predicate, deduped WARNING rejection) + CONFIG_UPDATE route (RTCFG-02, RTCFG-04, RTCFG-05)
 - [x] 09-03-PLAN.md — Ingress + durability: extend `add_event` allowlist + ingress 400, construct stores + inject router + restart layering in `build_live_system`, mandatory external-ingress test (RTCFG-01, RTCFG-02, RTCFG-03, RTCFG-04)
-- [ ] 09-04-PLAN.md — Read-model: `system_stats` append-only store/table/migration + thin stats writer + `state.*` writers; lock-free domain-store reads, no entity duplication (RTCFG-06)
+- [x] 09-04-PLAN.md — Read-model: `system_stats` append-only store/table/migration + thin stats writer + `state.*` writers; lock-free domain-store reads, no entity duplication (RTCFG-06)
 
 ### Phase 10 ★: Strategies Registry
 
