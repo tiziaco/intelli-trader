@@ -355,7 +355,7 @@ def test_new_store_registrars_are_register_vs_build() -> None:
     assert set(registry_tables) == {"strategy_registry", "strategy_subscriptions"}
 
     # The 3 registrars registered EXACTLY the 4 expected table names on the bare MetaData —
-    # no connection, no RuntimeSettings(), no SqlEngine constructed anywhere in the call chain.
+    # no connection, no LogConfig(), no SqlEngine constructed anywhere in the call chain.
     assert set(metadata.tables) == {
         "system_store",
         "venue_store",

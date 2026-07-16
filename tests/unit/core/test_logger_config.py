@@ -3,7 +3,7 @@
 Locks Plan 04-08 Task 1:
 
 * ``ITRADER_LOG_LEVEL`` / ``ITRADER_JSON_LOGS`` drive ``init_logger`` via
-  direct ``os.environ`` reads — never by constructing ``RuntimeSettings()``
+  direct ``os.environ`` reads — never by constructing ``LogConfig()``
   (Pitfall 8: the logger must not instantiate any config/settings model at
   import time, keeping ``import itrader`` side-effect-free).
 * Handler installation is guarded and idempotent: repeated setup never stacks

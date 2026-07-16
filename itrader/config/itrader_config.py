@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, ConfigDict, Field
 
 from itrader.config.order import OrderConfig
-from itrader.config.runtime import RuntimeSettings
+from itrader.config.log import LogConfig
 from itrader.config.safety import SafetySettings
 from itrader.config.stream import FeedProviderSettings, StreamSettings
 from itrader.config.system import Environment, SystemSettings, UniverseConfig
@@ -88,11 +88,11 @@ class ITraderConfig(BaseModel):
     safety: SafetySettings = Field(default_factory=SafetySettings)
     order: OrderConfig = Field(default_factory=OrderConfig)
 
-    # D-08: the env-var leaf stays a FIELD (never the root) so ``RuntimeSettings``'s
+    # D-08: the env-var leaf stays a FIELD (never the root) so ``LogConfig``'s
     # BaseSettings env-parsing (ITRADER_LOG_LEVEL/ITRADER_DISABLE_LOGS) does not leak
     # into every nested field. Named ``logging`` (user decision 4/5 — the legacy
     # ``runtime`` field is gone).
-    logging: RuntimeSettings = Field(default_factory=RuntimeSettings)
+    logging: LogConfig = Field(default_factory=LogConfig)
 
     @cached_property
     def sql(self) -> "SqlSettings":

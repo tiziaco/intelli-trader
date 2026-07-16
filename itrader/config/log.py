@@ -20,7 +20,7 @@ inside ``logger.py``.
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class RuntimeSettings(BaseSettings):
+class LogConfig(BaseSettings):
     """Runtime logging knobs read from ``ITRADER_*`` environment variables."""
 
     model_config = SettingsConfigDict(env_prefix="ITRADER_", extra="ignore")
@@ -30,5 +30,5 @@ class RuntimeSettings(BaseSettings):
     # ITRADER_DISABLE_LOGS — D-08 full-off kill-switch (Phase 4, PERF-03). Default
     # False keeps the backtest path env-free; pydantic-settings coerces
     # "true"/"1"/"yes" natively. The logger reads the same env var cache-once via
-    # os.environ (Pitfall 8 — it must NOT instantiate RuntimeSettings() at import).
+    # os.environ (Pitfall 8 — it must NOT instantiate LogConfig() at import).
     disable_logs: bool = False

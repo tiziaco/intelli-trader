@@ -26,11 +26,11 @@ _ITRADER_HANDLER_FLAG = "_itrader_handler"
 def _env_log_level() -> str:
     """Resolve the log level from ``ITRADER_LOG_LEVEL`` (default ``INFO``).
 
-    Read directly from ``os.environ`` — do NOT construct a ``RuntimeSettings``
+    Read directly from ``os.environ`` — do NOT construct a ``LogConfig``
     instance here: the logger must not instantiate any config/settings model at
     import time, keeping ``import itrader`` side-effect-free (Pitfall 8). The env
     name matches the pydantic-settings ``ITRADER_`` prefix so
-    ``RuntimeSettings.log_level`` stays the documented knob.
+    ``LogConfig.log_level`` stays the documented knob.
     """
     return os.environ.get("ITRADER_LOG_LEVEL", "INFO")
 
@@ -45,10 +45,10 @@ def _env_disable_logs() -> bool:
     """Resolve the D-08 full-off kill-switch from ``ITRADER_DISABLE_LOGS`` (default off).
 
     Mirrors the ``_env_json_logs`` idiom: read ``os.environ`` directly and never
-    construct a ``RuntimeSettings`` instance here — the logger must not instantiate any
+    construct a ``LogConfig`` instance here — the logger must not instantiate any
     config/settings model at import time, keeping ``import itrader`` side-effect-free
     (Pitfall 8). The env name matches the pydantic-settings ``ITRADER_`` prefix so
-    ``RuntimeSettings.disable_logs`` stays the documented knob.
+    ``LogConfig.disable_logs`` stays the documented knob.
     """
     raw = os.environ.get("ITRADER_DISABLE_LOGS", "false")
     return raw.strip().lower() in ("1", "true", "yes")
@@ -297,7 +297,7 @@ def init_logger(config: Any = None) -> "ITraderStructLogger":
     Log level and JSON rendering are environment-driven (M3-03 / D-20):
     ``ITRADER_LOG_LEVEL`` (default ``INFO``) and ``ITRADER_JSON_LOGS``
     (default off). Read via ``os.environ`` directly — never by constructing
-    a ``RuntimeSettings`` instance, keeping ``import itrader`` side-effect-free
+    a ``LogConfig`` instance, keeping ``import itrader`` side-effect-free
     (Pitfall 8).
 
     Args:

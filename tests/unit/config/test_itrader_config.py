@@ -25,7 +25,7 @@ import pytest
 
 import pydantic
 
-from itrader.config import TIMEZONE, RuntimeSettings
+from itrader.config import TIMEZONE, LogConfig
 from itrader.config.itrader_config import ITraderConfig
 from itrader.config.stream import FeedProviderSettings, StreamSettings
 from itrader.config.system import Environment
@@ -153,14 +153,14 @@ def test_module_timezone_matches_frozen_base_default():
     assert TIMEZONE == str(ITraderConfig.model_fields["timezone"].default)
 
 
-# --- logging: RuntimeSettings re-home (user decisions 4 + 5) ------------------
+# --- logging: LogConfig re-home (user decisions 4 + 5) ------------------
 
 
-def test_logging_is_a_runtime_settings_field():
-    """'logging' is a RuntimeSettings field carrying the documented default knobs (decision 4)."""
+def test_logging_is_a_log_config_field():
+    """'logging' is a LogConfig field carrying the documented default knobs (decision 4)."""
     assert "logging" in ITraderConfig.model_fields
     logging = ITraderConfig().logging
-    assert isinstance(logging, RuntimeSettings)
+    assert isinstance(logging, LogConfig)
     assert logging.log_level == "INFO"
     assert logging.disable_logs is False
 
@@ -170,10 +170,10 @@ def test_no_runtime_field_on_config_root():
     assert "runtime" not in ITraderConfig.model_fields
 
 
-def test_runtime_settings_parses_env(monkeypatch):
-    """RuntimeSettings preserves ITRADER_* env-parsing after the Settings retirement (decision 4)."""
+def test_log_config_parses_env(monkeypatch):
+    """LogConfig preserves ITRADER_* env-parsing after the Settings retirement (decision 4)."""
     monkeypatch.setenv("ITRADER_LOG_LEVEL", "DEBUG")
-    assert RuntimeSettings().log_level == "DEBUG"
+    assert LogConfig().log_level == "DEBUG"
 
 
 # --- migrated import-safety pins (ex-test_system_config.py) -------------------

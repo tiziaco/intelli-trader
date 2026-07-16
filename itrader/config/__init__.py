@@ -3,7 +3,7 @@
 The hand-rolled registry/provider/validator/schema machinery and the getters
 (``get_config_registry``, ``get_*_config_provider``) were deleted in the M2-06 config
 collapse (D-01). Consumers now construct Pydantic models directly. This package is a
-clean re-export of those models plus the ``RuntimeSettings`` env layer and the
+clean re-export of those models plus the ``LogConfig`` env layer and the
 reference-data constants — mirroring the grouped-re-export style of ``itrader.core.enums``.
 """
 
@@ -19,7 +19,7 @@ from itrader.core.constants import (
     SUPPORTED_EXCHANGES,
 )
 
-from .runtime import RuntimeSettings
+from .log import LogConfig
 
 # Domain models (Pydantic v2)
 from .portfolio import (
@@ -73,7 +73,7 @@ TIMEZONE: str = str(ITraderConfig.model_fields["timezone"].default)
 
 __all__ = [
     # Runtime env layer + reference data
-    "RuntimeSettings",
+    "LogConfig",
     "FORBIDDEN_SYMBOLS",
     "SUPPORTED_CURRENCIES",
     "SUPPORTED_EXCHANGES",
