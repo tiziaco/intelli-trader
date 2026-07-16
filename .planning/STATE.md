@@ -242,23 +242,6 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 | 260716-mov | Move UniverseConfig into its own itrader/config/universe.py (config/ one-domain-per-file convention); system.py keeps only Environment/LogLevel/SystemSettings; barrel re-exports unchanged. Byte-identical behavior; 2307 passed, oracle byte-exact, inertness + mypy clean | 2026-07-16 | d5a9deac | [260716-mov-move-universeconfig-into-its-own-config-](./quick/260716-mov-move-universeconfig-into-its-own-config-/) |
 | 260716-fast | Sync CLAUDE.md "Configuration system" section (+ Import side effects, config Layers, tech-stack/config prose) to ITraderConfig reality — drop SystemConfig/Settings/PerformanceSettings/MonitoringSettings, document frozen base + mutable sub-models + LogConfig + lazy sql, outils.recursive_merge, ExchangeConfig classmethods, config/models.py removal | 2026-07-16 | 03fdf3fd | (fast — no dir) |
 | 260716-cfg | Unify dry-validate-on-a-copy pattern in config_router.py: _dry_validate_setattr→_dry_validate_copy returns the validated candidate copy; system/order scopes share it (order drops its inline model_copy+try/except); portfolio merge-validate untouched. Behavior-preserving; 30 tests pass, mypy clean | 2026-07-16 | 4e40f379 | (fast — no dir) |
-| Phase 06 P01 | 4 min | 2 tasks | 2 files |
-| Phase 06 P02 | 12 min | 3 tasks | 3 files |
-| Phase 06 P03 | 6min | 1 tasks | 1 files |
-| Phase 06 P04 | 13min | 2 tasks | 7 files |
-| Phase 06 P05 | 9min | 3 tasks | 3 files |
-| Phase 06 P06 | 50min | 3 tasks | 26 files |
-| Phase 06 P07 | 70min | 3 tasks | 21 files |
-| Phase 06.1 P01 | 22min | 3 tasks | 7 files |
-| Phase 06.1 P02 | 18 | 3 tasks | 1 files |
-| Phase 06.1 P03 | 4 | 3 tasks | 4 files |
-| Phase 06.1 P04 | 6 | 3 tasks | 3 files |
-| Phase 07 P01 | 12 min | 3 tasks | 10 files |
-| Phase 07-safety-reconciliation-stream-recovery P02 | 15 min | 2 tasks | 7 files |
-| Phase 07-safety-reconciliation-stream-recovery P03 | 6min | 2 tasks | 4 files |
-| Phase 07 P04 | 6 min | 2 tasks | 4 files |
-| Phase 07 P05 | 20 min | 1 tasks | 2 files |
-| Phase 07 P06 | 45min | 3 tasks | 15 files |
 
 ## Deferred Items
 
