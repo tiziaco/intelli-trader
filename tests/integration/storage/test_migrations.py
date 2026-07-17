@@ -39,16 +39,23 @@ from itrader.strategy_handler.storage.models import build_signal_tables
 # RTCFG-06 gate asserts they exist after ``upgrade head`` and that their columns match the
 # registrar-built (``create_all``) schema. Plan 04-03 added the first four; Phase 9's
 # migration-owner plan (09-04) chains ``module_config`` (creates ``order_config``) then
-# ``system_stats`` on top (D-25/D-18). The ``portfolio_account_state.config_json`` column is
-# NOT a new table — it is an ADD COLUMN checked separately below.
+# ``system_stats`` on top (D-25/D-18). Phase 10 (10-02) chains
+# ``p10_strategy_portfolio_subs``, which DROPS the P4 ``strategy_subscriptions`` and adds
+# ``strategy_portfolio_subscriptions`` in its place (D-06). The
+# ``portfolio_account_state.config_json`` column is NOT a new table — it is an ADD COLUMN
+# checked separately below.
 _NEW_TABLES = (
     "system_store",
     "venue_store",
     "strategy_registry",
-    "strategy_subscriptions",
+    "strategy_portfolio_subscriptions",
     "order_config",
     "system_stats",
 )
+
+# The single head of the relocated chain. Updated by every migration-owner plan that chains
+# a new revision on top (P9: ``system_stats``; P10/10-02: ``p10_strategy_portfolio_subs``).
+_HEAD = "p10_strategy_portfolio_subs"
 
 # Repo-root-anchored paths so the Alembic Config is cwd-INDEPENDENT: Alembic resolves a
 # RELATIVE ``script_location`` against the process cwd (not the ini location), so the test
@@ -182,17 +189,18 @@ def test_alembic_chain_applies_operational_baseline_postgres(engine) -> None:
 
 
 def test_migration_chain_is_single_head() -> None:
-    """SQL-02/RTCFG-06: the relocated chain has exactly ONE head — ``system_stats``.
+    """SQL-02/RTCFG-06: the relocated chain has exactly ONE head.
 
     A branched/forked chain (two heads) would make ``upgrade head`` ambiguous and let the
     deploy schema drift. The 04-03 revisions chain linearly off ``d10_halt_records``
     (``system_store`` → ``venue_config`` → ``strategy_registry``); Phase 9's migration-owner
-    plan chains ``module_config`` → ``system_stats`` on top, so the single head is the last
-    link. ``get_heads()`` returns a list; a tuple compare pins the exact singleton.
+    plan chains ``module_config`` → ``system_stats``; Phase 10 chains
+    ``p10_strategy_portfolio_subs`` on top — so the single head is the last link.
+    ``get_heads()`` returns a list; a tuple compare pins the exact singleton.
     """
     url = "sqlite+pysqlite:///:memory:"  # URL is unused for a script-only head read
     heads = ScriptDirectory.from_config(_alembic_config(url)).get_heads()
-    assert tuple(heads) == ("system_stats",)
+    assert tuple(heads) == (_HEAD,)
 
 
 def test_full_chain_upgrade_creates_new_stores_sqlite(tmp_path: pathlib.Path) -> None:
@@ -202,7 +210,7 @@ def test_full_chain_upgrade_creates_new_stores_sqlite(tmp_path: pathlib.Path) ->
     Alembic-internal engine is disposed and can be inspected on a fresh connection. After
     the full chain every new table (incl. Phase 9's ``order_config`` + ``system_stats``) is
     present, the ``portfolio_account_state.config_json`` ADD COLUMN is applied, and
-    ``alembic_version`` holds exactly ONE row (stamped at the single head ``system_stats``).
+    ``alembic_version`` holds exactly ONE row (stamped at the single head).
     """
     db_path = tmp_path / "full_chain.db"
     url = f"sqlite+pysqlite:///{db_path}"
@@ -212,6 +220,8 @@ def test_full_chain_upgrade_creates_new_stores_sqlite(tmp_path: pathlib.Path) ->
     try:
         names = set(inspect(engine).get_table_names())
         assert set(_NEW_TABLES) <= names  # the chain built every new table
+        # D-06: the P4 table the P10 migration drops is GONE after the full chain.
+        assert "strategy_subscriptions" not in names
         # D-25: the portfolio-scope config carrier rides the EXISTING account-state table.
         pas_cols = {c["name"] for c in inspect(engine).get_columns("portfolio_account_state")}
         assert "config_json" in pas_cols
@@ -220,7 +230,7 @@ def test_full_chain_upgrade_creates_new_stores_sqlite(tmp_path: pathlib.Path) ->
                 text("SELECT version_num FROM alembic_version")
             ).fetchall()
         assert len(applied) == 1  # single head — one stamped revision row ...
-        assert applied[0][0] == "system_stats"  # ... exactly the new single head
+        assert applied[0][0] == _HEAD  # ... exactly the new single head
     finally:
         engine.dispose()
 
@@ -293,3 +303,200 @@ def test_create_all_vs_migration_parity(tmp_path: pathlib.Path) -> None:
     finally:
         engine_a.dispose()
         engine_b.dispose()
+
+
+# --------------------------------------------------------------------------------------
+# Phase 10 (10-02) — the D-06 strategy-registry reshape migration
+# --------------------------------------------------------------------------------------
+
+
+def _table_columns(engine, table: str) -> set[str]:
+    """The reflected column-name set for ``table`` on ``engine``."""
+    return {c["name"] for c in inspect(engine).get_columns(table)}
+
+
+def _schema_snapshot(engine) -> dict[str, set[str]]:
+    """{table: {column names}} for every table — the replay-safety comparison key."""
+    inspector = inspect(engine)
+    return {
+        name: {c["name"] for c in inspector.get_columns(name)}
+        for name in inspector.get_table_names()
+    }
+
+
+def _seed_subscription(engine) -> None:
+    """Insert a parent registry row + a child ``strategy_subscriptions`` row.
+
+    The A1 guard's trigger condition: a DEPLOYED DB whose ``strategy_subscriptions`` table
+    actually holds operator data. Written at the ``system_stats`` revision (one BEFORE the
+    P10 migration), where the P4 table still exists.
+    """
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO strategy_registry "
+                "(strategy_name, enabled, config_json, updated_at) "
+                "VALUES ('legacy', 1, '{}', '2026-01-01T00:00:00+00:00')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO strategy_subscriptions "
+                "(strategy_name, venue, symbol, timeframe) "
+                "VALUES ('legacy', 'okx', 'BTC/USDC', '1h')"
+            )
+        )
+
+
+def test_p10_upgrade_reshapes_strategy_registry_schema(tmp_path: pathlib.Path) -> None:
+    """D-06: ``upgrade head`` adds ``strategy_type``, adds the portfolio child, drops the P4 table.
+
+    The three operations of the P10 migration, asserted on a fresh (empty) DB — the normal
+    deploy case, where the A1 guard finds zero rows and lets the drop proceed.
+    """
+    db_path = tmp_path / "p10_upgrade.db"
+    url = f"sqlite+pysqlite:///{db_path}"
+    command.upgrade(_alembic_config(url), "head")
+
+    engine = create_engine(url)
+    try:
+        names = set(inspect(engine).get_table_names())
+        assert "strategy_type" in _table_columns(engine, "strategy_registry")
+        assert "strategy_portfolio_subscriptions" in names
+        assert "strategy_subscriptions" not in names  # the P4 table is DROPPED
+        assert _table_columns(engine, "strategy_portfolio_subscriptions") == {
+            "strategy_name",
+            "portfolio_id",
+        }
+    finally:
+        engine.dispose()
+
+
+def test_p10_downgrade_restores_the_p4_schema(tmp_path: pathlib.Path) -> None:
+    """D-06: ``downgrade -1`` is a TRUE inverse — restores the P4 table, undoes the P10 adds."""
+    db_path = tmp_path / "p10_downgrade.db"
+    url = f"sqlite+pysqlite:///{db_path}"
+    cfg = _alembic_config(url)
+    command.upgrade(cfg, "head")
+    command.downgrade(cfg, "-1")
+
+    engine = create_engine(url)
+    try:
+        names = set(inspect(engine).get_table_names())
+        assert "strategy_subscriptions" in names  # the P4 child is restored ...
+        assert _table_columns(engine, "strategy_subscriptions") == {
+            "strategy_name",
+            "venue",
+            "symbol",
+            "timeframe",
+        }
+        assert "strategy_portfolio_subscriptions" not in names  # ... the P10 child is gone
+        assert "strategy_type" not in _table_columns(engine, "strategy_registry")
+        with engine.connect() as conn:
+            applied = conn.execute(text("SELECT version_num FROM alembic_version")).fetchall()
+        assert applied[0][0] == "system_stats"  # back on the pre-P10 head
+    finally:
+        engine.dispose()
+
+
+def test_p10_upgrade_refuses_to_drop_a_non_empty_subscriptions_table(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A1 GUARD: a non-empty ``strategy_subscriptions`` makes ``upgrade`` RAISE, not drop.
+
+    RESEARCH A1 claimed "the tables are empty in every deployed DB" — a DB-STATE claim that
+    could not be verified from source. A silent destructive drop on a wrong assumption is
+    unrecoverable, so the migration counts FIRST and refuses loudly, naming the row count.
+    Asserts BOTH halves: the raise happens AND the table (with its data) still exists after.
+    """
+    db_path = tmp_path / "p10_guard.db"
+    url = f"sqlite+pysqlite:///{db_path}"
+    cfg = _alembic_config(url)
+    # Stop one revision BEFORE the P10 migration — the P4 table exists and is seedable.
+    command.upgrade(cfg, "system_stats")
+
+    engine = create_engine(url)
+    try:
+        _seed_subscription(engine)
+
+        with pytest.raises(RuntimeError, match="strategy_subscriptions"):
+            command.upgrade(cfg, "head")
+
+        names = set(inspect(engine).get_table_names())
+        assert "strategy_subscriptions" in names  # REFUSED — not dropped
+        with engine.connect() as conn:
+            count = conn.execute(
+                text("SELECT count(*) FROM strategy_subscriptions")
+            ).scalar()
+        assert count == 1  # the operator's row is intact
+    finally:
+        engine.dispose()
+
+
+def test_p10_guard_message_names_the_row_count(tmp_path: pathlib.Path) -> None:
+    """The A1 refusal names the ROW COUNT so the operator knows the blast radius."""
+    db_path = tmp_path / "p10_guard_msg.db"
+    url = f"sqlite+pysqlite:///{db_path}"
+    cfg = _alembic_config(url)
+    command.upgrade(cfg, "system_stats")
+
+    engine = create_engine(url)
+    try:
+        _seed_subscription(engine)
+        with pytest.raises(RuntimeError) as excinfo:
+            command.upgrade(cfg, "head")
+        message = str(excinfo.value)
+        assert "1" in message              # the row count
+        assert "strategy_subscriptions" in message  # the table
+    finally:
+        engine.dispose()
+
+
+def test_p10_upgrade_downgrade_upgrade_is_replay_safe(tmp_path: pathlib.Path) -> None:
+    """BACKSTOP: upgrade → downgrade → upgrade leaves the SAME schema as a single upgrade.
+
+    A migration whose downgrade is not a true inverse silently drifts on replay (a rollback
+    then re-deploy would leave a different schema than a clean deploy).
+    """
+    once_path = tmp_path / "p10_once.db"
+    once_url = f"sqlite+pysqlite:///{once_path}"
+    command.upgrade(_alembic_config(once_url), "head")
+
+    replay_path = tmp_path / "p10_replay.db"
+    replay_url = f"sqlite+pysqlite:///{replay_path}"
+    replay_cfg = _alembic_config(replay_url)
+    command.upgrade(replay_cfg, "head")
+    command.downgrade(replay_cfg, "-1")
+    command.upgrade(replay_cfg, "head")
+
+    once_engine = create_engine(once_url)
+    replay_engine = create_engine(replay_url)
+    try:
+        assert _schema_snapshot(replay_engine) == _schema_snapshot(once_engine)
+    finally:
+        once_engine.dispose()
+        replay_engine.dispose()
+
+
+def test_p10_migrated_schema_matches_the_registrar(tmp_path: pathlib.Path) -> None:
+    """The registrar is the SINGLE SOURCE OF TRUTH — the migrated DB must match it.
+
+    Narrower and more explicit than the whole-chain parity test above: builds a fresh
+    ``MetaData``, calls ``build_strategy_registry_tables``, and compares the DECLARED column
+    names for BOTH D-06 tables against the migrated DB's REFLECTED column names. A migration
+    that diverges from the registrar splits the test-path and prod schemas silently.
+    """
+    db_path = tmp_path / "p10_registrar_parity.db"
+    url = f"sqlite+pysqlite:///{db_path}"
+    command.upgrade(_alembic_config(url), "head")
+
+    metadata = MetaData(naming_convention=NAMING_CONVENTION)
+    declared = build_strategy_registry_tables(metadata)
+
+    engine = create_engine(url)
+    try:
+        for name, table in declared.items():
+            assert {col.name for col in table.columns} == _table_columns(engine, name), (
+                f"registrar/migration column drift on {name}")
+    finally:
+        engine.dispose()
