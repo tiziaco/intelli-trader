@@ -21,9 +21,19 @@ otherwise be reached for:
 """
 
 from .catalog import StrategyCatalog, UnknownStrategyTypeError, resolve_strategy_class
+from .config_codec import (
+	CONFIG_VERSION,
+	StrategyConfigError,
+	decode_strategy_config,
+	encode_strategy_config,
+)
 
 __all__ = [
+	"CONFIG_VERSION",
 	"StrategyCatalog",
+	"StrategyConfigError",
 	"UnknownStrategyTypeError",
+	"decode_strategy_config",
+	"encode_strategy_config",
 	"resolve_strategy_class",
 ]
