@@ -352,7 +352,12 @@ def test_new_store_registrars_are_register_vs_build() -> None:
     # Table-ONLY registration: the registrars return SQLAlchemy Table objects (no Engine).
     assert not isinstance(system_table, Engine)
     assert not isinstance(venue_table, Engine)
-    assert set(registry_tables) == {"strategy_registry", "strategy_subscriptions"}
+    # D-06 — the P4 ``strategy_subscriptions`` (venue, symbol, timeframe) child was dropped;
+    # ``strategy_portfolio_subscriptions`` models the portfolio fan-out edge instead.
+    assert set(registry_tables) == {
+        "strategy_registry",
+        "strategy_portfolio_subscriptions",
+    }
 
     # The 3 registrars registered EXACTLY the 4 expected table names on the bare MetaData —
     # no connection, no LogConfig(), no SqlEngine constructed anywhere in the call chain.
@@ -360,7 +365,7 @@ def test_new_store_registrars_are_register_vs_build() -> None:
         "system_store",
         "venue_store",
         "strategy_registry",
-        "strategy_subscriptions",
+        "strategy_portfolio_subscriptions",
     }
 
 
