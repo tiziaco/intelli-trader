@@ -60,6 +60,8 @@ class StrategiesHandler(object):
 		environment: str = "backtest",
 		sql_engine: "Optional[Any]" = None,
 		registry_store: "Optional[Any]" = None,
+		strategy_catalog: "Optional[Any]" = None,
+		portfolio_read_model: "Optional[Any]" = None,
 	) -> None:
 		"""
 		Parameters
@@ -112,6 +114,27 @@ class StrategiesHandler(object):
 		# D-09 durable instance registry — None on the backtest/in-memory path (see
 		# the ctor docstring). Every persist arm short-circuits on it.
 		self.registry_store: "Optional[Any]" = registry_store
+		# D-10 injected strategy-type catalog — the access-control ALLOWLIST the `add`
+		# verb resolves an untrusted external `strategy_type` through (catalog.py). None
+		# is the backtest/in-memory path (`add` is never driven there); `add` LOUD-rejects
+		# when it is None so no external payload can be instantiated. Typed `Any` so the
+		# SQL/registry stack stays off this module's import graph (GATE-01 inertness);
+		# live wiring injects it inside build_live_system's `system_store is not None` gate.
+		self.strategy_catalog: "Optional[Any]" = strategy_catalog
+		# D-11 injected portfolio READ-model (PortfolioReadModel) — the flat-detect the
+		# `remove` verb consults on FILL to know when a force-closed strategy is flat. A
+		# READ through an injected read-model (the same seam the order domain uses), NOT a
+		# cross-domain handler call, so the queue-only contract holds. None on the
+		# backtest/in-memory path (remove never force-closes there). Typed `Any` (GATE-01).
+		self.portfolio_read_model: "Optional[Any]" = portfolio_read_model
+		# D-11 pending-removal state. A `remove` force-flats FIRST and drops the object
+		# only once the flat is OBSERVED on a later FILL cycle, so it is a PENDING state
+		# (mirroring the pending-bracket / reconnect-resume precedents), not an inline
+		# mutation. A name lives here from the `remove` command until `on_fill` sees its
+		# positions flat; while pending, `get_strategies_universe` excludes its tickers so
+		# the poll's REMOVE branch drives the P7 force-close, but its registry ROW is KEPT
+		# until flat (crash-safety: restart rehydrates and resumes managing the positions).
+		self._pending_removals: set[str] = set()
 		# SHORT-01/D-07 two-flag registration gate — read, never mutated here.
 		self._allow_short_selling: bool = allow_short_selling
 		self._enable_margin: bool = enable_margin
@@ -598,6 +621,164 @@ class StrategiesHandler(object):
 		except (ValueError, TypeError):
 			return None
 
+	def _add_strategy_verb(self, event: StrategyCommandEvent) -> None:
+		"""D-10 `add`: catalog-gate -> construct DARK -> persist -> warm via the P7 poll.
+
+		The phase's highest-value trust boundary (T-10-41): an operator/FastAPI-supplied
+		``strategy_type`` + config becomes a live Python object. Every rejection below is a
+		LOUD no-op (``logger.warning`` + return) that registers and persists NOTHING — a
+		half-built strategy never enters the roster.
+
+		D-10 access control: the injected ``strategy_catalog`` IS the allowlist. Without it
+		nothing may be instantiated from an external payload, and resolution goes ONLY
+		through ``build_strategy`` -> ``decode_strategy_config`` -> ``resolve_strategy_class``
+		(a closed dict lookup). This branch NEVER resolves a type by dynamic module import
+		or by evaluating the payload as source text — either would turn the operator API
+		into remote code execution.
+
+		D-01 one reconstruction path: ``add`` builds through the IDENTICAL ``build_strategy``
+		path rehydrate uses, so the two cannot drift. Construction runs the real
+		``_apply_params`` -> ``validate()`` -> ``_run_init()``, so unknown/missing-param
+		rejection and warmup re-derivation happen on the real path.
+
+		D-10 warm-via-P7: a freshly constructed instance is DARK (its handles are reset at
+		construction, so ``is_ready`` is False until bars feed it). The emitted
+		``UniversePollEvent`` IS the whole warmup wiring: membership is derived FROM the
+		registered strategies (``StrategyDerivedSelectionModel``), so the poll re-selects,
+		the new symbol enters the universe, and the EXISTING P7 pipeline runs
+		``spawn_warmup`` -> ``BarsLoaded`` -> ``on_bars_loaded`` (mark_ready) -> it trades;
+		a ``BarsLoadFailed`` -> FAILED -> CR-02 retry next poll. This works on a COLD
+		symbol, which is the COMMON case — add-only-if-already-warm was rejected precisely
+		because it would refuse any genuinely new symbol. NO second warmup path is built:
+		``live_bar_feed`` explicitly refuses a second state-building path (LX-09), and a
+		parallel path would re-open the paper-replay parity gate.
+
+		Queue-only: the poll is emitted on ``self.global_queue``; this NEVER calls
+		``UniverseHandler`` or touches ``Universe``.
+		"""
+		# D-10 catalog gate — the access-control allowlist. Its absence is a LOUD reject:
+		# without an injected catalog nothing may be instantiated from an external payload.
+		# We resolve types ONLY through the injected allowlist (build_strategy below), never
+		# by consulting the import system or interpreting the payload as source text — that
+		# would convert the operator API into arbitrary code execution.
+		if self.strategy_catalog is None:
+			self.logger.warning(
+				'add for strategy %s refused — no strategy_catalog injected; an external '
+				'payload may only be instantiated through the injected allowlist (D-10)',
+				event.strategy_name)
+			return
+		config = event.config
+		if not isinstance(config, dict) or not isinstance(config.get("strategy_type"), str):
+			# A malformed payload (no config, or no string strategy_type key) — loud no-op.
+			self.logger.warning(
+				'add for strategy %s carries no string strategy_type in its config '
+				'payload — ignored', event.strategy_name)
+			return
+		strategy_type = config["strategy_type"]
+		# D-02 duplicate-name loud reject BEFORE any construction — a collision would
+		# silently shadow another instance and overwrite its persisted state. Pre-checked
+		# by name (rather than catching add_strategy's raise) so nothing is constructed.
+		if any(existing.name == event.strategy_name for existing in self.strategies):
+			self.logger.warning(
+				'add for strategy %s refused — a strategy with that name is already '
+				'registered (D-02); the existing instance is left untouched',
+				event.strategy_name)
+			return
+		# Lazy imports (GATE-01): the registry collaborators reach the store, so a
+		# module-top import would pull SQL onto the BACKTEST import graph. required_base_depth
+		# is pure feed logic but is imported here too so the whole add path stays local.
+		from itrader.core.exceptions import MissingParamError, UnknownParamError
+		from itrader.price_handler.feed.cache_registration import (
+			UnwarmableTimeframeError,
+			required_base_depth,
+		)
+		from itrader.strategy_handler.registry.catalog import UnknownStrategyTypeError
+		from itrader.strategy_handler.registry.config_codec import StrategyConfigError
+		from itrader.strategy_handler.registry.rehydrate import build_strategy
+
+		# Build the row-shaped record from the payload. The config_json blob is the payload
+		# MINUS portfolio_id (a subscription is a child-table concern, NOT a declared param —
+		# leaving it in the blob would make build_strategy's _apply_params raise
+		# UnknownParamError). strategy_type stays IN the blob (an envelope key decode reads)
+		# AND is the top-level column; the two agree because the .add factory folds one value
+		# into both. build_strategy is the IDENTICAL path rehydrate uses (D-01).
+		blob = {key: value for key, value in config.items() if key != "portfolio_id"}
+		rec = {
+			"strategy_name": event.strategy_name,
+			"strategy_type": strategy_type,
+			"config_json": blob,
+		}
+		try:
+			strategy = build_strategy(rec, catalog=self.strategy_catalog)
+		except (
+			UnknownStrategyTypeError,
+			StrategyConfigError,
+			UnknownParamError,
+			MissingParamError,
+		) as exc:
+			# Every construction failure is a loud no-op naming the error KIND (not the
+			# payload values — the P8 declared-fields-only precedent). Caught by SPECIFIC
+			# type, never a bare except: a store/driver fault must not be silently eaten.
+			self.logger.warning(
+				'add for strategy %s rejected (%s) — nothing registered or persisted',
+				event.strategy_name, type(exc).__name__)
+			return
+		# F-1 warmability gate. `cache_capacity()` re-derives lazily, but an existing ring is
+		# a `deque(maxlen=...)` fixed at creation (live_bar_feed) and CANNOT resize, so
+		# re-registering a deeper consumer does not deepen it — a strategy needing more base
+		# bars than the ring holds would register, stay is_ready False FOREVER, and emit
+		# nothing while raising nothing. That silent permanent no-trade is a correctness
+		# defect, so reject loudly instead. Keyed on `base_timeframe`: only the LIVE feed
+		# carries it (a property on LiveBarFeed), so the backtest/in-memory feed (which has
+		# no base_timeframe) skips the gate cleanly — the plan's own degrade arm, keyed on
+		# the attribute rather than a redundant injected handle (self.feed already exists,
+		# audit 10-07 F1). Ring RESIZE is deferred to
+		# .planning/todos/pending/strategy-timeframe-finer-than-base-resubscribe.md.
+		base_timeframe = getattr(self.feed, "base_timeframe", None)
+		if base_timeframe is not None:
+			try:
+				depth = required_base_depth(
+					strategy.warmup, strategy.timeframe, base_timeframe)
+			except UnwarmableTimeframeError as exc:
+				# A finer-than-base (or non-multiple) timeframe can never warm from the ring.
+				self.logger.warning(
+					'add for strategy %s rejected (%s) — its timeframe cannot be served '
+					'from the feed base cadence', event.strategy_name, type(exc).__name__)
+				return
+			capacity = self.feed.cache_capacity()
+			if depth > capacity:
+				self.logger.warning(
+					'add for strategy %s rejected — needs %d base bars but the feed ring '
+					'holds only %d (an existing deque maxlen is fixed at creation and '
+					'cannot resize, so it would stay permanently dark)',
+					event.strategy_name, depth, capacity)
+				return
+		# Register through add_strategy (its SHORT-01/D-07 direction gate + the IN-01/IN-06
+		# min_timeframe block). D-02 duplicate is already pre-checked, so the only remaining
+		# raise is the SHORT-01 system-config mismatch — convert THAT to a loud no-op so an
+		# operator add never raises into the queue.
+		try:
+			self.add_strategy(strategy)
+		except ValueError as exc:
+			self.logger.warning(
+				'add for strategy %s rejected — %s (a non-LONG_ONLY strategy needs the '
+				'handler short-enabled, SHORT-01/D-07)', event.strategy_name, exc)
+			return
+		# Subscribe any portfolio_id carried alongside the config (parsed + type-checked at
+		# the boundary, T-10-35; a bare str would fan signals at a portfolio matching
+		# nothing). Absent -> the strategy computes but fans out to nobody (a legal state,
+		# D-09), and the subscribe_portfolio verb can wire it later.
+		portfolio_id = self._portfolio_id_from(event)
+		if portfolio_id is not None:
+			strategy.subscribe_portfolio(portfolio_id)
+		# Persist parent-first (the child FK requires the registry row to exist first).
+		self._persist_strategy(strategy, event)
+		if portfolio_id is not None and self.registry_store is not None:
+			self.registry_store.add_portfolio_subscription(
+				strategy_name=strategy.name, portfolio_id=str(portfolio_id))
+		# The poll IS the warmup wiring (D-10) — see the method docstring. Queue-only.
+		self.global_queue.put(UniversePollEvent(time=event.time))
+
 	def on_strategy_command(self, event: StrategyCommandEvent) -> None:
 		"""Apply one control-plane verb to one strategy, live AND durably (D-09).
 
@@ -642,6 +823,14 @@ class StrategiesHandler(object):
 		event: `StrategyCommandEvent`
 			The control-plane command addressed to one strategy by name.
 		"""
+		# D-10: `add` targets a NEW name that is (by design) NOT yet in the roster, so it
+		# is dispatched BEFORE the by-name lookup guard below — that guard would reject
+		# every add as "unknown strategy". A pair `add` is likewise handled here (the
+		# verb-scoped pair guard below only governs EXISTING pair instances; `add`
+		# constructs a fresh one, which add_strategy's SHORT-01/D-07 gate admits).
+		if event.verb == "add":
+			self._add_strategy_verb(event)
+			return
 		by_name = {strategy.name: strategy for strategy in self.strategies}
 		strategy = by_name.get(event.strategy_name)
 		if strategy is None:
