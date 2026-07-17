@@ -625,6 +625,41 @@ class Strategy(ABC):
 		self.now = None
 		self.current_bar = None
 
+	def mark_unwarm(self) -> None:
+		"""Force this strategy back to UNWARM so it must re-warm before signalling (WD-1/WD-2).
+
+		The control-plane re-warm seam. ``StrategiesHandler`` calls this when a verb
+		invalidates the strategy's indicator window — today ``enable`` (WD-1), and the
+		same seam Plan 07's ``add`` and Plan 08's ``reconfigure`` re-warm through (ONE
+		warm path, not three).
+
+		WHY it exists (WD-1). The D-07 ``is_active`` guard sits FIRST in the
+		``calculate_signals`` loop, so ``update`` never runs while a strategy is disabled
+		and its O(1) recurrence state FREEZES rather than advancing. Re-enabling without
+		this call would leave the strategy holding values computed across an N-bar HOLE
+		spanning the disabled period, and it would fire IMMEDIATELY from that state —
+		SMA/MACD silently produce wrong values across a discontinuity. Warmth is monotone,
+		so nothing else in the engine would ever notice. WD-1 accepts the re-warm cost on
+		correctness grounds: never compute a signal from a discontinuous window.
+
+		WHY it is a WRAPPER and NOT a flag (WD-2). Warmth is DERIVED — ``is_ready`` is
+		``all(state.is_ready)`` over the per-symbol handles (P5-D06/D10b). A
+		``self._warm = False`` flag would be a SECOND source of truth that diverges from
+		that computation the moment the next bar lands. So this delegates to ``reset()``
+		(the existing P5-D19 handle+bookkeeping reset) and ``is_ready`` remains the single
+		computed truth. There is deliberately no ``mark_warm`` inverse: warmth is EARNED by
+		feeding bars, never asserted.
+
+		Clearing ``_last_bar_time`` (which ``reset`` does) is LOAD-BEARING, not incidental:
+		the CR-01 monotonic guard rejects any ``bar.time <= last accepted`` BEFORE mutating
+		state, so without the clear a ``BarsLoaded`` re-warm replay of historical bars
+		would be rejected wholesale and the strategy would stay dark FOREVER.
+
+		⚠ ``PairStrategy`` OVERRIDES this — its warmth is not handle-derived. See
+		``pair_base.py::mark_unwarm``.
+		"""
+		self.reset()
+
 	def evaluate(self, ticker: str, window: pd.DataFrame) -> SignalIntent | None:
 		"""LEGACY window-driven seam (P5-D13 — OFF the per-tick run path).
 
