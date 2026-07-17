@@ -431,7 +431,7 @@ Decimal money end-to-end (codec round-trips Decimals as strings); indentation me
 
 **Wave 7** *(blocked on 10-08)*
 
-- [ ] 10-09-PLAN.md — D-22 FastAPI stand-in add→restart lifecycle + phase gate sweep (STRAT-01/02/03)
+- [x] 10-09-PLAN.md — D-22 FastAPI stand-in add→restart lifecycle + phase gate sweep (STRAT-01/02/03)
 
 Plans:
 
@@ -442,7 +442,7 @@ Plans:
 - [x] 10-05-PLAN.md — D-01 rehydrate at construction in `build_live_system` + D-19 quarantine/loud-infrastructure split + D-21 empty-registry no-op + D-02 duplicate reject (wave 3)
 - [x] 10-06-PLAN.md — D-08 event extension + D-09 light verbs (enable/disable/subscribe/unsubscribe + ticker persist) + D-16/D-17 verb-scoped pair guard (wave 4)
 - [x] 10-07-PLAN.md — D-10 `add` (catalog-gate, dark, warm via the P7 pipeline) + D-11 `remove` (force-flat first, pending-removal state) (wave 5)
-- [ ] 10-08-PLAN.md — D-12/D-13/D-14/D-15 atomic reconfiguration (trial-validate → persist → apply → re-warm) + the D-15 allowlist + the F-1 timeframe capacity gate (wave 6)
+- [x] 10-08-PLAN.md — D-12/D-13/D-14/D-15 atomic reconfiguration (trial-validate → persist → apply → re-warm) + the D-15 allowlist + the F-1 timeframe capacity gate (wave 6)
 - [ ] 10-09-PLAN.md — D-22 external add→warm→trade→restart→resume lifecycle (the FastAPI stand-in) + phase gate sweep and validation sign-off (wave 7)
 
 ### Phase 11 ★: Multi-Portfolio-Live
