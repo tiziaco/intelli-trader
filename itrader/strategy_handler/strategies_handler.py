@@ -779,6 +779,144 @@ class StrategiesHandler(object):
 		# The poll IS the warmup wiring (D-10) — see the method docstring. Queue-only.
 		self.global_queue.put(UniversePollEvent(time=event.time))
 
+	def _remove_strategy_verb(
+		self, event: StrategyCommandEvent, strategy: Strategy
+	) -> None:
+		"""D-11 `remove`: force-flat FIRST, hold PENDING across cycles, then drop.
+
+		The three lifecycle behaviours stay DISTINCT and are never conflated:
+		  - ``disable`` -> stop NEW entries, KEEP open positions + resting brackets (D-07);
+		  - ``remove`` -> force-flat, WAIT flat, then drop the object + delete the rows;
+		  - ``reconfigure`` -> apply live, KEEP positions (D-12, Plan 08).
+
+		Orphaning positions on remove was REJECTED: a removed strategy's positions would
+		become unmanaged (no exit logic owns them, and on a bracket-less instrument nothing
+		closes them). So the sequence is deactivate -> pending -> persist ``enabled=False``
+		-> poll (drive the P7 force-close) -> only drop once the flat is observed on a FILL.
+
+		Because the flat is observed on a LATER event cycle, this is a PENDING state (the
+		``_pending_removals`` set), mirroring the pending-bracket and reconnect-resume
+		precedents — not an inline mutation.
+
+		THE load-bearing design call (recorded in the SUMMARY): the force-close is driven by
+		making the strategy's symbols LEAVE the derived membership. ``get_strategies_universe``
+		excludes a pending-removal strategy's tickers, so the follow-on ``UniversePollEvent``
+		re-derives membership WITHOUT them, the poll's REMOVE branch fires
+		``_on_symbol_removed`` for its now-unmembered symbols, and the EXISTING P7 force-close
+		-> detach-on-flat machinery manages the positions out — reusing the pipeline verbatim
+		(D-11) rather than building a second force-close path. The instance STAYS in
+		``self.strategies`` and its ROW is KEPT until flat: a crash mid-force-close then
+		rehydrates the strategy and it resumes managing its own positions rather than
+		orphaning them. Queue-only: the poll is emitted here; ``UniverseHandler`` is never
+		called and ``Universe`` is never touched.
+		"""
+		# Idempotency: a name already pending is a no-op — no second force-close, no second
+		# poll (D-10 idempotency). The unknown-name case is the shared loud no-op upstream.
+		if strategy.name in self._pending_removals:
+			return
+		# Deactivate FIRST — the D-07 `is_active` gate stops NEW entries while the
+		# force-close plays out (this is why D-07 is a Plan 03 dependency).
+		if strategy.is_active:
+			strategy.deactivate_strategy()
+		# Enter the pending state BEFORE emitting the poll, so get_strategies_universe
+		# already excludes this strategy when the poll re-derives membership.
+		self._pending_removals.add(strategy.name)
+		# Persist enabled=False — the row must reflect "should not be trading" even if the
+		# process dies mid-removal. Do NOT delete the row here: D-11's order is force-flat
+		# -> wait flat -> THEN drop. Deleting first would leave a crash mid-force-close with
+		# open positions and no row to rehydrate, so no owner: orphaned.
+		self._persist_strategy(strategy, event)
+		# The poll drives the P7 force-close (see the docstring). Queue-only.
+		self.global_queue.put(UniversePollEvent(time=event.time))
+		# Complete immediately when the flat condition already holds (the no-position case
+		# completes on the same cycle, D-11).
+		self._try_complete_removal(strategy)
+
+	def _strategy_is_flat(self, strategy: Strategy) -> bool:
+		"""True when NONE of ``strategy``'s tickers are held in any subscribed portfolio.
+
+		A READ through the injected ``PortfolioReadModel`` (``get_position``), which the
+		queue-only rule permits (reads go through injected read-models; only writes are
+		queue-mediated). Checks the strategy's tickers across its subscribed portfolios, so
+		a pair's BOTH legs must be flat (D-16).
+
+		With no read model injected there is nothing to observe: return True (the
+		backtest/in-memory degrade arm, where remove never force-closes and drops directly).
+		A strategy with no subscribed portfolios is likewise vacuously flat.
+		"""
+		read_model = self.portfolio_read_model
+		if read_model is None:
+			return True
+		for portfolio_id in strategy.subscribed_portfolios:
+			for ticker in strategy.tickers:
+				if read_model.get_position(portfolio_id, ticker) is not None:
+					return False
+		return True
+
+	def _try_complete_removal(self, strategy: Strategy) -> None:
+		"""Drop + delete a pending-removal strategy IFF its positions are now flat (D-11).
+
+		Only once flat: drop the object from ``self.strategies``, delete the rows (the store
+		removes the portfolio-subscription CHILD rows BEFORE the ``strategy_registry`` parent
+		— P-6; the FK forbids the reverse and the SQLite ``PRAGMA foreign_keys=ON`` hook
+		enforces it on both dialects), discard the name from ``_pending_removals``, and
+		recompute ``min_timeframe`` (it was derived at ``add_strategy`` time and dropping the
+		only strategy at the minimum leaves it stale).
+		"""
+		if not self._strategy_is_flat(strategy):
+			return
+		if strategy in self.strategies:
+			self.strategies.remove(strategy)
+		if self.registry_store is not None:
+			# Child-then-parent delete (P-6) — the store owns the FK ordering.
+			self.registry_store.delete(strategy.name)
+		self._pending_removals.discard(strategy.name)
+		self._recompute_min_timeframe()
+
+	def _recompute_min_timeframe(self) -> None:
+		"""Re-derive ``min_timeframe`` from the current roster after a drop (IN-01/IN-06).
+
+		``min_timeframe`` is derived only in ``add_strategy`` and never recomputed on
+		removal, so dropping the strategy at the minimum would leave it stale. An EMPTY
+		roster returns to the ``None`` seed — the legal "no strategies" state (IN-06),
+		mirroring the None-seed handling in ``add_strategy``.
+		"""
+		if not self.strategies:
+			self.min_timeframe = None
+			return
+		self.min_timeframe = min(strategy.timeframe for strategy in self.strategies)
+
+	def on_fill(self, event: "Any") -> None:
+		"""D-11 completion hook: drop a pending-removal strategy once its positions are flat.
+
+		The three lifecycle behaviours stay DISTINCT (never conflated): ``disable`` stops
+		NEW entries and KEEPS open positions + brackets; ``remove`` force-flats, waits flat,
+		then drops; ``reconfigure`` applies live and KEEPS positions.
+
+		The removal spans event cycles, so it is a PENDING state (like pending-bracket and
+		reconnect-resume) — not an inline mutation. On each FILL this re-scans EVERY pending
+		removal's flatness via the injected ``PortfolioReadModel`` (a READ through an
+		injected read-model, which the queue-only rule permits — ``PortfolioHandler`` is
+		never imported) and completes the ones that reached flat. It re-scans all pending
+		removals rather than keying on ``event.ticker`` so a multi-leg strategy completes on
+		whichever fill flattens its LAST open leg.
+
+		Wired on the LIVE FILL route only (``route_registrar``), AFTER
+		``PortfolioHandler.on_fill`` so the read model already reflects the settled (flat)
+		position. It is NOT on the backtest ``_routes`` FILL list at all, so it never runs on
+		the byte-exact oracle path (and ``_pending_removals`` is empty there regardless).
+		"""
+		if not self._pending_removals:
+			return
+		by_name = {strategy.name: strategy for strategy in self.strategies}
+		for name in list(self._pending_removals):
+			strategy = by_name.get(name)
+			if strategy is None:
+				# Already dropped — a stale pending entry; clear it defensively.
+				self._pending_removals.discard(name)
+				continue
+			self._try_complete_removal(strategy)
+
 	def on_strategy_command(self, event: StrategyCommandEvent) -> None:
 		"""Apply one control-plane verb to one strategy, live AND durably (D-09).
 
@@ -874,6 +1012,14 @@ class StrategiesHandler(object):
 				'the ticker verbs (CR-01: the exact-2-ticker contract is immutable at '
 				'the control-plane seam)',
 				event.verb, event.strategy_name)
+			return
+		# D-11 `remove` — a heavy lifecycle verb (force-flat first, pending across event
+		# cycles). It is NOT in _PAIR_REFUSED_VERBS, so a pair remove reaches here and
+		# force-flats BOTH legs (D-16). Dispatched to its own method; it owns its persist
+		# + poll and the pending-removal state, so it returns before the light-verb
+		# `mutated` tail below (which is for the D-09 light verbs only).
+		if event.verb == "remove":
+			self._remove_strategy_verb(event, strategy)
 			return
 		# IN-02: track whether the verb ACTUALLY mutated anything. Both the persist and
 		# the follow-on are gated on this — an idempotent no-op (enable an enabled
@@ -1016,6 +1162,16 @@ class StrategiesHandler(object):
 		"""
 		traded_tickers: list[str] = []
 		for strategy in self.strategies:
+			# D-11: a pending-removal strategy is EXCLUDED from the derived membership so
+			# the poll's REMOVE branch force-closes its now-unmembered symbols — the trigger
+			# that drives the P7 force-close machinery. The instance STAYS in
+			# self.strategies (its row is kept until flat for crash-safety); it simply stops
+			# CONTRIBUTING to membership. A symbol shared with a non-pending strategy stays a
+			# member via that other strategy (correct: it is still needed) — the force-close
+			# is symbol-scoped, so a shared symbol's position is not force-closed by removing
+			# only one of its strategies (the accepted P10-scope limitation).
+			if strategy.name in self._pending_removals:
+				continue
 			# IN-01: the declared config contract is `tickers: list[str]`, so
 			# `tickers[0]` is always a `str` — the legacy pairs-trading branch
 			# (`isinstance(tickers[0], tuple)`) was dead on every supported path

@@ -114,10 +114,17 @@ class LiveRouteRegistrar:
         # BARS_LOAD_FAILED marks the symbol FAILED (kept, retried next poll).
         routes[EventType.BARS_LOAD_FAILED] = [
             self._universe_handler.on_bars_load_failed]
-        # FILL = portfolio -> order -> universe: APPEND universe.on_fill AFTER the
-        # base PortfolioHandler.on_fill + OrderHandler.on_fill so the read model
-        # already reflects the settled (flat) position for detach-on-flat.
+        # FILL = portfolio -> order -> universe -> strategies: APPEND universe.on_fill
+        # AFTER the base PortfolioHandler.on_fill + OrderHandler.on_fill so the read model
+        # already reflects the settled (flat) position for detach-on-flat, then append
+        # strategies.on_fill (D-11 remove completion: it re-scans _pending_removals and
+        # drops a force-flatted strategy once the portfolio read model shows it flat — so
+        # it too must run AFTER PortfolioHandler.on_fill). Added ONLY on the live route:
+        # the backtest EventHandler._routes FILL list stays [portfolio, order], so
+        # strategies.on_fill never runs on the byte-exact oracle path (and
+        # _pending_removals is empty there regardless).
         routes[EventType.FILL].append(self._universe_handler.on_fill)
+        routes[EventType.FILL].append(self._strategies_handler.on_fill)
 
         # CONTROL-plane routes (SAFE-03/§11c, P7): the connector's asyncio loop puts a
         # StreamStateEvent / ConnectorFatalEvent on the bus (never touching engine state
