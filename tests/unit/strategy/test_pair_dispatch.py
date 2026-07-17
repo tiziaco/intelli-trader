@@ -25,7 +25,11 @@ import pytest
 from itrader.core.bar import Bar
 from itrader.core.enums import OrderType, Side, TradingDirection
 from itrader.core.sizing import FixedQuantity, SignalIntent
-from itrader.events_handler.events import BarEvent, SignalEvent
+from itrader.events_handler.events import (
+    BarEvent,
+    SignalEvent,
+    StrategyCommandEvent,
+)
 from itrader.strategy_handler.pair_base import PairStrategy
 from itrader.strategy_handler.storage import InMemorySignalStore
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
@@ -215,3 +219,115 @@ def test_beta_weighted_leg_quantities() -> None:
     # Both legs are MARKET entries (the _entry constructor).
     assert leg_A.order_type is OrderType.MARKET
     assert leg_B.order_type is OrderType.MARKET
+
+
+# ---------------------------------------------------------------------------
+# The VERB-SCOPED pair guard (D-16 / D-17 / CR-01)
+# ---------------------------------------------------------------------------
+#
+# The v1.7 guard refused EVERY StrategyCommandEvent verb for a PairStrategy. That is
+# BROADER than D-16 permits: D-16 requires pairs to add/remove/enable/disable/subscribe
+# and rehydrate as FULL registry instances. A blanket refusal silently guts pair
+# durability while LOOKING like a conservative safety measure — a refusal that is too
+# broad is as much a defect as one that is too narrow. The guard is now scoped to
+# exactly `reconfigure` (D-17) + the two ticker verbs (CR-01).
+
+
+def _pair_command(verb: str, **kwargs: object) -> StrategyCommandEvent:
+    return getattr(StrategyCommandEvent, verb)(
+        strategy_name="stub_pair", time=datetime(2020, 1, 8, tzinfo=timezone.utc),
+        **kwargs)
+
+
+@pytest.mark.parametrize("verb, kwargs, check", [
+    ("enable", {}, lambda s: s.is_active is True),
+    ("disable", {}, lambda s: s.is_active is False),
+    ("subscribe_portfolio", {"portfolio_id": "p9"},
+     lambda s: "p9" in s.subscribed_portfolios),
+])
+def test_pair_accepts_the_lifecycle_verbs(verb, kwargs, check) -> None:  # type: ignore[no-untyped-def]
+    """D-16: a pair IS a full registry instance — the lifecycle verbs apply to it.
+
+    This is the test that catches a blanket guard silently gutting D-16.
+    """
+    handler = _make_handler()
+    strategy = _make_subscribed_pair(handler)
+    if verb == "enable":
+        strategy.deactivate_strategy()
+
+    handler.on_strategy_command(_pair_command(verb, **kwargs))
+
+    assert check(strategy)
+
+
+def test_pair_accepts_unsubscribe_portfolio() -> None:
+    """D-16: the symmetric fan-out arm applies to a pair too."""
+    handler = _make_handler()
+    strategy = _make_subscribed_pair(handler)
+    handler.on_strategy_command(
+        _pair_command("subscribe_portfolio", portfolio_id="p9"))
+
+    handler.on_strategy_command(
+        _pair_command("unsubscribe_portfolio", portfolio_id="p9"))
+
+    assert "p9" not in strategy.subscribed_portfolios
+
+
+def test_pair_refuses_reconfigure() -> None:
+    """D-17: ALL pair reconfiguration is refused in P10 — a loud, documented no-op.
+
+    Not a taste call. ``pair_base._entry`` sets NO stop_loss/take_profit, so an open
+    spread has NO resting exchange bracket and its ONLY exit is ``evaluate_pair()``,
+    gated on ``is_pair_ready()``. ``_run_init`` unconditionally blanks ``_buf_A``/
+    ``_buf_B``/``_pair_bar_count`` and ``reconfigure()`` ALWAYS calls ``_run_init()``.
+    So reconfiguring a pair holding an open spread strands an unhedged, bracket-less
+    spread with no reachable exit for ``beta_warmup + z_lookback`` bars.
+    """
+    handler = _make_handler()
+    strategy = _make_subscribed_pair(handler)
+    before = strategy.entry_z
+
+    handler.on_strategy_command(
+        _pair_command("reconfigure", config={"entry_z": "3"}))
+
+    assert strategy.entry_z == before, "no param may change"
+    assert _drain(handler.global_queue) == [], "no follow-on on a refusal"
+
+
+def test_pair_refuses_the_ticker_verbs() -> None:
+    """CR-01: the exact-2-ticker contract keeps the v1.7 ticker refusal intact.
+
+    Mutating a pair's tickers would break ``_dispatch_pair``'s len-2 guard and make
+    EVERY subsequent BAR raise — an unbounded self-inflicted ErrorEvent storm.
+    """
+    handler = _make_handler()
+    strategy = _make_subscribed_pair(handler)
+
+    handler.on_strategy_command(_pair_command("add_ticker", symbol="SOLUSD"))
+    handler.on_strategy_command(_pair_command("remove_ticker", symbol=_TICKER_B))
+
+    assert strategy.tickers == [_TICKER_A, _TICKER_B], "the pair contract is immutable"
+    assert _drain(handler.global_queue) == []
+
+
+def test_pair_enable_re_warms_the_spread_not_just_the_handles() -> None:
+    """WD-1 + WD-2's pair arm: a re-enabled pair must NOT trade on a cold β.
+
+    A pair is handle-free, so ``is_ready`` is vacuously True and a handles-only unwarm
+    would leave it reporting warm INSTANTLY while ``_buf_A``/``_buf_B`` still held
+    pre-disable closes — re-entering the spread on a β fit across a discontinuity.
+    """
+    handler = _make_handler()
+    strategy = _make_subscribed_pair(handler)
+    _warm_to_ready(handler)
+    handler.calculate_signals(_bar_event(both_legs=True, day=_MAX_WINDOW))
+    _drain(handler.global_queue)
+    assert strategy.is_pair_ready() is True
+
+    handler.on_strategy_command(_pair_command("disable"))
+    handler.on_strategy_command(_pair_command("enable"))
+
+    assert strategy.is_pair_ready() is False
+    # And it stays dark on the next tick rather than firing from the stale spread.
+    handler.calculate_signals(_bar_event(both_legs=True, day=_MAX_WINDOW + 1))
+    assert _drain(handler.global_queue) == []
