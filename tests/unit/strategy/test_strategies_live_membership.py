@@ -76,6 +76,11 @@ class _SpyStrategy:
         self.tickers = list(tickers)
         self.name = name
         self.timeframe = timedelta(days=1)
+        # D-07: calculate_signals now reads is_active (the P10 enable/disable gate).
+        # Real strategies get it from Strategy.__init__ (base.py:193, defaults True);
+        # this spy does not subclass Strategy, so it mirrors the default explicitly —
+        # the stub's stated contract is to carry the surface the loop reads.
+        self.is_active = True
         self.strategy_id = "spy-id"
         self.subscribed_portfolios: list[Any] = []
         self.sizing_policy = FractionOfCash(Decimal("0.95"))

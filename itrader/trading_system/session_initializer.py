@@ -121,8 +121,18 @@ class SessionInitializer:
         # (2) RUN-07/D-17 warmup registration (06-03): sizes the LIVE feed ring to the
         # max strategy warmup so cache_capacity() derives to 100 (SMA_MACD). Safe
         # AFTER wire_universe's feed.bind (RESEARCH Landmine 3 — do NOT re-invert).
+        #
+        # F-1: the depth is derived in BASE-bar units, scaled by each strategy's
+        # timeframe multiple — the ring holds BASE bars while strategy.warmup counts
+        # STRATEGY-TIMEFRAME bars, so a strategy coarser than the base cadence needs
+        # warmup * multiple base bars (a 4h strategy on a 1h base resampling a
+        # warmup-deep ring would otherwise never warm, and never trade, silently).
+        # For SMA_MACD the timeframe equals the base cadence, so the multiple is 1 and
+        # the derived depth is unchanged at 100. engine.feed is a LiveBarFeed on this
+        # live-only path (same interim cast as the UniverseHandler ctor below).
         register_strategy_warmup(
-            engine.feed, engine.strategies_handler.strategies)
+            engine.feed, engine.strategies_handler.strategies,
+            base_timeframe=cast("LiveBarFeed", engine.feed).base_timeframe)
 
         # (3) WR-03 subscription/membership invariant — no guard needed TODAY.
         # Subscription is derived SOLELY from universe.members: start() runs

@@ -156,6 +156,20 @@ class StrategiesHandler(object):
 			The bar event of the trading system
 		"""
 		for strategy in self.strategies:
+			# D-07: the enable/disable gate — `is_active` (base.py:193) was an INERT
+			# flag before P10 (flipped by activate/deactivate_strategy, read by
+			# nothing); this wires it. Placed FIRST so the skip is unconditional and
+			# covers the PairStrategy branch below (D-16: a pair uses the same gate).
+			# A disabled strategy STAYS in self.strategies and keeps its indicator
+			# warmth (its O(1) state freezes at the current count rather than
+			# resetting — the same freeze the P5-D10c/D14 gap skip relies on), so
+			# enable trades the NEXT bar with no re-warmup; removing it would cost a
+			# full 100-bar re-warm. Disable stops NEW entries only — open positions
+			# and resting brackets run to natural exit via the execution layer, which
+			# never reads this flag. Backtest-inert: is_active defaults True and no
+			# backtest path deactivates, so the oracle stays byte-exact.
+			if not strategy.is_active:
+				continue
 			# Check if the strategy's timeframe is a multiple of the bar event time
 			if not check_timeframe(event.time, strategy.timeframe):
 				continue
