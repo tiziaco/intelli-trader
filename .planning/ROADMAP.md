@@ -411,7 +411,7 @@ Decimal money end-to-end (codec round-trips Decimals as strings); indentation me
 
 **Wave 2** *(blocked on 10-01)*
 
-- [ ] 10-04-PLAN.md — D-01 injected catalog allowlist + D-04/D-20 authoring codec (`config_version: 1`) (STRAT-01)
+- [x] 10-04-PLAN.md — D-01 injected catalog allowlist + D-04/D-20 authoring codec (`config_version: 1`) (STRAT-01)
 
 **Wave 3** *(blocked on 10-02 + 10-04)*
 
