@@ -1618,8 +1618,18 @@ def build_live_system(
                 "with ZERO strategies (D-21 first-start). On a live deployment this means "
                 "the Alembic migration chain has not been applied to this database.")
         else:
+            strategy_registry_store = StrategyRegistryStore(system_db_backend)
+            # D-09: inject the durable registry the runtime STRATEGY_COMMAND verbs write
+            # through. Post-construction attribute injection inside the gate, mirroring
+            # the `facade._config_router = ConfigRouter(...)` precedent above. Assigned
+            # BEFORE rehydrate so a rehydrated strategy's FIRST runtime verb already has
+            # a store to persist to — otherwise an enable/disable landing between boot
+            # and the next wiring step would apply live and vanish at restart. The
+            # backtest composition root never reaches here, so its handler keeps
+            # registry_store=None and every persist arm stays a no-op.
+            engine.strategies_handler.registry_store = strategy_registry_store
             facade._quarantined_strategies = rehydrate_strategies(
-                store=StrategyRegistryStore(system_db_backend),
+                store=strategy_registry_store,
                 catalog=strategy_catalog,
                 strategies_handler=engine.strategies_handler,
                 alert_sink=alert_sink,

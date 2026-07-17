@@ -18,6 +18,7 @@ Selectors: ``-k both_legs``, ``-k both_present``, ``-k beta_weighted``
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from queue import Queue
+from uuid import UUID
 
 import pandas as pd
 import pytest
@@ -48,6 +49,10 @@ _BETA_N = _BETA * _N   # 6 — leg B β-weighted quantity
 _BETA_WARMUP = 5
 _Z_LOOKBACK = 3
 _MAX_WINDOW = _BETA_WARMUP + _Z_LOOKBACK  # 8 — clears validate() (Pitfall 3)
+
+# A portfolio id as it arrives in the untrusted payload: a STRING the dispatch parses
+# back into the PortfolioId handle the fan-out expects.
+_P9 = "550e8400-e29b-41d4-a716-4466554400a9"
 
 
 class _StubPair(PairStrategy):
@@ -242,8 +247,8 @@ def _pair_command(verb: str, **kwargs: object) -> StrategyCommandEvent:
 @pytest.mark.parametrize("verb, kwargs, check", [
     ("enable", {}, lambda s: s.is_active is True),
     ("disable", {}, lambda s: s.is_active is False),
-    ("subscribe_portfolio", {"portfolio_id": "p9"},
-     lambda s: "p9" in s.subscribed_portfolios),
+    ("subscribe_portfolio", {"portfolio_id": _P9},
+     lambda s: UUID(_P9) in s.subscribed_portfolios),
 ])
 def test_pair_accepts_the_lifecycle_verbs(verb, kwargs, check) -> None:  # type: ignore[no-untyped-def]
     """D-16: a pair IS a full registry instance — the lifecycle verbs apply to it.
@@ -265,12 +270,12 @@ def test_pair_accepts_unsubscribe_portfolio() -> None:
     handler = _make_handler()
     strategy = _make_subscribed_pair(handler)
     handler.on_strategy_command(
-        _pair_command("subscribe_portfolio", portfolio_id="p9"))
+        _pair_command("subscribe_portfolio", portfolio_id=_P9))
 
     handler.on_strategy_command(
-        _pair_command("unsubscribe_portfolio", portfolio_id="p9"))
+        _pair_command("unsubscribe_portfolio", portfolio_id=_P9))
 
-    assert "p9" not in strategy.subscribed_portfolios
+    assert UUID(_P9) not in strategy.subscribed_portfolios
 
 
 def test_pair_refuses_reconfigure() -> None:
@@ -328,6 +333,12 @@ def test_pair_enable_re_warms_the_spread_not_just_the_handles() -> None:
     handler.on_strategy_command(_pair_command("enable"))
 
     assert strategy.is_pair_ready() is False
-    # And it stays dark on the next tick rather than firing from the stale spread.
+    # Drop the enable's UniversePollEvent re-warm follow-on: what matters below is
+    # that no SIGNAL is emitted from the now-cold spread.
+    _drain(handler.global_queue)
+
+    # It stays dark on the next tick rather than firing from the stale spread.
     handler.calculate_signals(_bar_event(both_legs=True, day=_MAX_WINDOW + 1))
-    assert _drain(handler.global_queue) == []
+
+    assert [s for s in _drain(handler.global_queue)
+            if isinstance(s, SignalEvent)] == []

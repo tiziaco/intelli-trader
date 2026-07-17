@@ -28,6 +28,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 from queue import Queue
 from typing import Any, Iterator
+from uuid import UUID
 
 import pandas as pd
 import pytest
@@ -51,6 +52,12 @@ _TICKER = "BTCUSD"
 _OTHER = "ETHUSD"
 _NAME = "verb_probe"
 _WARMUP = 3
+# Portfolio ids arrive as STRINGS in the untrusted payload (and are stored as String),
+# but `subscribed_portfolios` is typed `list[PortfolioId | int]` and calculate_signals
+# casts each entry straight onto SignalEvent.portfolio_id. So the dispatch must PARSE
+# them; a bare str would fan signals at a portfolio matching nothing.
+_P1 = "550e8400-e29b-41d4-a716-446655440000"
+_P2 = "550e8400-e29b-41d4-a716-446655440001"
 
 
 class _Probe(Strategy):
@@ -256,10 +263,57 @@ def test_subscribe_portfolio_applies_live_and_writes_the_child_row(
     handler, strategy = _handler(store)
 
     handler.on_strategy_command(StrategyCommandEvent.subscribe_portfolio(
-        strategy_name=_NAME, portfolio_id="p1", time=_T))
+        strategy_name=_NAME, portfolio_id=_P1, time=_T))
 
-    assert "p1" in strategy.subscribed_portfolios
-    assert store.portfolio_subscriptions(_NAME) == ["p1"]
+    assert UUID(_P1) in strategy.subscribed_portfolios
+    assert store.portfolio_subscriptions(_NAME) == [_P1]
+
+
+def test_subscribed_portfolio_id_is_a_portfolio_id_not_a_str(
+    store: StrategyRegistryStore,
+) -> None:
+    """The payload id must be PARSED, not passed through (the 10-05 trap, one arm over).
+
+    ``calculate_signals`` casts each entry of ``subscribed_portfolios`` straight onto
+    ``SignalEvent.portfolio_id`` (FL-02: "the runtime value is always a UUIDv7-backed
+    PortfolioId"). A bare ``str`` sails through that cast and reaches the portfolio
+    lookup matching NOTHING — the subscription looks healthy and fans into the void.
+    Only a TYPE assertion catches it: value equality passes while the type is wrong.
+    """
+    handler, strategy = _handler(store)
+
+    handler.on_strategy_command(StrategyCommandEvent.subscribe_portfolio(
+        strategy_name=_NAME, portfolio_id=_P1, time=_T))
+
+    subscribed = strategy.subscribed_portfolios[0]
+    assert isinstance(subscribed, UUID)
+    assert not isinstance(subscribed, str)
+
+
+def test_a_malformed_portfolio_id_is_a_loud_no_op(
+    store: StrategyRegistryStore,
+) -> None:
+    """An unparseable id never reaches live state or SQL, and never raises (T-10-35)."""
+    handler, strategy = _handler(store)
+
+    handler.on_strategy_command(StrategyCommandEvent.subscribe_portfolio(
+        strategy_name=_NAME, portfolio_id="not-a-uuid", time=_T))
+
+    assert strategy.subscribed_portfolios == []
+    assert store.portfolio_subscriptions(_NAME) == []
+
+
+def test_the_legacy_int_portfolio_id_arm_still_works(
+    store: StrategyRegistryStore,
+) -> None:
+    """``PortfolioId | int`` — the union's int arm is legal and must not be rejected."""
+    handler, strategy = _handler(store)
+
+    handler.on_strategy_command(StrategyCommandEvent.subscribe_portfolio(
+        strategy_name=_NAME, portfolio_id="7", time=_T))
+
+    assert strategy.subscribed_portfolios == [7]
+    assert store.portfolio_subscriptions(_NAME) == ["7"]
 
 
 def test_subscribe_portfolio_twice_is_idempotent(
@@ -268,13 +322,13 @@ def test_subscribe_portfolio_twice_is_idempotent(
     """One row, one list entry — a duplicate would fan one decision out twice."""
     handler, strategy = _handler(store)
     event = StrategyCommandEvent.subscribe_portfolio(
-        strategy_name=_NAME, portfolio_id="p1", time=_T)
+        strategy_name=_NAME, portfolio_id=_P1, time=_T)
 
     handler.on_strategy_command(event)
     handler.on_strategy_command(event)
 
-    assert strategy.subscribed_portfolios.count("p1") == 1
-    assert store.portfolio_subscriptions(_NAME) == ["p1"]
+    assert strategy.subscribed_portfolios.count(UUID(_P1)) == 1
+    assert store.portfolio_subscriptions(_NAME) == [_P1]
 
 
 def test_unsubscribe_portfolio_applies_live_and_deletes_the_child_row(
@@ -283,15 +337,15 @@ def test_unsubscribe_portfolio_applies_live_and_deletes_the_child_row(
     """Test 6 — the id leaves the live list AND the row goes."""
     handler, strategy = _handler(store)
     handler.on_strategy_command(StrategyCommandEvent.subscribe_portfolio(
-        strategy_name=_NAME, portfolio_id="p1", time=_T))
+        strategy_name=_NAME, portfolio_id=_P1, time=_T))
     handler.on_strategy_command(StrategyCommandEvent.subscribe_portfolio(
-        strategy_name=_NAME, portfolio_id="p2", time=_T))
+        strategy_name=_NAME, portfolio_id=_P2, time=_T))
 
     handler.on_strategy_command(StrategyCommandEvent.unsubscribe_portfolio(
-        strategy_name=_NAME, portfolio_id="p1", time=_T))
+        strategy_name=_NAME, portfolio_id=_P1, time=_T))
 
-    assert "p1" not in strategy.subscribed_portfolios
-    assert store.portfolio_subscriptions(_NAME) == ["p2"]
+    assert UUID(_P1) not in strategy.subscribed_portfolios
+    assert store.portfolio_subscriptions(_NAME) == [_P2]
 
 
 def test_unsubscribe_of_an_unsubscribed_id_is_an_idempotent_no_op(
@@ -313,10 +367,10 @@ def test_unsubscribing_the_last_portfolio_is_a_legal_empty_state(
     """Test 7 — the strategy computes but fans out to nobody. Legal, not an error."""
     handler, strategy = _handler(store)
     handler.on_strategy_command(StrategyCommandEvent.subscribe_portfolio(
-        strategy_name=_NAME, portfolio_id="p1", time=_T))
+        strategy_name=_NAME, portfolio_id=_P1, time=_T))
 
     handler.on_strategy_command(StrategyCommandEvent.unsubscribe_portfolio(
-        strategy_name=_NAME, portfolio_id="p1", time=_T))
+        strategy_name=_NAME, portfolio_id=_P1, time=_T))
 
     assert strategy.subscribed_portfolios == []
     assert store.portfolio_subscriptions(_NAME) == []
@@ -447,11 +501,11 @@ def test_every_verb_applies_live_with_no_store_injected() -> None:
     assert strategy.is_active is False
 
     handler.on_strategy_command(StrategyCommandEvent.subscribe_portfolio(
-        strategy_name=_NAME, portfolio_id="p1", time=_T))
-    assert "p1" in strategy.subscribed_portfolios
+        strategy_name=_NAME, portfolio_id=_P1, time=_T))
+    assert UUID(_P1) in strategy.subscribed_portfolios
 
     handler.on_strategy_command(StrategyCommandEvent.unsubscribe_portfolio(
-        strategy_name=_NAME, portfolio_id="p1", time=_T))
+        strategy_name=_NAME, portfolio_id=_P1, time=_T))
     assert strategy.subscribed_portfolios == []
 
     handler.on_strategy_command(StrategyCommandEvent.add_ticker(

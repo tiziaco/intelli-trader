@@ -1,3 +1,4 @@
+import uuid
 from datetime import timedelta
 from typing import Any, Optional, TYPE_CHECKING, cast
 
@@ -31,6 +32,18 @@ if TYPE_CHECKING:
 	from itrader.universe.universe import Universe
 
 
+# D-16/D-17 verb-scoped pair guard. A PairStrategy refuses EXACTLY these verbs and
+# accepts every other one — see the citation block in on_strategy_command. The v1.7
+# guard refused ALL verbs, which is broader than D-16 permits.
+_PAIR_REFUSED_VERBS = frozenset({"reconfigure", "add_ticker", "remove_ticker"})
+
+# D-09/D-11: the verbs whose effect requires a UniversePollEvent follow-on. The two
+# ticker verbs change universe MEMBERSHIP; `enable` needs it because WD-1 unwarms the
+# strategy and the re-warm rides the CR-02 FAILED-retry, which only runs on a poll.
+# disable/subscribe/unsubscribe change neither membership nor warmth -> no poll.
+_POLL_FOLLOW_ON_VERBS = frozenset({"add_ticker", "remove_ticker", "enable"})
+
+
 class StrategiesHandler(object):
 	"""
 	Manage all the strategies of the trading system.
@@ -46,6 +59,7 @@ class StrategiesHandler(object):
 		*,
 		environment: str = "backtest",
 		sql_engine: "Optional[Any]" = None,
+		registry_store: "Optional[Any]" = None,
 	) -> None:
 		"""
 		Parameters
@@ -73,6 +87,14 @@ class StrategiesHandler(object):
 			notional to "spend"; spot debit-notional cannot express it). With the
 			default ``max_leverage == 1`` this gives fully-collateralized shorts
 			(no leverage); levered shorts are a separate opt-in dial. Defaults off.
+		registry_store: `StrategyRegistryStore | None`
+			D-09: the injected durable instance registry every mutating
+			STRATEGY_COMMAND verb writes through. ``None`` is the BACKTEST /
+			in-memory path — every persist arm is then a clean no-op, exactly as
+			the ``system_store is not None`` gate degrades everywhere else, so the
+			oracle path carries no store and no SQL. Live wiring injects it inside
+			that gate (``live_trading_system.build_live_system``). Typed ``Any`` so
+			the SQL stack stays off this module's import graph (GATE-01 inertness).
 		"""
 		self.global_queue: "EventBus" = global_queue
 		self.feed: BarFeed = feed
@@ -87,6 +109,9 @@ class StrategiesHandler(object):
 		self.signal_store: SignalStore = (
 			signal_store or SignalStorageFactory.create(environment, sql_engine=sql_engine)
 		)
+		# D-09 durable instance registry — None on the backtest/in-memory path (see
+		# the ctor docstring). Every persist arm short-circuits on it.
+		self.registry_store: "Optional[Any]" = registry_store
 		# SHORT-01/D-07 two-flag registration gate — read, never mutated here.
 		self._allow_short_selling: bool = allow_short_selling
 		self._enable_margin: bool = enable_margin
@@ -160,11 +185,21 @@ class StrategiesHandler(object):
 			# flag before P10 (flipped by activate/deactivate_strategy, read by
 			# nothing); this wires it. Placed FIRST so the skip is unconditional and
 			# covers the PairStrategy branch below (D-16: a pair uses the same gate).
-			# A disabled strategy STAYS in self.strategies and keeps its indicator
-			# warmth (its O(1) state freezes at the current count rather than
-			# resetting — the same freeze the P5-D10c/D14 gap skip relies on), so
-			# enable trades the NEXT bar with no re-warmup; removing it would cost a
-			# full 100-bar re-warm. Disable stops NEW entries only — open positions
+			# A disabled strategy STAYS in self.strategies, but its indicator state
+			# FREEZES at the current count rather than advancing (the same freeze the
+			# P5-D10c/D14 gap skip relies on) — because this guard runs BEFORE
+			# strategy.update below, that update never happens while disabled.
+			#
+			# ⚠ WD-1 — that freeze is exactly why `enable` does NOT trade the next bar.
+			# The frozen values were computed over a window that now has an N-bar HOLE
+			# spanning the disabled period; firing from them would let SMA/MACD silently
+			# produce wrong values across a discontinuity, and warmth is monotone so
+			# nothing downstream would ever notice. So `enable` calls
+			# strategy.mark_unwarm() and the strategy must RE-WARM (~warmup bars) before
+			# is_ready lets it signal again. WD-1 knowingly accepts that cost: never
+			# compute a signal from a discontinuous window.
+			#
+			# Disable stops NEW entries only — open positions
 			# and resting brackets run to natural exit via the execution layer, which
 			# never reads this flag. Backtest-inert: is_active defaults True and no
 			# backtest path deactivates, so the oracle stays byte-exact.
@@ -449,40 +484,163 @@ class StrategiesHandler(object):
 				# Warmup only (D-03): drive the O(1) recurrence, emit NOTHING.
 				strategy.update(event.symbol, bar)
 
+	def _persist_strategy(
+		self, strategy: Strategy, event: StrategyCommandEvent
+	) -> None:
+		"""Write the strategy's post-mutation state to the durable registry (D-09).
+
+		A clean no-op when no registry store is injected (the backtest/in-memory path).
+
+		Writes the FULL post-mutation authoring set from ``encode_strategy_config``, never
+		the incoming delta (T-10-37): a partial write would let the row drift from the
+		live instance, and the row is what rehydrate reconstructs from at restart — a
+		divergence there resurrects a strategy that never existed.
+
+		``at`` comes from ``event.time`` — the event's BUSINESS time, never wall clock.
+		The store is clock-free by contract (caller-supplied ``at``), so the audit trail
+		stays reproducible (T-10-40).
+
+		The codec import is LAZY (function-local) and MUST stay that way: the
+		``strategy_handler/registry/`` collaborator reaches the store, so a module-top
+		import here would pull SQL onto the BACKTEST import graph and break GATE-01
+		inertness (T-10-38, gated by ``test_okx_inertness.py``).
+		"""
+		if self.registry_store is None:
+			return
+		from itrader.strategy_handler.registry.config_codec import (
+			encode_strategy_config,
+		)
+
+		self.registry_store.upsert(
+			strategy_name=strategy.name,
+			strategy_type=type(strategy).__name__,
+			config=encode_strategy_config(strategy),
+			enabled=strategy.is_active,
+			at=event.time,
+		)
+
+	def _request_rewarm(self, strategy: Strategy) -> None:
+		"""Drive an unwarmed strategy's symbols back through the P7 warmup pipeline (WD-1).
+
+		``mark_unwarm`` alone is already CORRECT — ``is_ready``/``is_pair_ready`` gate
+		emission, so the strategy simply re-warms from live bars and cannot signal off a
+		holed window either way. This method only makes it FAST: without it a re-enabled
+		1d strategy would wait ~``warmup`` real bars (100 days for SMA_MACD) before
+		trading again, which is a control-plane verb behaving like a decommission.
+
+		There is no strategy-level warm API to call — the warmup pipeline is per-SYMBOL
+		and owned by ``UniverseHandler`` behind the queue boundary. Its existing trigger
+		is the CR-02 FAILED-retry: a still-desired member whose readiness is FAILED is
+		re-warmed on the next poll (``on_poll`` flips it PENDING and folds it into
+		``added`` -> ``_begin_warmup`` -> ``BarsLoaded`` -> ``on_bars_loaded`` replays the
+		window through ``strategy.update``). So marking this strategy's symbols FAILED and
+		letting the ``enable`` follow-on poll land IS the re-warm request — the same path
+		Plan 07's ``add`` will reuse (WD-1: one warm path, not two). No new event type, no
+		cross-domain call.
+
+		``_universe`` is None on the backtest/in-memory path, where there is no warmup
+		pipeline at all and the passive re-warm above is the whole story — hence the
+		short-circuit (and the oracle stays byte-exact: no backtest path emits a verb).
+
+		Two accepted consequences, both bounded and self-healing:
+		  - a symbol shared with an already-warm sibling strategy goes dark for ONE poll
+		    interval (readiness is per-symbol and aggregate by design, ``is_warm``);
+		  - the replayed warmup bars are re-delivered to that warm sibling, which the
+		    CR-01 monotonic guard in ``Strategy.update`` rejects before any state
+		    mutation. That guard exists for exactly this re-warm case.
+		"""
+		if self._universe is None:
+			return
+		for ticker in strategy.tickers:
+			# mark_failed (not mark_pending): only FAILED members are collected by the
+			# CR-02 retry in on_poll, so PENDING would leave the symbol dark FOREVER —
+			# the silent-permanent-no-warm failure mode. The re-warm streak counter is
+			# incremented at the FAILURE sites, not here, so this raises no false alarm.
+			self._universe.mark_failed(ticker)
+
+	def _portfolio_id_from(
+		self, event: StrategyCommandEvent
+	) -> "Optional[PortfolioId | int]":
+		"""Parse ``config["portfolio_id"]`` into the handle the fan-out expects, or None.
+
+		The payload is operator/FastAPI-supplied and therefore untrusted (T-10-35): the
+		light verbs read ONLY this one key, and it is validated + PARSED here so a
+		malformed payload never reaches live strategy state or SQL. A miss returns None
+		and the caller makes it a loud no-op — this path must never raise into the queue.
+
+		⚠ The parse is a CORRECTNESS requirement, not a typing nit — the same defect
+		10-05 hit on the rehydrate arm. ``subscribed_portfolios`` is typed
+		``list[PortfolioId | int]``, and ``calculate_signals`` fans each intent out over
+		it and casts each id STRAIGHT onto ``SignalEvent.portfolio_id`` (FL-02: "the
+		runtime value is always a UUIDv7-backed PortfolioId"). A bare ``str`` sails
+		through that cast unchallenged and reaches the portfolio lookup as an id matching
+		NOTHING: the subscription would look perfectly healthy and then fan signals into
+		the void. Value-equality assertions pass while the type is wrong, so this is
+		pinned by a TYPE assertion.
+
+		Mirrors ``registry/rehydrate.py::_resolve_portfolio_id`` (UUID first, then the
+		legacy ``int`` arm the union still permits) but returns None instead of raising:
+		rehydrate quarantines a bad instance at boot, whereas a bad runtime command is a
+		loud no-op.
+		"""
+		config = event.config
+		if not isinstance(config, dict):
+			return None
+		raw = config.get("portfolio_id")
+		if not isinstance(raw, str) or not raw:
+			return None
+		try:
+			return PortfolioId(uuid.UUID(raw))
+		except (ValueError, AttributeError, TypeError):
+			pass
+		try:
+			return int(raw)
+		except (ValueError, TypeError):
+			return None
+
 	def on_strategy_command(self, event: StrategyCommandEvent) -> None:
-		"""Mutate a strategy's tickers then emit a UniversePollEvent follow-on (D-11).
+		"""Apply one control-plane verb to one strategy, live AND durably (D-09).
 
-		The operator strategy-ticker seam (live-only, wired Plan 07). Locates the
-		strategy whose ``.name`` matches ``event.strategy_name`` and applies the
-		verb IDEMPOTENTLY to its plain ``list[str]`` tickers (per-symbol indicator
-		handles mint LAZILY on first ``update``, so appending a ticker needs no
-		re-warmup wiring):
+		The STRAT-02 dispatch surface (live-only). Locates the strategy whose ``.name``
+		matches ``event.strategy_name`` — the durable per-instance identity (D-02) — and
+		applies the verb IDEMPOTENTLY. The LIGHT verbs (no force-flat, no construction):
 
-		- ``add_ticker`` appends ``event.symbol`` IF not already present.
-		- ``remove_ticker`` removes it IF present, EXCEPT a remove that would
-		  empty the list is REFUSED with a logged warning (the non-empty
-		  ``list[str]`` invariant, base.py — a strategy is never left with zero
-		  tickers); the refused command is a documented no-op (no re-select).
+		- ``enable`` — D-07 ``is_active`` True + persist ``enabled=True``, then FORCE A
+		  RE-WARM (WD-1, see the enable branch below). It does NOT trade the next bar.
+		- ``disable`` — ``is_active`` False + persist ``enabled=False``. The object STAYS
+		  in ``self.strategies``; open positions and resting brackets run to natural exit
+		  via the execution layer (which never reads this flag). Stops NEW entries only.
+		- ``subscribe_portfolio`` / ``unsubscribe_portfolio`` — D-06/D-09: the fan-out
+		  edge is RUNTIME-MUTABLE. Mutates ``strategy.subscribed_portfolios`` live and
+		  upserts/deletes the child row. Unsubscribing the LAST portfolio leaves an empty
+		  list and zero rows — a LEGAL state (the strategy computes but fans out to
+		  nobody), not an error.
+		- ``add_ticker`` / ``remove_ticker`` — the v1.7 membership verbs, now ALSO
+		  persisting (D-09: a ticker change IS a reconfigure of the ``tickers`` authoring
+		  param). ``remove_ticker`` still refuses a remove that would empty the list (the
+		  non-empty ``list[str]`` invariant, base.py).
 
-		CR-01: a ``PairStrategy`` target is REFUSED outright (loud no-op) — its
-		exact-2-ticker contract cannot be mutated via add/remove without breaking
-		every subsequent ``_dispatch_pair`` (the atomic ordered-pair
-		reconfiguration path is deferred, see
-		todos/pair-strategy-live-reconfiguration.md).
+		``add`` / ``remove`` (Plan 07) and ``reconfigure`` (Plan 08) fall through to the
+		unknown-verb no-op here.
 
-		On a command that ACTUALLY mutated the tickers it then EMITS a follow-on
-		``UniversePollEvent`` on ``self.global_queue`` (D-11 — one selection path,
-		two triggers; explicit causal ordering: the ticker mutation happens-before
-		the re-select). IN-02: an idempotent no-op (add already-present / remove
-		absent) mutates nothing and emits nothing (no control-plane churn). It
-		NEVER calls ``UniverseHandler`` or touches ``Universe`` (queue-only
-		cross-domain write — ``StrategiesHandler`` never sees ``UniverseHandler``).
-		An unknown ``strategy_name`` (or verb) logs a warning and emits nothing.
+		D-09 idempotency (IN-02): the ``mutated`` flag gates BOTH the persist and the
+		follow-on — a no-op verb mutates nothing, persists nothing and emits nothing (no
+		control-plane churn). An unknown ``strategy_name``, an unknown verb, or a
+		malformed payload is a LOUD no-op: ``logger.warning`` + return, NEVER a raise into
+		the queue.
+
+		D-09 concurrency: verbs are applied on the single engine thread that drains the
+		queue, so a verb never interleaves with a signal mid-application — in the
+		single-writer model that IS the D-13 quiesce.
+
+		The follow-on ``UniversePollEvent`` is queue-only (D-11 — one selection path, two
+		triggers; the mutation happens-before the re-select). This NEVER calls
+		``UniverseHandler`` or touches ``Universe.apply``.
 
 		Parameters
 		----------
 		event: `StrategyCommandEvent`
-			The add/remove-ticker command addressed to one strategy by name.
+			The control-plane command addressed to one strategy by name.
 		"""
 		by_name = {strategy.name: strategy for strategy in self.strategies}
 		strategy = by_name.get(event.strategy_name)
@@ -492,56 +650,170 @@ class StrategiesHandler(object):
 				'StrategyCommandEvent for unknown strategy %s (verb=%s, symbol=%s) — ignored',
 				event.strategy_name, event.verb, event.symbol)
 			return
-		# CR-01: a PairStrategy is bound to an EXACT-2-ticker contract
-		# (PairStrategy.validate + _dispatch_pair len-2 guard). Mutating its
-		# tickers via add/remove would break that contract and make EVERY
-		# subsequent BAR's _dispatch_pair raise — an unbounded self-inflicted
-		# ErrorEvent storm with no recovery. Refuse the command as a loud no-op
-		# BEFORE the verb branches: no ticker mutation, no follow-on poll. This
-		# guard is forward-compatible with the deferred atomic ordered-pair
-		# reconfiguration path (todos/pair-strategy-live-reconfiguration.md — the
-		# "correct" Option B, out of scope here); until that lands, a pair's
-		# membership is immutable at the control-plane seam.
-		if isinstance(strategy, PairStrategy):
+		# D-16/D-17 VERB-SCOPED pair guard. The v1.7 guard here refused EVERY verb for a
+		# PairStrategy. That is BROADER than D-16 permits — D-16 requires pairs to
+		# add/remove/enable/disable/subscribe and rehydrate as FULL registry instances, so
+		# a blanket refusal silently guts pair durability while LOOKING like a
+		# conservative safety measure. A refusal that is too broad is as much a defect as
+		# one that is too narrow. Refuse EXACTLY _PAIR_REFUSED_VERBS; accept the rest.
+		#
+		# D-17 — why `reconfigure` is refused for a pair in P10 (params AND the leg-swap,
+		# deferred to the next milestone as ONE unit). This is not conservatism; the three
+		# evidence sites compose into stranded money:
+		#   - pair_base.py::_entry (:247) sets NO stop_loss/take_profit — unlike the
+		#     single-leg _intent — so an OPEN SPREAD HAS NO RESTING EXCHANGE BRACKET and
+		#     its ONLY exit is evaluate_pair(), which _dispatch_pair gates on
+		#     is_pair_ready();
+		#   - PairStrategy._run_init (:144) unconditionally re-creates _buf_A/_buf_B and
+		#     resets _pair_bar_count (β re-fits from scratch), and reconfigure() ALWAYS
+		#     calls _run_init();
+		#   - is_pair_ready() (:185) needs beta_warmup + z_lookback bars (280 for the
+		#     reference).
+		# Net: reconfiguring a pair that holds an open spread strands an UNHEDGED,
+		# BRACKET-LESS spread with NO REACHABLE EXIT for 280 bars — ~12 days on 1h, 280
+		# days on 1d. Do NOT re-litigate this without re-reading those three sites; see
+		# .planning/todos/pending/pair-strategy-live-reconfiguration.md.
+		#
+		# CR-01 — the ticker verbs stay refused: a pair is bound to an EXACT-2-ticker
+		# contract (PairStrategy.validate + the _dispatch_pair len-2 guard), so mutating
+		# its tickers would make EVERY subsequent BAR's _dispatch_pair raise — an
+		# unbounded self-inflicted ErrorEvent storm with no recovery.
+		if isinstance(strategy, PairStrategy) and event.verb in _PAIR_REFUSED_VERBS:
 			self.logger.warning(
-				'StrategyCommandEvent verb=%s refused for pair strategy %s — '
-				'PairStrategy requires exactly 2 tickers and cannot be mutated via '
-				'add/remove_ticker',
+				'StrategyCommandEvent verb=%s refused for pair strategy %s — pairs '
+				'accept the lifecycle verbs (D-16) but refuse reconfigure (D-17) and '
+				'the ticker verbs (CR-01: the exact-2-ticker contract is immutable at '
+				'the control-plane seam)',
 				event.verb, event.strategy_name)
 			return
-		symbol = event.symbol
-		# IN-02: track whether the tickers ACTUALLY mutated. A follow-on
-		# UniversePollEvent is emitted ONLY on a genuine mutation — an idempotent
-		# no-op (add already-present / remove absent) emits nothing (no
-		# control-plane churn on a no-op command).
+		# IN-02: track whether the verb ACTUALLY mutated anything. Both the persist and
+		# the follow-on are gated on this — an idempotent no-op (enable an enabled
+		# strategy, add an already-present ticker, unsubscribe an unsubscribed id)
+		# mutates nothing, persists nothing and emits nothing.
 		mutated = False
-		if event.verb == "add_ticker":
-			if symbol not in strategy.tickers:
-				strategy.tickers.append(symbol)  # idempotent append
+		# A deferred (op, portfolio_id) child-table write, applied AFTER the parent
+		# upsert below — the child row carries an FK to the registry row (see there).
+		# The id is stringified for the store: the column is String and `to_dict`
+		# writes `str(pid)`, so this is the same normalization the rest of the system
+		# round-trips through (rehydrate parses it straight back).
+		child_write: "Optional[tuple[str, str]]" = None
+		if event.verb == "enable":
+			if not strategy.is_active:
+				strategy.activate_strategy()
+				# ⚠ WD-1 — the load-bearing half of `enable`. The D-07 guard sits FIRST
+				# in calculate_signals, so this strategy's indicators FROZE while it was
+				# disabled: their values were computed over a window that now has an
+				# N-bar HOLE spanning the disabled period. Trading the next bar would let
+				# SMA/MACD silently produce wrong values across that discontinuity —
+				# exactly the defect class this milestone exists to eliminate, and
+				# invisible because warmth is monotone (nothing downstream re-checks).
+				# So force the strategy back to UNWARM: is_ready() now gates emission
+				# until the recurrence has re-advanced over a CONTIGUOUS window.
+				#
+				# mark_unwarm is the WD-2 seam on Strategy (a named wrapper over the
+				# existing handle reset, NOT a flag — warmth stays derived from
+				# is_ready), and PairStrategy overrides it to clear the spread buffers
+				# too (a handle-free pair is is_ready==True always, so a handles-only
+				# unwarm would let it re-enter on a cold β). Plan 07's `add` re-warms
+				# through this SAME seam — one warm path, not two (WD-1).
+				strategy.mark_unwarm()
+				self._request_rewarm(strategy)
 				mutated = True
-		elif event.verb == "remove_ticker":
-			if symbol in strategy.tickers:
-				if len(strategy.tickers) == 1:
-					# Refuse: removing the last ticker would violate the
-					# non-empty list[str] invariant (base.py). Documented no-op —
-					# no mutation, no re-select.
-					self.logger.warning(
-						'remove_ticker %s refused for strategy %s — would empty its '
-						'ticker set (non-empty invariant preserved)',
-						symbol, event.strategy_name)
-					return
-				strategy.tickers.remove(symbol)  # idempotent removal
+		elif event.verb == "disable":
+			if strategy.is_active:
+				# D-07: deactivate only. Do NOT unwarm here — a disabled strategy's
+				# frozen state is discarded by `enable`, and unwarming on the way DOWN
+				# would just as happily discard state a re-enable never needs.
+				strategy.deactivate_strategy()
 				mutated = True
+		elif event.verb == "subscribe_portfolio":
+			portfolio_id = self._portfolio_id_from(event)
+			if portfolio_id is None:
+				self.logger.warning(
+					'subscribe_portfolio for strategy %s carries no valid '
+					'config["portfolio_id"] — ignored',
+					event.strategy_name)
+				return
+			if portfolio_id not in strategy.subscribed_portfolios:
+				# base.py's sanctioned idempotent mutator (WR-01) — a duplicate would
+				# fan ONE decision out to the same portfolio twice.
+				strategy.subscribe_portfolio(portfolio_id)
+				child_write = ("add", str(portfolio_id))
+				mutated = True
+		elif event.verb == "unsubscribe_portfolio":
+			portfolio_id = self._portfolio_id_from(event)
+			if portfolio_id is None:
+				self.logger.warning(
+					'unsubscribe_portfolio for strategy %s carries no valid '
+					'config["portfolio_id"] — ignored',
+					event.strategy_name)
+				return
+			if portfolio_id in strategy.subscribed_portfolios:
+				strategy.unsubscribe_portfolio(portfolio_id)
+				child_write = ("remove", str(portfolio_id))
+				# D-09: removing the LAST portfolio leaves an empty list and zero child
+				# rows — a legal state (the strategy computes but fans out to nobody).
+				# Deliberately NOT guarded against.
+				mutated = True
+		elif event.verb in ("add_ticker", "remove_ticker"):
+			# D-08: symbol is now `str | None` and six of the nine verbs carry none, so
+			# the read lives HERE, inside the only branches that have one.
+			symbol = event.symbol
+			if symbol is None:
+				self.logger.warning(
+					'%s for strategy %s carries no symbol — ignored',
+					event.verb, event.strategy_name)
+				return
+			if event.verb == "add_ticker":
+				if symbol not in strategy.tickers:
+					strategy.tickers.append(symbol)  # idempotent append
+					mutated = True
+			else:
+				if symbol in strategy.tickers:
+					if len(strategy.tickers) == 1:
+						# Refuse: removing the last ticker would violate the
+						# non-empty list[str] invariant (base.py). Documented no-op —
+						# no mutation, no persist, no re-select.
+						self.logger.warning(
+							'remove_ticker %s refused for strategy %s — would empty its '
+							'ticker set (non-empty invariant preserved)',
+							symbol, event.strategy_name)
+						return
+					strategy.tickers.remove(symbol)  # idempotent removal
+					mutated = True
 		else:
-			# Unknown verb — loud no-op.
+			# Unknown verb (including `add`/`remove`/`reconfigure`, which land in Plans
+			# 07/08) — loud no-op.
 			self.logger.warning(
 				'StrategyCommandEvent unknown verb %s for strategy %s — ignored',
 				event.verb, event.strategy_name)
 			return
-		# D-11 / IN-02 follow-on: mutate happens-before re-select. Emit a
-		# UniversePollEvent on the queue ONLY when the tickers actually mutated
-		# (queue-only cross-domain write — never call UniverseHandler).
-		if mutated:
+		if not mutated:
+			return
+		# D-09: EVERY mutating verb persists, parent row first.
+		#
+		# The subscribe/unsubscribe verbs are deliberately routed through the parent
+		# upsert too, even though they only change the CHILD table. It looks redundant —
+		# the config blob and `enabled` are unchanged — but strategy_portfolio_subscriptions
+		# carries an FK to strategy_registry, so writing a child row for a strategy the
+		# registry has never seen (one hand-added rather than rehydrated) raises an
+		# IntegrityError straight into the queue, violating this method's never-raise
+		# contract. Upserting the parent first is not a workaround for the FK; it is what
+		# the FK is telling us: a durable subscription edge whose instance is absent from
+		# the registry is an orphan rehydrate would silently drop at restart. Persist the
+		# instance, then the edge.
+		self._persist_strategy(strategy, event)
+		if child_write is not None and self.registry_store is not None:
+			operation, stored_portfolio_id = child_write
+			if operation == "add":
+				self.registry_store.add_portfolio_subscription(
+					strategy_name=strategy.name, portfolio_id=stored_portfolio_id)
+			else:
+				self.registry_store.remove_portfolio_subscription(
+					strategy_name=strategy.name, portfolio_id=stored_portfolio_id)
+		# D-11 / IN-02 follow-on: mutate happens-before re-select. Queue-only cross-domain
+		# write — never call UniverseHandler.
+		if event.verb in _POLL_FOLLOW_ON_VERBS:
 			self.global_queue.put(UniversePollEvent(time=event.time))
 
 	def get_strategies_universe(self) -> list[str]:
