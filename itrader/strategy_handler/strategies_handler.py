@@ -41,7 +41,32 @@ _PAIR_REFUSED_VERBS = frozenset({"reconfigure", "add_ticker", "remove_ticker"})
 # ticker verbs change universe MEMBERSHIP; `enable` needs it because WD-1 unwarms the
 # strategy and the re-warm rides the CR-02 FAILED-retry, which only runs on a poll.
 # disable/subscribe/unsubscribe change neither membership nor warmth -> no poll.
+# `reconfigure` emits its OWN poll inline (like `remove`), so it is NOT listed here.
 _POLL_FOLLOW_ON_VERBS = frozenset({"add_ticker", "remove_ticker", "enable"})
+
+# D-15/F-2: the `reconfigure` mutability DENY-lists (audit 10-08 F2). `reconfigure` MUTATES
+# the authoring surface, but two closed sets of keys are refused loudly BEFORE any throwaway
+# is built — everything else is left to _apply_params' existing unknown-param rejection, so no
+# second hand-maintained allowlist can drift from the class annotations.
+#
+# _RECONFIGURE_IMMUTABLE — IDENTITY + DERIVED, never a param:
+#   - `strategy_type`: changing the class IS a different strategy (remove + add). It is an
+#     ENVELOPE key, not a declared param, so _apply_params would also reject it — kept here as
+#     defense-in-depth and to name the remove+add path in the operator-facing reject.
+#   - `name`: the store PK (D-02). A rename would UPSERT a NEW row and ORPHAN the old one; the
+#     codec omits `name` from the blob precisely so a PK-vs-blob disagreement is
+#     unrepresentable (config_codec._SKIPPED_FIELDS). Identity is not a param — renaming is
+#     remove + add (audit 10-08 F2).
+#   - `warmup` / `max_window`: the codec's _DERIVED_FIELDS — `_run_init` UNCONDITIONALLY
+#     overwrites both from the declared indicators, so a passed value is silently clobbered
+#     (max_window ratchets via max()). Refuse loudly rather than accept-then-clobber.
+# Hardcoded (NOT imported from config_codec) to keep the registry/codec off the BACKTEST
+# import graph (GATE-01 inertness, test_okx_inertness); the authoritative derived set is
+# config_codec._DERIVED_FIELDS == frozenset({"warmup", "max_window"}) and this MUST track it.
+_RECONFIGURE_IMMUTABLE = frozenset({"strategy_type", "name", "warmup", "max_window"})
+
+# D-15: `tickers` is owned by add_ticker/remove_ticker — one path per concern.
+_RECONFIGURE_VERB_ONLY = frozenset({"tickers"})
 
 
 class StrategiesHandler(object):
@@ -917,6 +942,262 @@ class StrategiesHandler(object):
 				continue
 			self._try_complete_removal(strategy)
 
+	def _reconfigure_allowlist_check(self, config: dict[str, Any]) -> "Optional[str]":
+		"""D-15 deny-list gate — returns a rejection reason or None (audit 10-08 F2).
+
+		Deny ONLY the two closed sets (IMMUTABLE identity/derived, VERB-ONLY tickers) and
+		let the existing ``_apply_params`` unknown-param rejection own the rest — a positive
+		mutable-allowlist would be a second hand-maintained list that drifts from the class
+		annotations. Called BEFORE the trial construction so a refused key never even builds a
+		throwaway.
+		"""
+		for key in config:
+			if key in _RECONFIGURE_IMMUTABLE:
+				return (
+					f"{key!r} is immutable via reconfigure — it is identity/derived state; "
+					f"changing the class or renaming is remove + add (D-15)")
+			if key in _RECONFIGURE_VERB_ONLY:
+				return (
+					f"{key!r} is owned by the add_ticker/remove_ticker verbs, not "
+					f"reconfigure — one path per concern (D-15)")
+		return None
+
+	def _reconfigure_warmability_check(self, trial: Strategy) -> "Optional[str]":
+		"""D-15/F-1 timeframe + capacity gate against the TRIAL — reason or None.
+
+		Runs on the LIVE feed only (keyed on ``base_timeframe``: the backtest feed has none,
+		so the whole arm skips cleanly — the same degrade the D-10 ``add`` gate uses, audit
+		10-07 F1). ``required_base_depth`` raises ``UnwarmableTimeframeError`` for a
+		finer-than-base timeframe (the ring holds base bars, and the WR-01 off-grid guard would
+		actively DROP sub-base bars even if they arrived) and for a non-multiple. The capacity
+		gate then rejects a depth the ring can never serve: ``cache_capacity()`` re-derives
+		lazily, but an existing ring is a ``deque(maxlen=...)`` fixed at creation
+		(``live_bar_feed``) and CANNOT resize, so a deeper consumer would leave the strategy
+		``is_ready`` False FOREVER — registered, silent, error-free, never trading. Reject
+		loudly (F-1) rather than accept-and-dark; ring RESIZE is deferred to
+		.planning/todos/pending/strategy-timeframe-finer-than-base-resubscribe.md. Evaluating
+		against the TRIAL (its resolved ``warmup``/``timeframe``) covers BOTH a timeframe change
+		AND a window-grow that would exceed capacity — a superset of the plan's timeframe-only
+		scoping, and strictly safer.
+		"""
+		base_timeframe = getattr(self.feed, "base_timeframe", None)
+		if base_timeframe is None:
+			return None
+		# Lazy (GATE-01): the feed cache-registration module is pure feed logic, imported
+		# locally so the whole reconfigure path stays import-light and consistent with `add`.
+		from itrader.price_handler.feed.cache_registration import (
+			UnwarmableTimeframeError,
+			required_base_depth,
+		)
+		try:
+			depth = required_base_depth(trial.warmup, trial.timeframe, base_timeframe)
+		except UnwarmableTimeframeError:
+			return (
+				"the requested timeframe cannot be served from the feed base cadence "
+				"(finer than base, or not a whole multiple) — F-1/D-15")
+		capacity = self.feed.cache_capacity()
+		if depth > capacity:
+			return (
+				f"the requested timeframe needs {depth} base bars but the feed ring holds "
+				f"only {capacity} (a fixed-maxlen deque cannot resize, so the strategy would "
+				f"stay permanently dark) — F-1")
+		return None
+
+	def _emit_reconfigure_apply_failure(
+		self, event: StrategyCommandEvent, strategy: Strategy, exc: Exception
+	) -> None:
+		"""D-13 apply-fail egress: a CRITICAL ``ErrorEvent`` on the queue (T-10-58).
+
+		The trial already proved ``cls(**params)`` good, so a raise from the live
+		``strategy.reconfigure`` is genuinely exceptional. Per D-13 the persist has ALREADY
+		succeeded (the DB holds the NEW config and a restart rehydrates the intended
+		configuration), so this does NOT roll back — it reports. The alert binds
+		``strategy_name`` + the error KIND ONLY (the P8 declared-fields-only precedent) so no
+		config value leaks to the operator channel. Queue-only egress (the handler has no
+		alert_sink; this is how it raises an alarm mid-loop), consumed by the ERROR route.
+		"""
+		from itrader.core.enums import ErrorSeverity
+		from itrader.events_handler.events import ErrorEvent
+
+		self.logger.error(
+			'reconfigure for strategy %s PERSISTED but APPLY threw (%s) — the DB holds the '
+			'new config and a restart heals; the live instance is unchanged',
+			event.strategy_name, type(exc).__name__)
+		self.global_queue.put(ErrorEvent(
+			time=event.time,
+			source="strategies",
+			error_type=type(exc).__name__,
+			error_message=(
+				f"Strategy {event.strategy_name!r} reconfigure persisted but apply threw "
+				f"({type(exc).__name__}); the DB holds the new config and a restart heals"),
+			operation="reconfigure",
+			severity=ErrorSeverity.CRITICAL,
+			details={"strategy_name": event.strategy_name, "error_kind": type(exc).__name__}))
+
+	def _reconfigure_strategy_verb(
+		self, event: StrategyCommandEvent, strategy: Strategy
+	) -> None:
+		"""D-12/D-13/D-14/D-15 `reconfigure`: trial-validate -> persist -> apply -> re-warm.
+
+		The STRAT-03 atomicity contract. ``_apply_params`` is ALREADY atomic (its WR-02
+		resolve-into-locals trial phase commits at ``base.py:295-299``, so a rejected apply
+		raises before mutating ``self``), and the single engine thread draining the queue
+		ALREADY provides the D-13 quiesce (no signal is in flight between event cycles — no
+		lock, no pause mechanism). The genuine tear is that ``Strategy.reconfigure`` calls
+		``validate()`` + ``_run_init()`` AFTER that commit, so a cross-field ``validate()``
+		failure would leave a LIVE, trading strategy mutated into a state its own validator
+		rejects. The fix is a THROWAWAY construction: ``cls(**params)`` runs the whole
+		validate chain before the live instance is touched. No hand-rolled snapshot/rollback.
+
+		Order (D-13): allowlist -> merge -> trial-validate -> direction re-gate -> warmability
+		-> persist -> apply -> re-warm. Persist precedes apply so the DB and the live instance
+		never diverge in the applied-but-unpersisted direction (apply-then-persist was
+		rejected: a persist failure would silently lose the change on restart).
+		"""
+		config = event.config
+		if not isinstance(config, dict):
+			self.logger.warning(
+				'reconfigure for strategy %s carries no config payload — ignored',
+				event.strategy_name)
+			return
+		# D-15 deny-list BEFORE any construction (audit 10-08 F2) — a refused key must not
+		# even build a throwaway.
+		reason = self._reconfigure_allowlist_check(config)
+		if reason is not None:
+			self.logger.warning(
+				'reconfigure for strategy %s refused — %s', event.strategy_name, reason)
+			return
+		# D-10 catalog gate: decode needs the injected allowlist to resolve the class. None is
+		# the backtest/in-memory path (reconfigure is never driven there) — a clean loud no-op.
+		if self.strategy_catalog is None:
+			self.logger.warning(
+				'reconfigure for strategy %s refused — no strategy_catalog injected (D-10)',
+				event.strategy_name)
+			return
+		# Lazy imports (GATE-01): the registry/codec collaborators reach the store, so a
+		# module-top import would pull SQL onto the BACKTEST import graph (test_okx_inertness).
+		from itrader.core.exceptions import MissingParamError, UnknownParamError
+		from itrader.core.policy_codec import default_policy_registry
+		from itrader.strategy_handler.registry.catalog import UnknownStrategyTypeError
+		from itrader.strategy_handler.registry.config_codec import (
+			StrategyConfigError,
+			decode_strategy_config,
+			encode_strategy_config,
+		)
+
+		# P-4 MERGE in ENCODED blob space (audit 10-08 F3): overlay the partial delta on the
+		# CURRENT full authoring blob. An omitted field keeps its prior instance value (encode
+		# captured it); an empty/identical payload merges to an identical blob -> no-op.
+		current_blob = encode_strategy_config(strategy)
+		merged_blob = current_blob | dict(config)
+		if merged_blob == current_blob:
+			# D-13 idempotency + empty: nothing changed -> no persist, no apply, no re-warm,
+			# no poll (the D-09 no-control-plane-churn contract). Stays warm.
+			return
+		# D-13 TRIAL-VALIDATE. Route the merged blob back through decode_strategy_config — the
+		# ONLY function that knows the inverse coercions (Decimal via to_money, policies via
+		# decode_policy, envelope-key stripping, `name` from the PK) — into PARAM space, then
+		# construct a THROWAWAY. Routing the MERGE (blob space) straight into the constructor
+		# (param space) without this decode is the 10-04 defect re-entering: `entry_z` would
+		# land as the str '2'. The constructor runs _apply_params + validate() + _run_init(),
+		# so a cross-field validation failure raises HERE, against the throwaway, with the
+		# LIVE instance untouched.
+		rec = {
+			"strategy_name": strategy.name,
+			"strategy_type": type(strategy).__name__,
+			"config_json": merged_blob,
+		}
+		try:
+			cls, params = decode_strategy_config(
+				rec, self.strategy_catalog, default_policy_registry())
+			trial = cls(**params)
+		except (
+			StrategyConfigError,
+			UnknownStrategyTypeError,
+			UnknownParamError,
+			MissingParamError,
+			ValueError,
+		) as exc:
+			# Loud no-op naming the error KIND (not the payload values — the P8
+			# declared-fields-only precedent). SPECIFIC types (ValueError covers validate()
+			# + the _apply_params tickers/enum guards); never a bare except, so a store/infra
+			# fault is not silently eaten.
+			self.logger.warning(
+				'reconfigure for strategy %s rejected (%s) — live instance untouched',
+				event.strategy_name, type(exc).__name__)
+			return
+		# SHORT-01/D-07 direction re-gate (audit 10-08 F1 — the phase's most dangerous fix).
+		# validate() does NOT check direction, and the SHORT-01 gate reads HANDLER state, so
+		# the trial construction CANNOT catch a short-enabling direction change. Re-run the
+		# SHARED predicate against the TRIAL's resolved direction BEFORE persist: a
+		# non-LONG_ONLY direction is admitted ONLY when both flags are on. Without this, an
+		# external reconfigure(direction=SHORT_ONLY) on a no-margin engine would sail through
+		# onto a live strategy — the exact capability SHORT-01 exists to gate (T-10-55).
+		if not self._direction_admissible(trial.direction):
+			self.logger.warning(
+				'reconfigure for strategy %s refused — a non-LONG_ONLY direction requires '
+				'BOTH allow_short_selling AND enable_margin (SHORT-01/D-07)',
+				event.strategy_name)
+			return
+		# D-15/F-1 warmability gate against the TRIAL (finer-than-base / non-multiple /
+		# over-capacity). Skips cleanly on the backtest feed.
+		reason = self._reconfigure_warmability_check(trial)
+		if reason is not None:
+			self.logger.warning(
+				'reconfigure for strategy %s refused — %s', event.strategy_name, reason)
+			return
+		# D-13 PERSIST FIRST, from the TRIAL's FULL authoring set (P-4: never the partial
+		# delta — a partial write would let the row drift from the live instance and silently
+		# revert unchanged fields on restart). `enabled` is the LIVE strategy's current
+		# activation (a fresh trial is is_active=True; reconfigure does not change activation).
+		# A persist FAILURE propagates as infrastructure (the _add_strategy_verb / rehydrate
+		# D-19 fail-loud precedent) — but the LIVE instance is UNTOUCHED because persist
+		# precedes apply, so the DB and live never diverge in the applied-but-unpersisted
+		# direction (D-13: apply-then-persist was rejected). Degrades clean when
+		# registry_store is None.
+		if self.registry_store is not None:
+			self.registry_store.upsert(
+				strategy_name=strategy.name,
+				strategy_type=type(strategy).__name__,
+				config=encode_strategy_config(trial),
+				enabled=strategy.is_active,
+				at=event.time)
+		# D-13 APPLY to the live instance, proven good by the trial. Application happens
+		# BETWEEN event cycles on the single engine thread, so no signal is in flight
+		# mid-apply — in the single-writer model that IS the STRAT-03 quiesce. When apply
+		# nonetheless throws, log/emit CRITICAL and do NOT roll back the persist: the DB holds
+		# the NEW config and a restart heals (the deliberate persist-then-apply asymmetry).
+		try:
+			strategy.reconfigure(**params)
+		except (
+			StrategyConfigError,
+			UnknownParamError,
+			MissingParamError,
+			ValueError,
+		) as exc:
+			self._emit_reconfigure_apply_failure(event, strategy, exc)
+			return
+		# D-12: NO force-flat. Open positions stay open and their subsequent exits are
+		# governed by the NEW params — explicitly the operator's responsibility. always-flatten
+		# (a harmless sizing tweak would close positions) and param-classified flatten were
+		# both rejected.
+		#
+		# D-14 RE-WARM via the WD-2 seam. `Strategy.reconfigure -> _run_init` UNCONDITIONALLY
+		# resets the per-symbol handle state (base.py:409/426), so a handle-bearing instance is
+		# DARK after ANY applied reconfigure — `is_ready` is False until it re-warms (verified
+		# against the live tree; the plan's "shrank/unchanged stays warm" premise is false for
+		# exactly this reason, and preserving warmth would need a conditional `_run_init` on
+		# the base HOT PATH — oracle risk — deferred). `mark_unwarm` is the WD-2 seam
+		# (idempotent here since `_run_init` already reset; also covers the PairStrategy
+		# override if a pair ever reached this path), and `_request_rewarm` marks the symbols
+		# FAILED so the CR-02 retry re-warms them on the follow-on poll — the SAME warm path
+		# `enable`/`add` use (WD-1: one warm path). During the dark re-warm the instance cannot
+		# emit STRATEGY-driven exits, so an open position rides its resting exchange SL/TP
+		# brackets until warm (D-14, documented consequence, not a blocker).
+		strategy.mark_unwarm()
+		self._request_rewarm(strategy)
+		self.global_queue.put(UniversePollEvent(time=event.time))
+
 	def on_strategy_command(self, event: StrategyCommandEvent) -> None:
 		"""Apply one control-plane verb to one strategy, live AND durably (D-09).
 
@@ -1020,6 +1301,14 @@ class StrategiesHandler(object):
 		# `mutated` tail below (which is for the D-09 light verbs only).
 		if event.verb == "remove":
 			self._remove_strategy_verb(event, strategy)
+			return
+		# D-12/D-13/D-14/D-15 `reconfigure` — an authoring-param delta applied atomically
+		# (trial-validate -> persist -> apply -> re-warm). It owns its own persist + poll +
+		# the D-13 asymmetry, so it returns before the light-verb `mutated` tail below. A
+		# PairStrategy never reaches here — `reconfigure` is in _PAIR_REFUSED_VERBS, so the
+		# verb-scoped pair guard above already refused it (D-17).
+		if event.verb == "reconfigure":
+			self._reconfigure_strategy_verb(event, strategy)
 			return
 		# IN-02: track whether the verb ACTUALLY mutated anything. Both the persist and
 		# the follow-on are gated on this — an idempotent no-op (enable an enabled
@@ -1183,6 +1472,24 @@ class StrategiesHandler(object):
 		return list(set(traded_tickers))
 
 	
+	def _direction_admissible(self, direction: TradingDirection) -> bool:
+		"""SHORT-01/D-07 two-flag registration predicate — the SHARED gate (audit 10-08 F1).
+
+		A non-``LONG_ONLY`` direction is admissible ONLY when BOTH ``allow_short_selling``
+		AND ``enable_margin`` are on. Factored out of ``add_strategy`` so the IDENTICAL
+		predicate gates ``add`` AND ``reconfigure(direction=...)`` — the two cannot drift.
+
+		Deliberately NOT pushed into ``Strategy.validate()``: the two flags are HANDLER
+		policy state that a pure-alpha ``Strategy`` (D-12) must never see, and ``validate()``
+		has no access to them. That is exactly why the plan's original "``validate()``
+		re-runs the SHORT-01 gate" premise was false — ``validate()`` is a window-shape hook
+		and never checks ``direction`` — so the trial construction alone CANNOT admit-gate a
+		short-enabling reconfigure. This predicate, called on the reconfigure apply path
+		against the trial's resolved direction, is what actually closes T-10-55.
+		"""
+		return direction is TradingDirection.LONG_ONLY or (
+			self._allow_short_selling and self._enable_margin)
+
 	def add_strategy(self, strategy: Strategy) -> None:
 		"""
 		Add a new strategy in the list of strategies to trade.
@@ -1212,19 +1519,19 @@ class StrategiesHandler(object):
 			are a separate opt-in dial. Both flags default off → the golden
 			``LONG_ONLY`` path (SMA_MACD) is unaffected, oracle byte-exact.
 		"""
-		# SHORT-01/D-07 two-flag registration gate: a non-LONG_ONLY direction is
-		# admissible ONLY when BOTH allow_short_selling AND enable_margin are on.
-		# enable_margin is coupled in because it enables the lock-and-settle model
-		# that can actually represent a short. Both default off → the golden
-		# LONG_ONLY path is unaffected (oracle byte-exact).
-		if strategy.direction is not TradingDirection.LONG_ONLY:
-			if not (self._allow_short_selling and self._enable_margin):
-				raise ValueError(
-					"Non-LONG_ONLY strategies (LONG_SHORT / SHORT_ONLY) require "
-					"BOTH allow_short_selling AND enable_margin to be enabled "
-					"(SHORT-01/D-07) — enable_margin turns on the lock-and-settle "
-					"model that can represent a short. Both flags default off."
-				)
+		# SHORT-01/D-07 two-flag registration gate, via the SHARED predicate so `add` and
+		# `reconfigure(direction=...)` cannot drift (audit 10-08 F1): a non-LONG_ONLY
+		# direction is admissible ONLY when BOTH allow_short_selling AND enable_margin are on.
+		# enable_margin is coupled in because it enables the lock-and-settle model that can
+		# actually represent a short. Both default off → the golden LONG_ONLY path is
+		# unaffected (oracle byte-exact).
+		if not self._direction_admissible(strategy.direction):
+			raise ValueError(
+				"Non-LONG_ONLY strategies (LONG_SHORT / SHORT_ONLY) require "
+				"BOTH allow_short_selling AND enable_margin to be enabled "
+				"(SHORT-01/D-07) — enable_margin turns on the lock-and-settle "
+				"model that can represent a short. Both flags default off."
+			)
 
 		# D-02 duplicate-name loud reject. `strategy_name` is the DURABLE
 		# per-instance identity: the registry keys on it, STRATEGY_COMMAND
