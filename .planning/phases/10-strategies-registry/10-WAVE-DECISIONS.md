@@ -18,15 +18,28 @@ advancing. 10-03 implemented the directed guard-first placement (it satisfies th
 the consequence open: a re-enabled strategy would otherwise fire from a window containing an
 **N-bar hole** spanning the disabled period.
 
-**Decision.** `enable` MUST force a re-warmup before the strategy may emit a signal:
+**Decision.** `enable` MUST force a re-warmup before the strategy may emit a signal.
+
+> **⚠ CORRECTION (applied at wave-4 close, by Plan 10-06's executor).** The pseudocode originally
+> recorded here named an API **that does not exist** — `warmup_pipeline.warm(strategy)`. The warmup
+> pipeline is per-**symbol** and sits behind `UniverseHandler`'s queue boundary; there is no
+> per-strategy `warm()` entry point. This record made the same class of error it was written to guard
+> against (a plausible-sounding factual claim about code, never checked). The decision's *intent* was
+> and remains correct; only the mechanism named was wrong. **As shipped in 10-06:**
 
 ```
 enable(strategy) ->
-    strategy.is_active = True
-    strategy.mark_unwarm()          # force re-warm
-    warmup_pipeline.warm(strategy)  # reuse the P7 warmup path
-    # first signal only after the window is contiguous
+    activate(strategy)          # is_active = True
+    strategy.mark_unwarm()      # WD-2 seam — THIS is what gates correctness
+    _request_rewarm(strategy)   # marks the strategy's symbols FAILED so the
+                                # CR-02 FAILED-retry (the pipeline's existing
+                                # trigger) re-warms them on the enable poll
+    # is_ready gates emission; the retry only makes re-warm FAST, it is not
+    # what makes it CORRECT. Plan 10-07's `add` reuses the same two calls.
 ```
+
+**Why `mark_failed`, not `mark_pending`:** only FAILED symbols are collected by the retry; PENDING
+would strand the symbol dark forever.
 
 **Why.** Never compute a signal from a discontinuous window — indicators that span the gap
 (SMA/MACD) would silently produce wrong values, which is exactly the class of defect this
