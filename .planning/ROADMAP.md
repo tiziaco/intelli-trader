@@ -398,6 +398,41 @@ Plans:
 
 **Plans**: 9 plans in 7 waves
 
+*Cross-cutting constraints (apply to every plan): backtest oracle byte-exact `134 / 46189.87730727451` —
+**mandatory per-PLAN gate on 10-03** (the D-07 `is_active` guard is the one shared-hot-path edit);
+`test_okx_inertness.py` green (codec in `core/` + catalog seam stay SQL/ccxt-free, store import lazy);
+Decimal money end-to-end (codec round-trips Decimals as strings); indentation measured per file.*
+
+**Wave 1** *(three independent seams — parallel)*
+
+- [ ] 10-01-PLAN.md — D-03 tagged-union policy codec in `core/policy_codec.py` (all 6 policies incl. `PercentFromDecision`; Decimals as strings) (STRAT-01)
+- [ ] 10-02-PLAN.md — D-06 schema + Alembic migration (`down_revision="system_stats"`; non-destructive on non-empty — A1 guard) (STRAT-01)
+- [ ] 10-03-PLAN.md — D-07 `is_active` guard (oracle-gated) + **F-1 fix**: timeframe-aware `derive_warmup_depth` (STRAT-02)
+
+**Wave 2** *(blocked on 10-01)*
+
+- [ ] 10-04-PLAN.md — D-01 injected catalog allowlist + D-04/D-20 authoring codec (`config_version: 1`) (STRAT-01)
+
+**Wave 3** *(blocked on 10-02 + 10-04)*
+
+- [ ] 10-05-PLAN.md — D-01 rehydrate at construction + D-19 quarantine/loud split + D-21 empty-registry no-op (STRAT-01)
+
+**Wave 4** *(blocked on 10-03 + 10-05)*
+
+- [ ] 10-06-PLAN.md — D-08 event extension + light verbs + verb-scoped pair guard (D-16/D-17 reconcile) (STRAT-02)
+
+**Wave 5** *(blocked on 10-06)*
+
+- [ ] 10-07-PLAN.md — D-10 `add` (catalog-gate, dark, warm) + D-11 `remove` (force-flat first) (STRAT-02)
+
+**Wave 6** *(blocked on 10-07)*
+
+- [ ] 10-08-PLAN.md — D-12–D-15 atomic reconfigure + F-1 warmability gate (STRAT-03)
+
+**Wave 7** *(blocked on 10-08)*
+
+- [ ] 10-09-PLAN.md — D-22 FastAPI stand-in add→restart lifecycle + phase gate sweep (STRAT-01/02/03)
+
 Plans:
 - [ ] 10-01-PLAN.md — D-03/D-05 tagged-union policy codec in `core/` — all 6 sizing/SLTP policies round-trip, Decimals as strings, no repr-eval (wave 1)
 - [ ] 10-02-PLAN.md — D-06/D-18 schema: add `strategy_type`, add `strategy_portfolio_subscriptions`, drop `strategy_subscriptions`; migration chained onto `system_stats`, non-destructive on non-empty (wave 1)
