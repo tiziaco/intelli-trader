@@ -27,13 +27,21 @@ from .config_codec import (
 	decode_strategy_config,
 	encode_strategy_config,
 )
+from .rehydrate import (
+	RehydrateInfrastructureError,
+	build_strategy,
+	rehydrate_strategies,
+)
 
 __all__ = [
 	"CONFIG_VERSION",
+	"RehydrateInfrastructureError",
 	"StrategyCatalog",
 	"StrategyConfigError",
 	"UnknownStrategyTypeError",
+	"build_strategy",
 	"decode_strategy_config",
 	"encode_strategy_config",
+	"rehydrate_strategies",
 	"resolve_strategy_class",
 ]

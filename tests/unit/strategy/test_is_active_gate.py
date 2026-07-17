@@ -186,8 +186,15 @@ def test_inactive_strategy_emits_no_signal() -> None:
 def test_active_sibling_unaffected_by_inactive_peer() -> None:
     """D-07: the guard skips ONLY the inactive strategy — the loop continues."""
     handler = _make_handler()
-    inactive = _add(handler, _AlwaysBuyStrategy(timeframe="1d", tickers=[_TICKER]))
-    active = _add(handler, _AlwaysBuyStrategy(timeframe="1d", tickers=[_TICKER]))
+    inactive = _AlwaysBuyStrategy(timeframe="1d", tickers=[_TICKER])
+    active = _AlwaysBuyStrategy(timeframe="1d", tickers=[_TICKER])
+    # D-02: `name` is the durable per-instance identity and `add_strategy` rejects a
+    # duplicate, so two instances of one class must be named distinctly (the class pins a
+    # single default name). Registering them as siblings is the point of this test.
+    inactive.name = "always_buy_inactive"
+    active.name = "always_buy_active"
+    inactive = _add(handler, inactive)
+    active = _add(handler, active)
     inactive.deactivate_strategy()
 
     handler.calculate_signals(_bar_event(day=8))
