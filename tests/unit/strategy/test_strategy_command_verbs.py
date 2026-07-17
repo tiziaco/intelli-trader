@@ -41,9 +41,13 @@ from itrader.storage import SqlEngine
 from itrader.storage.strategy_registry_store import StrategyRegistryStore
 from itrader.strategy_handler.base import Strategy
 from itrader.strategy_handler.indicators import SMA
+from itrader.strategy_handler.registry import encode_strategy_config
 from itrader.strategy_handler.storage import InMemorySignalStore
+from itrader.strategy_handler.strategies.eth_btc_pair_strategy import EthBtcPairStrategy
+from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
 from tests.support.schema import provision_schema
+from tests.support.strategy_catalog import test_catalog
 
 pytestmark = pytest.mark.unit
 
@@ -560,4 +564,258 @@ def test_verbs_deferred_to_later_plans_are_no_ops_here(
         handler.on_strategy_command(event)
 
     assert store.get(_NAME) is None
+    assert _drain(handler.global_queue) == []
+
+
+# ===========================================================================
+# Plan 07 — D-10 `add` (catalog-gate, register dark, persist, warm via P7)
+# ===========================================================================
+#
+# `add` targets a NEW name not yet in the roster, so it is dispatched BEFORE the
+# by-name lookup guard. The injected `strategy_catalog` IS the access-control
+# allowlist (D-10): without it, nothing may be instantiated from an external
+# payload. Construction runs through the IDENTICAL `build_strategy` path rehydrate
+# uses (D-01) — one reconstruction path, not two that drift.
+
+
+class _CapFeed:
+    """A feed exposing `base_timeframe` + a controllable `cache_capacity` (F-1).
+
+    The F-1 warmability gate keys on `getattr(self.feed, "base_timeframe", None)`;
+    `_StubFeed` has neither, so it skips the gate cleanly (the backtest/in-memory
+    degrade arm). This stand-in drives the gate.
+    """
+
+    def __init__(self, base_timeframe: timedelta, capacity: int) -> None:
+        self._bt = base_timeframe
+        self._cap = capacity
+
+    @property
+    def base_timeframe(self) -> timedelta:
+        return self._bt
+
+    def cache_capacity(self) -> int:
+        return self._cap
+
+    def symbols(self) -> list[str]:
+        return []
+
+    def window(self, ticker, timeframe, max_window, asof):  # type: ignore[no-untyped-def]
+        return pd.DataFrame(
+            {"open": [], "high": [], "low": [], "close": [], "volume": []},
+            index=pd.DatetimeIndex([], tz="UTC"),
+        )
+
+
+def _add_handler(
+    registry: StrategyRegistryStore | None,
+    *,
+    feed: Any = None,
+    catalog: Any = "DEFAULT",
+    short_enabled: bool = False,
+) -> StrategiesHandler:
+    """A handler with a strategy_catalog injected (the D-10 add allowlist)."""
+    handler = StrategiesHandler(
+        Queue(),
+        feed or _StubFeed(),
+        InMemorySignalStore(),
+        allow_short_selling=short_enabled,
+        enable_margin=short_enabled,
+        strategy_catalog=(test_catalog() if catalog == "DEFAULT" else catalog),
+    )
+    handler.registry_store = registry
+    return handler
+
+
+def _sma_add_config(tickers: list[str] | None = None, *, timeframe: str = "1d") -> dict:
+    """A decode-ready config_json blob for an SMAMACDStrategy add payload."""
+    built = SMAMACDStrategy(timeframe=timeframe, tickers=list(tickers or ["ETHUSD"]))
+    return encode_strategy_config(built)
+
+
+def test_add_registers_dark_persists_and_emits_the_poll(
+    store: StrategyRegistryStore,
+) -> None:
+    """Test 1 (D-10) — instance registered, row present, a UniversePollEvent emitted."""
+    handler = _add_handler(store)
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="new1", strategy_type="SMAMACDStrategy",
+        config=_sma_add_config(["ETHUSD"]), time=_T))
+
+    names = [s.name for s in handler.strategies]
+    assert "new1" in names
+    row = store.get("new1")
+    assert row is not None
+    assert row["strategy_type"] == "SMAMACDStrategy"
+    assert row["enabled"] is True
+    assert [type(e) for e in _drain(handler.global_queue)] == [UniversePollEvent]
+
+
+def test_add_of_an_unknown_type_is_a_loud_no_op(store: StrategyRegistryStore) -> None:
+    """Test 2 (D-10) — an off-allowlist strategy_type registers/persists nothing."""
+    handler = _add_handler(store)
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="bad", strategy_type="NoSuchStrategy",
+        config={"config_version": 1, "timeframe": "1d", "tickers": ["BTCUSD"]},
+        time=_T))
+
+    assert [s.name for s in handler.strategies] == []
+    assert store.get("bad") is None
+    assert _drain(handler.global_queue) == []
+
+
+def test_add_of_a_duplicate_name_is_a_loud_no_op(store: StrategyRegistryStore) -> None:
+    """Test 3 (D-02) — a name collision leaves the existing instance + row untouched."""
+    handler = _add_handler(store)
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="dup", strategy_type="SMAMACDStrategy",
+        config=_sma_add_config(["ETHUSD"]), time=_T))
+    first = next(s for s in handler.strategies if s.name == "dup")
+    row_before = store.get("dup")
+    _drain(handler.global_queue)
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="dup", strategy_type="SMAMACDStrategy",
+        config=_sma_add_config(["BTCUSD"]), time=_T))
+
+    # The existing instance object is the SAME one (not shadowed) and its row is
+    # unchanged (still the ETHUSD config, not the second BTCUSD payload).
+    survivors = [s for s in handler.strategies if s.name == "dup"]
+    assert survivors == [first]
+    assert store.get("dup") == row_before
+    assert _drain(handler.global_queue) == []
+
+
+def test_add_uses_the_same_reconstruction_path_as_build_strategy(
+    store: StrategyRegistryStore,
+) -> None:
+    """Test 4 (D-01) — the added instance matches build_strategy on its declared surface."""
+    from itrader.strategy_handler.registry.rehydrate import build_strategy
+
+    handler = _add_handler(store)
+    config = _sma_add_config(["ETHUSD"])
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="twin", strategy_type="SMAMACDStrategy",
+        config=config, time=_T))
+
+    added = next(s for s in handler.strategies if s.name == "twin")
+    direct = build_strategy(
+        {"strategy_name": "twin", "strategy_type": "SMAMACDStrategy",
+         "config_json": config},
+        catalog=test_catalog())
+    assert encode_strategy_config(added) == encode_strategy_config(direct)
+
+
+def test_add_with_a_missing_required_param_registers_nothing(
+    store: StrategyRegistryStore,
+) -> None:
+    """Test 5 (degenerate) — MissingParamError from _apply_params; nothing enters the roster."""
+    handler = _add_handler(store)
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="half", strategy_type="EmptyStrategy",
+        config={"config_version": 1, "timeframe": "1d", "tickers": ["BTCUSD"]},
+        time=_T))  # EmptyStrategy needs sizing_policy — omitted
+
+    assert [s.name for s in handler.strategies] == []
+    assert store.get("half") is None
+    assert _drain(handler.global_queue) == []
+
+
+def test_add_with_an_unknown_param_registers_nothing(
+    store: StrategyRegistryStore,
+) -> None:
+    """Test 5b (degenerate) — UnknownParamError; a smuggled key never enters the roster."""
+    handler = _add_handler(store)
+    config = _sma_add_config(["ETHUSD"])
+    config["nonsense_param"] = 7
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="smuggle", strategy_type="SMAMACDStrategy",
+        config=config, time=_T))
+
+    assert [s.name for s in handler.strategies] == []
+    assert store.get("smuggle") is None
+
+
+def test_add_beyond_ring_capacity_is_a_loud_reject(store: StrategyRegistryStore) -> None:
+    """Test 6 (F-1) — required_base_depth > cache_capacity rejects loudly (ring can't resize)."""
+    handler = _add_handler(store, feed=_CapFeed(timedelta(days=1), capacity=5))
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="deep", strategy_type="SMAMACDStrategy",
+        config=_sma_add_config(["ETHUSD"]), time=_T))  # warmup 100 base bars > 5
+
+    assert [s.name for s in handler.strategies] == []
+    assert store.get("deep") is None
+    assert _drain(handler.global_queue) == []
+
+
+def test_add_within_ring_capacity_succeeds(store: StrategyRegistryStore) -> None:
+    """Test 6b (F-1) — a warmup that fits the ring registers normally."""
+    handler = _add_handler(store, feed=_CapFeed(timedelta(days=1), capacity=200))
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="fits", strategy_type="SMAMACDStrategy",
+        config=_sma_add_config(["ETHUSD"]), time=_T))  # warmup 100 <= 200
+
+    assert "fits" in [s.name for s in handler.strategies]
+    assert store.get("fits") is not None
+
+
+def test_add_of_a_finer_than_base_timeframe_is_a_loud_reject(
+    store: StrategyRegistryStore,
+) -> None:
+    """Test 7 (F-1) — a strategy timeframe finer than base raises UnwarmableTimeframeError."""
+    handler = _add_handler(store, feed=_CapFeed(timedelta(days=1), capacity=1000))
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="finer", strategy_type="SMAMACDStrategy",
+        config=_sma_add_config(["ETHUSD"], timeframe="1h"), time=_T))  # 1h < 1d base
+
+    assert [s.name for s in handler.strategies] == []
+    assert store.get("finer") is None
+
+
+def test_add_of_a_pair_strategy_succeeds(store: StrategyRegistryStore) -> None:
+    """Test 8 (D-16) — a pair adds as a full registry instance with both legs."""
+    handler = _add_handler(store, short_enabled=True)
+    built = EthBtcPairStrategy(timeframe="1d")
+    config = encode_strategy_config(built)
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="spread1", strategy_type="EthBtcPairStrategy",
+        config=config, time=_T))
+
+    added = next((s for s in handler.strategies if s.name == "spread1"), None)
+    assert added is not None
+    assert set(added.tickers) == {"ETHUSD", "BTCUSD"}
+    assert store.get("spread1") is not None
+
+
+def test_add_degrades_cleanly_with_no_store(store: StrategyRegistryStore) -> None:
+    """Test 9 (degrade-clean) — with registry_store None, add registers live, persists nothing."""
+    handler = _add_handler(None)
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="live_only", strategy_type="SMAMACDStrategy",
+        config=_sma_add_config(["ETHUSD"]), time=_T))
+
+    assert "live_only" in [s.name for s in handler.strategies]
+    assert handler.registry_store is None
+
+
+def test_add_with_no_catalog_is_a_loud_no_op(store: StrategyRegistryStore) -> None:
+    """Test 10 (D-10) — no injected catalog means no external payload may be instantiated."""
+    handler = _add_handler(store, catalog=None)
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="denied", strategy_type="SMAMACDStrategy",
+        config=_sma_add_config(["ETHUSD"]), time=_T))
+
+    assert [s.name for s in handler.strategies] == []
+    assert store.get("denied") is None
     assert _drain(handler.global_queue) == []
