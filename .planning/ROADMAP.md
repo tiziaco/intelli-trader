@@ -405,9 +405,9 @@ Decimal money end-to-end (codec round-trips Decimals as strings); indentation me
 
 **Wave 1** *(three independent seams — parallel)*
 
-- [ ] 10-01-PLAN.md — D-03 tagged-union policy codec in `core/policy_codec.py` (all 6 policies incl. `PercentFromDecision`; Decimals as strings) (STRAT-01)
-- [ ] 10-02-PLAN.md — D-06 schema + Alembic migration (`down_revision="system_stats"`; non-destructive on non-empty — A1 guard) (STRAT-01)
-- [ ] 10-03-PLAN.md — D-07 `is_active` guard (oracle-gated) + **F-1 fix**: timeframe-aware `derive_warmup_depth` (STRAT-02)
+- [x] 10-01-PLAN.md — D-03 tagged-union policy codec in `core/policy_codec.py` (all 6 policies incl. `PercentFromDecision`; Decimals as strings) (STRAT-01)
+- [x] 10-02-PLAN.md — D-06 schema + Alembic migration (`down_revision="system_stats"`; non-destructive on non-empty — A1 guard) (STRAT-01)
+- [x] 10-03-PLAN.md — D-07 `is_active` guard (oracle-gated) + **F-1 fix**: timeframe-aware `derive_warmup_depth` (STRAT-02)
 
 **Wave 2** *(blocked on 10-01)*
 
@@ -434,9 +434,10 @@ Decimal money end-to-end (codec round-trips Decimals as strings); indentation me
 - [ ] 10-09-PLAN.md — D-22 FastAPI stand-in add→restart lifecycle + phase gate sweep (STRAT-01/02/03)
 
 Plans:
-- [ ] 10-01-PLAN.md — D-03/D-05 tagged-union policy codec in `core/` — all 6 sizing/SLTP policies round-trip, Decimals as strings, no repr-eval (wave 1)
-- [ ] 10-02-PLAN.md — D-06/D-18 schema: add `strategy_type`, add `strategy_portfolio_subscriptions`, drop `strategy_subscriptions`; migration chained onto `system_stats`, non-destructive on non-empty (wave 1)
-- [ ] 10-03-PLAN.md — D-07 `is_active` hot-path guard (oracle-gated) + F-1 timeframe-aware ring depth and the shared `required_base_depth` boundary (wave 1)
+
+- [x] 10-01-PLAN.md — D-03/D-05 tagged-union policy codec in `core/` — all 6 sizing/SLTP policies round-trip, Decimals as strings, no repr-eval (wave 1)
+- [x] 10-02-PLAN.md — D-06/D-18 schema: add `strategy_type`, add `strategy_portfolio_subscriptions`, drop `strategy_subscriptions`; migration chained onto `system_stats`, non-destructive on non-empty (wave 1)
+- [x] 10-03-PLAN.md — D-07 `is_active` hot-path guard (oracle-gated) + F-1 timeframe-aware ring depth and the shared `required_base_depth` boundary (wave 1)
 - [ ] 10-04-PLAN.md — D-01 injected `strategy_catalog` allowlist + D-04/D-20 authoring-param codec (`_DERIVED_FIELDS`, the three aliasing traps, `config_version`) (wave 2)
 - [ ] 10-05-PLAN.md — D-01 rehydrate at construction in `build_live_system` + D-19 quarantine/loud-infrastructure split + D-21 empty-registry no-op + D-02 duplicate reject (wave 3)
 - [ ] 10-06-PLAN.md — D-08 event extension + D-09 light verbs (enable/disable/subscribe/unsubscribe + ticker persist) + D-16/D-17 verb-scoped pair guard (wave 4)

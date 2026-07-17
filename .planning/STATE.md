@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: Live System Refactor & Live-Readiness Hardening
 current_phase: 10
-current_phase_name: Strategies Registry
+current_phase_name: strategies-registry
 status: executing
 stopped_at: Phase 10 planned — 9 plans / 7 waves, all gates green; ready to execute
-last_updated: "2026-07-17T12:07:24.071Z"
-last_activity: 2026-07-16
-last_activity_desc: "Completed quick task 260716-mov: move UniverseConfig to its own config/universe.py module"
+last_updated: "2026-07-17T12:30:38.618Z"
+last_activity: 2026-07-17
+last_activity_desc: Phase 10 execution started
 progress:
   total_phases: 10
   completed_phases: 9
@@ -26,17 +26,17 @@ See: .planning/PROJECT.md (Current Milestone: v1.8 — Live System Refactor & Li
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct,
 deterministic, cross-validated numbers (oracle **134 / `46189.87730727451`**; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 shipped a live operating mode (paper-first on OKX) without disturbing that oracle.
-**Current focus:** Phase 10 (Strategies Registry ★) **planned** — 9 plans / 7 waves, ready to execute. v1.8 delivers a
+**Current focus:** Phase 10 — strategies-registry
 thin ~200-line facade over focused, venue-parametrized, FastAPI-ready collaborators — **without
 disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI itself is out of scope
 (LR-01). Full scope: core refactor (P1–P8 + P12) + the three ★ feature-adds (P9–P11).
 
 ## Current Position
 
-Phase: 10 — Strategies Registry ★ (deps {P4,P6} met; **planned** — 9 plans / 7 waves)
-Plan: Not started — next is Wave 1 (10-01, 10-02, 10-03 run in parallel)
-Status: Ready to execute (`/gsd-execute-phase 10`)
-Last activity: 2026-07-17 — Planned Phase 10: research + pattern map + 9 plans; decision coverage 22/22, requirements 3/3, plan-checker PASSED
+Phase: 10 (strategies-registry) — EXECUTING
+Plan: 1 of 9
+Status: Executing Phase 10
+Last activity: 2026-07-17 — Phase 10 execution started
 
 Note: `phase.complete` again advanced current_phase to 12 (its next-phase dir-scan skips the not-yet-created P10/P11 ★ dirs);
 corrected to 10 per the roadmap sequence. P10{P4,P6} + P11{P5,P7} are dependency-available now; P12 (core-final) depends on P11.
@@ -47,15 +47,19 @@ checker prompts, and `roadmap.annotate-dependencies` no-opped (`updated:false`) 
 written by hand. Expect the same on P11 ★.
 
 **Carried into execution (found during planning, not in CONTEXT):**
+
 - **F-1 (HIGH, confirmed real):** `cache_registration.py:226::derive_warmup_depth` is a bare `max(s.warmup)` with no
   timeframe scaling, while `warmup` counts strategy-timeframe bars and the ring is sized in base bars → a coarser-
   timeframe strategy silently never warms. Fixed in 10-03 (opt-in `base_timeframe`; omitted → byte-identical, which
   is what protects the oracle) + loud-reject gates in 10-07/10-08. Ring resize deferred to the finer-than-base todo.
+
 - **Three CONTEXT errors corrected in the plans, not inherited:** `universe_handler.py` is **4-SPACE** (measured
   0/559, CONTEXT says tabs — would break the file); migration head is **`system_stats`** (CONTEXT says
   `strategy_registry`); D-03's policy list omits **`PercentFromDecision`** (`core/sizing.py:278`, a live union member).
+
 - **CR-01 pair guard is broader than D-16 permits** — it refuses ALL verbs; 10-06 re-scopes it to
   `{reconfigure, add_ticker, remove_ticker}` so pairs can still add/remove/enable/disable/rehydrate.
+
 - **A1 (unverifiable from source):** the D-06 drop assumes `strategy_subscriptions` is empty in every deployed DB.
   10-02 counts rows first and raises on non-empty. Worth a manual `SELECT count(*)` before running the migration.
 
