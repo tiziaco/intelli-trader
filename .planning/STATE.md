@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: Live System Refactor & Live-Readiness Hardening
-current_phase: 10
-current_phase_name: strategies-registry
-status: executing
-stopped_at: Phase 10 planned — 9 plans / 7 waves, all gates green; ready to execute
-last_updated: "2026-07-17T12:30:38.618Z"
+current_phase: 12
+current_phase_name: Test Migration + Gates
+status: planning
+stopped_at: Phase 10 context gathered
+last_updated: "2026-07-17T16:31:24.947Z"
 last_activity: 2026-07-17
-last_activity_desc: Phase 10 execution started
+last_activity_desc: Phase 10 complete, transitioned to Phase 12
 progress:
   total_phases: 10
   completed_phases: 9
@@ -33,10 +33,10 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 
 ## Current Position
 
-Phase: 10 (strategies-registry) — EXECUTING
-Plan: 1 of 9
-Status: Executing Phase 10
-Last activity: 2026-07-17 — Phase 10 execution started
+Phase: 12 — Test Migration + Gates
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-07-17 — Phase 10 complete, transitioned to Phase 12
 
 Note: `phase.complete` again advanced current_phase to 12 (its next-phase dir-scan skips the not-yet-created P10/P11 ★ dirs);
 corrected to 10 per the roadmap sequence. P10{P4,P6} + P11{P5,P7} are dependency-available now; P12 (core-final) depends on P11.

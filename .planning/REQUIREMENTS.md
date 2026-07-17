@@ -267,14 +267,14 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 
 ### ★ Strategies Registry (P10)
 
-- [ ] **STRAT-01**: `StrategyRegistryStore` persists which strategies are active + config + subscriptions;
+- [x] **STRAT-01**: `StrategyRegistryStore` persists which strategies are active + config + subscriptions;
   on restart `build_live_system` rehydrates → re-registers active strategies (survives restart)
   (concern 18/§9).
 
-- [ ] **STRAT-02**: Runtime add / remove / enable / disable via `STRATEGY_COMMAND` (CONTROL) →
+- [x] **STRAT-02**: Runtime add / remove / enable / disable via `STRATEGY_COMMAND` (CONTROL) →
   `StrategiesHandler` applies + persists (§9).
 
-- [ ] **STRAT-03**: A strategy's config parameters are mutable at runtime via **atomic reconfiguration**
+- [x] **STRAT-03**: A strategy's config parameters are mutable at runtime via **atomic reconfiguration**
   (quiesce → apply → re-warmup the affected strategy), persisted to `StrategyRegistryStore` — folds
   `pair-strategy-live-reconfiguration.md` (v1.7 shipped only a refusal guard) (owner decision 2026-07-09).
 
@@ -415,9 +415,9 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | RTCFG-04 | P9 | Complete |
 | RTCFG-05 | P9 | Complete |
 | RTCFG-06 | P9 | Complete |
-| STRAT-01 | P10 | Pending |
-| STRAT-02 | P10 | Pending |
-| STRAT-03 | P10 | Pending |
+| STRAT-01 | P10 | Complete |
+| STRAT-02 | P10 | Complete |
+| STRAT-03 | P10 | Complete |
 | MPORT-01 | P11 | Pending |
 | MPORT-02 | P11 | Pending |
 | MPORT-03 | P11 | Pending |

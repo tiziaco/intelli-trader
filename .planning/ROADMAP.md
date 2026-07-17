@@ -109,7 +109,7 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 - [x] **Phase 7: Safety + Reconciliation + Stream Recovery** - `SafetyController`, `ReconciliationCoordinator`, `StreamRecoveryHandler`, CONTROL routes, pre-trade throttle — flag machinery deleted (SAFE-01..06) (completed 2026-07-14)
 - [x] **Phase 8: Error Subsystem** - Injected `ErrorPolicy`, formalized `ErrorHandler`, two-guard terminal safety, CF-1 aggregate circuit breaker (ERR-01..04) (completed 2026-07-14)
 - [x] **Phase 9 ★: Runtime-Config Platform** - `RuntimeConfig` overlay, scoped `ConfigUpdateEvent` + allowlist, restart layering, stats/state UI read-model (RTCFG-01..06) (completed 2026-07-16)
-- [ ] **Phase 10 ★: Strategies Registry** - Durable `StrategyRegistryStore` rehydrate, enable/disable via `STRATEGY_COMMAND`, atomic strategy-param reconfiguration (STRAT-01..03)
+- [x] **Phase 10 ★: Strategies Registry** - Durable `StrategyRegistryStore` rehydrate, enable/disable via `STRATEGY_COMMAND`, atomic strategy-param reconfiguration (STRAT-01..03) (completed 2026-07-17)
 - [ ] **Phase 11 ★: Multi-Portfolio-Live** - Per-`account_id` account factory, distinct-`account_id` invariant (fail loud), per-portfolio reconcile, `clOrdId→client_order_id` (MPORT-01..06)
 - [ ] **Phase 12: Test Migration + Gates** - live-smoke / config-restart / multi-portfolio-attribution gates (TEST-02..04; TEST-01 replay relocation pulled forward into P6)
 
@@ -443,7 +443,7 @@ Plans:
 - [x] 10-06-PLAN.md — D-08 event extension + D-09 light verbs (enable/disable/subscribe/unsubscribe + ticker persist) + D-16/D-17 verb-scoped pair guard (wave 4)
 - [x] 10-07-PLAN.md — D-10 `add` (catalog-gate, dark, warm via the P7 pipeline) + D-11 `remove` (force-flat first, pending-removal state) (wave 5)
 - [x] 10-08-PLAN.md — D-12/D-13/D-14/D-15 atomic reconfiguration (trial-validate → persist → apply → re-warm) + the D-15 allowlist + the F-1 timeframe capacity gate (wave 6)
-- [ ] 10-09-PLAN.md — D-22 external add→warm→trade→restart→resume lifecycle (the FastAPI stand-in) + phase gate sweep and validation sign-off (wave 7)
+- [x] 10-09-PLAN.md — D-22 external add→warm→trade→restart→resume lifecycle (the FastAPI stand-in) + phase gate sweep and validation sign-off (wave 7)
 
 ### Phase 11 ★: Multi-Portfolio-Live
 
