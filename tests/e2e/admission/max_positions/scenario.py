@@ -145,9 +145,9 @@ SCENARIO = ScenarioSpec(
     starting_cash=_CASH,
     data={_TICKER: HERE / "bars.csv", _ETH: HERE / "bars_eth.csv"},
     strategies=[
-        ScriptedEmitter(_TIMEFRAME, [_ETH], script=_ETH_SCRIPT,
+        ScriptedEmitter(_TIMEFRAME, [_ETH], script=_ETH_SCRIPT, name="emitter_eth",
                         sizing_policy=_SIZING, max_positions=1),
-        ScriptedEmitter(_TIMEFRAME, [_TICKER], script=_BTC_SCRIPT,
+        ScriptedEmitter(_TIMEFRAME, [_TICKER], script=_BTC_SCRIPT, name="emitter_btc",
                         sizing_policy=_SIZING, max_positions=1),
     ],
     portfolios=[PortfolioSpec(name="max_positions_pf", cash=_CASH)],

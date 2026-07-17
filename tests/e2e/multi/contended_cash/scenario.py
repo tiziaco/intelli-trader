@@ -171,10 +171,10 @@ SCENARIO = ScenarioSpec(
     strategies=[
         # [0] WINNER — dispatched first by registration order, reserves all cash.
         ScriptedEmitter(_TIMEFRAME, [_ETH], script=_ETH_SCRIPT,
-                        sizing_policy=_WINNER_SIZING),
+                        name="emitter_winner", sizing_policy=_WINNER_SIZING),
         # [1] LOSER — dispatched second, cash_reservation gate REJECTS it.
         ScriptedEmitter(_TIMEFRAME, [_BTC], script=_BTC_SCRIPT,
-                        sizing_policy=_LOSER_SIZING),
+                        name="emitter_loser", sizing_policy=_LOSER_SIZING),
     ],
     portfolios=[PortfolioSpec(name="contended_cash_pf", cash=_CASH)],
     exchange=None,  # zero-fee / zero-slippage — the cash contention is the only moving part.

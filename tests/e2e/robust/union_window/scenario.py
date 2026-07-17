@@ -160,9 +160,9 @@ SCENARIO = ScenarioSpec(
     starting_cash=_CASH,
     data={_BTC: HERE / "btc_sliced.csv", _AAVE: HERE / "aave_sliced.csv"},
     strategies=[
-        ScriptedEmitter(_TIMEFRAME, [_BTC], script=_BTC_SCRIPT,
+        ScriptedEmitter(_TIMEFRAME, [_BTC], script=_BTC_SCRIPT, name="emitter_btc",
                         sizing_policy=FixedQuantity(qty=Decimal("1"))),
-        ScriptedEmitter(_TIMEFRAME, [_AAVE], script=_AAVE_SCRIPT,
+        ScriptedEmitter(_TIMEFRAME, [_AAVE], script=_AAVE_SCRIPT, name="emitter_aave",
                         sizing_policy=FixedQuantity(qty=Decimal("10"))),
     ],
     portfolios=[PortfolioSpec(name="union_window_pf", cash=_CASH)],
