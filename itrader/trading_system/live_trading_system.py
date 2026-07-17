@@ -1628,6 +1628,18 @@ def build_live_system(
             # backtest composition root never reaches here, so its handler keeps
             # registry_store=None and every persist arm stays a no-op.
             engine.strategies_handler.registry_store = strategy_registry_store
+            # D-10/D-11 (Plan 07): inject the two seams the heavy lifecycle verbs need,
+            # next to registry_store and BEFORE rehydrate so a rehydrated strategy's first
+            # runtime `add`/`remove` already has them. `strategy_catalog` is the SAME
+            # injected allowlist rehydrate uses (D-01) — the `add` verb resolves an
+            # untrusted external `strategy_type` through it and nothing else (D-10 access
+            # control). `portfolio_handler` structurally satisfies `PortfolioReadModel`, so
+            # it IS the flat-detect the `remove` verb consults on FILL (D-11) — a READ
+            # through an injected read-model, never a cross-domain handler call. The
+            # backtest composition root never reaches here, so its handler keeps both None
+            # (add is never driven there; remove drops directly).
+            engine.strategies_handler.strategy_catalog = strategy_catalog
+            engine.strategies_handler.portfolio_read_model = portfolio_handler
             facade._quarantined_strategies = rehydrate_strategies(
                 store=strategy_registry_store,
                 catalog=strategy_catalog,

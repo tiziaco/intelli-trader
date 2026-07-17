@@ -60,6 +60,8 @@ class StrategiesHandler(object):
 		environment: str = "backtest",
 		sql_engine: "Optional[Any]" = None,
 		registry_store: "Optional[Any]" = None,
+		strategy_catalog: "Optional[Any]" = None,
+		portfolio_read_model: "Optional[Any]" = None,
 	) -> None:
 		"""
 		Parameters
@@ -112,6 +114,27 @@ class StrategiesHandler(object):
 		# D-09 durable instance registry — None on the backtest/in-memory path (see
 		# the ctor docstring). Every persist arm short-circuits on it.
 		self.registry_store: "Optional[Any]" = registry_store
+		# D-10 injected strategy-type catalog — the access-control ALLOWLIST the `add`
+		# verb resolves an untrusted external `strategy_type` through (catalog.py). None
+		# is the backtest/in-memory path (`add` is never driven there); `add` LOUD-rejects
+		# when it is None so no external payload can be instantiated. Typed `Any` so the
+		# SQL/registry stack stays off this module's import graph (GATE-01 inertness);
+		# live wiring injects it inside build_live_system's `system_store is not None` gate.
+		self.strategy_catalog: "Optional[Any]" = strategy_catalog
+		# D-11 injected portfolio READ-model (PortfolioReadModel) — the flat-detect the
+		# `remove` verb consults on FILL to know when a force-closed strategy is flat. A
+		# READ through an injected read-model (the same seam the order domain uses), NOT a
+		# cross-domain handler call, so the queue-only contract holds. None on the
+		# backtest/in-memory path (remove never force-closes there). Typed `Any` (GATE-01).
+		self.portfolio_read_model: "Optional[Any]" = portfolio_read_model
+		# D-11 pending-removal state. A `remove` force-flats FIRST and drops the object
+		# only once the flat is OBSERVED on a later FILL cycle, so it is a PENDING state
+		# (mirroring the pending-bracket / reconnect-resume precedents), not an inline
+		# mutation. A name lives here from the `remove` command until `on_fill` sees its
+		# positions flat; while pending, `get_strategies_universe` excludes its tickers so
+		# the poll's REMOVE branch drives the P7 force-close, but its registry ROW is KEPT
+		# until flat (crash-safety: restart rehydrates and resumes managing the positions).
+		self._pending_removals: set[str] = set()
 		# SHORT-01/D-07 two-flag registration gate — read, never mutated here.
 		self._allow_short_selling: bool = allow_short_selling
 		self._enable_margin: bool = enable_margin
@@ -598,6 +621,302 @@ class StrategiesHandler(object):
 		except (ValueError, TypeError):
 			return None
 
+	def _add_strategy_verb(self, event: StrategyCommandEvent) -> None:
+		"""D-10 `add`: catalog-gate -> construct DARK -> persist -> warm via the P7 poll.
+
+		The phase's highest-value trust boundary (T-10-41): an operator/FastAPI-supplied
+		``strategy_type`` + config becomes a live Python object. Every rejection below is a
+		LOUD no-op (``logger.warning`` + return) that registers and persists NOTHING — a
+		half-built strategy never enters the roster.
+
+		D-10 access control: the injected ``strategy_catalog`` IS the allowlist. Without it
+		nothing may be instantiated from an external payload, and resolution goes ONLY
+		through ``build_strategy`` -> ``decode_strategy_config`` -> ``resolve_strategy_class``
+		(a closed dict lookup). This branch NEVER resolves a type by dynamic module import
+		or by evaluating the payload as source text — either would turn the operator API
+		into remote code execution.
+
+		D-01 one reconstruction path: ``add`` builds through the IDENTICAL ``build_strategy``
+		path rehydrate uses, so the two cannot drift. Construction runs the real
+		``_apply_params`` -> ``validate()`` -> ``_run_init()``, so unknown/missing-param
+		rejection and warmup re-derivation happen on the real path.
+
+		D-10 warm-via-P7: a freshly constructed instance is DARK (its handles are reset at
+		construction, so ``is_ready`` is False until bars feed it). The emitted
+		``UniversePollEvent`` IS the whole warmup wiring: membership is derived FROM the
+		registered strategies (``StrategyDerivedSelectionModel``), so the poll re-selects,
+		the new symbol enters the universe, and the EXISTING P7 pipeline runs
+		``spawn_warmup`` -> ``BarsLoaded`` -> ``on_bars_loaded`` (mark_ready) -> it trades;
+		a ``BarsLoadFailed`` -> FAILED -> CR-02 retry next poll. This works on a COLD
+		symbol, which is the COMMON case — add-only-if-already-warm was rejected precisely
+		because it would refuse any genuinely new symbol. NO second warmup path is built:
+		``live_bar_feed`` explicitly refuses a second state-building path (LX-09), and a
+		parallel path would re-open the paper-replay parity gate.
+
+		Queue-only: the poll is emitted on ``self.global_queue``; this NEVER calls
+		``UniverseHandler`` or touches ``Universe``.
+		"""
+		# D-10 catalog gate — the access-control allowlist. Its absence is a LOUD reject:
+		# without an injected catalog nothing may be instantiated from an external payload.
+		# We resolve types ONLY through the injected allowlist (build_strategy below), never
+		# by consulting the import system or interpreting the payload as source text — that
+		# would convert the operator API into arbitrary code execution.
+		if self.strategy_catalog is None:
+			self.logger.warning(
+				'add for strategy %s refused — no strategy_catalog injected; an external '
+				'payload may only be instantiated through the injected allowlist (D-10)',
+				event.strategy_name)
+			return
+		config = event.config
+		if not isinstance(config, dict) or not isinstance(config.get("strategy_type"), str):
+			# A malformed payload (no config, or no string strategy_type key) — loud no-op.
+			self.logger.warning(
+				'add for strategy %s carries no string strategy_type in its config '
+				'payload — ignored', event.strategy_name)
+			return
+		strategy_type = config["strategy_type"]
+		# D-02 duplicate-name loud reject BEFORE any construction — a collision would
+		# silently shadow another instance and overwrite its persisted state. Pre-checked
+		# by name (rather than catching add_strategy's raise) so nothing is constructed.
+		if any(existing.name == event.strategy_name for existing in self.strategies):
+			self.logger.warning(
+				'add for strategy %s refused — a strategy with that name is already '
+				'registered (D-02); the existing instance is left untouched',
+				event.strategy_name)
+			return
+		# Lazy imports (GATE-01): the registry collaborators reach the store, so a
+		# module-top import would pull SQL onto the BACKTEST import graph. required_base_depth
+		# is pure feed logic but is imported here too so the whole add path stays local.
+		from itrader.core.exceptions import MissingParamError, UnknownParamError
+		from itrader.price_handler.feed.cache_registration import (
+			UnwarmableTimeframeError,
+			required_base_depth,
+		)
+		from itrader.strategy_handler.registry.catalog import UnknownStrategyTypeError
+		from itrader.strategy_handler.registry.config_codec import StrategyConfigError
+		from itrader.strategy_handler.registry.rehydrate import build_strategy
+
+		# Build the row-shaped record from the payload. The config_json blob is the payload
+		# MINUS portfolio_id (a subscription is a child-table concern, NOT a declared param —
+		# leaving it in the blob would make build_strategy's _apply_params raise
+		# UnknownParamError). strategy_type stays IN the blob (an envelope key decode reads)
+		# AND is the top-level column; the two agree because the .add factory folds one value
+		# into both. build_strategy is the IDENTICAL path rehydrate uses (D-01).
+		blob = {key: value for key, value in config.items() if key != "portfolio_id"}
+		rec = {
+			"strategy_name": event.strategy_name,
+			"strategy_type": strategy_type,
+			"config_json": blob,
+		}
+		try:
+			strategy = build_strategy(rec, catalog=self.strategy_catalog)
+		except (
+			UnknownStrategyTypeError,
+			StrategyConfigError,
+			UnknownParamError,
+			MissingParamError,
+		) as exc:
+			# Every construction failure is a loud no-op naming the error KIND (not the
+			# payload values — the P8 declared-fields-only precedent). Caught by SPECIFIC
+			# type, never a bare except: a store/driver fault must not be silently eaten.
+			self.logger.warning(
+				'add for strategy %s rejected (%s) — nothing registered or persisted',
+				event.strategy_name, type(exc).__name__)
+			return
+		# F-1 warmability gate. `cache_capacity()` re-derives lazily, but an existing ring is
+		# a `deque(maxlen=...)` fixed at creation (live_bar_feed) and CANNOT resize, so
+		# re-registering a deeper consumer does not deepen it — a strategy needing more base
+		# bars than the ring holds would register, stay is_ready False FOREVER, and emit
+		# nothing while raising nothing. That silent permanent no-trade is a correctness
+		# defect, so reject loudly instead. Keyed on `base_timeframe`: only the LIVE feed
+		# carries it (a property on LiveBarFeed), so the backtest/in-memory feed (which has
+		# no base_timeframe) skips the gate cleanly — the plan's own degrade arm, keyed on
+		# the attribute rather than a redundant injected handle (self.feed already exists,
+		# audit 10-07 F1). Ring RESIZE is deferred to
+		# .planning/todos/pending/strategy-timeframe-finer-than-base-resubscribe.md.
+		base_timeframe = getattr(self.feed, "base_timeframe", None)
+		if base_timeframe is not None:
+			try:
+				depth = required_base_depth(
+					strategy.warmup, strategy.timeframe, base_timeframe)
+			except UnwarmableTimeframeError as exc:
+				# A finer-than-base (or non-multiple) timeframe can never warm from the ring.
+				self.logger.warning(
+					'add for strategy %s rejected (%s) — its timeframe cannot be served '
+					'from the feed base cadence', event.strategy_name, type(exc).__name__)
+				return
+			capacity = self.feed.cache_capacity()
+			if depth > capacity:
+				self.logger.warning(
+					'add for strategy %s rejected — needs %d base bars but the feed ring '
+					'holds only %d (an existing deque maxlen is fixed at creation and '
+					'cannot resize, so it would stay permanently dark)',
+					event.strategy_name, depth, capacity)
+				return
+		# Register through add_strategy (its SHORT-01/D-07 direction gate + the IN-01/IN-06
+		# min_timeframe block). D-02 duplicate is already pre-checked, so the only remaining
+		# raise is the SHORT-01 system-config mismatch — convert THAT to a loud no-op so an
+		# operator add never raises into the queue.
+		try:
+			self.add_strategy(strategy)
+		except ValueError as exc:
+			self.logger.warning(
+				'add for strategy %s rejected — %s (a non-LONG_ONLY strategy needs the '
+				'handler short-enabled, SHORT-01/D-07)', event.strategy_name, exc)
+			return
+		# Subscribe any portfolio_id carried alongside the config (parsed + type-checked at
+		# the boundary, T-10-35; a bare str would fan signals at a portfolio matching
+		# nothing). Absent -> the strategy computes but fans out to nobody (a legal state,
+		# D-09), and the subscribe_portfolio verb can wire it later.
+		portfolio_id = self._portfolio_id_from(event)
+		if portfolio_id is not None:
+			strategy.subscribe_portfolio(portfolio_id)
+		# Persist parent-first (the child FK requires the registry row to exist first).
+		self._persist_strategy(strategy, event)
+		if portfolio_id is not None and self.registry_store is not None:
+			self.registry_store.add_portfolio_subscription(
+				strategy_name=strategy.name, portfolio_id=str(portfolio_id))
+		# The poll IS the warmup wiring (D-10) — see the method docstring. Queue-only.
+		self.global_queue.put(UniversePollEvent(time=event.time))
+
+	def _remove_strategy_verb(
+		self, event: StrategyCommandEvent, strategy: Strategy
+	) -> None:
+		"""D-11 `remove`: force-flat FIRST, hold PENDING across cycles, then drop.
+
+		The three lifecycle behaviours stay DISTINCT and are never conflated:
+		  - ``disable`` -> stop NEW entries, KEEP open positions + resting brackets (D-07);
+		  - ``remove`` -> force-flat, WAIT flat, then drop the object + delete the rows;
+		  - ``reconfigure`` -> apply live, KEEP positions (D-12, Plan 08).
+
+		Orphaning positions on remove was REJECTED: a removed strategy's positions would
+		become unmanaged (no exit logic owns them, and on a bracket-less instrument nothing
+		closes them). So the sequence is deactivate -> pending -> persist ``enabled=False``
+		-> poll (drive the P7 force-close) -> only drop once the flat is observed on a FILL.
+
+		Because the flat is observed on a LATER event cycle, this is a PENDING state (the
+		``_pending_removals`` set), mirroring the pending-bracket and reconnect-resume
+		precedents — not an inline mutation.
+
+		THE load-bearing design call (recorded in the SUMMARY): the force-close is driven by
+		making the strategy's symbols LEAVE the derived membership. ``get_strategies_universe``
+		excludes a pending-removal strategy's tickers, so the follow-on ``UniversePollEvent``
+		re-derives membership WITHOUT them, the poll's REMOVE branch fires
+		``_on_symbol_removed`` for its now-unmembered symbols, and the EXISTING P7 force-close
+		-> detach-on-flat machinery manages the positions out — reusing the pipeline verbatim
+		(D-11) rather than building a second force-close path. The instance STAYS in
+		``self.strategies`` and its ROW is KEPT until flat: a crash mid-force-close then
+		rehydrates the strategy and it resumes managing its own positions rather than
+		orphaning them. Queue-only: the poll is emitted here; ``UniverseHandler`` is never
+		called and ``Universe`` is never touched.
+		"""
+		# Idempotency: a name already pending is a no-op — no second force-close, no second
+		# poll (D-10 idempotency). The unknown-name case is the shared loud no-op upstream.
+		if strategy.name in self._pending_removals:
+			return
+		# Deactivate FIRST — the D-07 `is_active` gate stops NEW entries while the
+		# force-close plays out (this is why D-07 is a Plan 03 dependency).
+		if strategy.is_active:
+			strategy.deactivate_strategy()
+		# Enter the pending state BEFORE emitting the poll, so get_strategies_universe
+		# already excludes this strategy when the poll re-derives membership.
+		self._pending_removals.add(strategy.name)
+		# Persist enabled=False — the row must reflect "should not be trading" even if the
+		# process dies mid-removal. Do NOT delete the row here: D-11's order is force-flat
+		# -> wait flat -> THEN drop. Deleting first would leave a crash mid-force-close with
+		# open positions and no row to rehydrate, so no owner: orphaned.
+		self._persist_strategy(strategy, event)
+		# The poll drives the P7 force-close (see the docstring). Queue-only.
+		self.global_queue.put(UniversePollEvent(time=event.time))
+		# Complete immediately when the flat condition already holds (the no-position case
+		# completes on the same cycle, D-11).
+		self._try_complete_removal(strategy)
+
+	def _strategy_is_flat(self, strategy: Strategy) -> bool:
+		"""True when NONE of ``strategy``'s tickers are held in any subscribed portfolio.
+
+		A READ through the injected ``PortfolioReadModel`` (``get_position``), which the
+		queue-only rule permits (reads go through injected read-models; only writes are
+		queue-mediated). Checks the strategy's tickers across its subscribed portfolios, so
+		a pair's BOTH legs must be flat (D-16).
+
+		With no read model injected there is nothing to observe: return True (the
+		backtest/in-memory degrade arm, where remove never force-closes and drops directly).
+		A strategy with no subscribed portfolios is likewise vacuously flat.
+		"""
+		read_model = self.portfolio_read_model
+		if read_model is None:
+			return True
+		for portfolio_id in strategy.subscribed_portfolios:
+			for ticker in strategy.tickers:
+				if read_model.get_position(portfolio_id, ticker) is not None:
+					return False
+		return True
+
+	def _try_complete_removal(self, strategy: Strategy) -> None:
+		"""Drop + delete a pending-removal strategy IFF its positions are now flat (D-11).
+
+		Only once flat: drop the object from ``self.strategies``, delete the rows (the store
+		removes the portfolio-subscription CHILD rows BEFORE the ``strategy_registry`` parent
+		— P-6; the FK forbids the reverse and the SQLite ``PRAGMA foreign_keys=ON`` hook
+		enforces it on both dialects), discard the name from ``_pending_removals``, and
+		recompute ``min_timeframe`` (it was derived at ``add_strategy`` time and dropping the
+		only strategy at the minimum leaves it stale).
+		"""
+		if not self._strategy_is_flat(strategy):
+			return
+		if strategy in self.strategies:
+			self.strategies.remove(strategy)
+		if self.registry_store is not None:
+			# Child-then-parent delete (P-6) — the store owns the FK ordering.
+			self.registry_store.delete(strategy.name)
+		self._pending_removals.discard(strategy.name)
+		self._recompute_min_timeframe()
+
+	def _recompute_min_timeframe(self) -> None:
+		"""Re-derive ``min_timeframe`` from the current roster after a drop (IN-01/IN-06).
+
+		``min_timeframe`` is derived only in ``add_strategy`` and never recomputed on
+		removal, so dropping the strategy at the minimum would leave it stale. An EMPTY
+		roster returns to the ``None`` seed — the legal "no strategies" state (IN-06),
+		mirroring the None-seed handling in ``add_strategy``.
+		"""
+		if not self.strategies:
+			self.min_timeframe = None
+			return
+		self.min_timeframe = min(strategy.timeframe for strategy in self.strategies)
+
+	def on_fill(self, event: "Any") -> None:
+		"""D-11 completion hook: drop a pending-removal strategy once its positions are flat.
+
+		The three lifecycle behaviours stay DISTINCT (never conflated): ``disable`` stops
+		NEW entries and KEEPS open positions + brackets; ``remove`` force-flats, waits flat,
+		then drops; ``reconfigure`` applies live and KEEPS positions.
+
+		The removal spans event cycles, so it is a PENDING state (like pending-bracket and
+		reconnect-resume) — not an inline mutation. On each FILL this re-scans EVERY pending
+		removal's flatness via the injected ``PortfolioReadModel`` (a READ through an
+		injected read-model, which the queue-only rule permits — ``PortfolioHandler`` is
+		never imported) and completes the ones that reached flat. It re-scans all pending
+		removals rather than keying on ``event.ticker`` so a multi-leg strategy completes on
+		whichever fill flattens its LAST open leg.
+
+		Wired on the LIVE FILL route only (``route_registrar``), AFTER
+		``PortfolioHandler.on_fill`` so the read model already reflects the settled (flat)
+		position. It is NOT on the backtest ``_routes`` FILL list at all, so it never runs on
+		the byte-exact oracle path (and ``_pending_removals`` is empty there regardless).
+		"""
+		if not self._pending_removals:
+			return
+		by_name = {strategy.name: strategy for strategy in self.strategies}
+		for name in list(self._pending_removals):
+			strategy = by_name.get(name)
+			if strategy is None:
+				# Already dropped — a stale pending entry; clear it defensively.
+				self._pending_removals.discard(name)
+				continue
+			self._try_complete_removal(strategy)
+
 	def on_strategy_command(self, event: StrategyCommandEvent) -> None:
 		"""Apply one control-plane verb to one strategy, live AND durably (D-09).
 
@@ -642,6 +961,14 @@ class StrategiesHandler(object):
 		event: `StrategyCommandEvent`
 			The control-plane command addressed to one strategy by name.
 		"""
+		# D-10: `add` targets a NEW name that is (by design) NOT yet in the roster, so it
+		# is dispatched BEFORE the by-name lookup guard below — that guard would reject
+		# every add as "unknown strategy". A pair `add` is likewise handled here (the
+		# verb-scoped pair guard below only governs EXISTING pair instances; `add`
+		# constructs a fresh one, which add_strategy's SHORT-01/D-07 gate admits).
+		if event.verb == "add":
+			self._add_strategy_verb(event)
+			return
 		by_name = {strategy.name: strategy for strategy in self.strategies}
 		strategy = by_name.get(event.strategy_name)
 		if strategy is None:
@@ -685,6 +1012,14 @@ class StrategiesHandler(object):
 				'the ticker verbs (CR-01: the exact-2-ticker contract is immutable at '
 				'the control-plane seam)',
 				event.verb, event.strategy_name)
+			return
+		# D-11 `remove` — a heavy lifecycle verb (force-flat first, pending across event
+		# cycles). It is NOT in _PAIR_REFUSED_VERBS, so a pair remove reaches here and
+		# force-flats BOTH legs (D-16). Dispatched to its own method; it owns its persist
+		# + poll and the pending-removal state, so it returns before the light-verb
+		# `mutated` tail below (which is for the D-09 light verbs only).
+		if event.verb == "remove":
+			self._remove_strategy_verb(event, strategy)
 			return
 		# IN-02: track whether the verb ACTUALLY mutated anything. Both the persist and
 		# the follow-on are gated on this — an idempotent no-op (enable an enabled
@@ -827,6 +1162,16 @@ class StrategiesHandler(object):
 		"""
 		traded_tickers: list[str] = []
 		for strategy in self.strategies:
+			# D-11: a pending-removal strategy is EXCLUDED from the derived membership so
+			# the poll's REMOVE branch force-closes its now-unmembered symbols — the trigger
+			# that drives the P7 force-close machinery. The instance STAYS in
+			# self.strategies (its row is kept until flat for crash-safety); it simply stops
+			# CONTRIBUTING to membership. A symbol shared with a non-pending strategy stays a
+			# member via that other strategy (correct: it is still needed) — the force-close
+			# is symbol-scoped, so a shared symbol's position is not force-closed by removing
+			# only one of its strategies (the accepted P10-scope limitation).
+			if strategy.name in self._pending_removals:
+				continue
 			# IN-01: the declared config contract is `tickers: list[str]`, so
 			# `tickers[0]` is always a `str` — the legacy pairs-trading branch
 			# (`isinstance(tickers[0], tuple)`) was dead on every supported path

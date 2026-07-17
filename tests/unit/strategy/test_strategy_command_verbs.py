@@ -27,6 +27,7 @@ Assertions read STATE and the STORE, never log capture: ``make test`` exports
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 from queue import Queue
+from types import SimpleNamespace
 from typing import Any, Iterator
 from uuid import UUID
 
@@ -41,9 +42,13 @@ from itrader.storage import SqlEngine
 from itrader.storage.strategy_registry_store import StrategyRegistryStore
 from itrader.strategy_handler.base import Strategy
 from itrader.strategy_handler.indicators import SMA
+from itrader.strategy_handler.registry import encode_strategy_config
 from itrader.strategy_handler.storage import InMemorySignalStore
+from itrader.strategy_handler.strategies.eth_btc_pair_strategy import EthBtcPairStrategy
+from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
 from tests.support.schema import provision_schema
+from tests.support.strategy_catalog import test_catalog
 
 pytestmark = pytest.mark.unit
 
@@ -546,18 +551,451 @@ def test_unknown_verb_is_a_loud_no_op(store: StrategyRegistryStore) -> None:
     assert strategy.is_active is True
 
 
-def test_verbs_deferred_to_later_plans_are_no_ops_here(
+def test_reconfigure_is_still_a_no_op_here(
     store: StrategyRegistryStore,
 ) -> None:
-    """``add``/``remove``/``reconfigure`` land in Plans 07/08 — inert, never a raise."""
+    """``reconfigure`` lands in Plan 08 — inert here, never a raise. (``add``/``remove``
+    are implemented in Plan 07 and covered by their own suites.)"""
     handler, _strategy = _handler(store)
 
-    for event in (
-        StrategyCommandEvent.remove(strategy_name=_NAME, time=_T),
-        StrategyCommandEvent.reconfigure(
-            strategy_name=_NAME, config={"timeframe": "1h"}, time=_T),
-    ):
-        handler.on_strategy_command(event)
+    handler.on_strategy_command(StrategyCommandEvent.reconfigure(
+        strategy_name=_NAME, config={"timeframe": "1h"}, time=_T))
 
     assert store.get(_NAME) is None
     assert _drain(handler.global_queue) == []
+
+
+# ===========================================================================
+# Plan 07 — D-10 `add` (catalog-gate, register dark, persist, warm via P7)
+# ===========================================================================
+#
+# `add` targets a NEW name not yet in the roster, so it is dispatched BEFORE the
+# by-name lookup guard. The injected `strategy_catalog` IS the access-control
+# allowlist (D-10): without it, nothing may be instantiated from an external
+# payload. Construction runs through the IDENTICAL `build_strategy` path rehydrate
+# uses (D-01) — one reconstruction path, not two that drift.
+
+
+class _CapFeed:
+    """A feed exposing `base_timeframe` + a controllable `cache_capacity` (F-1).
+
+    The F-1 warmability gate keys on `getattr(self.feed, "base_timeframe", None)`;
+    `_StubFeed` has neither, so it skips the gate cleanly (the backtest/in-memory
+    degrade arm). This stand-in drives the gate.
+    """
+
+    def __init__(self, base_timeframe: timedelta, capacity: int) -> None:
+        self._bt = base_timeframe
+        self._cap = capacity
+
+    @property
+    def base_timeframe(self) -> timedelta:
+        return self._bt
+
+    def cache_capacity(self) -> int:
+        return self._cap
+
+    def symbols(self) -> list[str]:
+        return []
+
+    def window(self, ticker, timeframe, max_window, asof):  # type: ignore[no-untyped-def]
+        return pd.DataFrame(
+            {"open": [], "high": [], "low": [], "close": [], "volume": []},
+            index=pd.DatetimeIndex([], tz="UTC"),
+        )
+
+
+def _add_handler(
+    registry: StrategyRegistryStore | None,
+    *,
+    feed: Any = None,
+    catalog: Any = "DEFAULT",
+    short_enabled: bool = False,
+) -> StrategiesHandler:
+    """A handler with a strategy_catalog injected (the D-10 add allowlist)."""
+    handler = StrategiesHandler(
+        Queue(),
+        feed or _StubFeed(),
+        InMemorySignalStore(),
+        allow_short_selling=short_enabled,
+        enable_margin=short_enabled,
+        strategy_catalog=(test_catalog() if catalog == "DEFAULT" else catalog),
+    )
+    handler.registry_store = registry
+    return handler
+
+
+def _sma_add_config(tickers: list[str] | None = None, *, timeframe: str = "1d") -> dict:
+    """A decode-ready config_json blob for an SMAMACDStrategy add payload."""
+    built = SMAMACDStrategy(timeframe=timeframe, tickers=list(tickers or ["ETHUSD"]))
+    return encode_strategy_config(built)
+
+
+def test_add_registers_dark_persists_and_emits_the_poll(
+    store: StrategyRegistryStore,
+) -> None:
+    """Test 1 (D-10) — instance registered, row present, a UniversePollEvent emitted."""
+    handler = _add_handler(store)
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="new1", strategy_type="SMAMACDStrategy",
+        config=_sma_add_config(["ETHUSD"]), time=_T))
+
+    names = [s.name for s in handler.strategies]
+    assert "new1" in names
+    row = store.get("new1")
+    assert row is not None
+    assert row["strategy_type"] == "SMAMACDStrategy"
+    assert row["enabled"] is True
+    assert [type(e) for e in _drain(handler.global_queue)] == [UniversePollEvent]
+
+
+def test_add_of_an_unknown_type_is_a_loud_no_op(store: StrategyRegistryStore) -> None:
+    """Test 2 (D-10) — an off-allowlist strategy_type registers/persists nothing."""
+    handler = _add_handler(store)
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="bad", strategy_type="NoSuchStrategy",
+        config={"config_version": 1, "timeframe": "1d", "tickers": ["BTCUSD"]},
+        time=_T))
+
+    assert [s.name for s in handler.strategies] == []
+    assert store.get("bad") is None
+    assert _drain(handler.global_queue) == []
+
+
+def test_add_of_a_duplicate_name_is_a_loud_no_op(store: StrategyRegistryStore) -> None:
+    """Test 3 (D-02) — a name collision leaves the existing instance + row untouched."""
+    handler = _add_handler(store)
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="dup", strategy_type="SMAMACDStrategy",
+        config=_sma_add_config(["ETHUSD"]), time=_T))
+    first = next(s for s in handler.strategies if s.name == "dup")
+    row_before = store.get("dup")
+    _drain(handler.global_queue)
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="dup", strategy_type="SMAMACDStrategy",
+        config=_sma_add_config(["BTCUSD"]), time=_T))
+
+    # The existing instance object is the SAME one (not shadowed) and its row is
+    # unchanged (still the ETHUSD config, not the second BTCUSD payload).
+    survivors = [s for s in handler.strategies if s.name == "dup"]
+    assert survivors == [first]
+    assert store.get("dup") == row_before
+    assert _drain(handler.global_queue) == []
+
+
+def test_add_uses_the_same_reconstruction_path_as_build_strategy(
+    store: StrategyRegistryStore,
+) -> None:
+    """Test 4 (D-01) — the added instance matches build_strategy on its declared surface."""
+    from itrader.strategy_handler.registry.rehydrate import build_strategy
+
+    handler = _add_handler(store)
+    config = _sma_add_config(["ETHUSD"])
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="twin", strategy_type="SMAMACDStrategy",
+        config=config, time=_T))
+
+    added = next(s for s in handler.strategies if s.name == "twin")
+    direct = build_strategy(
+        {"strategy_name": "twin", "strategy_type": "SMAMACDStrategy",
+         "config_json": config},
+        catalog=test_catalog())
+    assert encode_strategy_config(added) == encode_strategy_config(direct)
+
+
+def test_add_with_a_missing_required_param_registers_nothing(
+    store: StrategyRegistryStore,
+) -> None:
+    """Test 5 (degenerate) — MissingParamError from _apply_params; nothing enters the roster."""
+    handler = _add_handler(store)
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="half", strategy_type="EmptyStrategy",
+        config={"config_version": 1, "timeframe": "1d", "tickers": ["BTCUSD"]},
+        time=_T))  # EmptyStrategy needs sizing_policy — omitted
+
+    assert [s.name for s in handler.strategies] == []
+    assert store.get("half") is None
+    assert _drain(handler.global_queue) == []
+
+
+def test_add_with_an_unknown_param_registers_nothing(
+    store: StrategyRegistryStore,
+) -> None:
+    """Test 5b (degenerate) — UnknownParamError; a smuggled key never enters the roster."""
+    handler = _add_handler(store)
+    config = _sma_add_config(["ETHUSD"])
+    config["nonsense_param"] = 7
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="smuggle", strategy_type="SMAMACDStrategy",
+        config=config, time=_T))
+
+    assert [s.name for s in handler.strategies] == []
+    assert store.get("smuggle") is None
+
+
+def test_add_beyond_ring_capacity_is_a_loud_reject(store: StrategyRegistryStore) -> None:
+    """Test 6 (F-1) — required_base_depth > cache_capacity rejects loudly (ring can't resize)."""
+    handler = _add_handler(store, feed=_CapFeed(timedelta(days=1), capacity=5))
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="deep", strategy_type="SMAMACDStrategy",
+        config=_sma_add_config(["ETHUSD"]), time=_T))  # warmup 100 base bars > 5
+
+    assert [s.name for s in handler.strategies] == []
+    assert store.get("deep") is None
+    assert _drain(handler.global_queue) == []
+
+
+def test_add_within_ring_capacity_succeeds(store: StrategyRegistryStore) -> None:
+    """Test 6b (F-1) — a warmup that fits the ring registers normally."""
+    handler = _add_handler(store, feed=_CapFeed(timedelta(days=1), capacity=200))
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="fits", strategy_type="SMAMACDStrategy",
+        config=_sma_add_config(["ETHUSD"]), time=_T))  # warmup 100 <= 200
+
+    assert "fits" in [s.name for s in handler.strategies]
+    assert store.get("fits") is not None
+
+
+def test_add_of_a_finer_than_base_timeframe_is_a_loud_reject(
+    store: StrategyRegistryStore,
+) -> None:
+    """Test 7 (F-1) — a strategy timeframe finer than base raises UnwarmableTimeframeError."""
+    handler = _add_handler(store, feed=_CapFeed(timedelta(days=1), capacity=1000))
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="finer", strategy_type="SMAMACDStrategy",
+        config=_sma_add_config(["ETHUSD"], timeframe="1h"), time=_T))  # 1h < 1d base
+
+    assert [s.name for s in handler.strategies] == []
+    assert store.get("finer") is None
+
+
+def test_add_of_a_pair_strategy_succeeds(store: StrategyRegistryStore) -> None:
+    """Test 8 (D-16) — a pair adds as a full registry instance with both legs."""
+    handler = _add_handler(store, short_enabled=True)
+    built = EthBtcPairStrategy(timeframe="1d")
+    config = encode_strategy_config(built)
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="spread1", strategy_type="EthBtcPairStrategy",
+        config=config, time=_T))
+
+    added = next((s for s in handler.strategies if s.name == "spread1"), None)
+    assert added is not None
+    assert set(added.tickers) == {"ETHUSD", "BTCUSD"}
+    assert store.get("spread1") is not None
+
+
+def test_add_degrades_cleanly_with_no_store(store: StrategyRegistryStore) -> None:
+    """Test 9 (degrade-clean) — with registry_store None, add registers live, persists nothing."""
+    handler = _add_handler(None)
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="live_only", strategy_type="SMAMACDStrategy",
+        config=_sma_add_config(["ETHUSD"]), time=_T))
+
+    assert "live_only" in [s.name for s in handler.strategies]
+    assert handler.registry_store is None
+
+
+def test_add_with_no_catalog_is_a_loud_no_op(store: StrategyRegistryStore) -> None:
+    """Test 10 (D-10) — no injected catalog means no external payload may be instantiated."""
+    handler = _add_handler(store, catalog=None)
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="denied", strategy_type="SMAMACDStrategy",
+        config=_sma_add_config(["ETHUSD"]), time=_T))
+
+    assert [s.name for s in handler.strategies] == []
+    assert store.get("denied") is None
+    assert _drain(handler.global_queue) == []
+
+
+# ===========================================================================
+# Plan 07 — D-11 `remove` (force-flat first, pending state, drop child-then-parent)
+# ===========================================================================
+#
+# `remove` deactivates (D-07 gate stops NEW entries), holds the name PENDING across
+# event cycles while the P7 universe force-close plays out, and drops the object +
+# deletes child-then-parent rows only once the positions are OBSERVED flat on a FILL.
+# The registry ROW survives a mid-removal crash so restart can resume ownership.
+
+
+class _FakeReadModel:
+    """A PortfolioReadModel stand-in for the D-11 flat-detect (`get_position` only)."""
+
+    def __init__(self, held: set[str] | None = None) -> None:
+        self.held: set[str] = set(held or set())
+
+    def get_position(self, portfolio_id: Any, ticker: str) -> Any:
+        # A non-None sentinel means "open position"; None means flat (the contract).
+        return object() if ticker in self.held else None
+
+
+def _fill(ticker: str = _TICKER) -> Any:
+    """A minimal FILL trigger — `on_fill` re-scans pending removals, not the event."""
+    return SimpleNamespace(ticker=ticker)
+
+
+def test_remove_with_an_open_position_does_not_drop_immediately(
+    store: StrategyRegistryStore,
+) -> None:
+    """Test 1 (D-11) — force-flat FIRST: deactivate, go pending, emit the poll, keep the row."""
+    handler, strategy = _handler(store)
+    strategy.subscribe_portfolio(UUID(_P1))
+    handler.portfolio_read_model = _FakeReadModel(held={_TICKER})
+
+    handler.on_strategy_command(StrategyCommandEvent.remove(strategy_name=_NAME, time=_T))
+
+    assert strategy in handler.strategies
+    assert strategy.is_active is False
+    assert _NAME in handler._pending_removals
+    row = store.get(_NAME)
+    assert row is not None
+    assert row["enabled"] is False
+    assert [type(e) for e in _drain(handler.global_queue)] == [UniversePollEvent]
+
+
+def test_remove_completes_and_deletes_child_then_parent_once_flat(
+    store: StrategyRegistryStore,
+) -> None:
+    """Test 2 (D-11) — on the flat FILL the object drops and BOTH rows go (no FK error)."""
+    handler, strategy = _handler(store)
+    read_model = _FakeReadModel(held={_TICKER})
+    handler.portfolio_read_model = read_model
+    handler.on_strategy_command(StrategyCommandEvent.subscribe_portfolio(
+        strategy_name=_NAME, portfolio_id=_P1, time=_T))
+    _drain(handler.global_queue)
+
+    handler.on_strategy_command(StrategyCommandEvent.remove(strategy_name=_NAME, time=_T))
+    assert store.portfolio_subscriptions(_NAME) == [_P1]  # child row still present, pending
+
+    read_model.held.clear()  # positions went flat
+    handler.on_fill(_fill(_TICKER))
+
+    assert strategy not in handler.strategies
+    assert _NAME not in handler._pending_removals
+    assert store.get(_NAME) is None
+    assert store.portfolio_subscriptions(_NAME) == []
+
+
+def test_remove_with_no_open_position_completes_on_the_same_cycle(
+    store: StrategyRegistryStore,
+) -> None:
+    """Test 3 (D-11) — the flat condition already holds, so it drops + deletes immediately."""
+    handler, strategy = _handler(store)
+    strategy.subscribe_portfolio(UUID(_P1))
+    handler.portfolio_read_model = _FakeReadModel(held=set())  # flat
+
+    handler.on_strategy_command(StrategyCommandEvent.remove(strategy_name=_NAME, time=_T))
+
+    assert strategy not in handler.strategies
+    assert _NAME not in handler._pending_removals
+    assert store.get(_NAME) is None
+
+
+def test_remove_keeps_the_row_while_pending_for_crash_safety(
+    store: StrategyRegistryStore,
+) -> None:
+    """Test 4 (D-11) — the row survives while pending; a mid-force-close crash rehydrates it."""
+    handler, strategy = _handler(store)
+    strategy.subscribe_portfolio(UUID(_P1))
+    handler.portfolio_read_model = _FakeReadModel(held={_TICKER})
+
+    handler.on_strategy_command(StrategyCommandEvent.remove(strategy_name=_NAME, time=_T))
+
+    assert store.get(_NAME) is not None  # still present -> restart resumes ownership
+
+
+def test_second_remove_while_pending_is_a_no_op(store: StrategyRegistryStore) -> None:
+    """Test 5 (D-11 idempotency) — no second force-close, no second poll."""
+    handler, strategy = _handler(store)
+    strategy.subscribe_portfolio(UUID(_P1))
+    handler.portfolio_read_model = _FakeReadModel(held={_TICKER})
+    handler.on_strategy_command(StrategyCommandEvent.remove(strategy_name=_NAME, time=_T))
+    _drain(handler.global_queue)
+
+    handler.on_strategy_command(StrategyCommandEvent.remove(strategy_name=_NAME, time=_T))
+
+    assert _drain(handler.global_queue) == []
+    assert strategy in handler.strategies
+
+
+def test_remove_of_an_unknown_name_is_a_loud_no_op(store: StrategyRegistryStore) -> None:
+    """Test 6 (D-11) — an unknown target mutates nothing and never raises."""
+    handler, strategy = _handler(store)
+
+    handler.on_strategy_command(StrategyCommandEvent.remove(strategy_name="ghost", time=_T))
+
+    assert strategy in handler.strategies
+    assert handler._pending_removals == set()
+    assert _drain(handler.global_queue) == []
+
+
+def test_remove_of_a_pair_force_flats_both_legs_before_dropping(
+    store: StrategyRegistryStore,
+) -> None:
+    """Test 7 (D-16) — a pair holding an open spread stays pending until BOTH legs are flat."""
+    handler = StrategiesHandler(
+        Queue(), _StubFeed(), InMemorySignalStore(),
+        allow_short_selling=True, enable_margin=True)
+    handler.registry_store = store
+    pair = EthBtcPairStrategy(timeframe="1d")
+    handler.add_strategy(pair)
+    pair.subscribe_portfolio(UUID(_P1))
+    read_model = _FakeReadModel(held={"ETHUSD", "BTCUSD"})
+    handler.portfolio_read_model = read_model
+
+    handler.on_strategy_command(StrategyCommandEvent.remove(
+        strategy_name=pair.name, time=_T))
+    assert pair in handler.strategies  # both legs still held -> pending
+
+    read_model.held.discard("ETHUSD")  # only one leg flat
+    handler.on_fill(_fill("ETHUSD"))
+    assert pair in handler.strategies  # STILL pending — the other leg is open
+
+    read_model.held.clear()  # both legs flat
+    handler.on_fill(_fill("BTCUSD"))
+    assert pair not in handler.strategies
+
+
+def test_disable_neither_force_flats_nor_drops(store: StrategyRegistryStore) -> None:
+    """Test 8 (D-11 vs D-07) — the three lifecycle behaviours stay distinct."""
+    handler, strategy = _handler(store)
+    strategy.subscribe_portfolio(UUID(_P1))
+    handler.portfolio_read_model = _FakeReadModel(held={_TICKER})
+
+    handler.on_strategy_command(StrategyCommandEvent.disable(strategy_name=_NAME, time=_T))
+
+    assert strategy in handler.strategies  # NOT dropped
+    assert _NAME not in handler._pending_removals  # NOT force-flatting
+
+
+def test_remove_degrades_cleanly_with_no_store(store: StrategyRegistryStore) -> None:
+    """Test 9 (degrade-clean) — with registry_store None, remove drops the live object."""
+    handler, strategy = _handler(None)
+    # No read model wired either -> nothing to observe, drops directly (backtest arm).
+
+    handler.on_strategy_command(StrategyCommandEvent.remove(strategy_name=_NAME, time=_T))
+
+    assert strategy not in handler.strategies
+    assert handler.registry_store is None
+
+
+def test_min_timeframe_is_recomputed_after_a_remove(store: StrategyRegistryStore) -> None:
+    """Removing the only strategy at the minimum must not leave min_timeframe stale."""
+    handler, strategy = _handler(store)
+    handler.portfolio_read_model = _FakeReadModel(held=set())  # flat -> immediate drop
+    assert handler.min_timeframe == timedelta(days=1)
+
+    handler.on_strategy_command(StrategyCommandEvent.remove(strategy_name=_NAME, time=_T))
+
+    assert handler.min_timeframe is None  # empty roster -> legal None seed (IN-06)
