@@ -878,6 +878,26 @@ an **external ingress** (`add_event`, the FastAPI stand-in), which makes V5 the 
 
 ## Open Questions
 
+> **STATUS: ALL FIVE RESOLVED at planning (2026-07-17).** Each recommendation below was adopted by a
+> plan — nothing in this section is still open. Recorded so the executor does not read these as
+> live questions:
+>
+> | OQ | Resolution | Adopted by |
+> |---|---|---|
+> | OQ-1 | `strategy_catalog` as a keyword param (mirroring `data_plugins`), `None` default | `10-05` |
+> | OQ-2 | **Both** option 1 + option 3: `derive_warmup_depth` made timeframe-aware (opt-in via `base_timeframe`; omitted → byte-identical), **plus** loud-reject when required depth > existing ring capacity. Option 2 (ring resize) deferred to the finer-than-base feed-lifecycle todo. See the F-1 note below. | `10-03` (fix) · `10-07`/`10-08` (gates) |
+> | OQ-3 | Integer `"config_version": 1` inside `config_json` | `10-04` |
+> | OQ-4 | `read_all()` reworked to JOIN `strategy_portfolio_subscriptions`, returning `portfolio_ids` | `10-02` |
+> | OQ-5 | A dedicated `state.quarantined_strategies` field (not `state.last_error`) | `10-05` |
+>
+> **OQ-2 / Assumptions-Log A3 — F-1 is CONFIRMED REAL, not speculative.** A3 flagged that F-1 rested on
+> `derive_warmup_depth`'s unread body. It was read at planning: `cache_registration.py:226` is a bare
+> `max((s.warmup for s in strategies), default=1)` with **no timeframe scaling**, while `base.py:458`
+> derives `warmup` in strategy-timeframe bars — so the ring is sized in base bars from a
+> strategy-timeframe count. **A3 is resolved: the defect is real.** Note the planner deliberately went
+> beyond OQ-2's "if the answer is keep P10 tight" fallback: a rehydrated coarser-timeframe strategy would
+> never warm *independent of reconfigure*, which D-01 makes reachable — so option 1 was non-optional.
+
 1. **OQ-1: Where does `build_live_system` receive `strategy_catalog`?** (CONTEXT lists this as Claude's
    discretion.)
    - What we know: `build_live_system(spec, *, status_callback, data_plugins)` (`:1259-1264`). There is
