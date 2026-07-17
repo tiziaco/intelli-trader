@@ -52,10 +52,36 @@ SMA_MACD indicator warmup (100 = `max(SMA50, SMA100, MACDHist15)`). So there is 
 fallback under-fetches. Building the max-concerned-strategy seam now would be speculative wiring with no
 behavioral difference.
 
+## ⚠ Re-evaluate: v1.8 P10 invalidates the deferral rationale (added 2026-07-17)
+
+The "Why deferred" reasoning above rests explicitly on **"the current SMA_MACD-only roster"** — a fixed,
+homogeneous, compile-time roster. **v1.8 Phase 10 (Strategies Registry) demolishes that premise:** D-01
+rehydrates arbitrary persisted instances from `store × catalog × codec` at boot, and D-10 adds arbitrary
+strategies at runtime via `STRATEGY_COMMAND` — with divergent warmups AND divergent timeframes. The
+trigger condition below ("a symbol shared by strategies with divergent warmups") therefore becomes
+**reachable in P10**, where it was unreachable when this was deferred.
+
+This is a flag to **re-evaluate, not a claim that it is now broken**: `derive_warmup_depth` remains a
+GLOBAL `max` post-P10, which is conservative per-symbol (it over-fetches for a shallow strategy rather
+than under-fetching). The efficiency cost grows with roster divergence; the correctness case needs a
+fresh read against the P10 roster model before this is scheduled.
+
+**Related, and a hard blocker on any depth change this todo makes:**
+[[live-ring-resize-fixed-maxlen-deque]] — a ring is a `deque(maxlen=...)` **fixed at creation**, so
+changing the derived depth does NOT resize an already-created ring. Step 3 below assumes the new K takes
+effect; it will not for existing symbols.
+
+**Also note P10 changed this function's contract:** `10-03` made it timeframe-aware
+(`derive_warmup_depth(strategies, *, base_timeframe=None)`, depth in base-bar units as
+`max(warmup × ceil(strategy_timeframe / base_timeframe))`) and added the shared `required_base_depth`
+helper. Re-read the current signature before implementing — the "P7 delivers (the seam)" description
+above predates it.
+
 ## Trigger to implement
 
 A future phase adds a strategy whose declared indicator warmup exceeds `cache_capacity()`, OR a symbol is
 shared by strategies with divergent warmups such that the fixed `cache_capacity()` fallback would under-fetch.
+**(Both are reachable as of P10 — see the re-evaluate note above.)**
 At that point:
 1. Add a depth-hint seam on StrategiesHandler exposing `max(strategy.warmup for concerned strategies)`.
 2. Wire it into `UniverseHandler` at the composition root (`_init_live_session`).

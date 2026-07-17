@@ -44,6 +44,11 @@ change** in its own right:
 3. **Re-warm every affected instance** on the new grid through the existing P7
    `spawn_warmup → BarsLoaded → WR-02 warm-verify` pipeline (all instances go dark until re-warmed, not
    just the reconfigured one).
+   **BLOCKED ON [[live-ring-resize-fixed-maxlen-deque]]** (added 2026-07-17, from P10's F-1): a finer
+   base cadence means every existing symbol's ring needs *more* base bars, but a ring is a
+   `deque(maxlen=...)` **fixed at creation** — re-registering a deeper consumer does NOT resize it.
+   Step 3 silently assumes the new depth takes effect; it will not for any already-created ring. Resize
+   must land first (or as part of this).
 4. **Atomicity:** the whole feed-cadence swap is one quiesced operation — no instance trades on the
    torn (old-base ring vs new-timeframe) state; validate → persist → apply → re-warm, mirroring the
    P10 STRAT-03 ordering (P9 D-15).
