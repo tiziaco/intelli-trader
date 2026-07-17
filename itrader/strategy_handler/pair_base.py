@@ -182,6 +182,33 @@ class PairStrategy(Strategy):
 		self.now = bar_A.time
 		self.current_bar = bar_A
 
+	def mark_unwarm(self) -> None:
+		"""Extend the base unwarm with the pair's OWN spread warmth (WD-2 pair arm).
+
+		⚠ THE TRAP THIS EXISTS TO CLOSE. A pair's warmth is **NOT handle-derived**. The
+		dispatch path gates on ``is_pair_ready()`` (β fittable + z tail = ``beta_warmup +
+		z_lookback`` buffered bars) and NOT on the inherited handle-derived ``warmup`` —
+		which is **0** for a handle-free pair, making ``is_ready`` unconditionally True
+		(see ``StrategiesHandler._dispatch_pair`` and ``is_warm``'s note). So the base
+		``mark_unwarm``, which resets only the handles, would return True from every
+		readiness surface a caller is likely to check while ``_buf_A``/``_buf_B`` stayed
+		FULL of pre-unwarm closes and ``_pair_bar_count`` stayed above the threshold. The
+		pair would report WARM INSTANTLY and re-enter the spread on a **cold β fit across
+		a discontinuity** — WD-1's exact failure mode, re-entering through the pair arm,
+		and invisible because the flag it lies through is a *computed* True.
+
+		Clearing the buffers here is therefore the load-bearing half of the override; the
+		``super()`` call still resets the base handles + bar bookkeeping (a pair subclass
+		MAY declare handles even though the reference does not, so the base arm is never
+		skipped). Mirrors the same reset ``_run_init`` performs, so an unwarm leaves the
+		pair in the shape a fresh construction does — and it re-warms through the ordinary
+		``update_pair`` push path, with no bespoke pipeline.
+		"""
+		self._buf_A.clear()
+		self._buf_B.clear()
+		self._pair_bar_count = 0
+		super().mark_unwarm()
+
 	def is_pair_ready(self) -> bool:
 		"""True once enough bars to fit β AND seed the z-score lookback (P5-D15).
 
