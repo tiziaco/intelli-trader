@@ -419,7 +419,7 @@ Decimal money end-to-end (codec round-trips Decimals as strings); indentation me
 
 **Wave 4** *(blocked on 10-03 + 10-05)*
 
-- [ ] 10-06-PLAN.md — D-08 event extension + light verbs + verb-scoped pair guard (D-16/D-17 reconcile) (STRAT-02)
+- [x] 10-06-PLAN.md — D-08 event extension + light verbs + verb-scoped pair guard (D-16/D-17 reconcile) (STRAT-02)
 
 **Wave 5** *(blocked on 10-06)*
 
@@ -439,7 +439,7 @@ Plans:
 - [x] 10-02-PLAN.md — D-06/D-18 schema: add `strategy_type`, add `strategy_portfolio_subscriptions`, drop `strategy_subscriptions`; migration chained onto `system_stats`, non-destructive on non-empty (wave 1)
 - [x] 10-03-PLAN.md — D-07 `is_active` hot-path guard (oracle-gated) + F-1 timeframe-aware ring depth and the shared `required_base_depth` boundary (wave 1)
 - [x] 10-04-PLAN.md — D-01 injected `strategy_catalog` allowlist + D-04/D-20 authoring-param codec (`_DERIVED_FIELDS`, the three aliasing traps, `config_version`) (wave 2)
-- [ ] 10-05-PLAN.md — D-01 rehydrate at construction in `build_live_system` + D-19 quarantine/loud-infrastructure split + D-21 empty-registry no-op + D-02 duplicate reject (wave 3)
+- [x] 10-05-PLAN.md — D-01 rehydrate at construction in `build_live_system` + D-19 quarantine/loud-infrastructure split + D-21 empty-registry no-op + D-02 duplicate reject (wave 3)
 - [ ] 10-06-PLAN.md — D-08 event extension + D-09 light verbs (enable/disable/subscribe/unsubscribe + ticker persist) + D-16/D-17 verb-scoped pair guard (wave 4)
 - [ ] 10-07-PLAN.md — D-10 `add` (catalog-gate, dark, warm via the P7 pipeline) + D-11 `remove` (force-flat first, pending-removal state) (wave 5)
 - [ ] 10-08-PLAN.md — D-12/D-13/D-14/D-15 atomic reconfiguration (trial-validate → persist → apply → re-warm) + the D-15 allowlist + the F-1 timeframe capacity gate (wave 6)
