@@ -27,6 +27,7 @@ Assertions read STATE and the STORE, never log capture: ``make test`` exports
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 from queue import Queue
+from types import SimpleNamespace
 from typing import Any, Iterator
 from uuid import UUID
 
@@ -550,18 +551,15 @@ def test_unknown_verb_is_a_loud_no_op(store: StrategyRegistryStore) -> None:
     assert strategy.is_active is True
 
 
-def test_verbs_deferred_to_later_plans_are_no_ops_here(
+def test_reconfigure_is_still_a_no_op_here(
     store: StrategyRegistryStore,
 ) -> None:
-    """``add``/``remove``/``reconfigure`` land in Plans 07/08 — inert, never a raise."""
+    """``reconfigure`` lands in Plan 08 — inert here, never a raise. (``add``/``remove``
+    are implemented in Plan 07 and covered by their own suites.)"""
     handler, _strategy = _handler(store)
 
-    for event in (
-        StrategyCommandEvent.remove(strategy_name=_NAME, time=_T),
-        StrategyCommandEvent.reconfigure(
-            strategy_name=_NAME, config={"timeframe": "1h"}, time=_T),
-    ):
-        handler.on_strategy_command(event)
+    handler.on_strategy_command(StrategyCommandEvent.reconfigure(
+        strategy_name=_NAME, config={"timeframe": "1h"}, time=_T))
 
     assert store.get(_NAME) is None
     assert _drain(handler.global_queue) == []
@@ -819,3 +817,185 @@ def test_add_with_no_catalog_is_a_loud_no_op(store: StrategyRegistryStore) -> No
     assert [s.name for s in handler.strategies] == []
     assert store.get("denied") is None
     assert _drain(handler.global_queue) == []
+
+
+# ===========================================================================
+# Plan 07 — D-11 `remove` (force-flat first, pending state, drop child-then-parent)
+# ===========================================================================
+#
+# `remove` deactivates (D-07 gate stops NEW entries), holds the name PENDING across
+# event cycles while the P7 universe force-close plays out, and drops the object +
+# deletes child-then-parent rows only once the positions are OBSERVED flat on a FILL.
+# The registry ROW survives a mid-removal crash so restart can resume ownership.
+
+
+class _FakeReadModel:
+    """A PortfolioReadModel stand-in for the D-11 flat-detect (`get_position` only)."""
+
+    def __init__(self, held: set[str] | None = None) -> None:
+        self.held: set[str] = set(held or set())
+
+    def get_position(self, portfolio_id: Any, ticker: str) -> Any:
+        # A non-None sentinel means "open position"; None means flat (the contract).
+        return object() if ticker in self.held else None
+
+
+def _fill(ticker: str = _TICKER) -> Any:
+    """A minimal FILL trigger — `on_fill` re-scans pending removals, not the event."""
+    return SimpleNamespace(ticker=ticker)
+
+
+def test_remove_with_an_open_position_does_not_drop_immediately(
+    store: StrategyRegistryStore,
+) -> None:
+    """Test 1 (D-11) — force-flat FIRST: deactivate, go pending, emit the poll, keep the row."""
+    handler, strategy = _handler(store)
+    strategy.subscribe_portfolio(UUID(_P1))
+    handler.portfolio_read_model = _FakeReadModel(held={_TICKER})
+
+    handler.on_strategy_command(StrategyCommandEvent.remove(strategy_name=_NAME, time=_T))
+
+    assert strategy in handler.strategies
+    assert strategy.is_active is False
+    assert _NAME in handler._pending_removals
+    row = store.get(_NAME)
+    assert row is not None
+    assert row["enabled"] is False
+    assert [type(e) for e in _drain(handler.global_queue)] == [UniversePollEvent]
+
+
+def test_remove_completes_and_deletes_child_then_parent_once_flat(
+    store: StrategyRegistryStore,
+) -> None:
+    """Test 2 (D-11) — on the flat FILL the object drops and BOTH rows go (no FK error)."""
+    handler, strategy = _handler(store)
+    read_model = _FakeReadModel(held={_TICKER})
+    handler.portfolio_read_model = read_model
+    handler.on_strategy_command(StrategyCommandEvent.subscribe_portfolio(
+        strategy_name=_NAME, portfolio_id=_P1, time=_T))
+    _drain(handler.global_queue)
+
+    handler.on_strategy_command(StrategyCommandEvent.remove(strategy_name=_NAME, time=_T))
+    assert store.portfolio_subscriptions(_NAME) == [_P1]  # child row still present, pending
+
+    read_model.held.clear()  # positions went flat
+    handler.on_fill(_fill(_TICKER))
+
+    assert strategy not in handler.strategies
+    assert _NAME not in handler._pending_removals
+    assert store.get(_NAME) is None
+    assert store.portfolio_subscriptions(_NAME) == []
+
+
+def test_remove_with_no_open_position_completes_on_the_same_cycle(
+    store: StrategyRegistryStore,
+) -> None:
+    """Test 3 (D-11) — the flat condition already holds, so it drops + deletes immediately."""
+    handler, strategy = _handler(store)
+    strategy.subscribe_portfolio(UUID(_P1))
+    handler.portfolio_read_model = _FakeReadModel(held=set())  # flat
+
+    handler.on_strategy_command(StrategyCommandEvent.remove(strategy_name=_NAME, time=_T))
+
+    assert strategy not in handler.strategies
+    assert _NAME not in handler._pending_removals
+    assert store.get(_NAME) is None
+
+
+def test_remove_keeps_the_row_while_pending_for_crash_safety(
+    store: StrategyRegistryStore,
+) -> None:
+    """Test 4 (D-11) — the row survives while pending; a mid-force-close crash rehydrates it."""
+    handler, strategy = _handler(store)
+    strategy.subscribe_portfolio(UUID(_P1))
+    handler.portfolio_read_model = _FakeReadModel(held={_TICKER})
+
+    handler.on_strategy_command(StrategyCommandEvent.remove(strategy_name=_NAME, time=_T))
+
+    assert store.get(_NAME) is not None  # still present -> restart resumes ownership
+
+
+def test_second_remove_while_pending_is_a_no_op(store: StrategyRegistryStore) -> None:
+    """Test 5 (D-11 idempotency) — no second force-close, no second poll."""
+    handler, strategy = _handler(store)
+    strategy.subscribe_portfolio(UUID(_P1))
+    handler.portfolio_read_model = _FakeReadModel(held={_TICKER})
+    handler.on_strategy_command(StrategyCommandEvent.remove(strategy_name=_NAME, time=_T))
+    _drain(handler.global_queue)
+
+    handler.on_strategy_command(StrategyCommandEvent.remove(strategy_name=_NAME, time=_T))
+
+    assert _drain(handler.global_queue) == []
+    assert strategy in handler.strategies
+
+
+def test_remove_of_an_unknown_name_is_a_loud_no_op(store: StrategyRegistryStore) -> None:
+    """Test 6 (D-11) — an unknown target mutates nothing and never raises."""
+    handler, strategy = _handler(store)
+
+    handler.on_strategy_command(StrategyCommandEvent.remove(strategy_name="ghost", time=_T))
+
+    assert strategy in handler.strategies
+    assert handler._pending_removals == set()
+    assert _drain(handler.global_queue) == []
+
+
+def test_remove_of_a_pair_force_flats_both_legs_before_dropping(
+    store: StrategyRegistryStore,
+) -> None:
+    """Test 7 (D-16) — a pair holding an open spread stays pending until BOTH legs are flat."""
+    handler = StrategiesHandler(
+        Queue(), _StubFeed(), InMemorySignalStore(),
+        allow_short_selling=True, enable_margin=True)
+    handler.registry_store = store
+    pair = EthBtcPairStrategy(timeframe="1d")
+    handler.add_strategy(pair)
+    pair.subscribe_portfolio(UUID(_P1))
+    read_model = _FakeReadModel(held={"ETHUSD", "BTCUSD"})
+    handler.portfolio_read_model = read_model
+
+    handler.on_strategy_command(StrategyCommandEvent.remove(
+        strategy_name=pair.name, time=_T))
+    assert pair in handler.strategies  # both legs still held -> pending
+
+    read_model.held.discard("ETHUSD")  # only one leg flat
+    handler.on_fill(_fill("ETHUSD"))
+    assert pair in handler.strategies  # STILL pending — the other leg is open
+
+    read_model.held.clear()  # both legs flat
+    handler.on_fill(_fill("BTCUSD"))
+    assert pair not in handler.strategies
+
+
+def test_disable_neither_force_flats_nor_drops(store: StrategyRegistryStore) -> None:
+    """Test 8 (D-11 vs D-07) — the three lifecycle behaviours stay distinct."""
+    handler, strategy = _handler(store)
+    strategy.subscribe_portfolio(UUID(_P1))
+    handler.portfolio_read_model = _FakeReadModel(held={_TICKER})
+
+    handler.on_strategy_command(StrategyCommandEvent.disable(strategy_name=_NAME, time=_T))
+
+    assert strategy in handler.strategies  # NOT dropped
+    assert _NAME not in handler._pending_removals  # NOT force-flatting
+
+
+def test_remove_degrades_cleanly_with_no_store(store: StrategyRegistryStore) -> None:
+    """Test 9 (degrade-clean) — with registry_store None, remove drops the live object."""
+    handler, strategy = _handler(None)
+    # No read model wired either -> nothing to observe, drops directly (backtest arm).
+
+    handler.on_strategy_command(StrategyCommandEvent.remove(strategy_name=_NAME, time=_T))
+
+    assert strategy not in handler.strategies
+    assert handler.registry_store is None
+
+
+def test_min_timeframe_is_recomputed_after_a_remove(store: StrategyRegistryStore) -> None:
+    """Removing the only strategy at the minimum must not leave min_timeframe stale."""
+    handler, strategy = _handler(store)
+    handler.portfolio_read_model = _FakeReadModel(held=set())  # flat -> immediate drop
+    assert handler.min_timeframe == timedelta(days=1)
+
+    handler.on_strategy_command(StrategyCommandEvent.remove(strategy_name=_NAME, time=_T))
+
+    assert handler.min_timeframe is None  # empty roster -> legal None seed (IN-06)
