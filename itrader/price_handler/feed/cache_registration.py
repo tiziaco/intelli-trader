@@ -33,6 +33,7 @@ Indentation: 4 SPACES (the ``price_handler/feed/`` package convention).
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Protocol
 
 __all__ = [
@@ -43,6 +44,8 @@ __all__ = [
     "StrategyWarmupConsumer",
     "derive_warmup_depth",
     "register_strategy_warmup",
+    "required_base_depth",
+    "UnwarmableTimeframeError",
 ]
 
 #: The newest-bar-only capacity (P5-D16): depth 1 holds just the latest completed
@@ -161,7 +164,22 @@ class _SupportsWarmup(Protocol):
 
     @property
     def warmup(self) -> int:
-        """The number of bars this strategy needs before its indicators warm."""
+        """The bars this strategy needs before its indicators warm.
+
+        Counted in STRATEGY-TIMEFRAME bars (auto-derived from the declared
+        handles' ``min_period``, ``base.py:391``) — NOT in base bars. See
+        ``required_base_depth`` for why that distinction is load-bearing (F-1).
+        """
+        ...
+
+    @property
+    def timeframe(self) -> timedelta:
+        """This strategy's bar cadence (F-1).
+
+        A ``timedelta`` at runtime: ``base.py:318-320`` overwrites ``self.timeframe``
+        with the coerced ``to_timedelta(...)`` value (the enum goes to
+        ``self._timeframe``, the string to ``self.timeframe_alias``).
+        """
         ...
 
 
@@ -197,7 +215,88 @@ class StrategyWarmupConsumer:
     required_history_depth: int
 
 
-def derive_warmup_depth(strategies: Iterable[_SupportsWarmup]) -> int:
+class UnwarmableTimeframeError(ValueError):
+    """A strategy timeframe the base cadence cannot serve (F-1 / D-15).
+
+    Raised by ``required_base_depth`` when a strategy's timeframe is FINER than the
+    feed's base cadence, or is not a whole multiple of it. Both cases are rejected
+    LOUDLY at the boundary rather than resolved into some approximate depth,
+    because the failure they would otherwise produce is silent and permanent: a
+    strategy registered against a ring that can never satisfy its warmup is
+    ``is_ready`` False forever — it emits nothing, raises nothing, and looks like a
+    healthy configuration while never trading.
+    """
+
+
+def required_base_depth(
+    warmup: int,
+    strategy_timeframe: timedelta,
+    base_timeframe: timedelta,
+) -> int:
+    """Convert a strategy's warmup into the BASE-bar ring depth that satisfies it.
+
+    **The unit contract (F-1) — this function is the ONLY place the two bar units
+    are reconciled:** the feed ring holds BASE bars (``LiveBarFeed`` buffers
+    ``tf_base`` and ``window()`` resamples them on read), while ``strategy.warmup``
+    counts STRATEGY-TIMEFRAME bars (derived from indicator ``min_period``,
+    ``base.py:391``). A strategy coarser than the base cadence therefore needs
+    ``warmup * multiple`` base bars. The old derivation silently assumed the two
+    units were the same — invisible only because SMA_MACD's timeframe equals the
+    live base cadence.
+
+    This is also the SHARED warmability boundary the D-10 ``add`` and D-15
+    ``reconfigure`` arms call to decide whether a configuration is warmable against
+    an existing ring's capacity (a ``deque`` ``maxlen`` is fixed at creation, so a
+    live ring cannot resize — those arms reject rather than resize).
+
+    Parameters
+    ----------
+    warmup : int
+        The strategy's warmup, in STRATEGY-TIMEFRAME bars.
+    strategy_timeframe : timedelta
+        The strategy's bar cadence.
+    base_timeframe : timedelta
+        The feed's base-bar cadence (``tf_base``).
+
+    Returns
+    -------
+    int
+        The ring depth in BASE bars: ``warmup * (strategy_timeframe /
+        base_timeframe)``. Equals ``warmup`` exactly when the cadences match.
+
+    Raises
+    ------
+    UnwarmableTimeframeError
+        If ``strategy_timeframe`` is finer than ``base_timeframe``, or is not a
+        whole multiple of it.
+    """
+    if strategy_timeframe < base_timeframe:
+        raise UnwarmableTimeframeError(
+            f"strategy timeframe {strategy_timeframe} is FINER than the feed base "
+            f"timeframe {base_timeframe}: the ring holds base bars, so a finer "
+            f"cadence can never be served from it (the feed's off-grid guard would "
+            f"actively drop such bars even if they arrived). Serving it requires "
+            f"re-subscribing the SHARED live stream at a finer base cadence — "
+            f"deferred, see .planning/todos/pending/"
+            f"strategy-timeframe-finer-than-base-resubscribe.md")
+    # Exact whole-multiple check. timedelta // timedelta is exact integer floor and
+    # timedelta % timedelta is exact (both are integer-microsecond backed), so this
+    # never inherits a float rounding artifact.
+    if strategy_timeframe % base_timeframe:
+        raise UnwarmableTimeframeError(
+            f"strategy timeframe {strategy_timeframe} is not a whole multiple of "
+            f"the feed base timeframe {base_timeframe}: a non-multiple resample "
+            f"produces buckets straddling base-bar boundaries with partial data, so "
+            f"no ring depth can correctly warm it")
+    multiple = strategy_timeframe // base_timeframe
+    return warmup * multiple
+
+
+def derive_warmup_depth(
+    strategies: Iterable[_SupportsWarmup],
+    *,
+    base_timeframe: timedelta | None = None,
+) -> int:
     """Derive the strategy-warmup ring depth — the NAMED, replaceable D-17 seam.
 
     Today returns the GLOBAL ``max((s.warmup for s in strategies), default=1)`` —
@@ -213,22 +312,54 @@ def derive_warmup_depth(strategies: Iterable[_SupportsWarmup]) -> int:
     raw-history ladder (capacity keys off raw-bar consumers); this is the separate
     strategy-warmup concern coexisting in the same file.
 
+    F-1 — the timeframe scaling
+    ---------------------------
+    Given a ``base_timeframe`` the ladder maxes over each strategy's requirement in
+    BASE-bar units (via ``required_base_depth``) rather than over the raw
+    ``warmup``. The two are NOT the same unit: the ring holds base bars while
+    ``warmup`` counts strategy-timeframe bars, so a coarser strategy needs
+    ``warmup * multiple`` base bars. Laddering the raw ``warmup`` can pick the
+    WRONG maximum — (warmup=100, 1h) needs 100 base bars but (warmup=50, 4h) needs
+    200, so the smaller warmup is the binding constraint.
+
+    ``base_timeframe`` is optional and defaults to the prior unscaled behaviour, so
+    the change is opt-in and every existing caller is byte-identical.
+
     Parameters
     ----------
     strategies : Iterable[_SupportsWarmup]
-        The registered strategies; each contributes its ``warmup``.
+        The registered strategies; each contributes its ``warmup`` (and, when
+        scaling, its ``timeframe``).
+    base_timeframe : timedelta | None
+        The feed's base-bar cadence. ``None`` (the default) keeps the historical
+        unscaled ``max(warmup)``.
 
     Returns
     -------
     int
-        The global maximum warmup depth, or ``1`` for an empty strategy set.
+        The maximum required depth, or ``1`` for an empty strategy set. In BASE
+        bars when ``base_timeframe`` is given; in strategy-timeframe bars (the
+        historical, unit-blind result) when it is not.
+
+    Raises
+    ------
+    UnwarmableTimeframeError
+        Propagated from ``required_base_depth`` when ``base_timeframe`` is given
+        and some strategy's timeframe is finer / a non-multiple.
     """
-    return max((s.warmup for s in strategies), default=1)
+    if base_timeframe is None:
+        return max((s.warmup for s in strategies), default=1)
+    return max(
+        (required_base_depth(s.warmup, s.timeframe, base_timeframe)
+         for s in strategies),
+        default=1)
 
 
 def register_strategy_warmup(
     feed: _SupportsRawBarConsumerRegistration,
     strategies: Iterable[_SupportsWarmup],
+    *,
+    base_timeframe: timedelta | None = None,
 ) -> None:
     """Register a warmup consumer sized to the strategies' warmup on ``feed``.
 
@@ -245,7 +376,13 @@ def register_strategy_warmup(
         The feed to register on (needs only ``register_raw_bar_consumer``).
     strategies : Iterable[_SupportsWarmup]
         The strategies whose max ``warmup`` sizes the ring.
+    base_timeframe : timedelta | None
+        The feed's base-bar cadence, threaded through to ``derive_warmup_depth``
+        so the depth is derived in BASE-bar units (F-1). ``None`` keeps the
+        historical unscaled derivation. Passed explicitly rather than read off the
+        feed Protocol, preserving this module's loose-typing convention (the feed
+        shape stays "needs only ``register_raw_bar_consumer``").
     """
-    depth = derive_warmup_depth(strategies)
+    depth = derive_warmup_depth(strategies, base_timeframe=base_timeframe)
     feed.register_raw_bar_consumer(
         StrategyWarmupConsumer(required_history_depth=depth))

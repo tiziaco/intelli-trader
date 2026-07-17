@@ -131,6 +131,20 @@ class LiveBarFeed(BarFeed):
         self.logger.info(
             "Live bar feed initialized (base timeframe %s)", self._base_alias)
 
+    @property
+    def base_timeframe(self) -> timedelta:
+        """The base-bar cadence of the subscribed stream (``tf_base``).
+
+        Read-only: the base cadence is fixed at construction (the rings and their
+        ``_base_alias`` keys are derived from it). Documented as part of the public
+        contract by the class docstring; this is the accessor that makes it real.
+
+        Read by ``SessionInitializer`` to derive the warmup ring depth in BASE-bar
+        units — the ring holds base bars while ``strategy.warmup`` counts
+        strategy-timeframe bars (F-1, see ``cache_registration.required_base_depth``).
+        """
+        return self._base_timeframe
+
     # -- WR-04 per-thread replay re-entrancy guard ----------------------------
 
     @property
