@@ -609,6 +609,23 @@ class StrategiesHandler(object):
 					"model that can represent a short. Both flags default off."
 				)
 
+		# D-02 duplicate-name loud reject. `strategy_name` is the DURABLE
+		# per-instance identity: the registry keys on it, STRATEGY_COMMAND
+		# addresses by it, and rehydrate reconstructs by it. (The ephemeral
+		# `strategy_id` UUIDv7 at base.py:192 is minted per construction and
+		# is NOT restart-stable, so keying durability on it would corrupt
+		# rehydrate.) A silent second registration under the same name would
+		# shadow the first instance and overwrite its persisted state, so a
+		# collision rejects loudly instead — including the rehydrate cases
+		# (rehydrating twice, or rehydrating a name already hand-added).
+		if any(existing.name == strategy.name for existing in self.strategies):
+			raise ValueError(
+				f"A strategy named {strategy.name!r} is already registered "
+				"(D-02) — strategy_name is the durable per-instance identity, "
+				"so a duplicate would silently shadow the existing instance "
+				"and overwrite its persisted state. Rename one of them."
+			)
+
 		# Add the strategy in the strategies list
 		self.strategies.append(strategy)
 

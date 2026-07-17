@@ -38,10 +38,12 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from uuid_utils.compat import uuid7
 
 from itrader.config.sql import SqlSettings
 from itrader.core.enums import ErrorSeverity
 from itrader.core.exceptions import UnknownParamError
+from itrader.core.ids import PortfolioId
 from itrader.core.sizing import FractionOfCash
 from itrader.storage import SqlEngine
 from itrader.storage.strategy_registry_store import StrategyRegistryStore
@@ -86,8 +88,28 @@ class _RecordingAlertSink:
         self.events.append(event)
 
 
-def _make_handler() -> StrategiesHandler:
-    return StrategiesHandler(Queue(), _StubFeed(), InMemorySignalStore())
+def _make_handler(
+    *, allow_short_selling: bool = False, enable_margin: bool = False
+) -> StrategiesHandler:
+    """A handler for rehydrate to register onto.
+
+    The SHORT-01/D-07 flags default OFF, matching production defaults. A pair strategy is
+    ``LONG_SHORT``, so rehydrating one requires BOTH flags on — the registration gate is
+    upstream of rehydrate and applies to a reconstructed instance exactly as it does to a
+    hand-added one (see ``test_pair_row_needs_the_short_flags_like_any_other_instance``).
+    """
+    return StrategiesHandler(
+        Queue(),
+        _StubFeed(),
+        InMemorySignalStore(),
+        allow_short_selling=allow_short_selling,
+        enable_margin=enable_margin,
+    )
+
+
+def _make_pair_handler() -> StrategiesHandler:
+    """A handler that admits the ``LONG_SHORT`` pair strategy (SHORT-01/D-07 both flags on)."""
+    return _make_handler(allow_short_selling=True, enable_margin=True)
 
 
 def _make_store() -> StrategyRegistryStore:
@@ -203,7 +225,7 @@ def test_rehydrate_round_trips_decimal_params_as_decimal_not_str() -> None:
         pair.name = "pair"
         _seed(store, [pair])
 
-        handler = _make_handler()
+        handler = _make_pair_handler()
         rehydrate_strategies(
             store=store,
             catalog=test_catalog(),
@@ -236,6 +258,66 @@ def test_rehydrate_skips_disabled_rows() -> None:
         )
 
         assert [s.name for s in handler.strategies] == ["sma_macd"]
+    finally:
+        store.dispose()
+
+
+def test_uuid_portfolio_subscription_rehydrates_as_a_portfolio_id_not_a_str() -> None:
+    """The fan-out id round-trips through the String column back to a UUID PortfolioId.
+
+    Asserted on TYPE. The runtime portfolio handle is always a UUIDv7-backed
+    ``PortfolioId`` (``strategies_handler`` FL-02), but the durable column is a ``String``.
+    Handing the raw string back would sail through the fan-out's ``cast`` and reach the
+    portfolio lookup as an id matching NOTHING — the strategy would look healthy and trade
+    into the void. A string-vs-UUID assertion is the only thing that catches it.
+    """
+    store = _make_store()
+    try:
+        portfolio_id = PortfolioId(uuid7())
+        sma = _sma()
+        sma.subscribe_portfolio(portfolio_id)
+        _seed(store, [sma])
+
+        handler = _make_handler()
+        rehydrate_strategies(
+            store=store,
+            catalog=test_catalog(),
+            strategies_handler=handler,
+            alert_sink=_RecordingAlertSink(),
+        )
+
+        subscriptions = handler.strategies[0].subscribed_portfolios
+        assert subscriptions == [portfolio_id]
+        assert isinstance(subscriptions[0], UUID)
+        assert not isinstance(subscriptions[0], str)
+    finally:
+        store.dispose()
+
+
+def test_malformed_portfolio_subscription_quarantines_the_instance() -> None:
+    """A fan-out id that parses as neither UUID nor int quarantines the whole instance.
+
+    Registering it half-wired would be worse than skipping it: it would trade with a
+    silently truncated portfolio set.
+    """
+    store = _make_store()
+    try:
+        _seed(store, [_sma()])
+        store.add_portfolio_subscription("sma_macd", "not-an-id")
+
+        handler = _make_handler()
+        sink = _RecordingAlertSink()
+
+        quarantined = rehydrate_strategies(
+            store=store,
+            catalog=test_catalog(),
+            strategies_handler=handler,
+            alert_sink=sink,
+        )
+
+        assert quarantined == ["sma_macd"]
+        assert handler.strategies == []  # NOT registered half-wired
+        assert len(sink.events) == 1
     finally:
         store.dispose()
 
@@ -372,12 +454,16 @@ def test_pair_row_rehydrates_with_no_special_case() -> None:
     """
     store = _make_store()
     try:
-        pair = EthBtcPairStrategy(timeframe="1d", entry_units=2, use_log_prices=False)
+        # entry_units is declared ``Decimal`` on EthBtcPairStrategy — an int would be
+        # refused at the codec's money boundary (float/int for money is a defect).
+        pair = EthBtcPairStrategy(
+            timeframe="1d", entry_units=Decimal("2"), use_log_prices=False
+        )
         pair.name = "eth_btc"
         pair.subscribe_portfolio(9)
         _seed(store, [pair])
 
-        handler = _make_handler()
+        handler = _make_pair_handler()
         rehydrate_strategies(
             store=store,
             catalog=test_catalog(),
@@ -388,9 +474,35 @@ def test_pair_row_rehydrates_with_no_special_case() -> None:
         rebuilt = handler.strategies[0]
         assert type(rebuilt) is EthBtcPairStrategy
         assert rebuilt.name == "eth_btc"
-        assert rebuilt.entry_units == 2
+        assert type(rebuilt.entry_units) is Decimal
+        assert rebuilt.entry_units == Decimal("2")
         assert rebuilt.use_log_prices is False
         assert [str(p) for p in rebuilt.subscribed_portfolios] == ["9"]
+    finally:
+        store.dispose()
+
+
+def test_pair_row_needs_the_short_flags_like_any_other_instance() -> None:
+    """D-16 x SHORT-01/D-07 — the registration gate applies to a REBUILT instance too.
+
+    A pair is ``LONG_SHORT``, so registering one onto a handler without both shorts flags
+    raises. This is NOT quarantined: an unadmissible direction means the engine is
+    misconfigured for the roster it was asked to run, which is a system-level problem the
+    operator must see — not a bad row to skip past.
+    """
+    store = _make_store()
+    try:
+        pair = EthBtcPairStrategy(timeframe="1d")
+        pair.name = "eth_btc"
+        _seed(store, [pair])
+
+        with pytest.raises(ValueError, match="allow_short_selling"):
+            rehydrate_strategies(
+                store=store,
+                catalog=test_catalog(),
+                strategies_handler=_make_handler(),  # both flags OFF (production default)
+                alert_sink=_RecordingAlertSink(),
+            )
     finally:
         store.dispose()
 
