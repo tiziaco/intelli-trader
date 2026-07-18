@@ -31,7 +31,7 @@ assertion. The double is green under both runners.
 (package-collision hazard). Folder-derived ``unit`` marker.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from queue import Queue
 from typing import Any
@@ -45,6 +45,7 @@ from itrader.core.enums import ErrorSeverity
 from itrader.core.exceptions import UnknownParamError
 from itrader.core.ids import PortfolioId
 from itrader.core.sizing import FractionOfCash
+from itrader.price_handler.feed.cache_registration import UnwarmableTimeframeError
 from itrader.storage import SqlEngine
 from itrader.storage.strategy_registry_store import StrategyRegistryStore
 from itrader.strategy_handler.registry import StrategyConfigError, UnknownStrategyTypeError
@@ -67,7 +68,27 @@ _AT = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 
 
 class _StubFeed:
-    """A minimal BarFeed stand-in — add_strategy never touches the feed."""
+    """A minimal BarFeed stand-in — add_strategy never touches the feed.
+
+    This variant has NO ``base_timeframe``, so rehydrate's F-1 warmability check
+    skips cleanly (the backtest/in-memory degrade). The ``_StubFeedWithBase``
+    variant below carries one and exercises the finer-than-base quarantine arm.
+    """
+
+    def symbols(self) -> list[str]:
+        return ["BTCUSD"]
+
+
+class _StubFeedWithBase:
+    """A LIVE-feed stand-in carrying ``base_timeframe`` (mirrors ``_StubFeed``).
+
+    Rehydrate resolves the base cadence via ``getattr(feed, "base_timeframe",
+    None)`` — the exact seam ``add``/``reconfigure`` use — so a feed exposing one
+    makes the F-1 warmability check RUN, quarantining a finer-than-base row.
+    """
+
+    def __init__(self, base_timeframe: timedelta) -> None:
+        self.base_timeframe = base_timeframe
 
     def symbols(self) -> list[str]:
         return ["BTCUSD"]
@@ -110,6 +131,19 @@ def _make_handler(
 def _make_pair_handler() -> StrategiesHandler:
     """A handler that admits the ``LONG_SHORT`` pair strategy (SHORT-01/D-07 both flags on)."""
     return _make_handler(allow_short_selling=True, enable_margin=True)
+
+
+def _make_handler_with_base(base_timeframe: timedelta) -> StrategiesHandler:
+    """A handler over a feed exposing ``base_timeframe`` — the LIVE warmability arm.
+
+    The default (both-off) short flags match production; only the feed differs from
+    ``_make_handler`` so rehydrate's F-1 check runs against a real base cadence.
+    """
+    return StrategiesHandler(
+        Queue(),
+        _StubFeedWithBase(base_timeframe),
+        InMemorySignalStore(),
+    )
 
 
 def _make_store() -> StrategyRegistryStore:
@@ -331,6 +365,46 @@ def test_malformed_portfolio_subscription_quarantines_the_instance() -> None:
         assert quarantined == ["sma_macd"]
         assert handler.strategies == []  # NOT registered half-wired
         assert len(sink.events) == 1
+    finally:
+        store.dispose()
+
+
+def test_finer_than_base_timeframe_row_is_quarantined_at_rehydrate_not_crash_boot() -> None:
+    """WR-01 re-review — a finer-than-base row is QUARANTINED at rehydrate, not raised.
+
+    A stored row whose timeframe is FINER than the feed base cadence can never warm from
+    the base-bar ring (F-1). Before Option A this raised ``UnwarmableTimeframeError`` out of
+    ``register_strategy_warmup`` and crashed the ENTIRE live boot — one stale row becomes a
+    self-inflicted outage. Now it takes the SAME per-instance D-19 quarantine the codec /
+    param failures already get: skip + one CRITICAL alert + continue, the healthy sibling
+    loads, boot does NOT raise, and the row is NEVER mutated (enabled stays True).
+
+    ``read_all()`` orders name-ASC, so "empty" (1h, finer than the 1d base) is processed
+    before "sma_macd" (1d == base): the sibling loading proves the quarantine did not abort.
+    """
+    store = _make_store()
+    try:
+        _seed(store, [_sma(), _empty()])  # sma_macd @ 1d (== base), empty @ 1h (finer)
+
+        handler = _make_handler_with_base(timedelta(days=1))
+        sink = _RecordingAlertSink()
+
+        quarantined = rehydrate_strategies(
+            store=store,
+            catalog=test_catalog(),
+            strategies_handler=handler,
+            alert_sink=sink,
+        )
+
+        assert quarantined == ["empty"]
+        # The healthy 1d sibling still loaded — boot did not abort on the bad row.
+        assert [s.name for s in handler.strategies] == ["sma_macd"]
+        assert len(sink.events) == 1
+        assert sink.events[0].error_type == UnwarmableTimeframeError.__name__
+        assert sink.events[0].severity is ErrorSeverity.CRITICAL
+        # D-19 — the row is UNTOUCHED; enabled stays True so it reloads once the base
+        # cadence can serve it (never silently flipped to disabled).
+        assert store.get("empty")["enabled"] is True
     finally:
         store.dispose()
 

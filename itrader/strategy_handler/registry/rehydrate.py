@@ -20,8 +20,9 @@ unreachable across a restart). This is what makes ``disable``-across-restart and
 **D-19 — two arms, and they pull in opposite directions.**
 
 * PER-INSTANCE failure (``strategy_type`` retired from the catalog, ``config_json`` that
-  will not deserialize after param drift) -> SKIP that instance, fire ONE CRITICAL alert,
-  and CONTINUE. The owner's strategy submodule evolves independently of rows already on
+  will not deserialize after param drift, or a timeframe the feed base cadence cannot serve
+  — finer than base or a non-whole-multiple, WR-01 re-review) -> SKIP that instance, fire
+  ONE CRITICAL alert, and CONTINUE. The owner's strategy submodule evolves independently of rows already on
   disk, so drift is a certainty rather than a risk; letting one stale row block every
   healthy strategy would turn a data problem into a self-inflicted outage.
 * INFRASTRUCTURE failure (rows exist but no catalog was injected; the store is unreadable)
@@ -73,6 +74,10 @@ from itrader.core.exceptions import MissingParamError, UnknownParamError
 from itrader.core.ids import PortfolioId
 from itrader.core.policy_codec import PolicyRegistry, default_policy_registry
 from itrader.logger import get_itrader_logger
+from itrader.price_handler.feed.cache_registration import (
+	UnwarmableTimeframeError,
+	required_base_depth,
+)
 from itrader.strategy_handler.base import Strategy
 from itrader.strategy_handler.registry.catalog import (
 	StrategyCatalog,
@@ -102,6 +107,8 @@ _QUARANTINABLE: tuple[type[Exception], ...] = (
 	StrategyConfigError,       # the blob will not deserialize (version/type/coercion)
 	UnknownParamError,         # param drift: the blob names a param the class dropped
 	MissingParamError,         # param drift: the class gained a required param
+	UnwarmableTimeframeError,  # finer-than-base / non-whole-multiple tf: can never warm from
+	                           # the base-bar ring (F-1) — a bad ROW, quarantined not raised (WR-01)
 )
 
 
@@ -322,6 +329,19 @@ def rehydrate_strategies(
 				_resolve_portfolio_id(raw)
 				for raw in rec["portfolio_ids"]
 			]
+			# F-1 warmability (WR-01 re-review): a finer-than-base / non-whole-multiple
+			# timeframe can never warm from the base-bar ring. Keyed on base_timeframe so
+			# ONLY the LIVE feed runs the check — the backtest/in-memory feed has no
+			# base_timeframe -> None -> skip cleanly (the SAME degrade the add/reconfigure
+			# gates use, strategies_handler.py:770/:1005). Called for its RAISE only (the
+			# ring sizing stays owned by register_strategy_warmup — discard the return). It
+			# runs BEFORE add_strategy, so a raise leaves the instance unregistered and the
+			# row unmutated: UnwarmableTimeframeError is now in _QUARANTINABLE, turning a
+			# self-inflicted boot outage into a per-instance quarantine.
+			base_timeframe = getattr(
+				getattr(strategies_handler, "feed", None), "base_timeframe", None)
+			if base_timeframe is not None:
+				required_base_depth(strategy.warmup, strategy.timeframe, base_timeframe)
 		except _QUARANTINABLE as exc:
 			# D-19 per-instance: skip, alert CRITICAL, CONTINUE. The row is NOT mutated —
 			# see the module docstring for why that is load-bearing.
