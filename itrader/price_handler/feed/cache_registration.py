@@ -182,6 +182,18 @@ class _SupportsWarmup(Protocol):
         """
         ...
 
+    @property
+    def is_active(self) -> bool:
+        """Whether this strategy participates in the warmup ladder.
+
+        A deactivated (``is_active`` False) strategy is SKIPPED by
+        ``derive_warmup_depth`` / ``register_strategy_warmup``: it neither inflates
+        the ring depth nor is passed to ``required_base_depth`` (so a deactivated
+        finer-than-base row can no longer raise from the ladder). ``Strategy`` sets
+        ``self.is_active`` in ``__init__``, so real strategies satisfy this.
+        """
+        ...
+
 
 class _SupportsRawBarConsumerRegistration(Protocol):
     """The minimal structural shape ``register_strategy_warmup`` needs off a feed.
@@ -328,8 +340,10 @@ def derive_warmup_depth(
     Parameters
     ----------
     strategies : Iterable[_SupportsWarmup]
-        The registered strategies; each contributes its ``warmup`` (and, when
-        scaling, its ``timeframe``).
+        The registered strategies; each ACTIVE one contributes its ``warmup`` (and,
+        when scaling, its ``timeframe``). ``is_active`` False strategies are SKIPPED
+        in both branches — a dark row neither inflates the depth nor is passed to
+        ``required_base_depth``.
     base_timeframe : timedelta | None
         The feed's base-bar cadence. ``None`` (the default) keeps the historical
         unscaled ``max(warmup)``.
@@ -350,17 +364,26 @@ def derive_warmup_depth(
         Propagated from ``required_base_depth`` when ``base_timeframe`` is given
         and some strategy's timeframe is finer / a non-multiple.
     """
-    # WR-01: floor at the newest-bar depth (1). A NON-empty roster whose strategies ALL
-    # declare warmup==0 (a handle-free EmptyStrategy / EthBtcPairStrategy) would otherwise
+    # The ladder skips is_active==False strategies in BOTH branches: a deactivated row
+    # (present-but-dark after CR-01) must neither inflate the ring depth nor — in the
+    # scaled branch — be passed to required_base_depth (so a DEACTIVATED finer-than-base
+    # strategy can no longer raise from the ladder; it is filtered before the call).
+    #
+    # WR-01: floor at the newest-bar depth (1). A roster that is EMPTY after filtering
+    # (all deactivated, or a NON-empty roster whose active strategies ALL declare
+    # warmup==0 — a handle-free EmptyStrategy / EthBtcPairStrategy) would otherwise
     # return 0, registering a StrategyWarmupConsumer(required_history_depth=0) that crashes
-    # the next cache_capacity() on derive_required_depths' `< 1` WR-06 guard.
+    # the next cache_capacity() on derive_required_depths' `< 1` WR-06 guard. The inner
+    # default=1 + the outer floor together protect the post-filter-empty case.
     if base_timeframe is None:
-        return max(NEWEST_BAR_ONLY, max((s.warmup for s in strategies), default=1))
+        return max(
+            NEWEST_BAR_ONLY,
+            max((s.warmup for s in strategies if s.is_active), default=1))
     return max(
         NEWEST_BAR_ONLY,
         max(
             (required_base_depth(s.warmup, s.timeframe, base_timeframe)
-             for s in strategies),
+             for s in strategies if s.is_active),
             default=1))
 
 
@@ -378,6 +401,10 @@ def register_strategy_warmup(
     registers a ``StrategyWarmupConsumer`` so ``feed.cache_capacity()`` re-derives
     the ring to the max strategy warmup at call time (``base.py`` reads
     ``derive(self._raw_bar_consumers)`` lazily, so registering IS what sizes it).
+
+    Deactivated (``is_active`` False) strategies are excluded via the
+    ``derive_warmup_depth`` boundary — this function has no separate loop, so the
+    filter flows through and no dark row inflates the ring or can raise from it.
 
     Parameters
     ----------
