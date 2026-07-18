@@ -338,6 +338,28 @@ def rehydrate_strategies(
 			# runs BEFORE add_strategy, so a raise leaves the instance unregistered and the
 			# row unmutated: UnwarmableTimeframeError is now in _QUARANTINABLE, turning a
 			# self-inflicted boot outage into a per-instance quarantine.
+			#
+			# WR-02 — uniform quarantine (do NOT gate on enabled): the check runs over
+			# EVERY row regardless of `rec["enabled"]`. Do NOT rewrite the guard below to
+			# `if base_timeframe is not None and rec["enabled"]:`. WHY the check must stay
+			# ungated on the row's enabled state:
+			#   (a) an unwarmable strategy can never reach is_ready, so a disabled row loaded
+			#       present-but-dark would only have ILLUSORY position "ownership" — it could
+			#       never warm enough to manage those positions out;
+			#   (b) quarantine is LOUD (one CRITICAL alert on the halt egress) whereas loading
+			#       it present-but-dark is a SILENTLY-inert dark strategy — and D-19 rates
+			#       "appears healthy while trading nothing" as worse than failing to start, so
+			#       loud-quarantine is the D-19-consistent choice;
+			#   (c) the row is NOT mutated, so the quarantine is non-destructive and
+			#       self-recovering — fix the base-cadence config and restart and the row
+			#       reloads warmable (nothing to un-flip by hand);
+			#   (d) consistent with every other _QUARANTINABLE class (codec / param drift /
+			#       portfolio-id), none of which get present-but-dark treatment.
+			# Load-bearing: once the deactivated-skip is reverted (quick-260718-evz), the
+			# warmup ladder AGAIN includes disabled strategies, so a loaded disabled-unwarmable
+			# row would crash boot inside register_strategy_warmup. Uniform quarantine here is
+			# therefore REQUIRED (not merely acceptable) to stop one stale disabled row
+			# becoming a self-inflicted boot outage.
 			base_timeframe = getattr(
 				getattr(strategies_handler, "feed", None), "base_timeframe", None)
 			if base_timeframe is not None:
