@@ -518,6 +518,14 @@ class StrategiesHandler(object):
 		intrinsic to the O(1) recurrence (D-03a — never vectorized); a strategy
 		not concerned with the symbol is skipped.
 
+		⚠ WR-02 — a live ``PairStrategy`` is NOT warmed by this ``BarsLoaded`` bulk
+		path. Its spread bookkeeping (``_buf_A`` / ``_buf_B`` / ``_pair_bar_count``)
+		fills ONLY via ``update_pair(bar_A, bar_B)`` (both legs together), never via
+		the inherited single-leg ``update()`` this path replays. So an added or
+		rehydrated pair warms from ~``beta_warmup`` + ``z_lookback`` LIVE bars via
+		``_dispatch_pair`` instead — accepted P10 scope, and the ``is_pair_ready``
+		gate already blocks any wrong trade in the meantime.
+
 		Parameters
 		----------
 		event: `BarsLoaded`

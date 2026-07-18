@@ -159,6 +159,13 @@ class StrategyCommandEvent(Event, frozen=True, kw_only=True, gc=False):
         carried beside it: the payload IS a ``config_json``-shaped blob and D-04
         specifies ``strategy_type`` as a key of that blob. Folded into a COPY —
         the caller's dict is never mutated.
+
+        ⚠ IN-02 — ``config`` MUST be a full ``config_json``-shaped, VERSION-STAMPED
+        blob (as produced by ``encode_strategy_config``, carrying an ``int``
+        ``config_version``), NOT a bare authoring-kwargs dict. ``decode_strategy_config``
+        hard-requires ``config_version`` and rejects a hand-built dict without it —
+        so an ``add`` carrying raw kwargs is a silent loud-no-op at the consumer (the
+        FastAPI-era hazard: the client's ``add`` looks accepted but registers nothing).
         """
         payload = {**config, "strategy_type": strategy_type}
         return cls(time=time, strategy_name=strategy_name,
