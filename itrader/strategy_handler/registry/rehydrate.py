@@ -4,10 +4,18 @@
 to the engine through the injected catalog (the owner's proprietary strategies live in a
 private submodule repo), so ``itrader`` never imports a concrete strategy class. Strategy
 *instances* are DATA: the store is their source of truth. Rehydrate therefore INSTANTIATES
-from ``store x catalog x codec`` — ``for rec in store.list_active(): cls =
+from ``store x catalog x codec`` — ``for rec in store.read_all(): cls =
 catalog[rec["strategy_type"]]; add_strategy(cls(**params))``. It does NOT re-apply stored
 state onto a roster hardcoded in composition code, because that would make code, not the
 store, the source of truth for WHAT TRADES.
+
+**CR-01 — the FULL roster loads; ``enabled`` becomes ``is_active``, not a load filter.**
+``read_all()`` returns EVERY row (enabled AND disabled). A disabled (``enabled=False``) row
+is reconstructed present-but-dark — the rebuilt instance is ``deactivate_strategy()``'d so
+it is ``is_active`` False: it owns its open positions and is re-enable-able, rather than
+being silently dropped (which would orphan its positions and make the strategy permanently
+unreachable across a restart). This is what makes ``disable``-across-restart and the
+``remove`` crash-safety guarantee actually hold.
 
 **D-19 — two arms, and they pull in opposite directions.**
 
@@ -112,12 +120,15 @@ class StrategyRegistryReader(Protocol):
 
 	A Protocol, not an import: keeping the store duck-typed means this module pulls no
 	SQLAlchemy onto the import graph, and a test can drive it with a plain fake.
+
+	``read_all()`` returns the FULL FK-joined roster — every row, enabled AND disabled,
+	each record carrying an inline ``portfolio_ids: list[str]`` (its portfolio fan-out
+	joined in). It is NOT a load filter: a row's ``enabled`` column becomes the
+	reconstructed instance's ``is_active`` (CR-01), so a disabled row loads present-but-dark
+	rather than being dropped.
 	"""
 
-	def list_active(self) -> list[Mapping[str, Any]]:
-		...
-
-	def portfolio_subscriptions(self, strategy_name: str) -> list[str]:
+	def read_all(self) -> list[Mapping[str, Any]]:
 		...
 
 
@@ -242,12 +253,20 @@ def rehydrate_strategies(
 	alert_sink: AlertEgress,
 	policy_registry: Optional[PolicyRegistry] = None,
 ) -> list[str]:
-	"""Register every enabled stored strategy onto ``strategies_handler`` (D-01).
+	"""Register the FULL stored roster onto ``strategies_handler`` (D-01/CR-01).
 
-	The store is the source of truth for the roster. Rows are processed in
-	``list_active()``'s deterministic ``strategy_name`` ASC order (IN-01), so registration
-	order — and therefore ``min_timeframe`` derivation and universe membership — is
-	reproducible across runs and dialects.
+	The store is the source of truth for the roster. Rows are reconstructed via
+	``read_all()`` — the deterministic ``strategy_name`` ASC roster with each record's
+	``portfolio_ids`` in ``portfolio_id`` ASC order (IN-01), so registration order — and
+	therefore ``min_timeframe`` derivation and universe membership — is reproducible across
+	runs and dialects.
+
+	CR-01 — ``read_all()`` loads EVERY row, not just the enabled ones. A row's ``enabled``
+	column becomes the reconstructed instance's ``is_active``: a disabled (``enabled=False``)
+	row is reconstructed present-but-dark (``deactivate_strategy()``'d after registration) so
+	it owns its positions and is re-enable-able. ``enabled`` is NOT a load filter — dropping
+	disabled rows would orphan their positions and make the strategy unreachable after a
+	restart.
 
 	Returns
 	-------
@@ -260,7 +279,7 @@ def rehydrate_strategies(
 	RehydrateInfrastructureError
 		The registry has rows but ``catalog`` is None (D-19 infrastructure arm).
 	Exception
-		Anything ``store.list_active()`` raises propagates unchanged — an unreadable store
+		Anything ``store.read_all()`` raises propagates unchanged — an unreadable store
 		is infrastructure, not a bad row.
 	ValueError
 		``add_strategy`` rejects a duplicate ``strategy_name`` (D-02). Not quarantined: a
@@ -269,7 +288,7 @@ def rehydrate_strategies(
 	logger = get_itrader_logger().bind(component="StrategyRehydrator")
 
 	# D-19 infrastructure: NOT wrapped. A store failure must reach the caller.
-	rows = store.list_active()
+	rows = store.read_all()
 
 	if not rows:
 		# D-21 x D-19: a fresh DB is a valid first-start state, and with nothing to
@@ -282,7 +301,7 @@ def rehydrate_strategies(
 	if catalog is None:
 		# D-19 infrastructure arm: rows exist and nothing can instantiate them.
 		raise RehydrateInfrastructureError(
-			f"the strategy registry holds {len(rows)} enabled row(s) but no strategy_catalog "
+			f"the strategy registry holds {len(rows)} row(s) but no strategy_catalog "
 			f"was injected into build_live_system — refusing to boot with zero strategies "
 			f"(D-19): this is a wiring bug, and an engine that appears healthy while trading "
 			f"nothing is worse than one that fails to start"
@@ -301,7 +320,7 @@ def rehydrate_strategies(
 			strategy = build_strategy(rec, catalog=catalog, policy_registry=registry)
 			portfolio_ids = [
 				_resolve_portfolio_id(raw)
-				for raw in store.portfolio_subscriptions(strategy_name)
+				for raw in rec["portfolio_ids"]
 			]
 		except _QUARANTINABLE as exc:
 			# D-19 per-instance: skip, alert CRITICAL, CONTINUE. The row is NOT mutated —
@@ -318,6 +337,12 @@ def rehydrate_strategies(
 		strategies_handler.add_strategy(strategy)
 		for portfolio_id in portfolio_ids:
 			strategy.subscribe_portfolio(portfolio_id)
+		# CR-01: honor `enabled` as `is_active`. A disabled row loads present-but-dark —
+		# registered (so it owns its positions and is re-enable-able) but deactivated so
+		# the D-07 gate stops NEW entries. This is orthogonal to the quarantine try above:
+		# it runs only once add_strategy succeeded.
+		if not rec["enabled"]:
+			strategy.deactivate_strategy()
 
 	logger.info(
 		"Rehydrated %d strategy instance(s) from the registry; %d quarantined",

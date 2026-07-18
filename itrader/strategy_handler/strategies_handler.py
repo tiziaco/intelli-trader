@@ -830,10 +830,24 @@ class StrategiesHandler(object):
 		``_on_symbol_removed`` for its now-unmembered symbols, and the EXISTING P7 force-close
 		-> detach-on-flat machinery manages the positions out — reusing the pipeline verbatim
 		(D-11) rather than building a second force-close path. The instance STAYS in
-		``self.strategies`` and its ROW is KEPT until flat: a crash mid-force-close then
-		rehydrates the strategy and it resumes managing its own positions rather than
-		orphaning them. Queue-only: the poll is emitted here; ``UniverseHandler`` is never
-		called and ``Universe`` is never touched.
+		``self.strategies`` and its ROW is KEPT (persisted ``enabled=False``) until flat: a
+		crash mid-force-close then rehydrates the strategy PRESENT-BUT-DEACTIVATED (CR-01 —
+		``read_all`` loads the disabled row and ``deactivate_strategy()`` re-applies it) and
+		it resumes managing its own positions rather than orphaning them. Queue-only: the
+		poll is emitted here; ``UniverseHandler`` is never called and ``Universe`` is never
+		touched.
+
+		⚠ CAVEAT — no auto-resume. An interrupted ``remove`` does NOT re-drive the
+		force-close on restart: the rehydrated strategy comes back merely deactivated
+		(``_pending_removals`` is in-memory only and is NOT reconstructed), so the operator
+		must RE-ISSUE ``remove`` to complete the drop. Auto-resume of an in-flight removal is
+		deferred to the live-hardening milestone.
+
+		⚠ FOOTGUN — after a restart a strategy mid-``remove`` is INDISTINGUISHABLE from a
+		merely-``disable``d one: both come back present-and-dark (``enabled=False``,
+		``is_active`` False), because the removing/disabled distinction lived only in the
+		in-memory ``_pending_removals`` set. Re-issuing the intended verb after a restart is
+		how the operator disambiguates.
 		"""
 		# Idempotency: a name already pending is a no-op — no second force-close, no second
 		# poll (D-10 idempotency). The unknown-name case is the shared loud no-op upstream.
@@ -1210,6 +1224,11 @@ class StrategiesHandler(object):
 		- ``disable`` — ``is_active`` False + persist ``enabled=False``. The object STAYS
 		  in ``self.strategies``; open positions and resting brackets run to natural exit
 		  via the execution layer (which never reads this flag). Stops NEW entries only.
+		  ACROSS A RESTART (CR-01): a disabled strategy is now REHYDRATED present-but-dark
+		  (``read_all`` loads it, then ``deactivate_strategy()`` re-applies ``is_active``
+		  False) — it is re-enable-able and still owns its positions. It is no longer
+		  silently dropped at boot (which would orphan its positions and make it permanently
+		  unreachable after a restart).
 		- ``subscribe_portfolio`` / ``unsubscribe_portfolio`` — D-06/D-09: the fan-out
 		  edge is RUNTIME-MUTABLE. Mutates ``strategy.subscribed_portfolios`` live and
 		  upserts/deletes the child row. Unsubscribing the LAST portfolio leaves an empty

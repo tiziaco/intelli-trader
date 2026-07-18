@@ -242,8 +242,13 @@ def test_rehydrate_round_trips_decimal_params_as_decimal_not_str() -> None:
         store.dispose()
 
 
-def test_rehydrate_skips_disabled_rows() -> None:
-    """D-06/D-09 — ``list_active()`` is the rehydrate query: an ``enabled=False`` row is out."""
+def test_rehydrate_reconstructs_disabled_rows_present_but_dark() -> None:
+    """CR-01 — ``read_all()`` loads the FULL roster: an ``enabled=False`` row is reconstructed
+    present-but-dark (``is_active`` False), re-enable-able, NOT dropped.
+
+    Dropping disabled rows would orphan their positions and make the strategy unreachable
+    after a restart; ``enabled`` is honored as ``is_active``, not used as a load filter.
+    """
     store = _make_store()
     try:
         _seed(store, [_sma()], enabled=True)
@@ -257,7 +262,15 @@ def test_rehydrate_skips_disabled_rows() -> None:
             alert_sink=_RecordingAlertSink(),
         )
 
-        assert [s.name for s in handler.strategies] == ["sma_macd"]
+        by_name = {s.name: s for s in handler.strategies}
+        # BOTH rows reconstructed — the disabled one is not silently dropped.
+        assert set(by_name) == {"sma_macd", "empty"}
+        assert by_name["sma_macd"].is_active is True
+        assert by_name["empty"].is_active is False
+
+        # Present-but-dark means re-enable-able: activate_strategy() flips it back.
+        by_name["empty"].activate_strategy()
+        assert by_name["empty"].is_active is True
     finally:
         store.dispose()
 
@@ -567,7 +580,7 @@ def test_unreadable_store_propagates_and_is_not_degrade_cleaned() -> None:
     """
 
     class _BrokenStore:
-        def list_active(self) -> list[Any]:
+        def read_all(self) -> list[Any]:
             raise RuntimeError("registry unreadable")
 
     with pytest.raises(RuntimeError, match="registry unreadable"):
@@ -663,8 +676,8 @@ def test_rehydrated_instance_mints_a_fresh_ephemeral_strategy_id() -> None:
 # --------------------------------------------------------------------------------------
 
 
-def test_registration_order_follows_list_active_name_ordering() -> None:
-    """IN-01 — ``list_active()`` is ``strategy_name`` ASC, so registration order is stable.
+def test_registration_order_follows_read_all_name_ordering() -> None:
+    """IN-01 — ``read_all()`` is ``strategy_name`` ASC, so registration order is stable.
 
     Registration order drives ``min_timeframe`` derivation and universe membership, so an
     unordered SELECT would make both irreproducible across runs.
