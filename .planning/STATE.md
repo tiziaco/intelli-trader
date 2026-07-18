@@ -36,7 +36,7 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 Phase: 11 — Multi-Portfolio-Live
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-07-18 — Completed quick task 260718-e36: Phase 10 re-review WR-01 (rehydrate quarantine + warmup deactivated-skip)
+Last activity: 2026-07-18 — Completed quick task 260718-evz: reverted warmup deactivated-skip, documented WR-02 uniform-quarantine rationale
 
 Note: `phase.complete` again advanced current_phase to 12 (its next-phase dir-scan skips the not-yet-created P10/P11 ★ dirs);
 corrected to 10 per the roadmap sequence. P10{P4,P6} + P11{P5,P7} are dependency-available now; P12 (core-final) depends on P11.
@@ -315,6 +315,7 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 | 260716-cfg | Unify dry-validate-on-a-copy pattern in config_router.py: _dry_validate_setattr→_dry_validate_copy returns the validated candidate copy; system/order scopes share it (order drops its inline model_copy+try/except); portfolio merge-validate untouched. Behavior-preserving; 30 tests pass, mypy clean | 2026-07-16 | 4e40f379 | (fast — no dir) |
 | 260718-di7 | Fix Phase 10 code-review findings: CR-01 (rehydrate loads full roster via read_all(), disabled rows come back present-but-dark, honoring enabled as is_active — resolves IN-01) + docstring truth on remove/disable restart guarantee; WR-01 (floor derive_warmup_depth at NEWEST_BAR_ONLY, never 0); WR-02/IN-02 docstrings (live-pair BarsLoaded warmup, add-factory config_json payload). 322 passed/9 skipped (env), mypy clean | 2026-07-18 | 992b31a5 | [260718-di7-fix-phase-10-code-review-findings-cr-01-](./quick/260718-di7-fix-phase-10-code-review-findings-cr-01-/) |
 | 260718-e36 | Fix Phase 10 re-review WR-01: quarantine an unwarmable (finer-than-base timeframe) stored row at rehydrate per D-19 (skip+alert+continue, row not mutated) instead of raising UnwarmableTimeframeError out of register_strategy_warmup and crashing the whole live boot; + skip is_active==False strategies in the warmup ladder (derive_warmup_depth/register_strategy_warmup), preserving the NEWEST_BAR_ONLY floor. 324 passed/5 skipped (env), mypy clean, inertness preserved | 2026-07-18 | 40e73430 | [260718-e36-fix-phase-10-re-review-wr-01-quarantine-](./quick/260718-e36-fix-phase-10-re-review-wr-01-quarantine-/) |
+| 260718-evz | Revert the e36 warmup deactivated-skip (2nd re-review found it net-negative: it broke the pre-provisioning that makes disabled→enable safe, since the `enable` verb has no capacity guard and the ring is a fixed-maxlen deque). derive_warmup_depth again sizes the ring from ALL strategies (NEWEST_BAR_ONLY floor kept); is_active dropped from _SupportsWarmup. Kept Option A's rehydrate quarantine ungated on enabled + documented the WR-02 uniform-quarantine rationale (unwarmable strategy can't manage positions regardless → present-but-dark is illusory; quarantine is loud + non-destructive + recoverable + consistent with the _QUARANTINABLE family). 322 passed/5 skipped (env), mypy clean, inertness preserved | 2026-07-18 | fe15923a | [260718-evz-revert-phase-10-warmup-deactivated-skip-](./quick/260718-evz-revert-phase-10-warmup-deactivated-skip-/) |
 
 ## Deferred Items
 
