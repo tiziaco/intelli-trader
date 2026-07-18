@@ -141,6 +141,25 @@ def test_derive_warmup_depth_empty_defaults_to_one() -> None:
     assert derive_warmup_depth([], base_timeframe=_1H) == 1
 
 
+def test_derive_warmup_depth_non_empty_all_zero_warmup_floors_at_newest_bar() -> None:
+    """WR-01 — a NON-empty roster whose strategies ALL declare warmup==0 (a handle-free
+    EmptyStrategy / EthBtcPairStrategy) floors at NEWEST_BAR_ONLY (1) in BOTH branches.
+
+    Without the floor the ladder returns 0, registering a
+    StrategyWarmupConsumer(required_history_depth=0) that crashes the next cache_capacity()
+    on derive_required_depths' `< 1` WR-06 guard.
+    """
+    from itrader.price_handler.feed.cache_registration import NEWEST_BAR_ONLY
+
+    strategies = [_StubStrategy(0, _1H), _StubStrategy(0, _4H)]
+
+    # Scaled branch (base_timeframe given).
+    assert derive_warmup_depth(strategies, base_timeframe=_1H) == NEWEST_BAR_ONLY
+    # Unscaled branch (base_timeframe omitted).
+    assert derive_warmup_depth(strategies) == NEWEST_BAR_ONLY
+    assert NEWEST_BAR_ONLY == 1
+
+
 # --- register_strategy_warmup ------------------------------------------------
 
 

@@ -337,9 +337,12 @@ def derive_warmup_depth(
     Returns
     -------
     int
-        The maximum required depth, or ``1`` for an empty strategy set. In BASE
-        bars when ``base_timeframe`` is given; in strategy-timeframe bars (the
-        historical, unit-blind result) when it is not.
+        The maximum required depth, floored at ``NEWEST_BAR_ONLY`` (1) — never 0. In
+        BASE bars when ``base_timeframe`` is given; in strategy-timeframe bars (the
+        historical, unit-blind result) when it is not. Both an EMPTY roster and a
+        NON-empty all-zero-warmup roster (handle-free ``EmptyStrategy`` /
+        ``EthBtcPairStrategy``) return ``NEWEST_BAR_ONLY``, so the derived depth can
+        never crash ``derive_required_depths``' ``< 1`` guard (WR-01/WR-06).
 
     Raises
     ------
@@ -347,12 +350,18 @@ def derive_warmup_depth(
         Propagated from ``required_base_depth`` when ``base_timeframe`` is given
         and some strategy's timeframe is finer / a non-multiple.
     """
+    # WR-01: floor at the newest-bar depth (1). A NON-empty roster whose strategies ALL
+    # declare warmup==0 (a handle-free EmptyStrategy / EthBtcPairStrategy) would otherwise
+    # return 0, registering a StrategyWarmupConsumer(required_history_depth=0) that crashes
+    # the next cache_capacity() on derive_required_depths' `< 1` WR-06 guard.
     if base_timeframe is None:
-        return max((s.warmup for s in strategies), default=1)
+        return max(NEWEST_BAR_ONLY, max((s.warmup for s in strategies), default=1))
     return max(
-        (required_base_depth(s.warmup, s.timeframe, base_timeframe)
-         for s in strategies),
-        default=1)
+        NEWEST_BAR_ONLY,
+        max(
+            (required_base_depth(s.warmup, s.timeframe, base_timeframe)
+             for s in strategies),
+            default=1))
 
 
 def register_strategy_warmup(
