@@ -36,7 +36,7 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 Phase: 11 — Multi-Portfolio-Live
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-07-17 — Phase 10 complete, transitioned to Phase 11
+Last activity: 2026-07-18 — Completed quick task 260718-di7: Phase 10 code-review fixes (CR-01/WR-01/WR-02/IN-01/IN-02)
 
 Note: `phase.complete` again advanced current_phase to 12 (its next-phase dir-scan skips the not-yet-created P10/P11 ★ dirs);
 corrected to 10 per the roadmap sequence. P10{P4,P6} + P11{P5,P7} are dependency-available now; P12 (core-final) depends on P11.
@@ -313,6 +313,7 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 | 260716-mov | Move UniverseConfig into its own itrader/config/universe.py (config/ one-domain-per-file convention); system.py keeps only Environment/LogLevel/SystemSettings; barrel re-exports unchanged. Byte-identical behavior; 2307 passed, oracle byte-exact, inertness + mypy clean | 2026-07-16 | d5a9deac | [260716-mov-move-universeconfig-into-its-own-config-](./quick/260716-mov-move-universeconfig-into-its-own-config-/) |
 | 260716-fast | Sync CLAUDE.md "Configuration system" section (+ Import side effects, config Layers, tech-stack/config prose) to ITraderConfig reality — drop SystemConfig/Settings/PerformanceSettings/MonitoringSettings, document frozen base + mutable sub-models + LogConfig + lazy sql, outils.recursive_merge, ExchangeConfig classmethods, config/models.py removal | 2026-07-16 | 03fdf3fd | (fast — no dir) |
 | 260716-cfg | Unify dry-validate-on-a-copy pattern in config_router.py: _dry_validate_setattr→_dry_validate_copy returns the validated candidate copy; system/order scopes share it (order drops its inline model_copy+try/except); portfolio merge-validate untouched. Behavior-preserving; 30 tests pass, mypy clean | 2026-07-16 | 4e40f379 | (fast — no dir) |
+| 260718-di7 | Fix Phase 10 code-review findings: CR-01 (rehydrate loads full roster via read_all(), disabled rows come back present-but-dark, honoring enabled as is_active — resolves IN-01) + docstring truth on remove/disable restart guarantee; WR-01 (floor derive_warmup_depth at NEWEST_BAR_ONLY, never 0); WR-02/IN-02 docstrings (live-pair BarsLoaded warmup, add-factory config_json payload). 322 passed/9 skipped (env), mypy clean | 2026-07-18 | 992b31a5 | [260718-di7-fix-phase-10-code-review-findings-cr-01-](./quick/260718-di7-fix-phase-10-code-review-findings-cr-01-/) |
 
 ## Deferred Items
 
