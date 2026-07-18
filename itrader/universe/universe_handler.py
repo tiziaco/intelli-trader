@@ -50,7 +50,7 @@ from itrader.events_handler.events import (
     UniversePollEvent,
 )
 from itrader.events_handler.events.fill import FillEvent
-from itrader.events_handler.events.market import UniverseUpdateEvent
+from itrader.events_handler.events.universe import UniverseUpdateEvent
 from itrader.logger import get_itrader_logger
 from itrader.outils.id_generator import IDGenerator
 from itrader.outils.time_parser import to_timedelta

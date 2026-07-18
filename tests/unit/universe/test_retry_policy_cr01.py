@@ -25,7 +25,7 @@ import pytest
 from itrader.core.bar import Bar
 from itrader.core.instrument import Instrument
 from itrader.events_handler.events import BarsLoaded, BarsLoadFailed, UniversePollEvent
-from itrader.events_handler.events.market import UniverseUpdateEvent
+from itrader.events_handler.events.universe import UniverseUpdateEvent
 from itrader.universe.universe import Universe
 from itrader.universe.universe_handler import UniverseHandler, UniverseHandlerConfig
 

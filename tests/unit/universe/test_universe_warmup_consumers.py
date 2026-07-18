@@ -28,7 +28,7 @@ from itrader.core.bar import Bar
 from itrader.core.enums import Readiness
 from itrader.core.instrument import Instrument
 from itrader.events_handler.events import BarsLoaded, BarsLoadFailed
-from itrader.events_handler.events.market import UniverseUpdateEvent
+from itrader.events_handler.events.universe import UniverseUpdateEvent
 from itrader.universe.membership import StrategyDerivedSelectionModel
 from itrader.universe.universe import Universe
 from itrader.config.stream import FeedProviderSettings

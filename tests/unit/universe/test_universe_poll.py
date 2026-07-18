@@ -34,7 +34,7 @@ from itrader.core.ids import PortfolioId
 from itrader.core.instrument import Instrument
 from itrader.core.portfolio_read_model import PositionView
 from itrader.events_handler.events import SignalEvent, UniversePollEvent
-from itrader.events_handler.events.market import UniverseUpdateEvent
+from itrader.events_handler.events.universe import UniverseUpdateEvent
 from itrader.universe.universe import Universe
 from itrader.universe.universe_handler import UniverseHandler, UniverseHandlerConfig
 
