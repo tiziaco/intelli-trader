@@ -41,20 +41,16 @@ _90M = timedelta(minutes=90)
 
 
 class _StubStrategy:
-    """The minimal ``_SupportsWarmup`` shape: ``warmup`` + ``timeframe`` + ``is_active``.
+    """The minimal ``_SupportsWarmup`` shape: ``warmup`` + ``timeframe``.
 
-    Deliberately NOT a real ``Strategy`` — the Protocol reads exactly these three
-    members, and constructing a real strategy would drag in indicator registration
-    that has nothing to do with the depth derivation. ``is_active`` defaults True so
-    every existing two-arg construction stays in the warmup ladder unchanged.
+    Deliberately NOT a real ``Strategy`` — the Protocol reads exactly two members,
+    and constructing a real strategy would drag in indicator registration that has
+    nothing to do with the depth derivation.
     """
 
-    def __init__(
-        self, warmup: int, timeframe: timedelta, is_active: bool = True
-    ) -> None:
+    def __init__(self, warmup: int, timeframe: timedelta) -> None:
         self.warmup = warmup
         self.timeframe = timeframe
-        self.is_active = is_active
 
 
 class _StubFeed:
@@ -164,37 +160,26 @@ def test_derive_warmup_depth_non_empty_all_zero_warmup_floors_at_newest_bar() ->
     assert NEWEST_BAR_ONLY == 1
 
 
-def test_derive_warmup_depth_skips_deactivated_unwarmable_strategy() -> None:
-    """A deactivated (is_active False) strategy is EXCLUDED from the ladder.
+def test_derive_warmup_depth_includes_disabled_deep_strategy_provisions_ring() -> None:
+    """A DISABLED deep strategy still sizes the ring — the pre-provisioning guarantee.
 
-    The 15m strategy is FINER than the 1h base — it would raise UnwarmableTimeframeError
-    if passed to required_base_depth. Filtering deactivated strategies FIRST means it is
-    never passed, so a dark row can neither raise from the ladder nor inflate the depth.
-    The depth reflects only the ACTIVE 1h strategy (100)."""
-    strategies = [
-        _StubStrategy(100, _1H, is_active=True),
-        _StubStrategy(100, _15M, is_active=False),  # finer-than-base — would raise if run
-    ]
+    The ladder sizes from ALL registered strategies, active or disabled: the ring is a
+    fixed-``maxlen`` deque that cannot resize, and the ``enable`` verb
+    (``strategies_handler.py:1351-1372``) has NO capacity guard — so a disabled deep
+    strategy MUST size the ring at BOOT, otherwise a later ``disabled -> enable`` would
+    find a ring too shallow to warm it (silent under-provisioning on a guardless path).
 
-    assert derive_warmup_depth(strategies, base_timeframe=_1H) == 100
+    Here the deep 100 @ 4h == 400 base bars sizes the ring EVEN THOUGH ``.is_active`` is
+    False — a plain instance attribute the reverted ladder does NOT read (``_StubStrategy``
+    no longer defines ``is_active``). If a future edit re-introduces an ``if s.is_active``
+    filter, the deep stub is excluded, this assertion drops to 50 and fails loudly,
+    guarding the reverted pre-provisioning contract (WR-01 / IN-01).
+    """
+    shallow = _StubStrategy(50, _1H)
+    deep = _StubStrategy(100, _4H)
+    deep.is_active = False  # ignored by the reverted ladder; pins the guarantee
 
-
-def test_derive_warmup_depth_all_deactivated_roster_floors_at_newest_bar() -> None:
-    """A roster that is EMPTY after filtering deactivated strategies still floors at
-    NEWEST_BAR_ONLY (1) in BOTH branches — the inner default=1 + outer floor together
-    guard the post-filter-empty case, never returning 0."""
-    from itrader.price_handler.feed.cache_registration import NEWEST_BAR_ONLY
-
-    strategies = [
-        _StubStrategy(100, _1H, is_active=False),
-        _StubStrategy(200, _4H, is_active=False),
-    ]
-
-    # Scaled branch (base_timeframe given).
-    assert derive_warmup_depth(strategies, base_timeframe=_1H) == NEWEST_BAR_ONLY
-    # Unscaled branch (base_timeframe omitted).
-    assert derive_warmup_depth(strategies) == NEWEST_BAR_ONLY
-    assert NEWEST_BAR_ONLY == 1
+    assert derive_warmup_depth([shallow, deep], base_timeframe=_1H) == 400
 
 
 # --- register_strategy_warmup ------------------------------------------------
@@ -214,25 +199,6 @@ def test_register_strategy_warmup_registers_scaled_depth() -> None:
     assert isinstance(consumer, StrategyWarmupConsumer)
     assert consumer.required_history_depth == 400, "the depth is scaled to base bars"
     assert feed.cache_capacity() == 400, "cache_capacity() derives to the scaled depth"
-
-
-def test_register_strategy_warmup_skips_deactivated_strategies() -> None:
-    """register_strategy_warmup inherits the is_active filter through derive_warmup_depth
-    (it has no separate loop). The deactivated 4h strategy would size the ring to 400 if
-    counted; skipped, the single registered consumer sizes only to the active 1h's 50."""
-    feed = _StubFeed()
-    strategies = [
-        _StubStrategy(50, _1H, is_active=True),
-        _StubStrategy(100, _4H, is_active=False),  # would be 400 base bars if not skipped
-    ]
-
-    register_strategy_warmup(feed, strategies, base_timeframe=_1H)
-
-    assert len(feed.consumers) == 1
-    consumer = feed.consumers[0]
-    assert isinstance(consumer, StrategyWarmupConsumer)
-    assert consumer.required_history_depth == 50, "sized to the active strategy only"
-    assert feed.cache_capacity() == 50
 
 
 # --- LiveBarFeed.base_timeframe ---------------------------------------------
