@@ -41,7 +41,7 @@ Three units, mirroring the `order_handler/` collaborator-extraction precedent (`
 ```
 StrategiesHandler          (thin: data plane + queue seam)
    ├── ManagedStrategies   (shared: the live instance set + membership rules)
-   └── StrategyCommandProcessor (live-only: all STRATEGY_COMMAND verb logic)
+   └── StrategyLifecycleManager (live-only: STRATEGY_COMMAND verbs + fill-driven removal completion)
               └── depends on ManagedStrategies + live deps + feed + queue
 ```
 
@@ -74,9 +74,11 @@ The naming distinguishes three strategy-collection concepts that already coexist
 
 **Depends on:** nothing beyond `core` + `Strategy`. Stays off the SQL graph.
 
-### Unit 2 — `StrategyCommandProcessor` (new)
+### Unit 2 — `StrategyLifecycleManager` (new)
 
-**File:** `itrader/strategy_handler/commands/processor.py` — **tab-indented**, live-only module → **imports at module top**.
+**File:** `itrader/strategy_handler/lifecycle/manager.py` (mirroring the `order_handler/lifecycle/` collaborator) — **tab-indented**, live-only module → **imports at module top**.
+
+**Why "lifecycle", not "command":** this unit owns the full runtime lifecycle of a live strategy instance — `add` (birth), `reconfigure` (mutation), `disable` (quiesce), `remove` + `on_fill` completion (death). The STRATEGY_COMMAND verbs are the *inputs* that drive those transitions; `on_fill` is **not** a command but the fill-driven completion half of the `remove` lifecycle (the D-11 hook that drops a pending-removal strategy once its positions are flat). Naming it `...CommandProcessor` would make `on_fill` a category error; `StrategyLifecycleManager` is its natural home and follows the `<Domain>Manager` house convention (`OrderManager`, `CashManager`).
 
 **Constructor deps (injected):**
 - `managed: ManagedStrategies` (the shared roster)
@@ -88,6 +90,8 @@ The naming distinguishes three strategy-collection concepts that already coexist
 **Moves (verbatim, private→as-is or de-underscored where they become the module's public surface):**
 `on_strategy_command`, `on_fill`, `_add_strategy_verb`, `_remove_strategy_verb`, `_reconfigure_strategy_verb`, `_reconfigure_allowlist_check`, `_reconfigure_warmability_check`, `_emit_reconfigure_apply_failure`, `_persist_strategy`, `_request_rewarm`, `_portfolio_id_from`, `_strategy_is_flat`, `_try_complete_removal`.
 
+`on_fill` moves here as a **lifecycle** concern (not a command): it re-scans `_pending_removals` and calls `_try_complete_removal`, i.e. it is the second half of the `remove` verb — `remove` initiates the pending removal, fills complete it once positions flatten. Its logic is coupled to `_pending_removals` (owned by `ManagedStrategies`) and `_try_complete_removal` (moved above), so it belongs with the removal verb it completes.
+
 These call into `managed` for roster mutation (`managed.add_strategy`, `managed.remove`, `managed.direction_admissible`, `managed.recompute_min_timeframe`, `managed.by_name`, pending-removal ops) — **no back-reference to the handler**.
 
 **Import story:** because this module is imported **only** on the live path (never re-exported from a package barrel, constructed only inside the live wiring arm — same discipline as the v1.7 live stack), its top-of-file imports may include `registry.config_codec`, `registry.rehydrate`, `registry.catalog`, `policy_codec`, and `price_handler.feed.cache_registration`. The five load-bearing lazy imports collapse to normal top imports. `test_okx_inertness.py` continues to guard that `import itrader` / the backtest path never reaches this module.
@@ -96,18 +100,20 @@ These call into `managed` for roster mutation (`managed.add_strategy`, `managed.
 
 **Keeps (data plane + queue seam):**
 - `on_bar` (renamed from `calculate_signals`), `_emit_intent`, `_dispatch_pair`, `on_bars_loaded`, `is_warm`, `set_universe`, `update_config`.
-- Constructs `self._managed = ManagedStrategies(...)` and, when live deps are present, `self._commands = StrategyCommandProcessor(self._managed, ...)`.
+- Constructs `self._managed = ManagedStrategies(...)` and, when live deps are present, `self._lifecycle = StrategyLifecycleManager(self._managed, ...)`. On the backtest path the live deps are absent, so `self._lifecycle` is `None` (never constructed).
 
 **Public surface preserved via thin delegation (back-compat — tests and route registrar depend on these):**
-- `on_strategy_command(event)` → `self._commands.on_strategy_command(event)`
-- `on_fill(event)` → `self._commands.on_fill(event)`
+- `on_strategy_command(event)` → `self._lifecycle.on_strategy_command(event)`
+- `on_fill(event)` → `self._lifecycle.on_fill(event)`
 - `add_strategy(strategy)` → `self._managed.add_strategy(strategy)`
 - `get_strategies_universe()` → `self._managed.get_universe()`
 - **Properties** (tests read these directly): `strategies` → `self._managed.strategies`; `min_timeframe` → `self._managed.min_timeframe`; `_pending_removals` → `self._managed._pending_removals`.
 
+**Backtest guard (implementation note):** the delegating `on_strategy_command`/`on_fill` above are safe today **only** because neither route is wired into the backtest `_routes` — nothing ever calls them there, so `self._lifecycle` being `None` never bites. That is an *implicit* invariant. Guard each delegator with `assert self._lifecycle is not None` (or an explicit live-only `raise`) so that if a future change ever routes FILL / STRATEGY_COMMAND onto the backtest path, it fails **loud** at the seam instead of raising an opaque `AttributeError: 'NoneType' object has no attribute 'on_fill'`.
+
 The hot-path text `for strategy in self.strategies` is therefore **byte-identical** — the `strategies` property returns the same list object `ManagedStrategies` owns. `on_bar` never edits its body; only the method name changes.
 
-**`_universe` sharing:** the handler owns `self._universe` (hot-path readiness gate reads it). `set_universe(universe)` sets `self._universe` **and** forwards to `self._commands.set_universe(universe)` (the processor's `_request_rewarm` mutates `_universe.mark_failed`). Two references to one object, set together — explicit, no back-ref.
+**`_universe` sharing:** the handler owns `self._universe` (hot-path readiness gate reads it). `set_universe(universe)` sets `self._universe` **and** (when live) forwards to `self._lifecycle.set_universe(universe)` (the lifecycle manager's `_request_rewarm` mutates `_universe.mark_failed`). Two references to one object, set together — explicit, no back-ref.
 
 ## The `on_bar` rename (separate, verified step)
 
@@ -122,7 +128,7 @@ The hot-path text `for strategy in self.strategies` is therefore **byte-identica
 
 ## Wiring changes
 
-- `trading_system/compose.py:227` — `StrategiesHandler(...)` constructor call: signature **unchanged**. Internal wiring (constructing `ManagedStrategies` + `StrategyCommandProcessor`) happens inside `__init__`, so compose is untouched except any read-back it already does.
+- `trading_system/compose.py:227` — `StrategiesHandler(...)` constructor call: signature **unchanged**. Internal wiring (constructing `ManagedStrategies` + `StrategyLifecycleManager`) happens inside `__init__`, so compose is untouched except any read-back it already does.
 - `route_registrar.py` — registrations reference `self._strategies_handler.on_strategy_command`, `.on_bars_loaded`, `.on_fill`; all preserved via handler delegation, so **no registrar edit** (it does not reference `calculate_signals`/the BAR route).
 - `full_event_handler.py:95` — BAR route updated for the `on_bar` rename only.
 
@@ -147,7 +153,7 @@ The hot-path text `for strategy in self.strategies` is therefore **byte-identica
 ## Suggested sequencing (for the implementation plan)
 
 1. Extract `ManagedStrategies` + delegating properties on the handler (no verb moves yet). Verify: full suite + oracle.
-2. Extract `StrategyCommandProcessor`; move the 13 verb helpers + `on_strategy_command`/`on_fill`; hoist imports to module top; delete the now-dead lazy imports (including the accidental 1041–1042). Verify: full suite + oracle + inertness.
+2. Extract `StrategyLifecycleManager`; move the 13 verb helpers + `on_strategy_command`/`on_fill`; hoist imports to module top; add the `self._lifecycle is not None` guards on the handler's delegators; delete the now-dead lazy imports (including the accidental 1041–1042). Verify: full suite + oracle + inertness.
 3. Rename `calculate_signals` → `on_bar` across source, routes, tests, and docs. Verify: full suite + oracle + `test_dispatch_registry`.
 
 Each step is independently green — the refactor never has a broken intermediate state.
