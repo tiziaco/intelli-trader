@@ -1,6 +1,6 @@
 ---
 phase: 10-strategies-registry
-reviewed: 2026-07-17T00:00:00Z
+reviewed: 2026-07-18T00:00:00Z
 depth: standard
 files_reviewed: 40
 files_reviewed_list:
@@ -43,173 +43,149 @@ files_reviewed_list:
   - tests/unit/strategy/test_strategies_live_membership.py
   - tests/unit/strategy/test_strategy_command_verbs.py
 findings:
-  critical: 1
-  warning: 2
-  info: 2
-  total: 5
+  critical: 0
+  warning: 1
+  info: 1
+  total: 2
 status: issues_found
 ---
 
-# Phase 10: Code Review Report
+# Phase 10: Code Review Report (RE-REVIEW after remediation)
 
-**Reviewed:** 2026-07-17T00:00:00Z
+**Reviewed:** 2026-07-18T00:00:00Z
 **Depth:** standard
 **Files Reviewed:** 40
-**Status:** issues_found
+**Status:** issues_found (prior blockers resolved; 1 new WARNING, 1 INFO)
 
 ## Summary
 
-Phase 10 adds the durable strategy-instance registry (two-table SQL schema + migration),
-the `catalog x row x codec -> Strategy` rehydrate seam, the tagged-union policy/config
-codecs, and the live `STRATEGY_COMMAND` verb surface (`add`/`remove`/`enable`/`disable`/
-`reconfigure`/`subscribe`/`unsubscribe`/`add_ticker`/`remove_ticker`). The codecs are
-carefully written (no eval/import-by-name; allowlist-gated class resolution; Decimal money
-boundary via string wire form; parameterized SQL Core) and the security posture of the
-external ingress (`add_event` fail-closed default-deny) is sound. Test coverage is broad,
-including a full external-ingress lifecycle and restart test.
+This is a re-review of the strategies-registry phase after remediation of the prior
+review's findings (CR-01, WR-01, WR-02, IN-01, IN-02). I verified each prior finding is
+resolved and did not introduce a regression, then reviewed the full scope fresh.
 
-The dominant defect is a **rehydrate/persistence contract mismatch**: `enabled=False` rows
-are written by two verbs on the assumption that the row survives and is reconstructed at
-restart, but rehydrate loads only `enabled=True` rows (`list_active()`), so those rows are
-never reconstructed. This breaks `disable`-across-restart entirely and defeats the
-documented `remove` crash-safety guarantee. Two lower-severity robustness gaps and two
-observations round out the review.
+**All four prior findings are RESOLVED and correctly fixed — see the verification section.**
+The remediation is clean: the rehydrate seam now loads the full roster via `read_all()`,
+disabled rows are reconstructed present-but-deactivated (and provably do NOT trade), the
+deterministic `strategy_name` ASC ordering is preserved, the WR-01 warmup-depth floor is
+correct in both branches, and the inline portfolio-id consumption in rehydrate is atomic.
 
-## Critical Issues
+The fresh pass surfaced **one new WARNING** — a D-19 quarantine gap where a rehydrated
+strategy with a timeframe finer than the feed base cadence crashes the boot at
+`register_strategy_warmup` instead of being quarantined — and **one INFO** documenting a
+benign behavioral coupling that the CR-01 fix introduces (disabled strategies now
+participate in `is_warm()` aggregation and ring sizing).
 
-### CR-01: `enabled=False` strategies are persisted for restart-recovery but rehydrate never loads them
+## Verification of prior findings
 
-**File:** `itrader/strategy_handler/registry/rehydrate.py:272`, `itrader/storage/strategy_registry_store.py:325`, `itrader/strategy_handler/strategies_handler.py:1346-1352` and `807-858`
+**CR-01 (BLOCKER) — RESOLVED.** `rehydrate_strategies` now calls `store.read_all()`
+(rehydrate.py:291), which returns the FULL FK-joined roster (enabled AND disabled). A
+disabled row is reconstructed, subscribed, then `deactivate_strategy()`'d
+(rehydrate.py:344-345). Verified no regression to trading: `calculate_signals` gates on
+`if not strategy.is_active: continue` FIRST (strategies_handler.py:254), placed before both
+the single-leg loop and the `_dispatch_pair` branch, so a rehydrated disabled strategy's
+`update()` never runs and it emits no signals. Pinned by
+`test_rehydrate_reconstructs_disabled_rows_present_but_dark` and `test_is_active_gate.py`.
 
-**Issue:**
-`rehydrate_strategies` reconstructs the roster from `store.list_active()`, which is a
-`WHERE enabled=True` query (`strategy_registry_store.py:340`). `read_all()` (the only query
-that returns disabled rows) has **no production caller** — rehydrate is the sole boot path
-and it uses `list_active`. Two verbs, however, persist `enabled=False` and explicitly rely
-on the row being reconstructed at restart:
+**Deterministic order — PRESERVED.** `read_all()` orders by `strategy_name ASC, portfolio_id
+ASC` (strategy_registry_store.py:381-384) and builds the record dict in row order, so
+`list(records.values())` is name-ASC. Pinned by
+`test_registration_order_follows_read_all_name_ordering` and
+`test_read_all_is_deterministically_ordered`.
 
-1. **`disable`** (`strategies_handler.py:1346-1352`, `1429` persist with
-   `enabled=strategy.is_active` == False): the object "STAYS in `self.strategies`" for the
-   current session, and the row is persisted `enabled=False` so the state survives "even if
-   the process dies." But at the next boot `list_active` skips the row, so the disabled
-   strategy is **not rehydrated at all**. A subsequent `enable` command then hits the
-   by-name lookup in `on_strategy_command` (`:1253-1260`), finds nothing, and is a loud
-   no-op — the strategy is permanently unreachable and can never be re-enabled, while its
-   `enabled=False` row lingers orphaned forever. This is a normal, non-edge operation.
+**Portfolio-ids inline consumption — ATOMIC (no new bug).** `build_strategy` and the
+`portfolio_ids = [_resolve_portfolio_id(raw) ...]` comprehension both run inside the same
+`try/except _QUARANTINABLE` block BEFORE `add_strategy` (rehydrate.py:320-334). A malformed
+id raises `StrategyConfigError` (a quarantinable type) so the instance is quarantined and
+never half-registered. Pinned by `test_malformed_portfolio_subscription_quarantines_the_instance`
+(asserts `handler.strategies == []`).
 
-2. **`remove`** (`_remove_strategy_verb`, `:807-858`): the docstring (`:831-834`, `:849-853`)
-   states the row is kept `enabled=False` until flat specifically so that "a crash
-   mid-force-close then rehydrates the strategy and it resumes managing its own positions
-   rather than orphaning them." Because rehydrate skips `enabled=False` rows, a crash during
-   the pending-removal window (open positions still flattening) restarts with the position
-   restored from the portfolio/order store but **no strategy object owning its exits** — the
-   exact orphaned-position outcome the design claims to prevent. Any position without a
-   resting exchange bracket is then unmanaged.
+**WR-01 (WARNING) — RESOLVED and correct.** `derive_warmup_depth` floors at
+`NEWEST_BAR_ONLY` (1) in BOTH the unscaled branch (`max(NEWEST_BAR_ONLY, max(..., default=1))`,
+cache_registration.py:358) and the scaled branch (:359-364). An all-zero-warmup roster
+returns 1, so no `StrategyWarmupConsumer(required_history_depth=0)` can be registered to
+crash `derive_required_depths`' `< 1` guard. The floor does not inflate a genuine depth
+(`max(1, 100) == 100`). Pinned by
+`test_derive_warmup_depth_non_empty_all_zero_warmup_floors_at_newest_bar`.
 
-**Fix:**
-Rehydrate must reconstruct rows that carry runtime obligations regardless of the `enabled`
-flag, then apply the flag to `is_active`. For example, load all rows and set activation from
-the column rather than filtering them out:
+**WR-02 (doc gap) — RESOLVED.** `on_bars_loaded` carries the explicit ⚠ docstring block
+(strategies_handler.py:521-527) documenting that a live `PairStrategy` is NOT warmed by the
+`BarsLoaded` bulk path (its `_buf_A/_buf_B` fill only via `update_pair`), and warms instead
+from live bars via `_dispatch_pair`, gated by `is_pair_ready`.
 
-```python
-# rehydrate.py — load the full roster, honor `enabled` as is_active, not as a load filter
-rows = store.read_all()            # instead of store.list_active()
-...
-strategies_handler.add_strategy(strategy)
-if not rec["enabled"]:
-    strategy.deactivate_strategy()  # disabled: registered but dark, re-enable-able + owns exits
-```
+**IN-01 (dead `read_all`) — RESOLVED.** `read_all()` is now the live rehydrate path
+(rehydrate.py:291); `list_active()` remains a distinct queryable surface. Not dead.
 
-(Or, if only enabled strategies should trade but disabled/removing ones must still manage
-open positions, add a dedicated "reconstruct-for-position-ownership" pass over the non-active
-rows.) Whichever path is chosen, the `disable`/`remove` docstrings' restart-recovery
-guarantees and the actual rehydrate query must be made consistent — today they contradict
-each other.
+**IN-02 (add-factory config_version) — RESOLVED.** `StrategyCommandEvent.add` carries the
+⚠ IN-02 docstring (universe.py:163-168) requiring a full version-stamped `config_json` blob.
 
 ## Warnings
 
-### WR-01: `derive_warmup_depth` returns 0 for an all-zero-warmup roster, crashing `cache_capacity()`
+### WR-01: Rehydrate does not quarantine a finer-than-base timeframe strategy — it crashes the boot
 
-**File:** `itrader/price_handler/feed/cache_registration.py:350-355` and `358-388`; consumer at `itrader/trading_system/session_initializer.py:133`
+**File:** `itrader/trading_system/session_initializer.py:133-135`, `itrader/strategy_handler/registry/rehydrate.py:313-345`, `itrader/price_handler/feed/cache_registration.py:359-364`
+**Issue:** `rehydrate_strategies` reconstructs every stored instance without any
+timeframe-vs-base-cadence check — `build_strategy` has no knowledge of the feed base
+cadence. After rehydrate (construction time), `SessionInitializer.initialize()` (invoked by
+`start()`) calls `register_strategy_warmup(engine.feed, engine.strategies_handler.strategies,
+base_timeframe=...)`, which ladders `required_base_depth(s.warmup, s.timeframe, base)` over
+ALL registered strategies. If any rehydrated strategy declares a timeframe FINER than the
+base cadence (or a non-whole-multiple), `required_base_depth` raises
+`UnwarmableTimeframeError`, which propagates out of `register_strategy_warmup` and crashes
+the entire live boot.
 
-**Issue:**
-`derive_warmup_depth` uses `max((required_base_depth(s.warmup, ...) for s in strategies),
-default=1)`. The `default=1` only applies to an **empty** iterable. For a non-empty roster
-whose strategies all have `warmup == 0` — a handle-free `EthBtcPairStrategy`
-(`pair_base.py`, warmup derives to 0) or an `EmptyStrategy` (warmup stays 0) — every term is
-`required_base_depth(0, tf, base) == 0`, so `max` returns **0**, not 1.
-`register_strategy_warmup` then registers `StrategyWarmupConsumer(required_history_depth=0)`
-unconditionally (`:386-388`). The next `cache_capacity()` call routes through
-`derive_required_depths`, whose WR-06 guard raises `ValueError` on any depth `< 1`
-(`:109-112`). Result: the live feed raises on the first bar delivery / warmup for a
-handle-free-only live roster.
+This defeats D-19's core promise for this one class of bad row: one unloadable strategy must
+not become a self-inflicted outage. The runtime `add` and `reconfigure` verbs BOTH guard this
+per-strategy with a loud no-op (`_add_strategy_verb` cache_registration gate at
+strategies_handler.py:770-788; `_reconfigure_warmability_check` at :1005-1026), but rehydrate
+— the one place a stored row becomes a live instance at boot — has no equivalent gate, so a
+single finer-than-base row takes down every healthy sibling instead of being quarantined.
 
-**Fix:** Floor the derived depth at the newest-bar minimum:
+Reachability is narrow: the reference strategies are all `1d == base`, and the add/reconfigure
+gates prevent a finer-than-base instance from ever being written through the normal path. The
+vector is a legacy row (written by an older code version) or a hand-inserted DB row — exactly
+the class of drift D-19 exists to survive.
 
+**Fix:** Wrap the finer-than-base / non-multiple case at rehydrate in the same D-19
+quarantine the codec/param failures already get. Either (a) add `UnwarmableTimeframeError` to
+the `_QUARANTINABLE` tuple and perform the `required_base_depth` check inside the per-instance
+`try` when a base cadence is available, or (b) make `register_strategy_warmup` skip-and-alert
+an individual unwarmable strategy rather than raising for the whole roster. Concretely, in
+`rehydrate_strategies`, after `build_strategy`, when the feed exposes `base_timeframe`:
 ```python
-# cache_registration.py::derive_warmup_depth
-if base_timeframe is None:
-    return max(NEWEST_BAR_ONLY, max((s.warmup for s in strategies), default=1))
-return max(
-    NEWEST_BAR_ONLY,
-    max((required_base_depth(s.warmup, s.timeframe, base_timeframe)
-         for s in strategies), default=1),
-)
+base_tf = getattr(getattr(strategies_handler, "feed", None), "base_timeframe", None)
+if base_tf is not None:
+    required_base_depth(strategy.warmup, strategy.timeframe, base_tf)  # raises -> quarantine
 ```
-
-### WR-02: A live `PairStrategy` is not warmed by the `BarsLoaded` bulk-warmup path
-
-**File:** `itrader/strategy_handler/strategies_handler.py:506-533` (`on_bars_loaded`), `itrader/strategy_handler/pair_base.py:169-222`
-
-**Issue:**
-`on_bars_loaded` warms each concerned strategy by replaying the single-symbol payload
-through `strategy.update(event.symbol, bar)`. A `PairStrategy`'s spread warmth lives in
-`_buf_A`/`_buf_B` and `_pair_bar_count`, which are filled ONLY by `update_pair(bar_A, bar_B)`
-(both legs together) — never by the inherited single-leg `update()`. So a pair that is
-rehydrated or `add`ed live (D-16 permits both) receives base bookkeeping churn from the bulk
-warmup but its `is_pair_ready()` stays False; it must instead accumulate `beta_warmup +
-z_lookback` (280 for the reference) **live** bars via `_dispatch_pair` before it can trade.
-The `on_bars_loaded`/`is_warm` docstrings imply pairs warm through the same pipeline, so this
-is a silent divergence. Because `is_warm` reports a handle-free pair as ready
-(`is_ready == True`), the symbol is flipped READY and subscribed while the spread is still
-cold — no wrong trade results (the `_dispatch_pair` `is_pair_ready` gate holds), but the pair
-trades nothing for ~280 live bars after being added.
-
-**Fix:** Either (a) explicitly document that live pairs warm from live bars only (not from
-`BarsLoaded`) and confirm this is the accepted P10 deferral, or (b) give the bulk-warmup path
-a pair-aware branch that feeds paired history through `update_pair` once both legs' warmup
-windows are available. Given the two-leg-simultaneity requirement, option (a) with an explicit
-note in `on_bars_loaded` is the pragmatic P10 fix; do not leave the current implied-but-unmet
-"pairs use the same pipeline" contract.
+with `UnwarmableTimeframeError` added to `_QUARANTINABLE`.
 
 ## Info
 
-### IN-01: `StrategyRegistryStore.read_all()` has no production caller
+### IN-01: CR-01 makes disabled strategies participate in `is_warm()` aggregation and ring sizing
 
-**File:** `itrader/storage/strategy_registry_store.py:356-406`
+**File:** `itrader/strategy_handler/strategies_handler.py:208-212` (`is_warm`), `:535-541` (`on_bars_loaded`)
+**Issue:** Before CR-01, disabled rows were dropped at rehydrate, so a disabled strategy
+could not influence readiness. After CR-01 a disabled strategy stays in `self.strategies`, so
+it now (a) contributes its `warmup` to `register_strategy_warmup`'s max ladder, and (b) is
+counted by `is_warm(symbol) = all(s.is_ready(symbol) for s in strategies if symbol in
+s.tickers)`. If a disabled strategy shares a symbol with an enabled one and is not yet warm,
+`is_warm(symbol)` returns False, which can gate the ENABLED sibling's readiness through
+`UniverseHandler` and `calculate_signals`' `_universe.is_ready(ticker)` check.
 
-**Issue:** The FK-join `read_all()` (the only query that returns disabled rows with their
-portfolio fan-out) is never called on the run path — rehydrate uses `list_active()` plus
-per-strategy `portfolio_subscriptions()`. It is currently dead outside tests. If CR-01 is
-fixed by switching rehydrate to `read_all()`, this becomes live; otherwise consider removing
-it or documenting it as a query-only/inspection surface.
-
-### IN-02: `add` verb requires the external payload to carry `config_version`
-
-**File:** `itrader/strategy_handler/registry/config_codec.py:383-393`, `itrader/strategy_handler/strategies_handler.py:730-735`
-
-**Issue:** `_add_strategy_verb` forwards the raw command `config` (minus `portfolio_id`) as
-the `config_json` blob, and `decode_strategy_config` hard-requires an `int config_version`
-key, rejecting the blob otherwise. This is correct for store-sourced blobs (written by
-`encode_strategy_config`, which stamps the version) and the P10 tests build the `add` payload
-via `encode_strategy_config`, so they pass. But a future FastAPI client that POSTs a
-hand-built authoring-param dict without `config_version` will get a silent loud-no-op `add`.
-Worth documenting on the `StrategyCommandEvent.add` factory that its `config` argument must
-be a full `config_json`-shaped blob (version-stamped), not a bare kwargs dict — the current
-factory docstring implies the latter.
+This appears self-consistent and self-healing rather than a defect: `on_bars_loaded`
+deliberately has NO `is_active` guard (strategies_handler.py:535), so it warms disabled
+strategies too, and `register_strategy_warmup` sizes the ring to the max warmup over all
+registered strategies (disabled included) — so the disabled sibling gets enough bars to warm
+and `is_warm` resolves True. I could not construct a concrete failing path. Flagging as INFO
+because it is a genuine behavioral change introduced by the CR-01 fix with no dedicated test
+of the shared-symbol disabled+enabled interaction; a regression test pinning "a disabled
+strategy sharing a symbol does not permanently block an enabled sibling's readiness" would
+lock the invariant this now depends on.
+**Fix:** Add an integration test covering an enabled strategy and a disabled strategy sharing
+one symbol, asserting the enabled strategy reaches READY after warmup. No code change
+required unless the test surfaces a block.
 
 ---
 
-_Reviewed: 2026-07-17T00:00:00Z_
+_Reviewed: 2026-07-18T00:00:00Z_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
