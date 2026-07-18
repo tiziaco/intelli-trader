@@ -2,7 +2,7 @@
 phase: 10-strategies-registry
 reviewed: 2026-07-18T00:00:00Z
 depth: standard
-files_reviewed: 40
+files_reviewed: 39
 files_reviewed_list:
   - itrader/core/policy_codec.py
   - itrader/events_handler/events/universe.py
@@ -44,188 +44,134 @@ files_reviewed_list:
   - tests/unit/strategy/test_strategy_command_verbs.py
 findings:
   critical: 0
-  warning: 2
-  info: 1
-  total: 3
-status: issues_found
+  warning: 0
+  info: 0
+  total: 0
+status: clean
 ---
 
-# Phase 10: Code Review Report (Round-2 Re-Review)
+# Phase 10: Code Review Report
 
-**Reviewed:** 2026-07-18
+**Reviewed:** 2026-07-18T00:00:00Z
 **Depth:** standard
-**Files Reviewed:** 40
-**Status:** issues_found
+**Files Reviewed:** 39
+**Status:** clean
 
 ## Summary
 
-This is the second re-review after two remediation rounds. The five round-2 fix
-points were verified in detail and are **mechanically correct for their stated
-goals**:
+This is the third and final confirmation re-review of phase 10 (strategies registry)
+after three rounds of remediation. The full scope was re-read at standard depth, the
+round-3 end state was verified against all five acceptance criteria, and the code was
+re-scanned adversarially for new defects.
 
-1. **Rehydrate quarantine matches the D-19 shape.** `UnwarmableTimeframeError` is in
-   `_QUARANTINABLE`; a raise appends the name, fires ONE CRITICAL `alert_sink.alert`,
-   logs, and `continue`s. The row is never mutated (the `deactivate_strategy()` /
-   `enabled`-honoring block runs only in the success path AFTER `add_strategy`), healthy
-   siblings keep loading, and `read_all()`/`strategy_name ASC` order is preserved
-   (`rehydrate.py:345-354`, `:357-365`).
-2. **`required_base_depth` argument order is correct.** Signature is
-   `(warmup, strategy_timeframe, base_timeframe)`; the call is
-   `required_base_depth(strategy.warmup, strategy.timeframe, base_timeframe)`
-   (`rehydrate.py:344`), and the return is discarded (called only for its raise).
-3. **The base-cadence accessor is crash-safe when the feed has no `base_timeframe`.**
-   `getattr(getattr(strategies_handler, "feed", None), "base_timeframe", None)` yields
-   `None` for the backtest/in-memory `BacktestBarFeed`, so the check is skipped
-   cleanly — no crash, no over-quarantine (`rehydrate.py:341-344`). It is active only on
-   the live `LiveBarFeed`, which exposes the `base_timeframe` property.
-4. **The floor is preserved and the Protocol change is mypy-clean.**
-   `max(NEWEST_BAR_ONLY, max((... for s if s.is_active), default=1))` returns `1` for
-   an empty/all-deactivated/all-zero-warmup roster in both branches
-   (`cache_registration.py:378-387`); pinned by
-   `test_derive_warmup_depth_all_deactivated_roster_floors_at_newest_bar`. The
-   `_SupportsWarmup.is_active` read-only `@property` is satisfied structurally by
-   `Strategy.is_active` (a plain attribute set in `base.py:193`) under strict mypy.
-5. **The new `cache_registration` module-top import in `rehydrate.py` does not break
-   inertness.** `cache_registration` imports only stdlib (`collections.abc`,
-   `dataclasses`, `datetime`, `typing`) — no sqlalchemy/ccxt/pandas — and `rehydrate` is
-   itself lazy-imported only inside the `build_live_system` gate and never barrel-exported.
+**All reviewed files meet quality standards. No issues found.** The round-3 revert of the
+"deactivated-skip" and the retention of the ungated rehydrate quarantine are internally
+consistent, regression-free, and correctly leave the warmup ladder unable to raise at boot.
 
-However, the round-2 **deactivated-skip** in `derive_warmup_depth` — while correct for
-the floor — introduced a live-path robustness regression (WR-01) and an internal
-inconsistency with the rehydrate warmability gate (WR-02). Both are below. Nothing else
-new surfaced; the codec, catalog, store, migration, pair, route-registrar, and event
-surfaces are clean.
-
-## Structural Findings (fallow)
-
-No `<structural_findings>` block was provided with this review.
+No structural pre-pass (`<structural_findings>`) was provided.
 
 ## Narrative Findings (AI reviewer)
 
-### WR-01: `derive_warmup_depth` excludes disabled strategies from live ring sizing, but `enable` has no capacity guard — re-enabling a deep disabled strategy under-provisions its warmup
+No BLOCKER or WARNING findings. The verification of the round-3 end state follows; each
+point was confirmed against the source and, where applicable, against a pinning test and a
+live test run.
 
-**File:** `itrader/price_handler/feed/cache_registration.py:378-387` (the `is_active`
-filter); `itrader/strategy_handler/strategies_handler.py:1351-1372` (the `enable` verb)
+### Round-3 verification (all five criteria CONFIRMED)
 
-**Issue:**
-The round-2 change added an `is_active` filter to `derive_warmup_depth` so
-`register_strategy_warmup` sizes the `LiveBarFeed` ring from **active strategies only**.
-This is pinned deliberately by `test_register_strategy_warmup_skips_deactivated_strategies`
-("The deactivated 4h strategy would size the ring to 400 if counted; skipped, the single
-registered consumer sizes only to the active 1h's 50").
+**(1) `derive_warmup_depth` sizes from ALL strategies in both branches; no `is_active`
+filter; `NEWEST_BAR_ONLY` floor preserved.**
+`itrader/price_handler/feed/cache_registration.py:357-364` — both the unscaled branch
+(`max(NEWEST_BAR_ONLY, max((s.warmup for s in strategies), default=1))`) and the scaled
+branch (`max(NEWEST_BAR_ONLY, max((required_base_depth(s.warmup, s.timeframe, base_timeframe)
+for s in strategies), default=1))`) iterate the full `strategies` iterable with no
+`s.is_active` predicate and both floor at `NEWEST_BAR_ONLY` (1). The regression test
+`test_derive_warmup_depth_includes_disabled_deep_strategy_provisions_ring`
+(`tests/unit/price_handler/test_cache_registration.py:163-182`) pins this: a disabled deep
+`100 @ 4h` strategy still sizes the ring to 400 base bars, and the stub deliberately no
+longer defines `is_active`, so any re-introduced `if s.is_active` filter drops the assertion
+to 50 and fails loudly.
 
-Two problems compound:
+**(2) `_SupportsWarmup` no longer carries `is_active`; mypy-strict clean.**
+The Protocol (`cache_registration.py:162-183`) declares only `warmup: int` and
+`timeframe: timedelta`. `mypy` run over both central modules reports
+`Success: no issues found in 2 source files`.
 
-1. **The filter is not needed for its stated purposes.** The `NEWEST_BAR_ONLY` floor is
-   already guaranteed by `default=1` + the outer `max(NEWEST_BAR_ONLY, ...)` **without**
-   the `is_active` filter. The other stated purpose — "a DEACTIVATED finer-than-base
-   strategy can no longer raise from the ladder" (`cache_registration.py:367-370`) —
-   defends an **unreachable** case: `register_strategy_warmup` (scaled branch) runs only
-   from `SessionInitializer` (live-only) over the just-rehydrated roster, and
-   `rehydrate_strategies` already quarantines every finer-than-base row (enabled OR
-   disabled) before it can enter the roster (`rehydrate.py:341-354`). So no
-   finer-than-base strategy — active or not — ever reaches the ladder, and the filter buys
-   nothing.
+**(3) The rehydrate quarantine catches every unwarmable row (enabled AND disabled) BEFORE
+the warmup ladder runs.**
+`itrader/strategy_handler/registry/rehydrate.py:363-366` resolves `base_timeframe` via
+`getattr(getattr(strategies_handler, "feed", None), "base_timeframe", None)` and calls
+`required_base_depth(...)` for its raise-only side effect — gated ONLY on
+`base_timeframe is not None`, never on `rec["enabled"]`. This runs inside the per-instance
+`try` at lines 322-366, i.e. BEFORE `add_strategy` (line 379) and BEFORE the
+present-but-dark `deactivate_strategy()` (lines 386-387). Because an unwarmable row is
+quarantined before registration, it never enters `self.strategies`, so the ladder — which
+iterates the surviving registered roster — cannot re-encounter it. The load-bearing WR-02
+comment block (lines 343-362) documents exactly why the check must stay ungated. Pinned by
+`test_finer_than_base_timeframe_row_is_quarantined_at_rehydrate_not_crash_boot`
+(`tests/unit/strategy/test_rehydrate.py:372-409`).
 
-2. **It reintroduces the silent under-provisioning that F-1 exists to prevent, on a path
-   with no guard.** The ring is a `deque(maxlen=cache_capacity())` fixed at creation and
-   cannot resize (`live_bar_feed.py:689`). Pre-round-2, disabled strategies inflated the
-   ring, so a disabled strategy was always fully provisioned. Post-round-2, a strategy
-   stored `enabled=False` at boot whose base-scaled warmup exceeds every active strategy's
-   is excluded from ring sizing. When an operator later issues `enable`
-   (`strategies_handler.py:1351`), the verb only `activate_strategy()` + `mark_unwarm()` +
-   `_request_rewarm()` — it does **not** re-check capacity and cannot resize the ring
-   (contrast the `add` gate at `:759-788` and the `reconfigure` gate at `:987-1026`, both
-   of which reject `depth > capacity` loudly). The warmup fetch depth is
-   `cache_capacity() + warmup_margin` (`live_bar_feed.py:308`), now sized without the
-   re-enabled strategy, so its warmup is under-provisioned — a regression from the
-   pre-round-2 guarantee and inconsistent with the sibling capacity gates that treat this
-   under-provisioning as a correctness defect.
+**(4) CR-01 present-but-dark loading, the D-19 quarantine shape, and backtest inertness are
+intact.**
+- Present-but-dark: `rehydrate.py:386-387` honors `enabled` as `is_active` via
+  `deactivate_strategy()` (never as a load filter); `read_all()`
+  (`strategy_registry_store.py:356-406`) LEFT-OUTER-JOINs the full roster. Pinned by
+  `test_rehydrate_reconstructs_disabled_rows_present_but_dark`.
+- D-19 shape: the quarantine appends the name, fires ONE CRITICAL `ErrorEvent` via
+  `alert_sink.alert`, `continue`s, and never mutates the row (`rehydrate.py:367-376`).
+  Deterministic order comes from `read_all()`'s `strategy_name ASC` / `portfolio_id ASC`
+  (`strategy_registry_store.py:381-384`). The `_QUARANTINABLE` tuple is narrow and explicit
+  (lines 105-112) so a store/driver fault still propagates loud. Pinned by
+  `test_quarantine_skips_bad_rows_keeps_healthy_and_never_mutates_the_row` and
+  `test_unreadable_store_propagates_and_is_not_degrade_cleaned`.
+- Backtest inertness: the registry/store/rehydrate imports are lazy inside the
+  `system_store is not None` gate in `build_live_system`
+  (`live_trading_system.py:1600-1648`) and the registry subpackage is not barrel-exported
+  (`registry/__init__.py:9-12`). `tests/integration/test_okx_inertness.py` passes.
 
-**Fix:** Drop the `is_active` filter from `derive_warmup_depth` so the ring is sized to the
-deepest *possible* active strategy (including currently-disabled, re-enable-able ones),
-restoring the pre-round-2 provisioning guarantee. The floor is already safe via
-`default=1` + the outer `max`:
+**(5) No contradiction between the rehydrate quarantine and the warmup ladder.**
+Both use the same shared `required_base_depth` boundary keyed on the same feed
+`base_timeframe`. Every strategy that survives rehydrate is provably warmable (the quarantine
+already raised on the unwarmable ones), so when `register_strategy_warmup` →
+`derive_warmup_depth` (`session_initializer.py:133-135`) later ladders `required_base_depth`
+over the surviving-and-registered roster, none can raise `UnwarmableTimeframeError`. The
+rehydrate-vs-`add`/`reconfigure` asymmetry (rehydrate does raise-only, no `depth > capacity`
+gate) is correct and documented: at rehydrate the ring is sized AFTER from the full survivor
+set, whereas the runtime verbs face an already-fixed-`maxlen` ring.
 
-```python
-# cache_registration.py — size to the whole roster, not active-only:
-if base_timeframe is None:
-    return max(NEWEST_BAR_ONLY, max((s.warmup for s in strategies), default=1))
-return max(
-    NEWEST_BAR_ONLY,
-    max((required_base_depth(s.warmup, s.timeframe, base_timeframe)
-         for s in strategies), default=1))
-```
+### Fresh adversarial scan — no new defects
 
-The finer-than-base concern the filter was added for is already handled by the rehydrate
-quarantine (nothing unwarmable reaches the roster). Alternatively, if excluding disabled
-strategies from ring sizing is intentional for memory reasons, add an explicit
-`depth > capacity` reject to the `enable` verb mirroring the `add`/`reconfigure` gates so
-the failure is loud, never silent. Update
-`test_register_strategy_warmup_skips_deactivated_strategies` and
-`test_derive_warmup_depth_skips_deactivated_unwarmable_strategy` to match the chosen
-contract.
+- Money boundary held end-to-end: `config_codec.py` and `policy_codec.py` refuse JSON floats
+  for `Decimal` params and re-enter the Decimal domain only via `to_money` (string path);
+  non-finite Decimals are refused on both encode and decode.
+- Access control: both `resolve_strategy_class` (`catalog.py`) and `decode_policy`
+  (`policy_codec.py`) resolve untrusted `strategy_type` / `kind` strings by plain dict lookup
+  in an injected allowlist only — never via the import system and never by interpreting a
+  blob field as source text. No injection surface introduced.
+- SQL surface is parameterized Core throughout (`strategy_registry_store.py`); FK ordering
+  (child-before-parent delete) is correct and enforced on both dialects; the migration's A1
+  guard refuses a destructive drop of a non-empty `strategy_subscriptions` (loud over silent).
+- Atomicity: `_apply_params` resolves into locals and commits only after all checks
+  (`base.py:243-299`); `reconfigure` trial-constructs a throwaway before touching the live
+  instance (`strategies_handler.py:1119-1163`), with the SHORT-01 direction re-gate that
+  `validate()` cannot cover. The persist-then-apply asymmetry is deliberate and documented.
+- No unhandled null/edge cases found in the per-tick `calculate_signals` / `_dispatch_pair`
+  gap and readiness gates, the `LiveBarFeed` monotonic guard, or the `_portfolio_id_from` /
+  `_resolve_portfolio_id` parse-or-reject seams.
 
-### WR-02: rehydrate quarantines a *disabled* unwarmable row instead of loading it present-but-dark — orphaning its open positions (CR-01 tension) and inconsistent with the ladder's own disabled-skip
+### Test evidence (this run)
 
-**File:** `itrader/strategy_handler/registry/rehydrate.py:341-354`
-
-**Issue:**
-The per-instance warmability check runs `required_base_depth(...)` for **every** row
-regardless of `rec["enabled"]`, inside the `_QUARANTINABLE` try. A row stored
-`enabled=False` whose timeframe is unwarmable against the current base cadence (reachable
-when the operator changes the subscribed stream's base cadence between restarts, or via a
-seeded/legacy row) is therefore **quarantined** — skipped, alerted, and NOT registered.
-
-This contradicts CR-01, the explicit round-1 guarantee that a disabled row loads
-"present-but-dark" precisely so it retains ownership of its open positions
-(`rehydrate.py:12-18`, `strategies_handler.py:1235-1239`). A quarantined disabled
-strategy is never added to `self.strategies`, so its open positions become **orphaned**
-(no strategy owns them out) — the exact harm CR-01 was written to prevent. A disabled
-strategy cannot trade anyway (the D-07 gate stops new entries), so an unwarmable timeframe
-has no trading consequence for it; quarantining it trades a loud alert for lost position
-ownership.
-
-This is also internally inconsistent with the round-2 ladder change: `derive_warmup_depth`
-now *skips* `is_active == False` strategies "so a DEACTIVATED finer-than-base strategy can
-no longer raise from the ladder," yet rehydrate does the opposite — it *quarantines* a
-disabled unwarmable row rather than skipping the check for it.
-
-**Fix:** Gate the per-instance warmability check on the row's enabled state so a disabled
-row loads present-but-dark (retaining positions) and is only re-checked if/when it is
-re-enabled (which, combined with WR-01, should carry the loud capacity reject):
-
-```python
-# rehydrate.py — only gate warmability for rows that will actually trade:
-base_timeframe = getattr(
-    getattr(strategies_handler, "feed", None), "base_timeframe", None)
-if base_timeframe is not None and rec["enabled"]:
-    required_base_depth(strategy.warmup, strategy.timeframe, base_timeframe)
-```
-
-If quarantining an unwarmable disabled row is the intended D-19 behavior, document the
-position-orphaning consequence explicitly at the check site and reconcile it with CR-01's
-present-but-dark contract, since the two currently read as contradictory.
-
-## Info
-
-### IN-01: `derive_warmup_depth` comment/docstring cites a filter benefit the rehydrate quarantine already provides
-
-**File:** `itrader/price_handler/feed/cache_registration.py:342-359`, `:367-370`
-
-**Issue:** The comment and docstring justify the `is_active` filter partly as preventing "a
-DEACTIVATED finer-than-base strategy [from raising] from the ladder." As established in
-WR-01, the scaled ladder only runs over the rehydrated roster, and rehydrate already
-quarantines every finer-than-base row, so no such strategy can reach the ladder. The
-justification is stale even if WR-01's filter removal is not adopted. This is documentation
-drift, not a runtime defect.
-
-**Fix:** If the filter is retained, trim the finer-than-base justification to the actual
-retained behavior (excluding dark rows from ring depth); if removed per WR-01, delete the
-paragraph. Keep the floor rationale (`default=1` + outer `max`), which is accurate.
+- `tests/unit/price_handler/test_cache_registration.py`, `test_rehydrate.py`,
+  `test_mark_unwarm.py`, `test_is_active_gate.py`: 45 passed.
+- Full `tests/unit/strategy/`, `test_strategy_registry_store.py`, `test_policy_codec.py`,
+  `test_strategy_command_vocabulary.py`, `test_okx_inertness.py`: 367 passed.
+- Phase-10 integration suite (`test_reconfigure_positions`, `test_strategy_add_warmup`,
+  `test_strategy_external_add_lifecycle`, `test_strategy_registry_restart`,
+  `test_strategy_remove_flat`, `storage/test_migrations`): 19 passed, 10 skipped (all skips
+  are "PostgreSQL container unavailable" environment gates, not code defects).
+- `mypy` over `cache_registration.py` + `rehydrate.py`: clean.
 
 ---
 
-_Reviewed: 2026-07-18_
+_Reviewed: 2026-07-18T00:00:00Z_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
