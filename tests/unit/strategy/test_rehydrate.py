@@ -42,11 +42,12 @@ from uuid_utils.compat import uuid7
 
 from itrader.config.sql import SqlSettings
 from itrader.core.enums import ErrorSeverity
-from itrader.core.exceptions import UnknownParamError
+from itrader.core.exceptions import StrategyAdmissionError, UnknownParamError
 from itrader.core.ids import PortfolioId
 from itrader.core.sizing import FractionOfCash
 from itrader.price_handler.feed.cache_registration import UnwarmableTimeframeError
 from itrader.storage import SqlEngine
+from itrader.strategy_handler.base import Strategy
 from itrader.storage.strategy_registry_store import StrategyRegistryStore
 from itrader.strategy_handler.registry import StrategyConfigError, UnknownStrategyTypeError
 from itrader.strategy_handler.registry.rehydrate import (
@@ -664,6 +665,97 @@ def test_unreadable_store_propagates_and_is_not_degrade_cleaned() -> None:
             strategies_handler=_make_handler(),
             alert_sink=_RecordingAlertSink(),
         )
+
+
+# --------------------------------------------------------------------------------------
+# D-19 — the two arms stay SEPARABLE under the StrategyAdmissionError collapse
+# --------------------------------------------------------------------------------------
+
+
+class _InfraBoomStrategy(Strategy):
+    """A catalog strategy whose ``init()`` raises the INFRASTRUCTURE error.
+
+    The injection point for a mid-loop infrastructure fault: ``build_strategy`` ->
+    ``cls(**params)`` -> ... -> ``self.init()`` runs INSIDE rehydrate's per-row try
+    block, which is exactly where the two D-19 arms have to be told apart. Mirrors
+    the ``_BoomStrategy`` pattern in ``test_strategy_command_verbs.py``.
+    """
+
+    sizing_policy = FractionOfCash(Decimal("0.5"))
+
+    def init(self) -> None:
+        raise RehydrateInfrastructureError("store/driver fault raised mid-loop")
+
+    def generate_signal(self, ticker: str) -> Any:
+        return None
+
+
+def test_infrastructure_error_is_not_a_strategy_admission_error() -> None:
+    """STRUCTURAL — the narrow base is what keeps the two D-19 arms separable.
+
+    ``_QUARANTINABLE`` now names ``StrategyAdmissionError`` instead of hand-listing
+    four types. That collapse is only safe because the base covers strategy-payload
+    REFUSALS and nothing else: ``RehydrateInfrastructureError`` roots at
+    ``RuntimeError``, so a genuine store/driver fault is NOT swallowed into a
+    per-row quarantine. This non-subclass relationship is LOAD-BEARING — widening
+    the base to cover it would silently quarantine every strategy in turn,
+    reporting a data problem while hiding an outage.
+    """
+    assert not issubclass(RehydrateInfrastructureError, StrategyAdmissionError)
+
+
+def test_mid_loop_infrastructure_fault_propagates_instead_of_quarantining() -> None:
+    """BEHAVIORAL arm 1 — an infrastructure fault raised INSIDE the per-row try escapes.
+
+    Deliberately NOT combined with the admission-refusal run below: the whole point
+    is that the two arms behave DIFFERENTLY through the same try block.
+    """
+    store = _make_store()
+    try:
+        rows, _ = seeded_registry_rows([_empty(name="boom")])
+        blob = dict(rows[0]["config_json"])
+        blob["strategy_type"] = "_InfraBoomStrategy"
+        store.upsert("boom", "_InfraBoomStrategy", blob, True, _AT)
+
+        catalog = {**test_catalog(), "_InfraBoomStrategy": _InfraBoomStrategy}
+
+        with pytest.raises(RehydrateInfrastructureError, match="mid-loop"):
+            rehydrate_strategies(
+                store=store,
+                catalog=catalog,
+                strategies_handler=_make_handler(),
+                alert_sink=_RecordingAlertSink(),
+            )
+    finally:
+        store.dispose()
+
+
+def test_admission_refusal_row_is_quarantined_through_the_shared_base() -> None:
+    """BEHAVIORAL arm 2 — a payload REFUSAL through the same try block IS quarantined.
+
+    Same code path, opposite outcome: the row is skipped, named in the return, and
+    alerted CRITICAL rather than propagating.
+    """
+    store = _make_store()
+    try:
+        rows, _ = seeded_registry_rows([_empty(name="drifted")])
+        blob = dict(rows[0]["config_json"])
+        blob["removed_knob"] = 7
+        store.upsert("drifted", "EmptyStrategy", blob, True, _AT)
+
+        sink = _RecordingAlertSink()
+        quarantined = rehydrate_strategies(
+            store=store,
+            catalog=test_catalog(),
+            strategies_handler=_make_handler(),
+            alert_sink=sink,
+        )
+
+        assert quarantined == ["drifted"]
+        assert len(sink.events) == 1
+        assert sink.events[0].severity is ErrorSeverity.CRITICAL
+    finally:
+        store.dispose()
 
 
 # --------------------------------------------------------------------------------------
