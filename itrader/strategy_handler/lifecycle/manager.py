@@ -590,19 +590,29 @@ class StrategyLifecycleManager:
 	def _try_complete_removal(self, strategy: Strategy) -> None:
 		"""Drop + delete a pending-removal strategy IFF its positions are now flat (D-11).
 
-		Only once flat: drop the object from the MANAGED ROSTER, delete the rows (the store
-		removes the portfolio-subscription CHILD rows BEFORE the ``strategy_registry`` parent
-		— P-6; the FK forbids the reverse and the SQLite ``PRAGMA foreign_keys=ON`` hook
-		enforces it on both dialects), discard the name from ``_pending_removals``, and
-		recompute ``min_timeframe`` (it was derived at ``add_strategy`` time and dropping the
-		only strategy at the minimum leaves it stale).
+		Only once flat: delete the rows (the store removes the portfolio-subscription CHILD
+		rows BEFORE the ``strategy_registry`` parent — P-6; the FK forbids the reverse and
+		the SQLite ``PRAGMA foreign_keys=ON`` hook enforces it on both dialects), then drop
+		the object from the MANAGED ROSTER and discard the name from ``_pending_removals``,
+		and recompute ``min_timeframe`` (it was derived at ``add_strategy`` time and dropping
+		the only strategy at the minimum leaves it stale).
+
+		⚠ THE STORE DELETE RUNS FIRST, AND THE ORDER IS LOAD-BEARING. It is the only
+		operation here that can raise — the roster drop is membership-guarded and the
+		pending discard is a ``set.discard``, both non-raising. Doing the durable delete
+		ahead of every in-memory mutation makes a store fault leave the strategy FULLY
+		intact and STILL pending, so the next FILL retries the whole completion cleanly.
+		The reverse order would strand the name in ``_pending_removals`` with the object
+		already gone from the roster: ``get_universe`` would keep filtering on a name
+		nothing will ever discard, and ``on_fill`` would re-enter on a strategy
+		``by_name()`` can no longer resolve.
 		"""
 		if not self._strategy_is_flat(strategy):
 			return
-		self._managed.remove(strategy)
 		if self.registry_store is not None:
 			# Child-then-parent delete (P-6) — the store owns the FK ordering.
 			self.registry_store.delete(strategy.name)
+		self._managed.remove(strategy)
 		self._managed.discard_pending(strategy.name)
 		self._managed.recompute_min_timeframe()
 

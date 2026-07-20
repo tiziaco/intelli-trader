@@ -968,6 +968,28 @@ def _fill(ticker: str = _TICKER) -> Any:
     return SimpleNamespace(ticker=ticker)
 
 
+class _FaultyDeleteStore:
+    """Registry-store wrapper whose ``delete`` raises while ``fail`` is set.
+
+    ``delete`` is defined explicitly so attribute lookup finds it BEFORE
+    ``__getattr__``; every other call the remove path makes (the
+    ``_persist_strategy`` upsert, ``get``, the subscription writers) delegates
+    to the real store unchanged.
+    """
+
+    def __init__(self, wrapped: StrategyRegistryStore) -> None:
+        self._wrapped = wrapped
+        self.fail = True
+
+    def delete(self, strategy_name: str) -> None:
+        if self.fail:
+            raise RuntimeError("registry store delete faulted")
+        self._wrapped.delete(strategy_name)
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._wrapped, item)
+
+
 def test_remove_with_an_open_position_does_not_drop_immediately(
     store: StrategyRegistryStore,
 ) -> None:
@@ -1111,6 +1133,39 @@ def test_remove_degrades_cleanly_with_no_store(store: StrategyRegistryStore) -> 
 
     assert strategy not in handler.strategies
     assert handler.registry_store is None
+
+
+def test_a_store_fault_during_removal_completion_mutates_nothing(
+    store: StrategyRegistryStore,
+) -> None:
+    """WR-01 — a store fault at ``delete()`` leaves the removal fully retryable.
+
+    The store delete is the ONLY call in the completion sequence that can raise, so
+    it runs BEFORE every in-memory mutation. A fault therefore leaves the strategy
+    fully intact — still in the roster AND still pending — rather than half-applied,
+    and the next FILL retries cleanly.
+    """
+    faulty = _FaultyDeleteStore(store)
+    handler, strategy = _handler(faulty)
+    # Flat -> completion is attempted synchronously on the verb.
+    handler.portfolio_read_model = _FakeReadModel(held=set())
+
+    with pytest.raises(RuntimeError):
+        handler.on_strategy_command(
+            StrategyCommandEvent.remove(strategy_name=_NAME, time=_T))
+
+    # THE falsifying pair: before the raising call was ordered first, the roster drop
+    # had already run by the time delete() faulted, so both of these were FALSE.
+    assert strategy in handler.strategies
+    assert _NAME in handler._pending_removals
+
+    # Once the store recovers, the next FILL completes the removal cleanly.
+    faulty.fail = False
+    handler.on_fill(_fill())
+
+    assert strategy not in handler.strategies
+    assert _NAME not in handler._pending_removals
+    assert store.get(_NAME) is None
 
 
 def test_min_timeframe_is_recomputed_after_a_remove(store: StrategyRegistryStore) -> None:
