@@ -905,6 +905,57 @@ class StrategyLifecycleManager:
 				'reconfigure for strategy %s rejected (%s) — live instance untouched',
 				event.strategy_name, type(exc).__name__)
 			return
+		except Exception as exc:
+			# Tier 2 — s6b. ZONE 1 fallback: any OTHER trial failure is STILL a loud no-op.
+			#
+			# 1. WHY A ZONE GUARD AND NOT A TYPE TUPLE. `cls(**params)` above reaches
+			#    `Strategy.__init__` -> `_run_init()` -> `init()`, and `init()` is ARBITRARY
+			#    operator-supplied code from my_strategies/. `_run_init` sits deliberately
+			#    OUTSIDE the `StrategyValidationError` wrap in `Strategy.__init__` (see its
+			#    own point 3), so the set of exceptions escaping it is UNBOUNDED BY
+			#    CONSTRUCTION and enumerating types fixes the INSTANCE, never the CLASS. The
+			#    pre-`ra5` `(StrategyAdmissionError, ValueError)` tuple caught exactly ONE
+			#    arbitrary member of that infinite set while TypeError / KeyError /
+			#    AttributeError always escaped — it LOOKED like coverage and was a
+			#    coincidence. `ra5` did not create this hole; it removed the accident that
+			#    concealed it. Do not "simplify" this arm back to a type tuple.
+			# 2. THE GENERAL RULE, stated verb-independently so the next verb inherits it:
+			#    EVERY D-10 verb that invokes `_run_init` on operator-supplied input carries
+			#    a zone guard, and the guard's SHAPE FOLLOWS ITS ZONE — zone 1 refuses as a
+			#    loud no-op, zone 2 routes into the designed CRITICAL path (see the apply
+			#    arm below). The km2/CR-01 principle is a property of what `init()` IS, not
+			#    of which verb it was first noticed in; it landed on `_add_strategy_verb`
+			#    only because CR-01 happened to point there. D-10 makes the stakes concrete:
+			#    STRATEGY_COMMAND is externally admitted, so an escape reaches
+			#    ErrorPolicy.record_failure -> the failure-rate tripwire -> halt(), and
+			#    HALTED has NO legal exit except an operator reset_halt(). Routine bad
+			#    operator input must never latch live trading into HALT.
+			# 3. WHY THIS DOES NOT VIOLATE THE NEVER-A-BARE-EXCEPT DOCTRINE. That doctrine
+			#    governs ZONE 2 — the store/persist/emit calls, where an infrastructure
+			#    fault MUST stay loud so D-19 holds. This arm covers ZONE 1 ONLY: untrusted
+			#    payload -> THROWAWAY object. Neither call in its `try` (decode_strategy_config,
+			#    cls(**params)) touches a store, and the arm sits BEFORE the
+			#    `registry_store.upsert` below, so returning here persists nothing and the
+			#    live instance is unmutated. Do not widen it past that boundary.
+			# 4. SCOPE IS THE EXACT `_add_strategy_verb` ANALOG. That site's tier-2 wraps its
+			#    single `build_strategy` call — and `build_strategy` is ITSELF
+			#    `decode_strategy_config` + `cls(**params)`, the same two calls this `try`
+			#    already spans. So no try-splitting is wanted: isolating `cls(**params)`
+			#    would make this guard NARROWER than the one it mirrors.
+			# 5. ERROR tier, mirroring the add site: an unexpected KIND means a defect in our
+			#    path rather than operator junk, so it must be visibly distinct from tier-1's
+			#    WARNING. exc_info carries the diagnostic; the message names `type(exc).__name__`
+			#    and NOTHING else — no payload values (the P8 declared-fields-only precedent
+			#    tier-1 follows), since an arbitrary init() message may quote operator config.
+			#
+			# Owning these per-site guards in ONE shared admission seam is deferred to
+			# .planning/todos/pending/shared-strategy-admission-seam.md (candidate after Phase 11).
+			self.logger.error(
+				'reconfigure for strategy %s failed with an UNEXPECTED error kind (%s) '
+				'during the trial — live instance untouched and nothing persisted; this '
+				'indicates a defect in the construction path rather than a bad payload',
+				event.strategy_name, type(exc).__name__, exc_info=True)
+			return
 		# SHORT-01/D-07 direction re-gate (audit 10-08 F1 — the phase's most dangerous fix).
 		# validate() does NOT check direction, and the SHORT-01 gate reads HANDLER state, so
 		# the trial construction CANNOT catch a short-enabling direction change. Re-run the
@@ -950,13 +1001,37 @@ class StrategyLifecycleManager:
 		# the NEW config and a restart heals (the deliberate persist-then-apply asymmetry).
 		try:
 			strategy.reconfigure(**params)
-		except StrategyAdmissionError as exc:
-			# Same narrow catch as the TRIAL site above — see there for why the redundant
-			# `ValueError` member was dropped (IN2-02). Here the residue is typed by the
-			# wrap in Strategy.reconfigure rather than Strategy.__init__. This site
-			# previously omitted UnknownStrategyTypeError (defensibly — apply resolves no
-			# class); folding it in via the shared base is harmless because apply cannot
-			# raise it.
+		except Exception as exc:
+			# s6b — ZONE 2 guard. The SAME unbounded hazard as the trial arm above (this
+			# `try` reaches `Strategy.reconfigure` -> `_run_init()` -> `init()`, arbitrary
+			# operator code outside the `StrategyValidationError` wrap), but a DIFFERENT
+			# SHAPE, because the zone is different. See the trial arm for the full
+			# why-a-zone-guard-not-a-type-tuple reasoning and the verb-independent rule.
+			#
+			# 1. WHY IT ROUTES INSTEAD OF NO-OPING. This is POST-PERSIST, so a silent
+			#    refusal would be a lie: the DB already holds the new config. The D-13
+			#    asymmetry is deliberate and PRESERVED — `_emit_reconfigure_apply_failure`
+			#    reports (CRITICAL ErrorEvent) WITHOUT rolling back, and the invariant is
+			#    "the DB holds the NEW config and a restart heals". Both exception classes
+			#    route to it with identical semantics, so there is no second narrow arm:
+			#    one with a byte-identical body would be pure noise. `exc` is already
+			#    annotated `Exception` there, so widening needs no signature change.
+			# 2. WHY NEITHER EXTREME WORKS. Letting an arbitrary `init()` exception escape
+			#    to halt() would BYPASS this design's own handling of exactly this case (and
+			#    latch live trading, D-10). A blanket swallow would hide genuine zone-2
+			#    failures that D-19 wants loud.
+			# 3. D-19 IS NOT WEAKENED, and the boundary is structural, not conventional:
+			#    this `try` body is the SINGLE `strategy.reconfigure(...)` call and contains
+			#    no store call. `registry_store.upsert` sits OUTSIDE it (above), so a
+			#    store/driver fault still propagates out of this verb unchanged. Do NOT move
+			#    the upsert inside this `try`, and do not widen the body.
+			#
+			# (Pre-s6b this arm read `except StrategyAdmissionError` — narrow for the same
+			# IN2-02 reason as the trial arm, with the residue typed by the wrap in
+			# `Strategy.reconfigure` rather than `Strategy.__init__`. It also omitted
+			# UnknownStrategyTypeError, defensibly, since apply resolves no class. The
+			# ancestor remains SUBSUMED here, so admission refusals keep the identical
+			# emit shape they had.)
 			self._emit_reconfigure_apply_failure(event, strategy, exc)
 			return
 		# D-12: NO force-flat. Open positions stay open and their subsequent exits are
