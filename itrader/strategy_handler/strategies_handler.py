@@ -182,12 +182,6 @@ class StrategiesHandler(object):
 			portfolio_read_model=portfolio_read_model,
 			logger=self.logger,
 		)
-		# WR-02 (D-01) live-only readiness seam: the injected dynamic universe,
-		# wired ONLY on the live path via set_universe. Defaults None so the
-		# backtest wires no universe → the on_bar readiness gate is a
-		# single `is None` short-circuit (oracle byte-exact, RESEARCH OQ8).
-		self._universe: "Universe | None" = None
-
 		self.logger.info('Strategies Handler initialized')
 
 	# --- DECOMP-01 roster accessors ---------------------------------------
@@ -290,6 +284,19 @@ class StrategiesHandler(object):
 	def portfolio_read_model(self, value: "Optional[Any]") -> None:
 		self._lifecycle.portfolio_read_model = value
 
+	# IN-04: the WR-02 (D-01) live-only readiness seam is a READ-THROUGH over the
+	# lifecycle manager's single copy, matching the three live-dep properties
+	# above. It was previously a handler-side FIELD written alongside the
+	# manager's by set_universe — correct, but kept consistent only by that one
+	# method writing both. READ-ONLY here (no setter): the sole write path is
+	# set_universe -> the manager, and an absent setter makes a desync
+	# unrepresentable rather than merely unlikely. A desync would silently
+	# short-circuit _request_rewarm, which would then never re-warm.
+	@property
+	def _universe(self) -> "Universe | None":
+		"""The injected dynamic universe — owned by the lifecycle manager."""
+		return self._lifecycle._universe
+
 	def set_universe(self, universe: "Universe") -> None:
 		"""Wire the dynamic universe for the WR-02 readiness gate (D-01).
 
@@ -307,12 +314,12 @@ class StrategiesHandler(object):
 		``is not None`` guard and no ``assert``: the manager is constructed
 		unconditionally in ``__init__``, so it always exists by the time this runs
 		(an ``assert`` here would abort every backtest run, since
-		``universe_wiring`` reaches this method on the backtest path too). The
-		handler keeps its OWN reference because ``on_bar`` reads it on
-		the per-tick readiness gate — two references to ONE object is the intended
-		shape, not a duplicated state.
+		``universe_wiring`` reaches this method on the backtest path too).
+
+		IN-04: the manager is the SINGLE owner. This method writes only through it;
+		the handler's ``_universe`` is a read-only read-through property, so the
+		former handler-side copy — and the desync it made representable — is gone.
 		"""
-		self._universe = universe
 		self._lifecycle.set_universe(universe)
 
 	def is_warm(self, symbol: str) -> bool:
