@@ -483,7 +483,7 @@ the wave that touches them.*
 
 **Wave 4** *(blocked on 10.1-03)*
 
-- [ ] 10.1-04-PLAN.md — Rename `calculate_signals` → `on_bar` across source, route literal, 59 test call-sites, and docs; amend the committed spec doc (DECOMP-03)
+- [x] 10.1-04-PLAN.md — Rename `calculate_signals` → `on_bar` across source, route literal, 59 test call-sites, and docs; amend the committed spec doc (DECOMP-03)
 
 ### Phase 11 ★: Multi-Portfolio-Live
 
