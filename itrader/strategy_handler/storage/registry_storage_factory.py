@@ -76,6 +76,25 @@ class StrategyRegistryStorageFactory:
             return None
         elif environment == 'live':
             if sql_engine is None:
+                # WR-02 — this arm is LOUD for the same reason the D-21 has-table arm
+                # below is: both return None, and a None registry makes every persist
+                # arm in the control plane a clean no-op, so every enable / disable /
+                # subscribe / add / reconfigure applies in memory and vanishes on
+                # restart with no audit trail. Today's wiring makes this unreachable
+                # (build_live_system falls back to environment='backtest' when the
+                # credential probe fails), but the factory is now the SINGLE owner of
+                # this decision and is a public seam — the invariant belongs here, not
+                # in one caller's coincidental gating.
+                #
+                # Names the CONDITION only: no credentials, no connection string, no
+                # sql_engine repr (the D-21 arm logs no connection detail either).
+                logger = get_itrader_logger().bind(
+                    component="StrategyRegistryStorageFactory")
+                logger.warning(
+                    "environment='live' but no SQL spine was wired — the strategy "
+                    "registry is DISABLED. Every STRATEGY_COMMAND verb (enable, disable, "
+                    "subscribe, add, reconfigure) will apply IN MEMORY ONLY and is lost "
+                    "on restart.")
                 return None
             # GATE-01 — lazy imports keep SQLAlchemy and the registry store off the
             # backtest import path.

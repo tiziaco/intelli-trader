@@ -213,7 +213,7 @@ class StrategiesHandler(object):
 	@property
 	def _pending_removals(self) -> set[str]:
 		"""The D-11 pending-removal name set — the collaborator's OWN set object."""
-		return self._managed._pending_removals
+		return self._managed.pending_removals
 
 	# The two SHORT-01/D-07 flags are read/WRITE by delegation. They are a
 	# CAPABILITY gate, so there must be exactly ONE copy: `direction_admissible`
@@ -226,20 +226,20 @@ class StrategiesHandler(object):
 	@property
 	def _allow_short_selling(self) -> bool:
 		"""SHORT-01/D-07 gate flag — single source of truth is the collaborator."""
-		return self._managed._allow_short_selling
+		return self._managed.allow_short_selling
 
 	@_allow_short_selling.setter
 	def _allow_short_selling(self, value: bool) -> None:
-		self._managed._allow_short_selling = value
+		self._managed.allow_short_selling = value
 
 	@property
 	def _enable_margin(self) -> bool:
 		"""SHORT-01/D-07 gate flag — single source of truth is the collaborator."""
-		return self._managed._enable_margin
+		return self._managed.enable_margin
 
 	@_enable_margin.setter
 	def _enable_margin(self, value: bool) -> None:
-		self._managed._enable_margin = value
+		self._managed.enable_margin = value
 
 	# --- DECOMP-01 live-dep accessors (single owner) -----------------------
 	#

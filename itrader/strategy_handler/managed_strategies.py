@@ -19,7 +19,7 @@ delegating accessors):
   - `strategies`          the roster list  (assigned ONCE, mutated in place)
   - `_pending_removals`   the D-11 pending-removal name set (likewise)
   - `min_timeframe`       the IN-06 derived minimum
-  - `_allow_short_selling` / `_enable_margin`  the SHORT-01/D-07 gate flags
+  - `allow_short_selling` / `enable_margin`  the SHORT-01/D-07 gate flags
 
 ⚠ SAME-OBJECT INVARIANT. `strategies` and `_pending_removals` are assigned
 exactly once, in `__init__`, and are NEVER rebound — every mutation is in
@@ -28,8 +28,8 @@ sites mutate the handler's roster with `.append` / `.extend`, and a
 copy-returning accessor anywhere on the seam would silently turn every one of
 them into a no-op.
 
-⚠ SINGLE SOURCE OF TRUTH for the two flags. `_allow_short_selling` and
-`_enable_margin` are a CAPABILITY gate, not style state — `direction_admissible`
+⚠ SINGLE SOURCE OF TRUTH for the two flags. `allow_short_selling` and
+`enable_margin` are a CAPABILITY gate, not style state — `direction_admissible`
 is the shared predicate behind BOTH `add` and `reconfigure(direction=...)` so
 the two cannot drift and admit a short-enabling reconfigure that `add` would
 reject (the T-10-55 closure). They therefore live HERE only; the handler
@@ -56,9 +56,9 @@ TABS file (matching `strategy_handler/` source).
 """
 
 from datetime import timedelta
-from typing import Any
 
 from itrader.core.sizing import TradingDirection
+from itrader.logger import ITraderStructLogger
 from itrader.strategy_handler.base import Strategy
 
 
@@ -74,7 +74,7 @@ class ManagedStrategies:
 		self,
 		allow_short_selling: bool,
 		enable_margin: bool,
-		logger: Any,
+		logger: ITraderStructLogger,
 	) -> None:
 		"""
 		Parameters
@@ -87,9 +87,11 @@ class ManagedStrategies:
 			SHORT-01/D-07 registration flag, coupled with ``allow_short_selling``
 			because it turns on the lock-and-settle model (Phase 2 D-09) — the
 			only model that can represent a short.
-		logger: `Any`
+		logger: `ITraderStructLogger`
 			The bound logger the moved ``add_strategy`` body logs through. See
 			the module docstring for why the log lives inside the moved body.
+			Concretely typed (WR-03) so ``mypy --strict`` checks the call sites
+			here rather than erasing them behind ``Any``.
 		"""
 		self.logger = logger
 		# D-11 pending-removal state. A `remove` force-flats FIRST and drops the object
@@ -101,8 +103,11 @@ class ManagedStrategies:
 		# until flat (crash-safety: restart rehydrates and resumes managing the positions).
 		self._pending_removals: set[str] = set()
 		# SHORT-01/D-07 two-flag registration gate — read, never mutated here.
-		self._allow_short_selling: bool = allow_short_selling
-		self._enable_margin: bool = enable_margin
+		# IN-01: PUBLIC on this class. The handler's `_`-prefixed properties forward
+		# here, so this stays the single copy the gate reads (see the module
+		# docstring); only the collaborator-side name lost its underscore.
+		self.allow_short_selling: bool = allow_short_selling
+		self.enable_margin: bool = enable_margin
 		# IN-06: initialize to None rather than a 100-week magic sentinel. A
 		# downstream consumer reading min_timeframe before any strategy is
 		# registered gets a clear "no strategies" signal (None) instead of
@@ -129,6 +134,20 @@ class ManagedStrategies:
 		"""
 		if strategy in self.strategies:
 			self.strategies.remove(strategy)
+
+	@property
+	def pending_removals(self) -> set[str]:
+		"""The D-11 pending-removal name set — THIS object, never a copy (IN-01).
+
+		The public same-object read seam the handler's ``_pending_removals``
+		property forwards to. The five verb methods below (``mark_pending`` /
+		``discard_pending`` / ``is_pending`` / ``has_pending`` / ``pending_names``)
+		deliberately do NOT cover this: ``pending_names`` returns a ``list`` COPY,
+		so none of them can serve a caller that must mutate the live set. Tests
+		mutate the handler's set in place, so returning a copy here would silently
+		turn those mutations into no-ops (the module's SAME-OBJECT INVARIANT).
+		"""
+		return self._pending_removals
 
 	def mark_pending(self, name: str) -> None:
 		"""Enter ``name`` into the D-11 pending-removal set (in place)."""
@@ -226,7 +245,7 @@ class ManagedStrategies:
 		against the trial's resolved direction, is what actually closes T-10-55.
 		"""
 		return direction is TradingDirection.LONG_ONLY or (
-			self._allow_short_selling and self._enable_margin)
+			self.allow_short_selling and self.enable_margin)
 
 	def add_strategy(self, strategy: Strategy) -> None:
 		"""

@@ -63,6 +63,7 @@ from itrader.events_handler.events import (
 	StrategyCommandEvent,
 	UniversePollEvent,
 )
+from itrader.logger import ITraderStructLogger
 from itrader.price_handler.feed.base import BarFeed
 from itrader.price_handler.feed.cache_registration import (
 	UnwarmableTimeframeError,
@@ -153,7 +154,7 @@ class StrategyLifecycleManager:
 		registry_store: "Optional[Any]",
 		strategy_catalog: "Optional[Any]",
 		portfolio_read_model: "Optional[Any]",
-		logger: Any,
+		logger: ITraderStructLogger,
 	) -> None:
 		"""
 		Parameters
@@ -176,8 +177,10 @@ class StrategyLifecycleManager:
 		portfolio_read_model: `PortfolioReadModel | None`
 			D-11 flat-detect read-model consulted on FILL. A READ through an
 			injected read-model, NOT a cross-domain handler call.
-		logger: `Any`
-			The handler's logger, re-bound to this component.
+		logger: `ITraderStructLogger`
+			The handler's logger, re-bound to this component. Concretely typed
+			(WR-03) so ``mypy --strict`` checks this module's ~23 logger call
+			sites rather than erasing them behind ``Any``.
 		"""
 		self._managed = managed
 		self.global_queue: "EventBus" = global_queue
