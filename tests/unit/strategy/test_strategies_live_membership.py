@@ -3,7 +3,7 @@
 Three live-only seams composed onto ``StrategiesHandler`` (D-01/D-03/D-11), each a
 no-op / absent on the backtest oracle path:
 
-1. ``calculate_signals``: a defensive ``universe.is_ready(sym)`` gate composed
+1. ``on_bar``: a defensive ``universe.is_ready(sym)`` gate composed
    BEFORE the existing ``strategy.is_ready`` indicator-warmth gate — warm the
    indicator (``update`` runs) but do NOT trade while a symbol is PENDING/FAILED.
    None-guarded and O(1), so with no universe wired the oracle is byte-exact.
@@ -66,7 +66,7 @@ class _FakeUniverse:
 class _SpyStrategy:
     """A single-leg strategy spy recording ``update`` / ``generate_signal`` calls.
 
-    Carries only the surface ``calculate_signals`` / ``on_bars_loaded`` /
+    Carries only the surface ``on_bar`` / ``on_bars_loaded`` /
     ``on_strategy_command`` read (NOT a PairStrategy, so the pair branch is
     skipped). ``generate_signal`` returns ``None`` so nothing is emitted — the
     behavioral proof is the recorded call lists, not queue traffic.
@@ -76,7 +76,7 @@ class _SpyStrategy:
         self.tickers = list(tickers)
         self.name = name
         self.timeframe = timedelta(days=1)
-        # D-07: calculate_signals now reads is_active (the P10 enable/disable gate).
+        # D-07: on_bar now reads is_active (the P10 enable/disable gate).
         # Real strategies get it from Strategy.__init__ (base.py:193, defaults True);
         # this spy does not subclass Strategy, so it mirrors the default explicitly —
         # the stub's stated contract is to carry the surface the loop reads.
@@ -107,7 +107,7 @@ def _handler() -> StrategiesHandler:
 
 
 # --------------------------------------------------------------------------- #
-# Task 1 — the defensive readiness gate in calculate_signals + set_universe.
+# Task 1 — the defensive readiness gate in on_bar + set_universe.
 # --------------------------------------------------------------------------- #
 
 
@@ -117,7 +117,7 @@ def test_no_universe_wired_fires_as_today() -> None:
     spy = _SpyStrategy(["BTCUSDT"])
     handler.strategies.append(spy)
 
-    handler.calculate_signals(BarEvent(time=_T0, bars={"BTCUSDT": _bar()}))
+    handler.on_bar(BarEvent(time=_T0, bars={"BTCUSDT": _bar()}))
 
     assert spy.update_calls == [("BTCUSDT", spy.update_calls[0][1])]
     assert spy.generate_calls == ["BTCUSDT"]
@@ -130,7 +130,7 @@ def test_universe_ready_fires_like_no_universe() -> None:
     handler.strategies.append(spy)
     handler.set_universe(_FakeUniverse(True))
 
-    handler.calculate_signals(BarEvent(time=_T0, bars={"BTCUSDT": _bar()}))
+    handler.on_bar(BarEvent(time=_T0, bars={"BTCUSDT": _bar()}))
 
     assert len(spy.update_calls) == 1
     assert spy.generate_calls == ["BTCUSDT"]
@@ -143,7 +143,7 @@ def test_universe_pending_warms_but_does_not_trade() -> None:
     handler.strategies.append(spy)
     handler.set_universe(_FakeUniverse(False))
 
-    handler.calculate_signals(BarEvent(time=_T0, bars={"BTCUSDT": _bar()}))
+    handler.on_bar(BarEvent(time=_T0, bars={"BTCUSDT": _bar()}))
 
     assert len(spy.update_calls) == 1  # warmed
     assert spy.generate_calls == []  # NOT traded
@@ -156,7 +156,7 @@ def test_universe_gate_is_per_symbol() -> None:
     handler.strategies.append(spy)
     handler.set_universe(_FakeUniverse({"BTCUSDT": True, "ETHUSDT": False}))
 
-    handler.calculate_signals(
+    handler.on_bar(
         BarEvent(time=_T0, bars={"BTCUSDT": _bar(), "ETHUSDT": _bar("50")})
     )
 

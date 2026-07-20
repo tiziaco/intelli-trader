@@ -2,7 +2,7 @@
 
 The strategy is a pure function: ``generate_signal(ticker, bars) ->
 SignalIntent | None`` — no queue, no event construction, no portfolio
-knowledge. The handler (``StrategiesHandler.calculate_signals``) owns
+knowledge. The handler (``StrategiesHandler.on_bar``) owns
 stamping, policy attachment, per-portfolio fan-out, and enqueueing.
 
 Covered behaviors:
@@ -123,7 +123,7 @@ def test_too_short_window_short_circuits_in_handler(handler_env):
 
     The in-strategy ``if len(bars) < self.max_window: return None`` guard was
     removed from SMA_MACD and relocated to the framework short-circuit in
-    ``StrategiesHandler.calculate_signals`` (guarding on ``strategy.warmup``).
+    ``StrategiesHandler.on_bar`` (guarding on ``strategy.warmup``).
     A too-short window therefore means the handler skips ``generate_signal``
     entirely — no SignalEvent is emitted (the byte-exact firing-tick behavior
     the old guard produced, HARD-04).
@@ -133,7 +133,7 @@ def test_too_short_window_short_circuits_in_handler(handler_env):
     strategy.subscribe_portfolio(_PORTFOLIO_A)
     handler.add_strategy(strategy)
 
-    handler.calculate_signals(_bar_event())
+    handler.on_bar(_bar_event())
 
     assert q.empty()  # warmup short-circuit fired — no signal
 
@@ -447,7 +447,7 @@ def test_fan_out_single_portfolio_stamps_event(handler_env):
     handler.add_strategy(strategy)
     event = _bar_event()
 
-    handler.calculate_signals(event)
+    handler.on_bar(event)
 
     signal: SignalEvent = q.get(False)
     assert q.empty()  # exactly one
@@ -483,7 +483,7 @@ def test_fan_out_two_portfolios_two_events(handler_env):
     strategy.subscribe_portfolio(_PORTFOLIO_B)
     handler.add_strategy(strategy)
 
-    handler.calculate_signals(_bar_event())
+    handler.on_bar(_bar_event())
 
     signals = []
     while not q.empty():
@@ -504,7 +504,7 @@ def test_sparse_ticker_guard_skips_silently(handler_env):
     # The bar event carries a DIFFERENT ticker — the strategy's is absent.
     event = _bar_event(ticker="ETHUSDT")
 
-    handler.calculate_signals(event)  # must not raise
+    handler.on_bar(event)  # must not raise
 
     assert q.empty()
 
@@ -584,7 +584,7 @@ def test_fan_out_carries_declared_leverage(handler_env):
     strategy.subscribe_portfolio(_PORTFOLIO_A)
     handler.add_strategy(strategy)
 
-    handler.calculate_signals(_bar_event())
+    handler.on_bar(_bar_event())
 
     signal: SignalEvent = q.get(False)
     assert q.empty()
@@ -599,7 +599,7 @@ def test_fan_out_default_leverage_stays_one(handler_env):
     strategy.subscribe_portfolio(_PORTFOLIO_A)
     handler.add_strategy(strategy)
 
-    handler.calculate_signals(_bar_event())
+    handler.on_bar(_bar_event())
 
     signal: SignalEvent = q.get(False)
     assert q.empty()

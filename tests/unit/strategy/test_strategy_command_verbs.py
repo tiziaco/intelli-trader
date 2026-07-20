@@ -12,7 +12,7 @@ LOUD no-op — ``logger.warning`` + return, never a raise into the queue.
 
 **D-07 + WD-1** — ``enable`` sets ``is_active=True`` and persists ``enabled=True``, then
 FORCES A RE-WARM. It does NOT trade the next bar. The D-07 guard is FIRST in the
-``calculate_signals`` loop, so a disabled strategy's indicator state FREEZES; re-enabling
+``on_bar`` loop, so a disabled strategy's indicator state FREEZES; re-enabling
 without a re-warm would fire from a window with an N-bar hole. ``disable`` sets
 ``is_active=False``, persists ``enabled=False``, and leaves the object in the roster with
 its open positions and resting brackets running to natural exit — it stops NEW entries only.
@@ -58,7 +58,7 @@ _OTHER = "ETHUSD"
 _NAME = "verb_probe"
 _WARMUP = 3
 # Portfolio ids arrive as STRINGS in the untrusted payload (and are stored as String),
-# but `subscribed_portfolios` is typed `list[PortfolioId | int]` and calculate_signals
+# but `subscribed_portfolios` is typed `list[PortfolioId | int]` and on_bar
 # casts each entry straight onto SignalEvent.portfolio_id. So the dispatch must PARSE
 # them; a bare str would fan signals at a portfolio matching nothing.
 _P1 = "550e8400-e29b-41d4-a716-446655440000"
@@ -189,7 +189,7 @@ def test_enable_forces_a_re_warm_before_the_strategy_may_signal(
 ) -> None:
     """WD-1 — the load-bearing one. A re-enabled strategy must NOT fire from a holed window.
 
-    The D-07 guard is first in ``calculate_signals``, so a disabled strategy's indicator
+    The D-07 guard is first in ``on_bar``, so a disabled strategy's indicator
     state FREEZES. Trading the next bar after enable would compute SMA/MACD across an
     N-bar discontinuity — silently wrong values, invisible because warmth is monotone.
     """
@@ -279,7 +279,7 @@ def test_subscribed_portfolio_id_is_a_portfolio_id_not_a_str(
 ) -> None:
     """The payload id must be PARSED, not passed through (the 10-05 trap, one arm over).
 
-    ``calculate_signals`` casts each entry of ``subscribed_portfolios`` straight onto
+    ``on_bar`` casts each entry of ``subscribed_portfolios`` straight onto
     ``SignalEvent.portfolio_id`` (FL-02: "the runtime value is always a UUIDv7-backed
     PortfolioId"). A bare ``str`` sails through that cast and reaches the portfolio
     lookup matching NOTHING — the subscription looks healthy and fans into the void.
