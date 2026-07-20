@@ -924,6 +924,158 @@ def test_add_of_a_pair_strategy_succeeds(store: StrategyRegistryStore) -> None:
     assert store.get("spread1") is not None
 
 
+@pytest.mark.parametrize("bad_id", ["7", "not-a-uuid", "", 7])
+def test_add_with_a_malformed_portfolio_id_rejects_the_whole_add(
+    store: StrategyRegistryStore, monkeypatch: pytest.MonkeyPatch, bad_id: Any
+) -> None:
+    """WR2-01 — a SUPPLIED-but-unparseable ``portfolio_id`` must reject the entire add.
+
+    ``_portfolio_id_from`` deliberately collapses config-not-a-dict / key-absent /
+    wrong-type / unparseable-UUID into ONE ``None``. ``_add_strategy_verb`` used to read
+    that ``None`` as the legal absent state and proceed silently, producing a registered,
+    persisted, warming strategy with ZERO subscriptions. ``on_bar`` fans each intent over
+    ``subscribed_portfolios``, so an empty list means literally zero ``SignalEvent``s —
+    a self-inflicted trading outage on an engine that looks perfectly healthy.
+
+    The identical payload sent as ``subscribe_portfolio`` ALREADY warns
+    (``test_a_bare_numeric_portfolio_id_is_a_loud_no_op``), so the diagnosis must not
+    depend on which verb the operator happened to use. ``"7"`` is the live blast radius:
+    ``owe`` removed the bare-int fallback, so a numeric id now lands here.
+
+    ``_portfolio_id_supplied`` is what makes SUPPLIED-and-malformed distinguishable from
+    ABSENT, and the gate sits ahead of every state mutation so the reject never has to
+    unwind a completed ``add_strategy`` roster insert.
+    """
+    handler = _add_handler(store)
+    spy = _LogSpy()
+    monkeypatch.setattr(handler._lifecycle, "logger", spy)
+    config = _sma_add_config(["ETHUSD"])
+    config["portfolio_id"] = bad_id
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="malformed_pid", strategy_type="SMAMACDStrategy",
+        config=config, time=_T))
+
+    assert [s.name for s in handler.strategies] == []
+    assert store.get("malformed_pid") is None
+    assert store.portfolio_subscriptions("malformed_pid") == []
+    assert _drain(handler.global_queue) == []
+    assert len(spy.warnings) == 1, "exactly one LOUD warning — operator payload junk"
+    assert spy.errors == [], "operator junk is not a defect in our construction path"
+
+
+def test_add_without_a_portfolio_id_is_registered_and_silent(
+    store: StrategyRegistryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WR2-01 — an ABSENT ``portfolio_id`` stays a clean, SILENT, legal no-subscription add.
+
+    D-09 makes "computes but fans out to nobody" a LEGAL state: the operator may add a
+    strategy unsubscribed and wire it later with ``subscribe_portfolio``. So the WR2-01
+    reject must key on SUPPLIED-and-malformed only — warning on absence would cry wolf on
+    the ordinary two-step add.
+    """
+    handler = _add_handler(store)
+    spy = _LogSpy()
+    monkeypatch.setattr(handler._lifecycle, "logger", spy)
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="unsubbed", strategy_type="SMAMACDStrategy",
+        config=_sma_add_config(["ETHUSD"]), time=_T))
+
+    added = next((s for s in handler.strategies if s.name == "unsubbed"), None)
+    assert added is not None
+    assert added.subscribed_portfolios == []
+    assert store.get("unsubbed") is not None
+    assert store.portfolio_subscriptions("unsubbed") == []
+    assert [type(e) for e in _drain(handler.global_queue)] == [UniversePollEvent]
+    assert spy.warnings == [], "absence is legal (D-09) and must stay SILENT"
+    assert spy.errors == []
+
+
+def test_add_with_an_explicitly_null_portfolio_id_is_registered_and_silent(
+    store: StrategyRegistryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WR2-01 — an explicit ``None`` VALUE is ABSENT, not malformed.
+
+    A FastAPI/Pydantic model declaring ``portfolio_id: str | None = None`` serializes the
+    unsubscribed case as a null on EVERY add, so a bare key-PRESENCE probe would reject the
+    most likely shape of the legal no-subscription payload. ``_portfolio_id_supplied``
+    therefore treats an explicit null as NOT supplied; every other value — non-``str``,
+    empty ``str``, non-UUID ``str`` — is supplied-and-malformed.
+    """
+    handler = _add_handler(store)
+    spy = _LogSpy()
+    monkeypatch.setattr(handler._lifecycle, "logger", spy)
+    config = _sma_add_config(["ETHUSD"])
+    config["portfolio_id"] = None
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="null_pid", strategy_type="SMAMACDStrategy",
+        config=config, time=_T))
+
+    added = next((s for s in handler.strategies if s.name == "null_pid"), None)
+    assert added is not None
+    assert added.subscribed_portfolios == []
+    assert store.get("null_pid") is not None
+    assert [type(e) for e in _drain(handler.global_queue)] == [UniversePollEvent]
+    assert spy.warnings == []
+    assert spy.errors == []
+
+
+def test_add_with_a_valid_portfolio_id_subscribes_and_is_silent(
+    store: StrategyRegistryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WR2-01 — the happy path is unmoved: one live subscription, one child row, no warning.
+
+    Pins that the new gate rejects ONLY the malformed shape. The parse itself is unchanged
+    (``_portfolio_id_from``); it simply happens earlier in ``_add_strategy_verb`` now and is
+    reused by the subscribe block rather than re-run.
+    """
+    handler = _add_handler(store)
+    spy = _LogSpy()
+    monkeypatch.setattr(handler._lifecycle, "logger", spy)
+    config = _sma_add_config(["ETHUSD"])
+    config["portfolio_id"] = _P1
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="subbed", strategy_type="SMAMACDStrategy",
+        config=config, time=_T))
+
+    added = next((s for s in handler.strategies if s.name == "subbed"), None)
+    assert added is not None
+    assert added.subscribed_portfolios == [UUID(_P1)]
+    assert store.get("subbed") is not None
+    assert store.portfolio_subscriptions("subbed") == [_P1]
+    assert spy.warnings == []
+    assert spy.errors == []
+
+
+@pytest.mark.parametrize("verb", ["subscribe_portfolio", "unsubscribe_portfolio"])
+def test_the_light_portfolio_verbs_keep_warn_and_ignore_on_a_malformed_id(
+    store: StrategyRegistryStore, monkeypatch: pytest.MonkeyPatch, verb: str
+) -> None:
+    """WR2-01 drift pin — only ``add`` gained the reject; the two light verbs are unmoved.
+
+    ``subscribe_portfolio`` / ``unsubscribe_portfolio`` operate on an ALREADY-registered
+    strategy, so "reject the command" for them means warn-and-ignore — the strategy STAYS
+    in the roster and nothing is written. Tearing down a live strategy because one runtime
+    subscription command carried junk would be a far worse cure than the disease. This
+    pins that the WR2-01 fix cannot leak into them.
+    """
+    handler, strategy = _handler(store)
+    spy = _LogSpy()
+    monkeypatch.setattr(handler._lifecycle, "logger", spy)
+
+    handler.on_strategy_command(StrategyCommandEvent(
+        time=_T, strategy_name=_NAME, verb=verb, config={"portfolio_id": "7"}))
+
+    assert [s.name for s in handler.strategies] == [_NAME]
+    assert strategy.subscribed_portfolios == []
+    assert store.portfolio_subscriptions(_NAME) == []
+    assert len(spy.warnings) == 1
+    assert spy.errors == []
+
+
 def test_add_degrades_cleanly_with_no_store(store: StrategyRegistryStore) -> None:
     """Test 9 (degrade-clean) — with registry_store None, add registers live, persists nothing."""
     handler = _add_handler(None)
