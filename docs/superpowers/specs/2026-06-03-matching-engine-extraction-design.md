@@ -175,7 +175,7 @@ exchange as today.
 **Event wiring (`full_event_handler.process_events`)**
 - `BAR` → `portfolio.update_portfolios_market_value`,
   `execution_handler.on_market_data` (**replaces** `order_handler.process_orders_on_market_data`),
-  `strategies_handler.calculate_signals`.
+  `strategies_handler.on_bar`.
 - `FILL` → `portfolio.on_fill` **and** `order_handler.on_fill`.
 - Ordering preserved: matching runs before signal generation, so fills enqueue
   before new signals (FIFO-correct).

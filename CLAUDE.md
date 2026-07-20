@@ -51,7 +51,7 @@ TIME   -> screeners_handler.screen_markets + feed.generate_bar_event   (Backtest
 BAR    -> portfolio_handler.update_portfolios_market_value
 
         + execution_handler.on_market_data              (exchange matches resting stop/limit -> FillEvent)
-        + strategies_handler.calculate_signals
+        + strategies_handler.on_bar
 
 SIGNAL -> order_handler.on_signal                       (validate + size -> OrderEvent)
 ORDER  -> execution_handler.on_order                    (exchange fills/rests -> FillEvent)
@@ -351,7 +351,7 @@ must import, run, and yield trustworthy results.
 | `EventHandler` | Drain queue; dispatch each event through `self._routes` (list order = execution order); fail-fast error seam | `itrader/events_handler/full_event_handler.py` |
 | `TradingSystem` | Backtest composition root + synchronous run loop over `TimeGenerator` | `itrader/trading_system/backtest_trading_system.py` |
 | `LiveTradingSystem` | Live composition root; background processing thread + start/stop/status lifecycle | `itrader/trading_system/live_trading_system.py` |
-| `TradingInterface` | Bridge between external/web API and `LiveTradingSystem` | `itrader/trading_system/trading_interface.py` |
+| `LiveTradingSystem.add_event` | External/web ingress into the live system (D-10 fail-closed: admits only externally-originated `SIGNAL` / `STRATEGY_COMMAND`) | `itrader/trading_system/live_trading_system.py` |
 | `TimeGenerator` | Yield `TimeEvent`s across a pinned bar-date grid | `itrader/trading_system/simulation/time_generator.py` |
 | `StrategiesHandler` | Run all strategies per bar; emit `SignalEvent`s | `itrader/strategy_handler/strategies_handler.py` |
 | `ScreenersHandler` | Dynamic market screening on TIME (deferred subsystem) | `itrader/screeners_handler/screeners_handler.py` |
@@ -379,7 +379,7 @@ must import, run, and yield trustworthy results.
 
 - Purpose: Wire all components around one `global_queue`; drive the run.
 - Location: `itrader/trading_system/`
-- Contains: `TradingSystem` (backtest for-loop), `LiveTradingSystem` (threaded), `TradingInterface`, `TimeGenerator`.
+- Contains: `TradingSystem` (backtest for-loop), `LiveTradingSystem` (threaded), `TimeGenerator`.
 - Depends on: All handlers, `EventHandler`, `BacktestBarFeed`/`CsvPriceStore`, `reporting`.
 - Used by: `scripts/run_backtest.py`, notebooks, external/web callers.
 - Purpose: Drain the queue and route each event to its registered handler callables.
@@ -431,7 +431,7 @@ must import, run, and yield trustworthy results.
 - Pattern: `@dataclass(frozen=True, slots=True, kw_only=True)` subclass of `Event`; `type` pinned via `field(default=EventType.X, init=False)`; factory class methods for safe construction.
 - Purpose: Base for all trading strategies.
 - Examples: `itrader/strategy_handler/base.py`; concrete `itrader/strategy_handler/strategies/SMA_MACD_strategy.py`, `itrader/strategy_handler/my_strategies/`.
-- Pattern: Subclass implements `calculate_signal(...)`; emits a `SignalEvent` onto `global_queue`.
+- Pattern: Subclass implements the `generate_signal(ticker)` abstractmethod returning a `SignalIntent`; the handler pushes bars via `update(ticker, bar)`, gates on `is_ready(ticker)`, and emits the resulting `SignalEvent` onto `global_queue`.
 - Purpose: Pluggable exchange interface.
 - Examples: `itrader/execution_handler/exchanges/base.py`; concrete `SimulatedExchange`.
 - Pattern: Implements `on_order`, `on_market_data`, `connect/disconnect/health_check/validate_order`.
@@ -454,11 +454,11 @@ must import, run, and yield trustworthy results.
 - Location: `itrader/trading_system/live_trading_system.py` — `LiveTradingSystem.start()`
 - Triggers: External caller / web API.
 - Responsibilities: Wire components, launch processing thread, manage lifecycle.
-- Location: `itrader/trading_system/trading_interface.py`
+- Location: `itrader/trading_system/live_trading_system.py` — `LiveTradingSystem.add_event()`
 - Triggers: Web API / external caller.
-- Responsibilities: Validate running state; construct and enqueue `OrderEvent`s.
-- Location: `itrader/strategy_handler/base.py` — strategy `calculate_signal` → `SignalEvent`.
-- Triggers: `StrategiesHandler.calculate_signals` per BAR.
+- Responsibilities: Fail-closed default-deny admission (D-10) — accepts only externally-originated `SIGNAL` and `STRATEGY_COMMAND` events onto the queue; a `SIGNAL` routes through `OrderHandler.on_signal` → `AdmissionManager` so validation/sizing/cash-reservation run before any `OrderEvent` is emitted.
+- Location: `itrader/strategy_handler/base.py` — strategy `generate_signal(ticker)` → `SignalIntent`, which the handler turns into a `SignalEvent`.
+- Triggers: `StrategiesHandler.on_bar` per BAR.
 
 ## Architectural Constraints
 

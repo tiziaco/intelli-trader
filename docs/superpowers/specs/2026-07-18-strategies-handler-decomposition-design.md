@@ -1,8 +1,66 @@
 # StrategiesHandler Decomposition — Design
 
 **Date:** 2026-07-18
-**Status:** Draft (awaiting user review)
+**Status:** SUPERSEDED IN PART — see the amendment below. Executed as phase 10.1 (plans 10.1-01 … 10.1-04), completed 2026-07-20.
 **Scope:** Structural refactor of `itrader/strategy_handler/strategies_handler.py` (1648 lines). Behaviour-preserving; oracle byte-exact.
+
+---
+
+## Amendment (2026-07-20, phase 10.1)
+
+This document is preserved as a historical design record, **not** as a description of what
+shipped. Phase 10.1's research pass (`10.1-RESEARCH.md`) disproved five of its factual claims
+with executed commands, found one material omission, and the owner made four decisions during
+execution that deliberately superseded the design. Everything below this section is the
+**original 2026-07-18 text**, corrected only for the method rename so it stays navigable.
+
+### A. Five claims disproved by executed verification
+
+1. **"The three live deps are constructor-visible."** They were **post-construction-injected** —
+   three assignments at `live_trading_system.py:1630/1641/1642`, not constructor arguments. The
+   design's proposed split assumed a constructor signature that did not exist.
+2. **"`set_universe` is live-only."** It runs on the **backtest** path too
+   (`universe_wiring.py:109`). Classifying it as live-only would have moved an oracle-critical
+   call off the backtest import graph.
+3. **"Five of the six function-local imports are load-bearing for GATE-01."** They were **not**.
+   A clean-interpreter probe leaked **zero** forbidden modules and **zero** SQLAlchemy with all
+   six hoisted to module top. The design's central justification for the lazy-import structure
+   was false; the imports were dissolved outright.
+4. **"`ErrorSeverity` / `ErrorEvent` are already imported at module top."** They were **not**, so
+   handling them was an **add**, not the delete the design described.
+5. **"312 test field-references."** The actual figure was **185** (113 handler-scoped).
+
+### B. Material omission
+
+The design enumerated the control-plane helpers but omitted **four module-level verb constants**
+that the extracted control plane depends on — `_PAIR_REFUSED_VERBS`, `_POLL_FOLLOW_ON_VERBS`,
+`_RECONFIGURE_IMMUTABLE`, `_RECONFIGURE_VERB_ONLY` (now `lifecycle/manager.py:94/101/122/125`).
+Following the design literally would have produced a `NameError` at the first verb dispatch.
+
+### C. Owner decisions that superseded the design
+
+1. **Unconditional `__init__`-time construction.** Both collaborators are built in `__init__`
+   from module-top imports — no `Optional`, no guard, no late-init helper. The design's
+   lazy/optional shape was rejected outright.
+2. **The three live deps are real at `__init__`.** `registry_store` is handler-owned via a new
+   `StrategyRegistryStorageFactory` keyed on `(environment, sql_engine)`; `strategy_catalog` is
+   an `Optional[Any]` `compose_engine` kwarg (D-01 forbids `itrader` importing a concrete
+   strategy class); `portfolio_read_model` is a `compose.py` pass-through.
+3. **Positive SQL-absence assertion replaced the `_FORBIDDEN` name-list entry.** The lifecycle
+   module is on the backtest import graph **by design**, so the design's proposed name-list entry
+   would have failed the gate immediately. `test_okx_inertness.py` now asserts SQL absence
+   positively instead.
+4. **`my_strategies/` excluded from the DECOMP-03 rename** (2026-07-20). It is gitignored and
+   untracked, imported by nothing, and its same-named methods are a distinct legacy per-strategy
+   API on the removed `AbstractStrategy` base — not the handler method.
+
+### D. Single-owner read-through properties
+
+The three live deps are exposed as read-through properties with a single owner. This was not in
+the design and was required by the test surface: **28 post-construction assignments across 7 test
+files** would otherwise have desynced from a manager holding captured values.
+
+---
 
 ## Problem
 
@@ -10,20 +68,20 @@
 
 | Concern | Methods | ~Lines | Runs on |
 |---|---|---|---|
-| **Data plane** (signal generation / warmup) | `calculate_signals`, `_emit_intent`, `_dispatch_pair`, `on_bars_loaded`, `is_warm`, `set_universe` | ~300 | backtest **+** live |
+| **Data plane** (signal generation / warmup) | `on_bar`, `_emit_intent`, `_dispatch_pair`, `on_bars_loaded`, `is_warm`, `set_universe` | ~300 | backtest **+** live |
 | **Control plane** (STRATEGY_COMMAND verbs) | `on_strategy_command` + 13 helpers (`_add/_remove/_reconfigure_*_verb`, `_persist_strategy`, `_request_rewarm`, `_portfolio_id_from`, `_strategy_is_flat`, `_try_complete_removal`, `_reconfigure_*_check`, `_emit_reconfigure_apply_failure`, `on_fill`) | ~700 | **live only** |
 | **Roster** (membership + registration rules) | `add_strategy`, `_direction_admissible`, `_recompute_min_timeframe`, `get_strategies_universe`, `update_config` | ~200 | both |
 
 Two concrete symptoms:
 
-1. **Mixed responsibilities in one file** — the live-only control plane (~700 lines) sits on top of the oracle-critical `calculate_signals` hot path.
+1. **Mixed responsibilities in one file** — the live-only control plane (~700 lines) sits on top of the oracle-critical `on_bar` hot path.
 2. **Load-bearing mid-function imports** — six function-local imports exist so the SQL/registry stack stays off the backtest import graph (**GATE-01 inertness**, gated by `tests/integration/test_okx_inertness.py`). Five are genuinely load-bearing today; one (`_emit_reconfigure_apply_failure`, lines 1041–1042: `ErrorSeverity`, `ErrorEvent`) is **not** — both modules are already imported at module top and pull no SQL.
 
 ## Goals
 
 - Split the file along its natural seams into three well-bounded units.
 - Move the live-only control plane off the backtest import graph so its imports live at module top — **dissolving the five load-bearing lazy imports**, not just the one accidental one.
-- Rename `calculate_signals` → `on_bar` to match the documented `on_<event>()` callback convention (`CONVENTIONS.md`), as a **separately-verified step**.
+- Rename the per-bar entry point — then the sole imperative-verb name on the BAR route — to `on_bar`, matching the documented `on_<event>()` callback convention (`CONVENTIONS.md`), as a **separately-verified step**.
 - Keep the backtest oracle **byte-exact** (`46189.87730727451`, oracle 134) and `test_okx_inertness.py` green.
 - Preserve the public handler surface so no external caller (compose, route registrar, tests) breaks, except the deliberate `on_bar` rename.
 
@@ -99,7 +157,7 @@ These call into `managed` for roster mutation (`managed.add_strategy`, `managed.
 ### Unit 3 — `StrategiesHandler` (slimmed, ~350 lines)
 
 **Keeps (data plane + queue seam):**
-- `on_bar` (renamed from `calculate_signals`), `_emit_intent`, `_dispatch_pair`, `on_bars_loaded`, `is_warm`, `set_universe`, `update_config`.
+- `on_bar` (renamed in DECOMP-03), `_emit_intent`, `_dispatch_pair`, `on_bars_loaded`, `is_warm`, `set_universe`, `update_config`.
 - Constructs `self._managed = ManagedStrategies(...)` and, when live deps are present, `self._lifecycle = StrategyLifecycleManager(self._managed, ...)`. On the backtest path the live deps are absent, so `self._lifecycle` is `None` (never constructed).
 
 **Public surface preserved via thin delegation (back-compat — tests and route registrar depend on these):**
@@ -117,19 +175,19 @@ The hot-path text `for strategy in self.strategies` is therefore **byte-identica
 
 ## The `on_bar` rename (separate, verified step)
 
-`calculate_signals` is the only BAR-route consumer named as an imperative verb; every sibling callback is `on_<event>()`. Rename to `on_bar`.
+The per-bar entry point was the only BAR-route consumer named as an imperative verb; every sibling callback is `on_<event>()`. Renamed to `on_bar`.
 
 **Ripple (all mechanical grep-and-replace, but touches the route table → own verification):**
 - `events_handler/full_event_handler.py:95` — the **only** route site. The BAR route lives in the base `_routes` literal that *both* modes reuse; `route_registrar.py` does not set the BAR route (it only sets `UNIVERSE_*` / `STRATEGY_COMMAND` / `BARS_*` and appends to `FILL`), so it needs **no** edit for this rename.
 - **59 test call-sites** across ~14 files.
-- `CLAUDE.md` canonical-flow diagram (line ~54, `strategies_handler.calculate_signals`) and `.planning/codebase/` docs referencing it.
+- `CLAUDE.md` canonical-flow diagram (line ~54, `strategies_handler.on_bar`) and `.planning/codebase/` docs referencing it.
 
-**No compatibility alias.** This repo dislikes dead/duplicate surface; the call-sites are updated directly rather than leaving a `calculate_signals` shim.
+**No compatibility alias.** This repo dislikes dead/duplicate surface; the call-sites are updated directly rather than leaving a shim under the old name.
 
 ## Wiring changes
 
 - `trading_system/compose.py:227` — `StrategiesHandler(...)` constructor call: signature **unchanged**. Internal wiring (constructing `ManagedStrategies` + `StrategyLifecycleManager`) happens inside `__init__`, so compose is untouched except any read-back it already does.
-- `route_registrar.py` — registrations reference `self._strategies_handler.on_strategy_command`, `.on_bars_loaded`, `.on_fill`; all preserved via handler delegation, so **no registrar edit** (it does not reference `calculate_signals`/the BAR route).
+- `route_registrar.py` — registrations reference `self._strategies_handler.on_strategy_command`, `.on_bars_loaded`, `.on_fill`; all preserved via handler delegation, so **no registrar edit** (it does not reference `on_bar`/the BAR route).
 - `full_event_handler.py:95` — BAR route updated for the `on_bar` rename only.
 
 ## Testing & back-compat
@@ -154,6 +212,6 @@ The hot-path text `for strategy in self.strategies` is therefore **byte-identica
 
 1. Extract `ManagedStrategies` + delegating properties on the handler (no verb moves yet). Verify: full suite + oracle.
 2. Extract `StrategyLifecycleManager`; move the 13 verb helpers + `on_strategy_command`/`on_fill`; hoist imports to module top; add the `self._lifecycle is not None` guards on the handler's delegators; delete the now-dead lazy imports (including the accidental 1041–1042). Verify: full suite + oracle + inertness.
-3. Rename `calculate_signals` → `on_bar` across source, routes, tests, and docs. Verify: full suite + oracle + `test_dispatch_registry`.
+3. Rename the per-bar entry point to `on_bar` across source, routes, tests, and docs. Verify: full suite + oracle + `test_dispatch_registry`.
 
 Each step is independently green — the refactor never has a broken intermediate state.
