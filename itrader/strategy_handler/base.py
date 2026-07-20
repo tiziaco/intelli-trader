@@ -511,7 +511,7 @@ class Strategy(ABC):
 		# (duplicate) drops SILENTLY (expected/benign). Monotonic bars (bar.time > last, and
 		# the first bar) fall through and record the raw bar.time at the end of the method.
 		# BACKTEST INERTNESS: update() IS on the backtest per-tick path
-		# (strategies_handler.calculate_signals), BUT backtest bars for a ticker arrive
+		# (strategies_handler.on_bar), BUT backtest bars for a ticker arrive
 		# strictly monotonically increasing in bar.time, so `bar.time <= last` is NEVER
 		# true — the reject branch is never taken and the SMA_MACD oracle is byte-exact.
 		last_time = self._last_bar_time.get(ticker)
@@ -634,7 +634,7 @@ class Strategy(ABC):
 		warm path, not three).
 
 		WHY it exists (WD-1). The D-07 ``is_active`` guard sits FIRST in the
-		``calculate_signals`` loop, so ``update`` never runs while a strategy is disabled
+		``on_bar`` loop, so ``update`` never runs while a strategy is disabled
 		and its O(1) recurrence state FREEZES rather than advancing. Re-enabling without
 		this call would leave the strategy holding values computed across an N-bar HOLE
 		spanning the disabled period, and it would fire IMMEDIATELY from that state —
@@ -666,7 +666,7 @@ class Strategy(ABC):
 		Plan C removed the per-tick ``feed.window()`` slice: the handler now drives
 		value production via ``update(ticker, bar)`` per tick and gates on
 		``is_ready(ticker)`` (P5-D14), so ``evaluate`` is NO LONGER called from
-		``StrategiesHandler.calculate_signals``. It survives ONLY as a direct
+		``StrategiesHandler.on_bar``. It survives ONLY as a direct
 		window-driven test/back-compat seam (e.g. ``test_strategy`` feeds a
 		synthetic frame): it RESETS ``ticker``'s state, replays the window's bars
 		through the SAME ``update`` push (Model B — value-identical to the old
@@ -1008,7 +1008,7 @@ class Strategy(ABC):
 
 	def subscribe_portfolio(self, portfolio_id: PortfolioId | int) -> None:
 		# WR-01: idempotent subscribe — a duplicate subscription would fan the
-		# same intent out to one portfolio TWICE in calculate_signals (two
+		# same intent out to one portfolio TWICE in on_bar (two
 		# SignalEvents, two orders for one decision). Guard the append.
 		if portfolio_id not in self.subscribed_portfolios:
 			self.subscribed_portfolios.append(portfolio_id)

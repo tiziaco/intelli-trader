@@ -92,7 +92,7 @@ class EventHandler(object):
 			EventType.BAR: [
 				self.portfolio_handler.update_portfolios_market_value,  # 1) mark-to-market
 				self.execution_handler.on_market_data,                  # 2) resting-order matching
-				self.strategies_handler.calculate_signals,              # 3) new signals
+				self.strategies_handler.on_bar,                         # 3) new signals
 			],
 			EventType.SIGNAL: [self.order_handler.on_signal],
 			EventType.ORDER: [self.execution_handler.on_order],

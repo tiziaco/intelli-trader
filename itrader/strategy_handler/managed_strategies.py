@@ -2,7 +2,7 @@
 Roster state primitive — the single owner of the managed-strategy roster (DECOMP-01).
 
 `ManagedStrategies` is the phase-10.1 analog of `BracketBook` (D-05): a thin
-owner-class around the state that the DATA plane (`calculate_signals` iterates
+owner-class around the state that the DATA plane (`on_bar` iterates
 the roster) and the CONTROL plane (every STRATEGY_COMMAND verb mutates it)
 both reach for. Giving it one owner is what lets 10.1-03 lift the control plane
 out without the two planes reaching into each other's attributes.

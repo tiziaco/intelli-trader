@@ -174,7 +174,7 @@ def _resolve_portfolio_id(raw: str) -> PortfolioId | int:
 	``subscribed_portfolios`` is typed ``list[PortfolioId | int]``, and a ``Uuid`` column
 	would reject the legal ``int`` arm), and ``to_dict`` writes it out via ``str(pid)``. The
 	inverse therefore has to PARSE — handing the raw string on would be a silent
-	correctness bug rather than a typing nit: ``calculate_signals`` fans an intent out over
+	correctness bug rather than a typing nit: ``on_bar`` fans an intent out over
 	``subscribed_portfolios`` and casts each id straight onto ``SignalEvent.portfolio_id``
 	(``strategies_handler.py``, FL-02: "the runtime value is always a UUIDv7-backed
 	PortfolioId"). A bare ``str`` would sail through that cast and reach the portfolio

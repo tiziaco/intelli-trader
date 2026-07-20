@@ -197,7 +197,7 @@ class StrategyLifecycleManager:
 
 		Forwarded unconditionally from ``StrategiesHandler.set_universe``, which
 		keeps its own reference for the per-tick readiness gate in
-		``calculate_signals``. Two references to ONE object is the intended shape.
+		``on_bar``. Two references to ONE object is the intended shape.
 		"""
 		self._universe = universe
 
@@ -283,7 +283,7 @@ class StrategyLifecycleManager:
 
 		⚠ The parse is a CORRECTNESS requirement, not a typing nit — the same defect
 		10-05 hit on the rehydrate arm. ``subscribed_portfolios`` is typed
-		``list[PortfolioId | int]``, and ``calculate_signals`` fans each intent out over
+		``list[PortfolioId | int]``, and ``on_bar`` fans each intent out over
 		it and casts each id STRAIGHT onto ``SignalEvent.portfolio_id`` (FL-02: "the
 		runtime value is always a UUIDv7-backed PortfolioId"). A bare ``str`` sails
 		through that cast unchallenged and reaches the portfolio lookup as an id matching
@@ -982,7 +982,7 @@ class StrategyLifecycleManager:
 			if not strategy.is_active:
 				strategy.activate_strategy()
 				# ⚠ WD-1 — the load-bearing half of `enable`. The D-07 guard sits FIRST
-				# in calculate_signals, so this strategy's indicators FROZE while it was
+				# in on_bar, so this strategy's indicators FROZE while it was
 				# disabled: their values were computed over a window that now has an
 				# N-bar HOLE spanning the disabled period. Trading the next bar would let
 				# SMA/MACD silently produce wrong values across that discontinuity —

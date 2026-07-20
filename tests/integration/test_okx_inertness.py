@@ -330,7 +330,7 @@ def test_backtest_event_handler_phase7_routes_are_inert_empty() -> None:
     would mean live routing leaked onto the backtest path (the T-07-07-ORACLE threat).
 
     Built with ``MagicMock`` collaborators + a real ``Queue``: the ``_routes`` literal only
-    *references* handler attributes (e.g. ``self.strategies_handler.calculate_signals``); it
+    *references* handler attributes (e.g. ``self.strategies_handler.on_bar``); it
     never calls them at construction, so mocks are sufficient and no backtest data is loaded.
     """
     import queue as _queue

@@ -294,7 +294,7 @@ class LiveBarFeed(BarFeed):
         into config/stream.py, RESEARCH §Warmup safety-margin survey; with the
         03-04 D-13 registration ``cache_capacity()`` is 100, so K >= 105 fetches
         enough bars that stateful indicators actually warm — otherwise
-        ``calculate_signals`` short-circuits and the oracle produces zero trades,
+        ``on_bar`` short-circuits and the oracle produces zero trades,
         RESEARCH Pitfall 1).
 
         Every fetched ``ClosedBar`` is replayed one-by-one through the SAME

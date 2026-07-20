@@ -269,7 +269,7 @@ class _LifecycleSystem:
 
     def calculate_signals_for(self, day: int) -> list[SignalEvent]:
         bar = _bar(200, day=day)
-        self.system.strategies_handler.calculate_signals(
+        self.system.strategies_handler.on_bar(
             BarEvent(time=bar.time, bars={_SYM: bar}))
         return [e for e in self._drain() if isinstance(e, SignalEvent)]
 

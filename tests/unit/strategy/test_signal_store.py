@@ -134,7 +134,7 @@ def test_one_record_per_intent_regardless_of_portfolio_count(store_env):
     strategy.subscribe_portfolio(_PORTFOLIO_C)
     handler.add_strategy(strategy)
 
-    handler.calculate_signals(_bar_event())
+    handler.on_bar(_bar_event())
 
     records = store.get_all()
     assert len(records) == 1  # one intent -> one record, NOT one-per-portfolio
@@ -150,7 +150,7 @@ def test_none_intent_writes_no_record(store_env):
     strategy.subscribe_portfolio(_PORTFOLIO_A)
     handler.add_strategy(strategy)
 
-    handler.calculate_signals(_bar_event())
+    handler.on_bar(_bar_event())
 
     assert store.get_all() == []
 
@@ -163,7 +163,7 @@ def test_record_fields_mirror_intent_and_event(store_env):
     handler.add_strategy(strategy)
     event = _bar_event()
 
-    handler.calculate_signals(event)
+    handler.on_bar(event)
 
     record = store.get_all()[0]
     assert record.strategy_id == strategy.strategy_id
@@ -211,7 +211,7 @@ def test_by_strategy_and_by_ticker_filter(store_env):
         _OTHER_TICKER: Bar(time=_EVENT_TIME, open=Decimal("50"), high=Decimal("55"),
                            low=Decimal("45"), close=Decimal("52"), volume=Decimal("500")),
     })
-    handler.calculate_signals(event)
+    handler.on_bar(event)
 
     assert len(store.get_all()) == 2
 
