@@ -11,7 +11,11 @@ from itrader.price_handler.feed.base import BarFeed
 from itrader.strategy_handler.base import Strategy
 from itrader.strategy_handler.pair_base import PairStrategy
 from itrader.strategy_handler.signal_record import SignalRecord
-from itrader.strategy_handler.storage import SignalStorageFactory, SignalStore
+from itrader.strategy_handler.storage import (
+	SignalStorageFactory,
+	SignalStore,
+	StrategyRegistryStorageFactory,
+)
 from itrader.events_handler.bus import EventBus
 from itrader.events_handler.events import (
 	BarEvent,
@@ -115,13 +119,16 @@ class StrategiesHandler(object):
 			default ``max_leverage == 1`` this gives fully-collateralized shorts
 			(no leverage); levered shorts are a separate opt-in dial. Defaults off.
 		registry_store: `StrategyRegistryStore | None`
-			D-09: the injected durable instance registry every mutating
-			STRATEGY_COMMAND verb writes through. ``None`` is the BACKTEST /
-			in-memory path — every persist arm is then a clean no-op, exactly as
-			the ``system_store is not None`` gate degrades everywhere else, so the
-			oracle path carries no store and no SQL. Live wiring injects it inside
-			that gate (``live_trading_system.build_live_system``). Typed ``Any`` so
-			the SQL stack stays off this module's import graph (GATE-01 inertness).
+			D-09: the durable instance registry every mutating STRATEGY_COMMAND
+			verb writes through. DECOMP-01a: the handler OWNS this — it is derived
+			in ``__init__`` from ``(environment, sql_engine)`` via
+			``StrategyRegistryStorageFactory``, not assigned by a caller after
+			construction. ``None`` is the BACKTEST / in-memory path — every persist
+			arm is then a clean no-op, exactly as the ``system_store is not None``
+			gate degrades everywhere else, so the oracle path carries no store and
+			no SQL. An explicitly passed ``registry_store`` still WINS: it is the
+			override seam the tests inject through. Typed ``Any`` so the SQL stack
+			stays off this module's import graph (GATE-01 inertness).
 		"""
 		self.global_queue: "EventBus" = global_queue
 		self.feed: BarFeed = feed
@@ -136,21 +143,34 @@ class StrategiesHandler(object):
 		self.signal_store: SignalStore = (
 			signal_store or SignalStorageFactory.create(environment, sql_engine=sql_engine)
 		)
-		# D-09 durable instance registry — None on the backtest/in-memory path (see
-		# the ctor docstring). Every persist arm short-circuits on it.
-		self.registry_store: "Optional[Any]" = registry_store
+		# D-09 durable instance registry — DECOMP-01a: handler-OWNED, derived here
+		# from (environment, sql_engine) exactly like signal_store above, so the
+		# dep is REAL at construction rather than assigned by the live composition
+		# root afterwards. `create('backtest', sql_engine=None)` returns None, so
+		# the backtest path is unchanged and every persist arm short-circuits.
+		# An explicit `registry_store=` override still wins — tested with `is not
+		# None` rather than `or`, because a store object's truthiness is not part
+		# of its contract and an `or` would silently re-derive on a falsy store.
+		self.registry_store: "Optional[Any]" = (
+			registry_store if registry_store is not None
+			else StrategyRegistryStorageFactory.create(environment, sql_engine=sql_engine)
+		)
 		# D-10 injected strategy-type catalog — the access-control ALLOWLIST the `add`
 		# verb resolves an untrusted external `strategy_type` through (catalog.py). None
 		# is the backtest/in-memory path (`add` is never driven there); `add` LOUD-rejects
 		# when it is None so no external payload can be instantiated. Typed `Any` so the
-		# SQL/registry stack stays off this module's import graph (GATE-01 inertness);
-		# live wiring injects it inside build_live_system's `system_store is not None` gate.
+		# SQL/registry stack stays off this module's import graph (GATE-01 inertness).
+		# DECOMP-01a: passed at CONSTRUCTION as a compose_engine kwarg (build_live_system
+		# forwards its own `strategy_catalog`), not assigned afterwards.
 		self.strategy_catalog: "Optional[Any]" = strategy_catalog
 		# D-11 injected portfolio READ-model (PortfolioReadModel) — the flat-detect the
 		# `remove` verb consults on FILL to know when a force-closed strategy is flat. A
 		# READ through an injected read-model (the same seam the order domain uses), NOT a
-		# cross-domain handler call, so the queue-only contract holds. None on the
-		# backtest/in-memory path (remove never force-closes there). Typed `Any` (GATE-01).
+		# cross-domain handler call, so the queue-only contract holds. Typed `Any` (GATE-01).
+		# DECOMP-01a: compose_engine passes the `portfolio_handler` here on BOTH paths, so
+		# this is NON-None in backtest too. Backtest stays unaffected because the
+		# pending-removal machinery that reads it is never driven there: `on_fill` is not
+		# on the backtest FILL route and STRATEGY_COMMAND routes to an empty list.
 		self.portfolio_read_model: "Optional[Any]" = portfolio_read_model
 		# D-11 pending-removal state. A `remove` force-flats FIRST and drops the object
 		# only once the flat is OBSERVED on a later FILL cycle, so it is a PENDING state
@@ -180,12 +200,16 @@ class StrategiesHandler(object):
 		self.logger.info('Strategies Handler initialized')
 
 	def set_universe(self, universe: "Universe") -> None:
-		"""Wire the live dynamic universe for the WR-02 readiness gate (D-01).
+		"""Wire the dynamic universe for the WR-02 readiness gate (D-01).
 
-		Live-only seam (mirrors the inert-by-default pattern): the backtest
-		composition root never calls this, so ``self._universe`` stays ``None``
-		and the per-tick gate in ``calculate_signals`` short-circuits — the
-		SMA_MACD oracle path is untouched.
+		Called on BOTH paths — ``universe_wiring.wire_universe`` invokes it for
+		backtest too (reached from ``backtest_runner._initialise_backtest_session``),
+		so ``self._universe`` is NOT ``None`` in backtest. The oracle is nonetheless
+		unaffected, and by construction rather than by absence: ``Universe.__init__``
+		marks every member ``Readiness.READY`` and backtest membership derives FROM
+		the strategy tickers, so ``is_ready(ticker)`` always holds at the per-tick
+		gate in ``calculate_signals`` and the gate never skips — oracle-inert, proven
+		by the byte-exact double-run.
 		"""
 		self._universe = universe
 
@@ -887,8 +911,11 @@ class StrategiesHandler(object):
 		queue-mediated). Checks the strategy's tickers across its subscribed portfolios, so
 		a pair's BOTH legs must be flat (D-16).
 
-		With no read model injected there is nothing to observe: return True (the
-		backtest/in-memory degrade arm, where remove never force-closes and drops directly).
+		With no read model injected there is nothing to observe: return True. Since
+		DECOMP-01a this arm is UNREACHABLE from either composition root — compose_engine
+		passes the portfolio_handler on both paths — so it now guards only
+		directly-constructed handlers (the unit tests) rather than the backtest path it
+		was originally written for. Kept as a defensive default, not a live degrade arm.
 		A strategy with no subscribed portfolios is likewise vacuously flat.
 		"""
 		read_model = self.portfolio_read_model
