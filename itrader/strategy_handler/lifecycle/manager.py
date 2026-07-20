@@ -325,6 +325,34 @@ class StrategyLifecycleManager:
 		except (ValueError, AttributeError, TypeError):
 			return None
 
+	def _portfolio_id_supplied(self, event: StrategyCommandEvent) -> bool:
+		"""WR2-01 — the presence probe that makes ABSENT and MALFORMED distinguishable.
+
+		``_portfolio_id_from`` deliberately collapses FOUR outcomes into one ``None``:
+		config-not-a-dict, key absent, value of the wrong type, unparseable UUID. That
+		collapse is RIGHT for the two light verbs (``subscribe_portfolio`` /
+		``unsubscribe_portfolio`` warn on every ``None`` — the operator asked for a
+		subscription and did not get one, whatever the cause) and WRONG for ``add``,
+		where absence is a LEGAL state (D-09: register now, wire the portfolio later)
+		but malformation is operator error. ``add`` needs to tell the two apart; this
+		is the one probe that does it.
+
+		The ``"portfolio_id"`` key name and the ``isinstance(config, dict)`` guard live
+		HERE, adjacent to ``_portfolio_id_from``, rather than at the call site: the call
+		site re-reading ``event.config`` would duplicate the payload parsing this pair
+		centralizes and let the probe and the parser drift apart.
+
+		An explicit ``None`` VALUE counts as NOT supplied. A FastAPI/Pydantic model
+		declaring ``portfolio_id: str | None = None`` serializes the unsubscribed case as
+		a null on EVERY add, so a bare key-PRESENCE probe would reject the most likely
+		shape of the legal no-subscription payload. Every OTHER value — non-``str``,
+		empty ``str``, non-UUID ``str`` — is supplied-and-malformed.
+		"""
+		config = event.config
+		if not isinstance(config, dict):
+			return False
+		return config.get("portfolio_id") is not None
+
 	def _add_strategy_verb(self, event: StrategyCommandEvent) -> None:
 		"""D-10 `add`: catalog-gate -> construct DARK -> persist -> warm via the P7 poll.
 
@@ -389,6 +417,41 @@ class StrategyLifecycleManager:
 			self.logger.warning(
 				'add for strategy %s refused — a strategy with that name is already '
 				'registered (D-02); the existing instance is left untouched',
+				event.strategy_name)
+			return
+
+		# WR2-01 — a SUPPLIED but unparseable portfolio_id rejects the WHOLE add.
+		#
+		# Reject-without-registering is this method's established idiom, not a new policy:
+		# the D-10 catalog gate, the D-02 duplicate gate and the SHORT-01 arm all refuse the
+		# command outright rather than half-apply it. Without this arm the malformed id fell
+		# into the ABSENT branch below and the add proceeded SILENTLY, leaving a registered,
+		# persisted, warming strategy with zero subscriptions — and on_bar fans each intent
+		# over subscribed_portfolios, so an empty list means literally zero SignalEvents
+		# forever. A healthy-looking engine that trades nothing is worse than a loud refusal.
+		#
+		# ABSENT stays a clean legal no-op (D-09): the operator may add a strategy
+		# unsubscribed and wire it later with subscribe_portfolio. Only supplied-and-
+		# unparseable is refused — `_portfolio_id_supplied` is what separates the two.
+		#
+		# The identical payload sent as subscribe_portfolio ALREADY warns, so the diagnosis
+		# must not depend on which verb the operator happened to use.
+		#
+		# PLACEMENT is load-bearing. This is a pure payload check with no dependency on the
+		# constructed object, so it belongs AHEAD of every state mutation: rejecting down at
+		# the old parse site would have to UNDO a completed `_managed.add_strategy` roster
+		# insert. It also sits deliberately OUTSIDE the CR-01 two-tier zone-1 guard, which
+		# stays scoped to the single `build_strategy` call (see its own point 3) — this arm
+		# raises nothing, so it needs no guard.
+		portfolio_id = self._portfolio_id_from(event)
+		if portfolio_id is None and self._portfolio_id_supplied(event):
+			# Names the KIND/condition only — never echoes the payload value (the P8
+			# declared-fields-only precedent the tier-1 arm below follows).
+			self.logger.warning(
+				'add for strategy %s refused — its config["portfolio_id"] is present but '
+				'unparseable; nothing was registered or persisted. A registered strategy '
+				'with no subscription computes signals and fans them to nobody. Re-issue '
+				'with a valid portfolio UUID, or omit the key to add it unsubscribed',
 				event.strategy_name)
 			return
 
@@ -494,11 +557,12 @@ class StrategyLifecycleManager:
 				'add for strategy %s rejected — %s (a non-LONG_ONLY strategy needs the '
 				'handler short-enabled, SHORT-01/D-07)', event.strategy_name, exc)
 			return
-		# Subscribe any portfolio_id carried alongside the config (parsed + type-checked at
-		# the boundary, T-10-35; a bare str would fan signals at a portfolio matching
-		# nothing). Absent -> the strategy computes but fans out to nobody (a legal state,
-		# D-09), and the subscribe_portfolio verb can wire it later.
-		portfolio_id = self._portfolio_id_from(event)
+		# Subscribe the portfolio_id carried alongside the config. It was parsed +
+		# type-checked at the boundary by the WR2-01 gate ABOVE (T-10-35; a bare str would
+		# fan signals at a portfolio matching nothing) and the handle is reused here — the
+		# parse does NOT happen at this site. Reaching here with None therefore means
+		# ABSENT, never malformed: the strategy computes but fans out to nobody (a legal
+		# state, D-09), and the subscribe_portfolio verb can wire it later.
 		if portfolio_id is not None:
 			strategy.subscribe_portfolio(portfolio_id)
 		# Persist parent-first (the child FK requires the registry row to exist first).
