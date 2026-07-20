@@ -57,6 +57,7 @@ from itrader.core.enums import ErrorSeverity
 from itrader.core.exceptions import StrategyAdmissionError
 from itrader.core.ids import PortfolioId
 from itrader.core.policy_codec import default_policy_registry
+from itrader.core.portfolio_read_model import PortfolioReadModel
 from itrader.events_handler.bus import EventBus
 from itrader.events_handler.events import (
 	ErrorEvent,
@@ -133,9 +134,15 @@ class StrategyLifecycleManager:
 	deviation from the order-domain analog, the ZERO-roster-state invariant, and
 	the closed-dict-lookup security contract.
 
-	The three live deps keep `Optional[Any]` VALUES: `None` is the legal
-	backtest/in-memory state and every persist arm short-circuits on it. They are
-	typed `Any` so the SQL stack stays off this module's annotations. The manager
+	The three live deps all accept `None` as their legal backtest/in-memory state,
+	and every persist arm short-circuits on it. `registry_store` and
+	`strategy_catalog` additionally keep `Optional[Any]` VALUES so the SQL stack
+	stays off this module's annotations. `portfolio_read_model` is the EXCEPTION
+	(WR-04): `core/portfolio_read_model.py` pulls no SQL — only stdlib plus
+	`core.enums` and `core.ids`, both already on this module's import graph — so
+	naming the real protocol costs nothing in inertness and buys a genuine
+	`mypy --strict` check of the `get_position` call in `_strategy_is_flat`. The
+	erased `Any` there was silently suppressing exactly that check. The manager
 	is the SINGLE OWNER of all three — the handler exposes read-through properties
 	over these attributes rather than keeping its own copies, so a
 	post-construction assignment on the handler can never desync the two (T-10.1-03).
@@ -153,7 +160,7 @@ class StrategyLifecycleManager:
 		feed: BarFeed,
 		registry_store: "Optional[Any]",
 		strategy_catalog: "Optional[Any]",
-		portfolio_read_model: "Optional[Any]",
+		portfolio_read_model: "Optional[PortfolioReadModel]",
 		logger: ITraderStructLogger,
 	) -> None:
 		"""
@@ -187,7 +194,7 @@ class StrategyLifecycleManager:
 		self.feed: BarFeed = feed
 		self.registry_store: "Optional[Any]" = registry_store
 		self.strategy_catalog: "Optional[Any]" = strategy_catalog
-		self.portfolio_read_model: "Optional[Any]" = portfolio_read_model
+		self.portfolio_read_model: "Optional[PortfolioReadModel]" = portfolio_read_model
 		self.logger = logger.bind(component="StrategyLifecycleManager")
 		# WR-02 (D-01) live-only readiness seam, wired ONLY via set_universe.
 		# `_request_rewarm` is the sole reader (mark_failed) and it lives here.
@@ -274,7 +281,7 @@ class StrategyLifecycleManager:
 
 	def _portfolio_id_from(
 		self, event: StrategyCommandEvent
-	) -> "Optional[PortfolioId | int]":
+	) -> "Optional[PortfolioId]":
 		"""Parse ``config["portfolio_id"]`` into the handle the fan-out expects, or None.
 
 		The payload is operator/FastAPI-supplied and therefore untrusted (T-10-35): the
@@ -284,18 +291,16 @@ class StrategyLifecycleManager:
 
 		⚠ The parse is a CORRECTNESS requirement, not a typing nit — the same defect
 		10-05 hit on the rehydrate arm. ``subscribed_portfolios`` is typed
-		``list[PortfolioId | int]``, and ``on_bar`` fans each intent out over
-		it and casts each id STRAIGHT onto ``SignalEvent.portfolio_id`` (FL-02: "the
-		runtime value is always a UUIDv7-backed PortfolioId"). A bare ``str`` sails
-		through that cast unchallenged and reaches the portfolio lookup as an id matching
-		NOTHING: the subscription would look perfectly healthy and then fan signals into
-		the void. Value-equality assertions pass while the type is wrong, so this is
-		pinned by a TYPE assertion.
+		``list[PortfolioId]``, and ``on_bar`` fans each intent out over
+		it and puts each id STRAIGHT onto ``SignalEvent.portfolio_id`` (FL-02: "the
+		runtime value is always a UUIDv7-backed PortfolioId"). A bare ``str`` reaches
+		the portfolio lookup as an id matching NOTHING: the subscription would look
+		perfectly healthy and then fan signals into the void. Value-equality assertions
+		pass while the type is wrong, so this is pinned by a TYPE assertion.
 
-		Mirrors ``registry/rehydrate.py::_resolve_portfolio_id`` (UUID first, then the
-		legacy ``int`` arm the union still permits) but returns None instead of raising:
-		rehydrate quarantines a bad instance at boot, whereas a bad runtime command is a
-		loud no-op.
+		Mirrors ``registry/rehydrate.py::_resolve_portfolio_id`` (parse the one legal
+		UUID shape) but returns None instead of raising: rehydrate quarantines a bad
+		instance at boot, whereas a bad runtime command is a loud no-op.
 		"""
 		config = event.config
 		if not isinstance(config, dict):
@@ -306,10 +311,6 @@ class StrategyLifecycleManager:
 		try:
 			return PortfolioId(uuid.UUID(raw))
 		except (ValueError, AttributeError, TypeError):
-			pass
-		try:
-			return int(raw)
-		except (ValueError, TypeError):
 			return None
 
 	def _add_strategy_verb(self, event: StrategyCommandEvent) -> None:

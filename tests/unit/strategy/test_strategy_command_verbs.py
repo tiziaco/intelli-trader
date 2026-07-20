@@ -58,9 +58,9 @@ _OTHER = "ETHUSD"
 _NAME = "verb_probe"
 _WARMUP = 3
 # Portfolio ids arrive as STRINGS in the untrusted payload (and are stored as String),
-# but `subscribed_portfolios` is typed `list[PortfolioId | int]` and on_bar
-# casts each entry straight onto SignalEvent.portfolio_id. So the dispatch must PARSE
-# them; a bare str would fan signals at a portfolio matching nothing.
+# but `subscribed_portfolios` is typed `list[PortfolioId]` and on_bar puts each entry
+# straight onto SignalEvent.portfolio_id. So the dispatch must PARSE them; a bare str
+# would fan signals at a portfolio matching nothing.
 _P1 = "550e8400-e29b-41d4-a716-446655440000"
 _P2 = "550e8400-e29b-41d4-a716-446655440001"
 
@@ -308,17 +308,24 @@ def test_a_malformed_portfolio_id_is_a_loud_no_op(
     assert store.portfolio_subscriptions(_NAME) == []
 
 
-def test_the_legacy_int_portfolio_id_arm_still_works(
+def test_a_bare_numeric_portfolio_id_is_a_loud_no_op(
     store: StrategyRegistryStore,
 ) -> None:
-    """``PortfolioId | int`` — the union's int arm is legal and must not be rejected."""
+    """WR-04 — a bare numeric id is NOT a valid portfolio handle and must be refused.
+
+    The handle carries exactly one shape, the UUIDv7-backed ``PortfolioId`` (FL-02).
+    A numeric id used to be accepted through a vestigial second parse arm; it now
+    reaches the same loud no-op path as any other unparseable id — nothing is written
+    to live state or SQL, and nothing raises (T-10-35). Accepting it would seat a
+    subscription whose id matches no portfolio, fanning signals into the void.
+    """
     handler, strategy = _handler(store)
 
     handler.on_strategy_command(StrategyCommandEvent.subscribe_portfolio(
         strategy_name=_NAME, portfolio_id="7", time=_T))
 
-    assert strategy.subscribed_portfolios == [7]
-    assert store.portfolio_subscriptions(_NAME) == ["7"]
+    assert strategy.subscribed_portfolios == []
+    assert store.portfolio_subscriptions(_NAME) == []
 
 
 def test_subscribe_portfolio_twice_is_idempotent(

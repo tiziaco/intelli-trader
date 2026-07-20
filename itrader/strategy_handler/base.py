@@ -186,12 +186,14 @@ class Strategy(ABC):
 	name: str = "strategy"        # D-03 discretion: default name (a subclass pins it)
 
 	def __init__(self, **kwargs: Any) -> None:
-		# WR-01: portfolio-id handle is opaque (PortfolioId | int) — the
-		# fan-out never resolves a portfolio object here, so both shapes are
-		# legal. Mint a fresh UUIDv7 strategy_id per construction (KEEP).
+		# WR-04: the portfolio-id handle carries exactly ONE shape, the
+		# UUIDv7-backed PortfolioId (the FL-02 invariant). The handle feeds
+		# PortfolioReadModel.get_position and the on_bar fan-out's
+		# SignalEvent.portfolio_id, both of which require a real PortfolioId.
+		# Mint a fresh UUIDv7 strategy_id per construction (KEEP).
 		self.strategy_id: StrategyId = StrategyId(idgen.generate_strategy_id())
 		self.is_active = True
-		self.subscribed_portfolios: list[PortfolioId | int] = []
+		self.subscribed_portfolios: list[PortfolioId] = []
 		# D-06 (PERF-04 / 08-03 Req 4): per-INSTANCE cache of the serialized STATIC
 		# portion of to_dict (the _declared_hints introspection + _json_safe walk +
 		# the bespoke set-once serializations). None until the first to_dict call
@@ -845,8 +847,9 @@ class Strategy(ABC):
 			# returns a UUID). A raw UUID makes json.dumps(strategy.to_dict())
 			# raise "Object of type UUID is not JSON serializable" — the same
 			# defect class IN-03 closed for strategy_id. Stringify at the
-			# serialization edge; str() is safe for both int and UUID handles
-			# (str(1) == "1", str(uuid) == "019e...").
+			# serialization edge (str(uuid) == "019e..."); this str() IS the
+			# reason the durable portfolio_id column is a String — rehydrate's
+			# _resolve_portfolio_id is its parsing inverse.
 			"subscribed_portfolios" : [str(pid) for pid in self.subscribed_portfolios],
 			# D-01: the per-instance order_type attr is retired — order type is now
 			# per-intent on SignalIntent, so to_dict no longer emits an "order_type".
@@ -1006,14 +1009,14 @@ class Strategy(ABC):
 		return self._intent(ticker, Side.SELL, OrderType.STOP,
 			price, sl, tp, exit_fraction)
 
-	def subscribe_portfolio(self, portfolio_id: PortfolioId | int) -> None:
+	def subscribe_portfolio(self, portfolio_id: PortfolioId) -> None:
 		# WR-01: idempotent subscribe — a duplicate subscription would fan the
 		# same intent out to one portfolio TWICE in on_bar (two
 		# SignalEvents, two orders for one decision). Guard the append.
 		if portfolio_id not in self.subscribed_portfolios:
 			self.subscribed_portfolios.append(portfolio_id)
 
-	def unsubscribe_portfolio(self, portfolio_id: PortfolioId | int) -> None:
+	def unsubscribe_portfolio(self, portfolio_id: PortfolioId) -> None:
 		# WR-01: idempotent unsubscribe — list.remove raises ValueError on a
 		# double-unsubscribe / never-subscribed id (a noisy ErrorEvent in live
 		# mode). Guard so a defensive caller can unsubscribe safely.

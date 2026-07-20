@@ -175,33 +175,29 @@ def _codec_rec(rec: Mapping[str, Any]) -> Mapping[str, Any]:
 	return {**rec, "config_json": rec.get("config")}
 
 
-def _resolve_portfolio_id(raw: str) -> PortfolioId | int:
+def _resolve_portfolio_id(raw: str) -> PortfolioId:
 	"""Rebuild a stored portfolio-subscription id into the handle the fan-out expects.
 
-	The ``strategy_portfolio_subscriptions.portfolio_id`` column is a ``String`` (Plan 02:
-	``subscribed_portfolios`` is typed ``list[PortfolioId | int]``, and a ``Uuid`` column
-	would reject the legal ``int`` arm), and ``to_dict`` writes it out via ``str(pid)``. The
-	inverse therefore has to PARSE — handing the raw string on would be a silent
+	The ``strategy_portfolio_subscriptions.portfolio_id`` column is a ``String`` because
+	``to_dict`` serializes each handle via ``str(pid)`` — the stored form is a string by the
+	round trip's own construction, and this function is that round trip's parsing inverse.
+	(Whether the column should instead become a ``Uuid`` column is a separate open question,
+	filed as B2, and is NOT settled here.) The inverse therefore has to PARSE — handing the
+	raw string on would be a silent
 	correctness bug rather than a typing nit: ``on_bar`` fans an intent out over
-	``subscribed_portfolios`` and casts each id straight onto ``SignalEvent.portfolio_id``
+	``subscribed_portfolios`` and puts each id straight onto ``SignalEvent.portfolio_id``
 	(``strategies_handler.py``, FL-02: "the runtime value is always a UUIDv7-backed
-	PortfolioId"). A bare ``str`` would sail through that cast and reach the portfolio
-	lookup as an id that matches NOTHING — the strategy would rehydrate looking healthy and
-	then trade into the void.
+	PortfolioId"). A bare ``str`` would reach the portfolio lookup as an id that matches
+	NOTHING — the strategy would rehydrate looking healthy and then trade into the void.
 
 	A malformed id raises ``StrategyConfigError`` so the D-19 quarantine claims it: an
 	instance whose fan-out cannot be reconstructed must not register half-wired.
 	"""
 	try:
 		return PortfolioId(uuid.UUID(raw))
-	except (ValueError, AttributeError, TypeError):
-		pass
-	# The legacy int arm the union still permits.
-	try:
-		return int(raw)
-	except (ValueError, TypeError) as exc:
+	except (ValueError, AttributeError, TypeError) as exc:
 		raise StrategyConfigError(
-			f"portfolio subscription id {raw!r} is neither a UUID nor an int — the stored "
+			f"portfolio subscription id {raw!r} is not a UUID — the stored "
 			f"fan-out cannot be reconstructed"
 		) from exc
 

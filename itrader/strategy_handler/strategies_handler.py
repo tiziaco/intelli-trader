@@ -1,4 +1,4 @@
-from typing import Any, Optional, TYPE_CHECKING, cast
+from typing import Any, Optional, TYPE_CHECKING
 
 from itrader.core.enums import OrderType
 from itrader.core.exceptions import ConfigurationError
@@ -528,12 +528,7 @@ class StrategiesHandler(object):
 				stop_loss=intent.stop_loss if intent.stop_loss is not None else to_money(0),
 				take_profit=intent.take_profit if intent.take_profit is not None else to_money(0),
 				strategy_id=strategy.strategy_id,
-				# FL-02: subscribed_portfolios is the dual-handle
-				# PortfolioId | int seam, but the runtime value is always a
-				# UUIDv7-backed PortfolioId. SignalEvent.portfolio_id is now
-				# typed PortfolioId (#10 carry-forward), so bridge the union
-				# with cast(PortfolioId, ...) at this construction boundary.
-				portfolio_id=cast(PortfolioId, portfolio_id),
+				portfolio_id=portfolio_id,
 				sizing_policy=strategy.sizing_policy,
 				direction=strategy.direction,
 				allow_increase=strategy.allow_increase,
