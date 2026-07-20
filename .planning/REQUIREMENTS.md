@@ -278,6 +278,23 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   (quiesce → apply → re-warmup the affected strategy), persisted to `StrategyRegistryStore` — folds
   `pair-strategy-live-reconfiguration.md` (v1.7 shipped only a refusal guard) (owner decision 2026-07-09).
 
+### Strategies Handler Decomposition (P10.1)
+
+- [ ] **DECOMP-01**: `strategies_handler.py` (1648 LOC) is split into a thin data-plane `StrategiesHandler`
+  (queue seam), a shared `ManagedStrategies` holder (owns `strategies`/`min_timeframe`/`_pending_removals`
+  + registration/membership rules), and a live-only `StrategyLifecycleManager` (the ~700-LOC control plane
+  + the D-11 fill-driven removal completion); no behaviour change to any verb, the signal path, or
+  pending-removal semantics (follow-up to P10; spec 2026-07-18).
+
+- [ ] **DECOMP-02**: The five load-bearing GATE-01 lazy imports (plus the accidental `ErrorEvent`/
+  `ErrorSeverity` one) are removed — `StrategyLifecycleManager` is live-only (never barrelled, constructed
+  only in the live wiring arm), so its `registry`/`config_codec`/`catalog`/`cache_registration` imports sit
+  at module top; `test_okx_inertness.py` stays green.
+
+- [ ] **DECOMP-03**: `calculate_signals` is renamed `on_bar` (matches the `on_<event>()` callback
+  convention) across the `_routes` literal (`full_event_handler.py`), the 59 test call-sites, and the docs
+  (incl. the CLAUDE.md flow diagram); no compat shim; `test_dispatch_registry` passes.
+
 ### ★ Multi-Portfolio-Live (P11)
 
 - [ ] **MPORT-01**: The venue plugin's `new_account(portfolio_ref, config)` mints a per-portfolio account
@@ -418,6 +435,9 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | STRAT-01 | P10 | Complete |
 | STRAT-02 | P10 | Complete |
 | STRAT-03 | P10 | Complete |
+| DECOMP-01 | P10.1 | Pending |
+| DECOMP-02 | P10.1 | Pending |
+| DECOMP-03 | P10.1 | Pending |
 | MPORT-01 | P11 | Pending |
 | MPORT-02 | P11 | Pending |
 | MPORT-03 | P11 | Pending |

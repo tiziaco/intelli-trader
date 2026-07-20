@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: Live System Refactor & Live-Readiness Hardening
-current_phase: 12
+current_phase: 11
 current_phase_name: Test Migration + Gates
 status: planning
 stopped_at: Phase 10 context gathered
-last_updated: "2026-07-17T16:31:24.947Z"
-last_activity: 2026-07-17
-last_activity_desc: Phase 10 complete, transitioned to Phase 11
+last_updated: "2026-07-18T10:20:22.470Z"
+last_activity: 2026-07-18
+last_activity_desc: "Completed quick task 260718-fxm: reorganized events package to one-class-per-domain layout (pure relocation, oracle byte-exact)"
 progress:
-  total_phases: 10
+  total_phases: 11
   completed_phases: 9
   total_plans: 39
   completed_plans: 39
-  percent: 90
+  percent: 82
 ---
 
 # Project State
@@ -181,6 +181,8 @@ trim boundary P1–P8+P12 core vs P9–P11 ★ is noted, not taken). Research fl
 - 4 research refinements folded into the spec §16 graph: (1) P3 depends on {P1,P2}; (2) minimal
   `EngineContext` skeleton lands in P2; (3) P2 adds the CONTROL EventTypes; (4) `SqlBackend→SqlEngine`
   rename folded into P3 (only migrations *relocation* stays in the merged P4).
+
+- Phase 10.1 inserted after Phase 10: StrategiesHandler Decomposition (URGENT)
 
 ### Decisions
 
