@@ -869,6 +869,83 @@ def test_add_whose_init_raises_an_arbitrary_type_is_a_loud_no_op_at_the_error_ti
         "the ERROR tier carries the traceback; the message itself names no payload values")
 
 
+class _BareValidateStrategy(Strategy):
+    """A catalog strategy whose ``validate()`` raises a BARE ``ValueError``.
+
+    Stands in for a third-party / ``my_strategies`` class that refuses a payload
+    WITHOUT using our exception hierarchy at all — the case the dropped bare
+    ``ValueError`` tuple member was nominally there to cover.
+    """
+
+    sizing_policy = FractionOfCash(Decimal("0.5"))
+
+    def validate(self) -> None:
+        raise ValueError("a cross-field rule outside our exception hierarchy")
+
+    def generate_signal(self, ticker: str) -> Any:
+        return None
+
+
+def test_add_with_a_bare_value_error_validate_stays_a_loud_no_op_after_the_narrowing(
+    store: StrategyRegistryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """IN2-02 — dropping the ``ValueError`` tuple member must not open a HALT vector.
+
+    The tier-1 catch now names ``StrategyAdmissionError`` ALONE. That is only safe
+    because the wrap in ``Strategy.__init__`` types the bare-``ValueError`` residue as
+    ``StrategyValidationError`` under that ancestor. If the wrap ever regressed, this
+    payload would escape into the queue -> ``ErrorPolicy.record_failure`` -> the
+    failure-rate tripwire -> ``halt()``, which has no exit but operator ``reset_halt()``.
+    """
+    handler = _add_handler(store, catalog={"_BareValidateStrategy": _BareValidateStrategy})
+    spy = _LogSpy()
+    monkeypatch.setattr(handler._lifecycle, "logger", spy)
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="bare", strategy_type="_BareValidateStrategy",
+        config={"config_version": 1, "timeframe": "1d", "tickers": ["BTCUSD"]},
+        time=_T))
+
+    assert [s.name for s in handler.strategies] == []
+    assert store.get("bare") is None
+    assert _drain(handler.global_queue) == []
+    assert spy.warnings, "a validate() refusal is operator junk — the WARNING tier"
+    assert spy.errors == [], (
+        "it must NOT fall through to the tier-2 catch-all: that would mean the narrowed "
+        "tier-1 tuple no longer claims the typed residue")
+    assert "StrategyValidationError" in spy.warnings[0][0], (
+        "the warning names the error KIND, which is now the typed residue")
+
+
+def test_reconfigure_with_a_bare_value_error_validate_stays_a_loud_no_op(
+    store: StrategyRegistryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """IN2-02 — the same guarantee at the reconfigure TRIAL site.
+
+    ``short_window > long_window`` trips ``SMAMACDStrategy.validate``'s bare
+    ``ValueError`` during the throwaway construction, so the live instance must be
+    untouched and nothing persisted — with D-10 never-raise intact.
+    """
+    handler = _add_handler(store)
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="live1", strategy_type="SMAMACDStrategy",
+        config=_sma_add_config(["ETHUSD"]), time=_T))
+    _drain(handler.global_queue)
+    live = next(s for s in handler.strategies if s.name == "live1")
+    before = encode_strategy_config(live)
+
+    spy = _LogSpy()
+    monkeypatch.setattr(handler._lifecycle, "logger", spy)
+    handler.on_strategy_command(StrategyCommandEvent.reconfigure(
+        strategy_name="live1", config={"short_window": 200, "long_window": 50}, time=_T))
+
+    assert encode_strategy_config(live) == before, "the LIVE instance must be untouched"
+    assert store.get("live1")["config"] == before, "nothing may be persisted"
+    assert _drain(handler.global_queue) == []
+    assert spy.warnings, "a rejected reconfigure is a loud no-op at the WARNING tier"
+    assert spy.errors == []
+
+
 def test_add_beyond_ring_capacity_is_a_loud_reject(store: StrategyRegistryStore) -> None:
     """Test 6 (F-1) — required_base_depth > cache_capacity rejects loudly (ring can't resize)."""
     handler = _add_handler(store, feed=_CapFeed(timedelta(days=1), capacity=5))

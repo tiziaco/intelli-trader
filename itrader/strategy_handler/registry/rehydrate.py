@@ -107,6 +107,23 @@ __all__ = [
 # relationship is now LOAD-BEARING rather than incidental, and it is pinned by an explicit
 # regression test (``tests/unit/strategy/test_rehydrate.py``).
 #
+# WR2-02 — why this tuple needs NO widening despite covering ``validate()`` refusals. A
+# strategy class that GAINS a cross-field ``validate()`` rule refuses a row written under
+# the old build. That refusal used to arrive as a BARE ``ValueError`` (from ``validate()``,
+# a subclass override, the ``_apply_params`` malformed-``tickers`` guard, or ``_COERCE``
+# enum coercion), which this tuple did NOT claim — so it escaped the per-row try and turned
+# ONE stale row into a whole-engine boot outage, precisely the failure the D-19 split
+# exists to prevent. It is now TYPED as ``StrategyValidationError`` under
+# ``StrategyAdmissionError`` by the wrap in ``Strategy.__init__`` / ``Strategy.reconfigure``,
+# so the FIRST member below already claims it — including refusals from a third-party
+# ``validate()`` override, because the wrap converts at the raise boundary rather than
+# requiring the class to opt into our hierarchy.
+#
+# The fix was made AT THE SOURCE deliberately. Adding bare ``ValueError`` to this tuple was
+# the obvious alternative and was REJECTED: a programming-bug ``ValueError`` from unrelated
+# code inside the per-row try would then silently quarantine a row instead of failing boot,
+# collapsing exactly the arm separability the paragraphs above defend.
+#
 # Do NOT widen this tuple toward a bare ``except``.
 _QUARANTINABLE: tuple[type[Exception], ...] = (
 	StrategyAdmissionError,    # the payload was refused at admission: unknown strategy_type,

@@ -469,17 +469,24 @@ class StrategyLifecycleManager:
 		}
 		try:
 			strategy = build_strategy(rec, catalog=self.strategy_catalog)
-		except (StrategyAdmissionError, ValueError) as exc:
+		except StrategyAdmissionError as exc:
 			# Tier 1 — EXPECTED validation kinds, i.e. "the operator sent junk". A loud
 			# no-op naming the error KIND (not the payload values — the P8
 			# declared-fields-only precedent). StrategyAdmissionError is the shared
 			# ancestor of every strategy-payload refusal (unknown strategy_type,
 			# undeserializable blob, param drift either direction) — one name instead of
 			# a hand-listed tuple that can drift out of sync with its siblings, which is
-			# what caused CR-01. ValueError stays as the residue: validate() and the
-			# _apply_params tickers/enum guards raise BARE ValueError (base.py,
-			# SMA_MACD_strategy.py), and a third-party strategy's validate() override can
-			# never be brought into our hierarchy.
+			# what caused CR-01.
+			#
+			# IN2-02 — the bare `ValueError` member is GONE. It was fully SUBSUMED by the
+			# first member (StrategyAdmissionError is declared `(ITraderError, ValueError)`),
+			# so the tuple read as a two-name catch while behaving as a one-name one. The
+			# residue it was there for — validate() and the _apply_params tickers/enum
+			# guards raising BARE ValueError — is now TYPED as StrategyValidationError by
+			# the wrap in Strategy.__init__ / Strategy.reconfigure, so the ancestor alone
+			# covers it. A third-party validate() override outside our hierarchy is covered
+			# too: the wrap converts at the RAISE boundary rather than requiring the class
+			# to opt in.
 			self.logger.warning(
 				'add for strategy %s rejected (%s) — nothing registered or persisted',
 				event.strategy_name, type(exc).__name__)
@@ -882,14 +889,18 @@ class StrategyLifecycleManager:
 			cls, params = decode_strategy_config(
 				rec, self.strategy_catalog, default_policy_registry())
 			trial = cls(**params)
-		except (StrategyAdmissionError, ValueError) as exc:
+		except StrategyAdmissionError as exc:
 			# Loud no-op naming the error KIND (not the payload values — the P8
 			# declared-fields-only precedent). StrategyAdmissionError is the shared ancestor
-			# of every strategy-payload refusal; ValueError is the residue that can never
-			# join it (validate() + the _apply_params tickers/enum guards raise BARE
-			# ValueError, and a third-party validate() override is outside our hierarchy).
-			# Still NARROW — never a bare except, so a store/infra fault is not silently
-			# eaten.
+			# of every strategy-payload refusal.
+			#
+			# IN2-02 — the bare `ValueError` member is GONE (it entirely SUBSUMED the first
+			# member, since StrategyAdmissionError is declared `(ITraderError, ValueError)`).
+			# The residue it existed for is now TYPED as StrategyValidationError by the wrap
+			# in Strategy.__init__, which is what the throwaway `cls(**params)` above runs —
+			# including a third-party validate() override, since the wrap converts at the
+			# raise boundary. Still NARROW — never a bare except, so a store/infra fault is
+			# not silently eaten.
 			self.logger.warning(
 				'reconfigure for strategy %s rejected (%s) — live instance untouched',
 				event.strategy_name, type(exc).__name__)
@@ -939,10 +950,13 @@ class StrategyLifecycleManager:
 		# the NEW config and a restart heals (the deliberate persist-then-apply asymmetry).
 		try:
 			strategy.reconfigure(**params)
-		except (StrategyAdmissionError, ValueError) as exc:
-			# Same narrow pair as the TRIAL site above. This site previously omitted
-			# UnknownStrategyTypeError (defensibly — apply resolves no class); folding it
-			# in via the shared base is harmless because apply cannot raise it.
+		except StrategyAdmissionError as exc:
+			# Same narrow catch as the TRIAL site above — see there for why the redundant
+			# `ValueError` member was dropped (IN2-02). Here the residue is typed by the
+			# wrap in Strategy.reconfigure rather than Strategy.__init__. This site
+			# previously omitted UnknownStrategyTypeError (defensibly — apply resolves no
+			# class); folding it in via the shared base is harmless because apply cannot
+			# raise it.
 			self._emit_reconfigure_apply_failure(event, strategy, exc)
 			return
 		# D-12: NO force-flat. Open positions stay open and their subsequent exits are
