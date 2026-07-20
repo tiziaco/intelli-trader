@@ -194,6 +194,11 @@ def test_by_strategy_and_by_ticker_filter(store_env):
     handler, _q, store = store_env
     strat_btc = _AlwaysBuyStrategy(ticker=_TICKER)
     strat_eth = _AlwaysBuyStrategy(ticker=_OTHER_TICKER)
+    # D-02: `name` is the durable per-instance identity and `add_strategy` rejects a
+    # duplicate, so two instances of one class must be named distinctly (the class pins a
+    # single default name). The two-instance fan-out is what this test exercises.
+    strat_btc.name = "always_buy_btc"
+    strat_eth.name = "always_buy_eth"
     strat_btc.subscribe_portfolio(_PORTFOLIO_A)
     strat_eth.subscribe_portfolio(_PORTFOLIO_A)
     handler.add_strategy(strat_btc)

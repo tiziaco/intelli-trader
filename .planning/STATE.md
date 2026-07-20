@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: Live System Refactor & Live-Readiness Hardening
-current_phase: 10
-current_phase_name: Strategies Registry
+current_phase: 11
+current_phase_name: Test Migration + Gates
 status: planning
-stopped_at: Phase 09 complete (incl. code-review fixes)
-last_updated: "2026-07-16T12:09:02.082Z"
-last_activity: 2026-07-16
-last_activity_desc: "Phase 09 (Runtime-Config Platform ★) complete + verified + review-fixed; next: Phase 10 (Strategies Registry ★)"
+stopped_at: Phase 10 context gathered
+last_updated: "2026-07-18T10:20:22.470Z"
+last_activity: 2026-07-18
+last_activity_desc: "Completed quick task 260718-fxm: reorganized events package to one-class-per-domain layout (pure relocation, oracle byte-exact)"
 progress:
-  total_phases: 10
+  total_phases: 11
   completed_phases: 9
   total_plans: 39
   completed_plans: 39
-  percent: 90
+  percent: 82
 ---
 
 # Project State
@@ -26,20 +26,42 @@ See: .planning/PROJECT.md (Current Milestone: v1.8 — Live System Refactor & Li
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct,
 deterministic, cross-validated numbers (oracle **134 / `46189.87730727451`**; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 shipped a live operating mode (paper-first on OKX) without disturbing that oracle.
-**Current focus:** Phase 09 (Runtime-Config Platform ★) complete + verified + review-fixed — next: Phase 10 (Strategies Registry ★). v1.8 delivers a
+**Current focus:** Phase 11 — Multi-Portfolio-Live
 thin ~200-line facade over focused, venue-parametrized, FastAPI-ready collaborators — **without
 disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI itself is out of scope
 (LR-01). Full scope: core refactor (P1–P8 + P12) + the three ★ feature-adds (P9–P11).
 
 ## Current Position
 
-Phase: 10 — Strategies Registry ★ (next; deps {P4,P6} met — not yet planned)
+Phase: 11 — Multi-Portfolio-Live
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-07-16 — Completed quick task 260716-mov: move UniverseConfig to its own config/universe.py module
+Last activity: 2026-07-18 — Completed quick task 260718-fxm: reorganized events package to one-class-per-domain layout (pure relocation, oracle byte-exact)
 
 Note: `phase.complete` again advanced current_phase to 12 (its next-phase dir-scan skips the not-yet-created P10/P11 ★ dirs);
 corrected to 10 per the roadmap sequence. P10{P4,P6} + P11{P5,P7} are dependency-available now; P12 (core-final) depends on P11.
+
+Note (P10 planning): the starred header `### Phase 10 ★:` again broke `roadmap.get-phase` (`found:false`) and
+`init.plan-phase` (`phase_req_ids:null`); REQ IDs STRAT-01..03 were injected manually into the researcher/planner/
+checker prompts, and `roadmap.annotate-dependencies` no-opped (`updated:false`) so the ROADMAP wave list was
+written by hand. Expect the same on P11 ★.
+
+**Carried into execution (found during planning, not in CONTEXT):**
+
+- **F-1 (HIGH, confirmed real):** `cache_registration.py:226::derive_warmup_depth` is a bare `max(s.warmup)` with no
+  timeframe scaling, while `warmup` counts strategy-timeframe bars and the ring is sized in base bars → a coarser-
+  timeframe strategy silently never warms. Fixed in 10-03 (opt-in `base_timeframe`; omitted → byte-identical, which
+  is what protects the oracle) + loud-reject gates in 10-07/10-08. Ring resize deferred to the finer-than-base todo.
+
+- **Three CONTEXT errors corrected in the plans, not inherited:** `universe_handler.py` is **4-SPACE** (measured
+  0/559, CONTEXT says tabs — would break the file); migration head is **`system_stats`** (CONTEXT says
+  `strategy_registry`); D-03's policy list omits **`PercentFromDecision`** (`core/sizing.py:278`, a live union member).
+
+- **CR-01 pair guard is broader than D-16 permits** — it refuses ALL verbs; 10-06 re-scopes it to
+  `{reconfigure, add_ticker, remove_ticker}` so pairs can still add/remove/enable/disable/rehydrate.
+
+- **A1 (unverifiable from source):** the D-06 drop assumes `strategy_subscriptions` is empty in every deployed DB.
+  10-02 counts rows first and raises on non-empty. Worth a manual `SELECT count(*)` before running the migration.
 
 Progress: [██████████] 100% (8/9 core phases; the three ★ feature-adds P9–P11 are in scope on top)
 
@@ -159,6 +181,8 @@ trim boundary P1–P8+P12 core vs P9–P11 ★ is noted, not taken). Research fl
 - 4 research refinements folded into the spec §16 graph: (1) P3 depends on {P1,P2}; (2) minimal
   `EngineContext` skeleton lands in P2; (3) P2 adds the CONTROL EventTypes; (4) `SqlBackend→SqlEngine`
   rename folded into P3 (only migrations *relocation* stays in the merged P4).
+
+- Phase 10.1 inserted after Phase 10: StrategiesHandler Decomposition (URGENT)
 
 ### Decisions
 
@@ -291,6 +315,10 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 | 260716-mov | Move UniverseConfig into its own itrader/config/universe.py (config/ one-domain-per-file convention); system.py keeps only Environment/LogLevel/SystemSettings; barrel re-exports unchanged. Byte-identical behavior; 2307 passed, oracle byte-exact, inertness + mypy clean | 2026-07-16 | d5a9deac | [260716-mov-move-universeconfig-into-its-own-config-](./quick/260716-mov-move-universeconfig-into-its-own-config-/) |
 | 260716-fast | Sync CLAUDE.md "Configuration system" section (+ Import side effects, config Layers, tech-stack/config prose) to ITraderConfig reality — drop SystemConfig/Settings/PerformanceSettings/MonitoringSettings, document frozen base + mutable sub-models + LogConfig + lazy sql, outils.recursive_merge, ExchangeConfig classmethods, config/models.py removal | 2026-07-16 | 03fdf3fd | (fast — no dir) |
 | 260716-cfg | Unify dry-validate-on-a-copy pattern in config_router.py: _dry_validate_setattr→_dry_validate_copy returns the validated candidate copy; system/order scopes share it (order drops its inline model_copy+try/except); portfolio merge-validate untouched. Behavior-preserving; 30 tests pass, mypy clean | 2026-07-16 | 4e40f379 | (fast — no dir) |
+| 260718-di7 | Fix Phase 10 code-review findings: CR-01 (rehydrate loads full roster via read_all(), disabled rows come back present-but-dark, honoring enabled as is_active — resolves IN-01) + docstring truth on remove/disable restart guarantee; WR-01 (floor derive_warmup_depth at NEWEST_BAR_ONLY, never 0); WR-02/IN-02 docstrings (live-pair BarsLoaded warmup, add-factory config_json payload). 322 passed/9 skipped (env), mypy clean | 2026-07-18 | 992b31a5 | [260718-di7-fix-phase-10-code-review-findings-cr-01-](./quick/260718-di7-fix-phase-10-code-review-findings-cr-01-/) |
+| 260718-e36 | Fix Phase 10 re-review WR-01: quarantine an unwarmable (finer-than-base timeframe) stored row at rehydrate per D-19 (skip+alert+continue, row not mutated) instead of raising UnwarmableTimeframeError out of register_strategy_warmup and crashing the whole live boot; + skip is_active==False strategies in the warmup ladder (derive_warmup_depth/register_strategy_warmup), preserving the NEWEST_BAR_ONLY floor. 324 passed/5 skipped (env), mypy clean, inertness preserved | 2026-07-18 | 40e73430 | [260718-e36-fix-phase-10-re-review-wr-01-quarantine-](./quick/260718-e36-fix-phase-10-re-review-wr-01-quarantine-/) |
+| 260718-evz | Revert the e36 warmup deactivated-skip (2nd re-review found it net-negative: it broke the pre-provisioning that makes disabled→enable safe, since the `enable` verb has no capacity guard and the ring is a fixed-maxlen deque). derive_warmup_depth again sizes the ring from ALL strategies (NEWEST_BAR_ONLY floor kept); is_active dropped from _SupportsWarmup. Kept Option A's rehydrate quarantine ungated on enabled + documented the WR-02 uniform-quarantine rationale (unwarmable strategy can't manage positions regardless → present-but-dark is illusory; quarantine is loud + non-destructive + recoverable + consistent with the _QUARANTINABLE family). 322 passed/5 skipped (env), mypy clean, inertness preserved | 2026-07-18 | fe15923a | [260718-evz-revert-phase-10-warmup-deactivated-skip-](./quick/260718-evz-revert-phase-10-warmup-deactivated-skip-/) |
+| 260718-fxm | Reorganize the events_handler/events/ package to a one-class-per-domain layout (pure relocation, zero behavior change): new portfolio.py/screener.py/strategy.py/feed.py; market.py trimmed to TimeEvent+BarEvent; UniverseUpdateEvent moved market→universe; OrderAckEvent merged into order.py; ack.py deleted; barrel re-pointed with an unchanged public name set (blast-radius shield); 6 direct-submodule importers repointed; STRATEGY_COMMAND enum comment + CLAUDE.md events-split line synced. 2464 passed/75 skipped (env), mypy --strict clean, oracle byte-exact (134 / 46189.87730727451) | 2026-07-18 | 6e3f6f4c | [260718-fxm-reorganize-events-package-by-domain-file](./quick/260718-fxm-reorganize-events-package-by-domain-file/) |
 
 ## Deferred Items
 
@@ -320,11 +348,11 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-16T11:22:55.409Z
-Stopped at: Completed 09-04-PLAN.md
+Last session: 2026-07-17T11:09:39.781Z
+Stopped at: Phase 10 context gathered
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
-Resume file: None
+Resume file: .planning/phases/10-strategies-registry/10-CONTEXT.md
 Carried todo: 14 pending todos in `todos/pending/` (10 fold into v1.8 as CF-1..CF-10; `v17-residual-carryforward.md`
 is the index; the substantive open item is `margin-equity-double-counts-notional-wr01`, owner-gated).
 

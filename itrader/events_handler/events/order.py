@@ -1,6 +1,10 @@
 """
 Order event: the immutable instruction sent to the execution layer,
 fully linked to its originating Order entity (D-11/D-12).
+
+Co-located here: ``OrderAckEvent`` — the venue's acknowledgement of a
+submitted order carrying the venue-assigned order id back to the order
+domain (D-06 / V17-02).
 """
 
 from decimal import Decimal
@@ -142,4 +146,43 @@ class OrderEvent(Event, frozen=True, kw_only=True, gc=False):
             parent_order_id=order.parent_order_id,
             child_order_ids=tuple(order.child_order_ids),
             command=command,
+        )
+
+
+class OrderAckEvent(Event, frozen=True, kw_only=True, gc=False):
+    """
+    The venue's acknowledgement that a submitted order was accepted, carrying the
+    venue-assigned order id back to the order domain.
+
+    Emitted by ``OkxExchange._submit_order`` once the venue id lands and consumed by
+    ``OrderHandler.on_order_ack`` to stamp + persist the mirror's ``venue_order_id``.
+    The simulated exchange never emits it (oracle-dark on the backtest path).
+    """
+
+    type: ClassVar[EventType] = EventType.ORDER_ACK
+    order_id: OrderId
+    venue_order_id: str
+    portfolio_id: PortfolioId
+
+    def __str__(self) -> str:
+        return (f"{self.type} (order_id: {self.order_id}, "
+                f"venue_order_id: {self.venue_order_id})")
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    @classmethod
+    def new_order_ack(cls, event: Any, venue_order_id: str) -> 'OrderAckEvent':
+        """
+        Build an OrderAckEvent from the originating ``OrderEvent`` and the venue id.
+
+        Reads ``order_id``/``portfolio_id``/``time`` off the submitted OrderEvent so
+        the ack traces to its entity (D-12) and inherits the order's business time
+        (never wall clock, D-02).
+        """
+        return cls(
+            time=event.time,
+            order_id=event.order_id,
+            venue_order_id=venue_order_id,
+            portfolio_id=event.portfolio_id,
         )

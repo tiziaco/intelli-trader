@@ -212,6 +212,13 @@ class LiveTradingSystem:
         # so the CONFIG_UPDATE CONTROL route resolves to a live consumer. None on a facade
         # built outside build_live_system (the route stays the pre-declared empty slot).
         self._config_router: Optional[Any] = None
+        # D-19 (10-05): the strategy names that could NOT be rehydrated at boot (a retired
+        # class, or a config blob that no longer deserializes). Surfaced on the get_status
+        # read-model. A DEDICATED field, not folded into `last_error`: `last_error` is
+        # single-valued and the next error would overwrite it, losing the list — and this
+        # list is what tells an operator which strategies are silently not trading. Empty
+        # on a clean boot and on a facade built outside build_live_system.
+        self._quarantined_strategies: list[str] = []
 
         # RTCFG-06 read-model sinks (D-18/D-19). ATTACHED by build_live_system after
         # construction, gated on the SQL spine (None on backtest / in-memory fallback):
@@ -913,6 +920,13 @@ class LiveTradingSystem:
                     if self._live_runner is not None and self._live_runner._thread
                     else None),
                 'last_error': snap['last_error'],
+                # D-19 (10-05): the strategies that could not be rehydrated at boot and are
+                # therefore NOT trading, despite their registry rows still declaring them
+                # enabled (the row is never rewritten — the DB holds operator INTENT). A
+                # DEDICATED field rather than part of 'last_error': that one is
+                # single-valued and would be overwritten by the next error, losing exactly
+                # the list an operator needs to see. Directly renderable by the future UI.
+                'quarantined_strategies': list(self._quarantined_strategies),
                 # D-13 (08-03): the CF-1 tripwire snapshot (per-FailureClass in-window hit
                 # counts + last-trip HaltReason). Read None-safely — the ErrorPolicy is
                 # unwired on a facade built outside build_live_system. P8 scope = get_status
@@ -1262,6 +1276,7 @@ def build_live_system(
     *,
     status_callback: Optional[Callable[[SystemStatus, Dict[str, Any]], None]] = None,
     data_plugins: Optional[Dict[str, Any]] = None,
+    strategy_catalog: Optional[Dict[str, type]] = None,
 ) -> LiveTradingSystem:
     """The live composition root (RUN-01/D-09) — the ONLY live construction path.
 
@@ -1283,6 +1298,14 @@ def build_live_system(
     D-21: production ``paper`` re-points to the OKX live data feed; the offline replay
     DATA provider left this module for the test harness (TEST-01/D-18). A test fixture
     injects a ``'replay'`` plugin via ``data_plugins`` — production never registers one.
+
+    D-01: ``strategy_catalog`` is the injected strategy-TYPE allowlist, mirroring
+    ``data_plugins`` — both are CODE artifacts the application hands in, as opposed to
+    ``spec`` (persisted config). It is the only thing that turns a stored ``strategy_type``
+    string into a class, so the app decides WHICH classes are instantiable at boot. The
+    ``None`` default keeps every existing caller working: with an empty registry there is
+    nothing to instantiate (D-21), and with rows present a missing catalog fails LOUD
+    rather than booting a healthy-looking engine that trades nothing (D-19).
 
     All live/venue/SQL imports live INSIDE this function body (lazy) so importing this
     module (via the ``trading_system`` barrel, on the backtest import graph) pulls NO
@@ -1553,6 +1576,76 @@ def build_live_system(
             portfolio_handler=portfolio_handler,
             execution_handler=execution_handler,
         )
+
+        # STRATEGY REHYDRATE (D-01/STRAT-01): the stored roster becomes live instances.
+        # THIS EXACT POSITION satisfies four independent constraints at once:
+        #  (1) portfolios are already layered ABOVE (_layer_persisted_overrides iterates
+        #      portfolio_handler._portfolios), so subscribe_portfolio binds to ids that
+        #      already exist and are restart-stable — portfolios-before-strategies holds.
+        #  (2) session init BELOW reads the strategy list: wire_universe derives membership
+        #      from it via StrategyDerivedSelectionModel, and register_strategy_warmup sizes
+        #      the feed ring from it. A strategy registered after either would never enter
+        #      the universe and never size the ring — so rehydrate MUST precede them.
+        #  (3) NOT inside _initialize_live_session: three integration tests — including a
+        #      RESTART test — monkeypatch that method to a no-op, so rehydrate placed there
+        #      would be silently lost exactly where it matters most.
+        #  (4) the store + collaborator imports stay LAZY inside this gate and are never
+        #      barrel-exported, keeping the backtest import path SQL-free (GATE-01).
+        # Deliberately NOT wrapped in try/except _degrade_clean: D-19's semantics are finer
+        # grained than that pattern. Per-instance failures are ALREADY handled inside
+        # rehydrate_strategies (skip + CRITICAL alert + the row left untouched), while an
+        # infrastructure failure must fail LOUD — the opposite of degrade-clean. A blanket
+        # wrap would convert the loud arm into a silent boot with zero strategies, which is
+        # precisely the outcome D-19 rates as worse than not booting.
+        from sqlalchemy import inspect as _sa_inspect
+
+        from itrader.storage.strategy_registry_store import StrategyRegistryStore
+        from itrader.strategy_handler.registry.rehydrate import rehydrate_strategies
+
+        # An UNPROVISIONED registry table is not a D-19 infrastructure failure — it is the
+        # D-21 first-start state expressed at the schema level. The distinction is exact
+        # rather than convenient: D-19's loud arm exists to stop a boot with zero
+        # strategies WHILE ROWS EXIST, and without the table there provably are no rows, so
+        # skipping here cannot produce the outcome D-19 forbids. Probed explicitly with
+        # has_table instead of swallowing the query's error, so a genuine store fault
+        # (connection lost, permissions, corrupt data) still PROPAGATES loud out of
+        # rehydrate_strategies — an exception-swallow could not tell those apart. Logged at
+        # WARNING, not silently: on a live deployment an absent table means the Alembic
+        # chain was never run, which the operator needs to see.
+        if not _sa_inspect(system_db_backend.engine).has_table("strategy_registry"):
+            logger.warning(
+                "strategy_registry table absent — skipping strategy rehydrate and booting "
+                "with ZERO strategies (D-21 first-start). On a live deployment this means "
+                "the Alembic migration chain has not been applied to this database.")
+        else:
+            strategy_registry_store = StrategyRegistryStore(system_db_backend)
+            # D-09: inject the durable registry the runtime STRATEGY_COMMAND verbs write
+            # through. Post-construction attribute injection inside the gate, mirroring
+            # the `facade._config_router = ConfigRouter(...)` precedent above. Assigned
+            # BEFORE rehydrate so a rehydrated strategy's FIRST runtime verb already has
+            # a store to persist to — otherwise an enable/disable landing between boot
+            # and the next wiring step would apply live and vanish at restart. The
+            # backtest composition root never reaches here, so its handler keeps
+            # registry_store=None and every persist arm stays a no-op.
+            engine.strategies_handler.registry_store = strategy_registry_store
+            # D-10/D-11 (Plan 07): inject the two seams the heavy lifecycle verbs need,
+            # next to registry_store and BEFORE rehydrate so a rehydrated strategy's first
+            # runtime `add`/`remove` already has them. `strategy_catalog` is the SAME
+            # injected allowlist rehydrate uses (D-01) — the `add` verb resolves an
+            # untrusted external `strategy_type` through it and nothing else (D-10 access
+            # control). `portfolio_handler` structurally satisfies `PortfolioReadModel`, so
+            # it IS the flat-detect the `remove` verb consults on FILL (D-11) — a READ
+            # through an injected read-model, never a cross-domain handler call. The
+            # backtest composition root never reaches here, so its handler keeps both None
+            # (add is never driven there; remove drops directly).
+            engine.strategies_handler.strategy_catalog = strategy_catalog
+            engine.strategies_handler.portfolio_read_model = portfolio_handler
+            facade._quarantined_strategies = rehydrate_strategies(
+                store=strategy_registry_store,
+                catalog=strategy_catalog,
+                strategies_handler=engine.strategies_handler,
+                alert_sink=alert_sink,
+            )
 
     # ------------------------------------------------------------------
     # SAFE-01..06 (§11): construct + ATTACH the four safety collaborators (P7). All

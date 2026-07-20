@@ -27,7 +27,7 @@ import msgspec
 import pytest
 
 from itrader.core.enums import EventType  # noqa: E402 (must precede stub import)
-from itrader.events_handler.events.market import UniverseUpdateEvent
+from itrader.events_handler.events.universe import UniverseUpdateEvent
 
 pytestmark = pytest.mark.unit
 

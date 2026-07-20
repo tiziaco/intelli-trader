@@ -298,7 +298,7 @@ class _RemovePolicyHarness:
 
     def remove(self, symbol: str):
         """Drive the ``on_universe_update`` REMOVE branch for ``symbol``."""
-        from itrader.events_handler.events.market import UniverseUpdateEvent
+        from itrader.events_handler.events.universe import UniverseUpdateEvent
 
         self.universe_handler.on_universe_update(
             UniverseUpdateEvent(time=self._SIGNAL_TIME, added=(), removed=(symbol,)))

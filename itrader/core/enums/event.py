@@ -30,7 +30,7 @@ class EventType(Enum):
     SCREENER = "SCREENER"
     UNIVERSE_UPDATE = "UNIVERSE_UPDATE"
     UNIVERSE_POLL = "UNIVERSE_POLL"          # D-06: control-plane poll tick
-    STRATEGY_COMMAND = "STRATEGY_COMMAND"    # D-09: add/remove-ticker command
+    STRATEGY_COMMAND = "STRATEGY_COMMAND"    # D-09: add/remove/enable/disable/reconfigure/subscribe_portfolio/unsubscribe_portfolio/add_ticker/remove_ticker
     BARS_LOADED = "BARS_LOADED"              # D-03: warmup bulk-transport
     BARS_LOAD_FAILED = "BARS_LOAD_FAILED"    # D-04: warmup backfill failure
     STREAM_STATE = "STREAM_STATE"            # BUS-03: connector stream up/down (CONTROL)

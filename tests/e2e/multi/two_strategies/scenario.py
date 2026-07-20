@@ -127,9 +127,9 @@ SCENARIO = ScenarioSpec(
     data={_BTC: HERE / "bars.csv", _ETH: HERE / "bars_eth.csv"},
     strategies=[
         ScriptedEmitter(_TIMEFRAME, [_BTC], script=_BTC_SCRIPT,
-                        sizing_policy=_SIZING),
+                        name="emitter_btc", sizing_policy=_SIZING),
         ScriptedEmitter(_TIMEFRAME, [_ETH], script=_ETH_SCRIPT,
-                        sizing_policy=_SIZING),
+                        name="emitter_eth", sizing_policy=_SIZING),
     ],
     portfolios=[PortfolioSpec(name="two_strategies_pf", cash=_CASH)],
     exchange=None,  # zero-fee / zero-slippage — both fills are the only moving part.

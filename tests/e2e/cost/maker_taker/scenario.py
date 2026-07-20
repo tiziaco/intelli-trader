@@ -150,9 +150,9 @@ SCENARIO = ScenarioSpec(
     data={_TICKER: HERE / "bars.csv"},
     strategies=[
         ScriptedEmitter(_TIMEFRAME, [_TICKER], script=_MAKER_SCRIPT,
-                        order_type=OrderType.LIMIT),
+                        name="emitter_maker", order_type=OrderType.LIMIT),
         ScriptedEmitter(_TIMEFRAME, [_TICKER], script=_TAKER_SCRIPT,
-                        order_type=OrderType.MARKET),
+                        name="emitter_taker", order_type=OrderType.MARKET),
     ],
     portfolios=[PortfolioSpec(name="cost02_pf", cash=_CASH)],
     exchange=_EXCHANGE,  # D-14: MAKER_TAKER fee model applied to the run.

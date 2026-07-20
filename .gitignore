@@ -34,6 +34,10 @@ credentials*
 # the broad **cache** rule above would otherwise ignore it by filename.
 !itrader/price_handler/feed/cache_registration.py
 !tests/integration/test_bar_cache_registration.py
+# v1.8 Phase 10 F-1 timeframe-aware ring-depth unit tests (mandated artifact name,
+# mirrors the source module above; the broad **cache** rule would otherwise ignore
+# it by filename).
+!tests/unit/price_handler/test_cache_registration.py
 # Phase 8 Req 2/D-05 Position-cache fill-invalidation test (mandated artifact name).
 !tests/unit/portfolio/positions/test_position_cache.py
 # v1.6 Phase 4 cached-SQL live write-through wrappers + tests (mandated artifact

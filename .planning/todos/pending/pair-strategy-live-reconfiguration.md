@@ -3,11 +3,47 @@ status: scheduled
 created: "2026-07-07"
 source: surfaced in v1.7 Phase 7 07-REVIEW.md CR-01 discussion (StrategyCommandEvent vs PairStrategy 2-ticker contract)
 tags: [strategy, pair-strategy, universe, readiness, live-control-plane, operator-command, next-milestone, phase-7-tie-in]
-resolves_phase: "P10"
-folded_into: "v1.8 STRAT-03 (P10 Strategies Registry) — atomic runtime param reconfiguration; brought in-scope by owner decision 2026-07-09 (was spec §18 'not folded / deferred to ★-trimmable P11')"
+resolves_phase: "next-milestone"
+folded_into: "PARTIALLY — v1.8 STRAT-03 (P10 Strategies Registry) builds the atomic-reconfiguration FOUNDATION (validate→persist→apply→re-warm, force-flat, dark-then-warm via P7) for SINGLE-LEG strategies only. The pair-specific B2 ordered leg-swap is DEFERRED to the next milestone by owner decision 2026-07-17: P10 is already multi-wave, and B2's flatten→wait-until-flat→swap sequencing needs a pending-swap state machine (spans event cycles) + 280-bar×2-leg test fixtures — ~1-2 waves of net work better built ON the shipped P10 foundation, in the milestone where pairs actually go live. P10 EXTENDS the CR-01 refusal to the new reconfigure/leg-swap verbs (loud 'pair runtime reconfiguration not yet supported'). Supersedes the 2026-07-09 owner decision that brought it in-scope for P10."
 ---
 
 # PairStrategy live reconfiguration — atomic ordered-pair leg swap (the "correct B" for CR-01)
+
+## SCOPE WIDENED 2026-07-17 (P10 discuss): ALL pair runtime reconfiguration, not just leg-swap
+
+Owner decision (2026-07-17): P10 refuses **all** runtime reconfiguration of a `PairStrategy` — **params
+AND leg-swap**. Both land here, next milestone, as ONE coherent unit. Pairs ARE full P10 registry
+instances (add / remove / enable / disable / rehydrate all work; only `reconfigure` is refused).
+
+**Why pair PARAM reconfig is NOT "the same as single-leg" (evidence gathered 2026-07-17 — this was the
+decisive finding; do not re-litigate without re-reading it):**
+
+1. **A pair entry carries NO SL/TP bracket.** `pair_base.py::_entry` builds
+   `SignalIntent(ticker, action, order_type=MARKET, quantity=to_money(q), exit_fraction=1, leverage=...)`
+   — **no `stop_loss`, no `take_profit`**, unlike the single-leg `base.py::_intent` which threads
+   `stop_loss=to_money(sl)` / `take_profit=to_money(tp)`. A pair's ONLY exit path is `evaluate_pair()`
+   emitting exit intents on z-reversion — and that is gated on `is_pair_ready()`.
+2. **`_run_init` wipes the pair's state on EVERY reconfigure, unconditionally.** It re-creates
+   `_buf_A` / `_buf_B` (`deque(maxlen=beta_warmup + z_lookback)`) and resets `_pair_bar_count = 0`, and
+   β re-fits from scratch. `reconfigure()` always calls `_run_init()` — so even changing a pair's
+   `sizing_policy` (a change that leaves a SINGLE-LEG strategy warm and trading) blanks a pair.
+3. **`is_pair_ready()` needs 280 bars** (`beta_warmup` 250 + `z_lookback` 30 for the reference pair).
+
+**Net hazard:** reconfiguring a pair that holds an open spread strands an **unhedged, bracket-less
+A/B spread with no reachable exit path for 280 bars** (~12 days on 1h bars; 280 days on 1d) — the pair
+can't emit exits until it re-warms, and no resting bracket exists to protect it. Contrast the single-leg
+case, where an open position rides its **resting exchange SL/TP brackets** through a (shorter, 100-bar,
+and only-if-the-window-grew) dark re-warm. This asymmetry is why P10 refuses pair reconfiguration
+outright instead of reusing the single-leg "apply live, keep positions" semantics (P10 Area-3 decision).
+
+**Considered and rejected for P10:** a *flat-gated* allowance (permit pair param reconfig only when the
+instance holds no open spread; refuse otherwise). Safe, but a half-capability — owner chose to keep the
+guard total and deliver all pair reconfiguration together here. Also rejected: auto-force-flat on
+reconfigure — that IS this todo's B2 step-1 flatten→wait-until-flat sequencing, which is precisely the
+work being deferred; pulling it into P10 defeats the deferral.
+
+**So this todo's next-milestone scope = (a) pair PARAM reconfiguration (with whatever
+flatten/flat-gate/quiesce semantics the hazard above demands) + (b) the B2 ordered leg-swap below.**
 
 **Origin:** Surfaced in v1.7 Phase 7 (Live Dynamic-Universe Hardening) while fixing **CR-01**
 (`07-REVIEW.md`). CR-01's defect: `StrategiesHandler.on_strategy_command`'s `add_ticker`/`remove_ticker`

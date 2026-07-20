@@ -109,7 +109,8 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 - [x] **Phase 7: Safety + Reconciliation + Stream Recovery** - `SafetyController`, `ReconciliationCoordinator`, `StreamRecoveryHandler`, CONTROL routes, pre-trade throttle — flag machinery deleted (SAFE-01..06) (completed 2026-07-14)
 - [x] **Phase 8: Error Subsystem** - Injected `ErrorPolicy`, formalized `ErrorHandler`, two-guard terminal safety, CF-1 aggregate circuit breaker (ERR-01..04) (completed 2026-07-14)
 - [x] **Phase 9 ★: Runtime-Config Platform** - `RuntimeConfig` overlay, scoped `ConfigUpdateEvent` + allowlist, restart layering, stats/state UI read-model (RTCFG-01..06) (completed 2026-07-16)
-- [ ] **Phase 10 ★: Strategies Registry** - Durable `StrategyRegistryStore` rehydrate, enable/disable via `STRATEGY_COMMAND`, atomic strategy-param reconfiguration (STRAT-01..03)
+- [x] **Phase 10 ★: Strategies Registry** - Durable `StrategyRegistryStore` rehydrate, enable/disable via `STRATEGY_COMMAND`, atomic strategy-param reconfiguration (STRAT-01..03) (completed 2026-07-17)
+- [ ] **Phase 10.1: StrategiesHandler Decomposition** - Split `strategies_handler.py` into a thin handler + `ManagedStrategies` holder + live-only `StrategyLifecycleManager`; dissolve GATE-01 lazy imports; rename `calculate_signals`→`on_bar` (DECOMP-01..03) (INSERTED — follow-up to Phase 10)
 - [ ] **Phase 11 ★: Multi-Portfolio-Live** - Per-`account_id` account factory, distinct-`account_id` invariant (fail loud), per-portfolio reconcile, `clOrdId→client_order_id` (MPORT-01..06)
 - [ ] **Phase 12: Test Migration + Gates** - live-smoke / config-restart / multi-portfolio-attribution gates (TEST-02..04; TEST-01 replay relocation pulled forward into P6)
 
@@ -396,7 +397,86 @@ Plans:
   3. A strategy's config parameters are mutable at runtime via **atomic reconfiguration** (quiesce → apply → re-warmup the affected strategy), persisted to `StrategyRegistryStore` (STRAT-03; folds `pair-strategy-live-reconfiguration.md`).
   4. The backtest oracle stays byte-exact (live-only, backtest-dark) and `test_okx_inertness.py` stays green.
 
-**Plans**: TBD
+**Plans**: 9 plans in 7 waves
+
+*Cross-cutting constraints (apply to every plan): backtest oracle byte-exact `134 / 46189.87730727451` —
+**mandatory per-PLAN gate on 10-03** (the D-07 `is_active` guard is the one shared-hot-path edit);
+`test_okx_inertness.py` green (codec in `core/` + catalog seam stay SQL/ccxt-free, store import lazy);
+Decimal money end-to-end (codec round-trips Decimals as strings); indentation measured per file.*
+
+**Wave 1** *(three independent seams — parallel)*
+
+- [x] 10-01-PLAN.md — D-03 tagged-union policy codec in `core/policy_codec.py` (all 6 policies incl. `PercentFromDecision`; Decimals as strings) (STRAT-01)
+- [x] 10-02-PLAN.md — D-06 schema + Alembic migration (`down_revision="system_stats"`; non-destructive on non-empty — A1 guard) (STRAT-01)
+- [x] 10-03-PLAN.md — D-07 `is_active` guard (oracle-gated) + **F-1 fix**: timeframe-aware `derive_warmup_depth` (STRAT-02)
+
+**Wave 2** *(blocked on 10-01)*
+
+- [x] 10-04-PLAN.md — D-01 injected catalog allowlist + D-04/D-20 authoring codec (`config_version: 1`) (STRAT-01)
+
+**Wave 3** *(blocked on 10-02 + 10-04)*
+
+- [x] 10-05-PLAN.md — D-01 rehydrate at construction + D-19 quarantine/loud split + D-21 empty-registry no-op (STRAT-01)
+
+**Wave 4** *(blocked on 10-03 + 10-05)*
+
+- [x] 10-06-PLAN.md — D-08 event extension + light verbs + verb-scoped pair guard (D-16/D-17 reconcile) (STRAT-02)
+
+**Wave 5** *(blocked on 10-06)*
+
+- [x] 10-07-PLAN.md — D-10 `add` (catalog-gate, dark, warm) + D-11 `remove` (force-flat first) (STRAT-02)
+
+**Wave 6** *(blocked on 10-07)*
+
+- [x] 10-08-PLAN.md — D-12–D-15 atomic reconfigure + F-1 warmability gate (STRAT-03)
+
+**Wave 7** *(blocked on 10-08)*
+
+- [x] 10-09-PLAN.md — D-22 FastAPI stand-in add→restart lifecycle + phase gate sweep (STRAT-01/02/03)
+
+Plans:
+
+- [x] 10-01-PLAN.md — D-03/D-05 tagged-union policy codec in `core/` — all 6 sizing/SLTP policies round-trip, Decimals as strings, no repr-eval (wave 1)
+- [x] 10-02-PLAN.md — D-06/D-18 schema: add `strategy_type`, add `strategy_portfolio_subscriptions`, drop `strategy_subscriptions`; migration chained onto `system_stats`, non-destructive on non-empty (wave 1)
+- [x] 10-03-PLAN.md — D-07 `is_active` hot-path guard (oracle-gated) + F-1 timeframe-aware ring depth and the shared `required_base_depth` boundary (wave 1)
+- [x] 10-04-PLAN.md — D-01 injected `strategy_catalog` allowlist + D-04/D-20 authoring-param codec (`_DERIVED_FIELDS`, the three aliasing traps, `config_version`) (wave 2)
+- [x] 10-05-PLAN.md — D-01 rehydrate at construction in `build_live_system` + D-19 quarantine/loud-infrastructure split + D-21 empty-registry no-op + D-02 duplicate reject (wave 3)
+- [x] 10-06-PLAN.md — D-08 event extension + D-09 light verbs (enable/disable/subscribe/unsubscribe + ticker persist) + D-16/D-17 verb-scoped pair guard (wave 4)
+- [x] 10-07-PLAN.md — D-10 `add` (catalog-gate, dark, warm via the P7 pipeline) + D-11 `remove` (force-flat first, pending-removal state) (wave 5)
+- [x] 10-08-PLAN.md — D-12/D-13/D-14/D-15 atomic reconfiguration (trial-validate → persist → apply → re-warm) + the D-15 allowlist + the F-1 timeframe capacity gate (wave 6)
+- [x] 10-09-PLAN.md — D-22 external add→warm→trade→restart→resume lifecycle (the FastAPI stand-in) + phase gate sweep and validation sign-off (wave 7)
+
+### Phase 10.1: StrategiesHandler Decomposition (INSERTED — follow-up to Phase 10)
+
+**Goal**: Split the 1648-line `strategies_handler.py` along its three natural seams — a thin data-plane `StrategiesHandler` (queue seam), a shared `ManagedStrategies` holder (the live instance set + membership rules), and a live-only `StrategyLifecycleManager` (all `STRATEGY_COMMAND` verb logic + fill-driven removal completion). Behaviour-preserving; dissolves the GATE-01 lazy imports and renames `calculate_signals` → `on_bar`. Spec: `docs/superpowers/specs/2026-07-18-strategies-handler-decomposition-design.md`. (Non-starred structural cleanup; inserted after Phase 10, does not renumber Phase 11/12.)
+**Depends on**: Phase 10
+**Requirements**: DECOMP-01, DECOMP-02, DECOMP-03 *(NEW ids — register in the requirements doc before plan-phase, per the decision-coverage gate)*
+**Success Criteria** (what must be TRUE):
+
+  1. `strategies_handler.py` is split into a thin `StrategiesHandler` (data plane + queue seam), a `ManagedStrategies` holder (owns `strategies`/`min_timeframe`/`_pending_removals` + the registration/membership rules), and a live-only `StrategyLifecycleManager` (~700-line control plane + the D-11 fill-driven removal completion). No behaviour change to any verb, the signal path, or pending-removal semantics (DECOMP-01).
+  2. The five load-bearing GATE-01 lazy imports — plus the accidental `ErrorEvent`/`ErrorSeverity` one — are gone: `StrategyLifecycleManager` is live-only (never barrelled, constructed only in the live wiring arm), so its `registry`/`config_codec`/`catalog`/`cache_registration` imports sit at module top; `test_okx_inertness.py` stays green (DECOMP-02).
+  3. `calculate_signals` is renamed `on_bar` across the `_routes` literal (`full_event_handler.py`), the 59 test call-sites, and the docs (incl. the CLAUDE.md flow diagram); `test_dispatch_registry` passes (DECOMP-03).
+  4. The public handler surface is preserved by delegation — `on_strategy_command` / `on_fill` / `add_strategy` / `get_strategies_universe` and the `strategies` / `min_timeframe` / `_pending_removals` accessors still resolve, so the 312 test field-references and the route registrations are unbroken.
+  5. The backtest oracle stays byte-exact `134 / 46189.87730727451` and the full unit + integration suites stay green.
+
+*Cross-cutting constraints (apply to every plan): backtest oracle byte-exact `134 / 46189.87730727451` —
+the `strategies` property returns the same list object so `on_bar`'s body is never edited (hot path untouched);
+`test_okx_inertness.py` green (the lifecycle module must never reach the backtest import graph); no compat
+shim for `calculate_signals` (call-sites updated directly); indentation is tabs, measured per file.*
+
+**Plans**: 3 plans in 3 sequential waves
+
+**Wave 1** *(no deps — pure extraction, hot path untouched)*
+
+- [ ] 10.1-01-PLAN.md — Extract `ManagedStrategies` (roster state + membership rules) + delegating handler accessors; hot path reads unchanged (DECOMP-01)
+
+**Wave 2** *(blocked on 10.1-01)*
+
+- [ ] 10.1-02-PLAN.md — Extract `StrategyLifecycleManager` into `strategy_handler/lifecycle/`; move the 13 verb helpers + `on_strategy_command`/`on_fill`; hoist imports to module top; delete the dead lazy imports (DECOMP-02)
+
+**Wave 3** *(blocked on 10.1-02)*
+
+- [ ] 10.1-03-PLAN.md — Rename `calculate_signals` → `on_bar` across source, route literal, 59 test call-sites, and docs (DECOMP-03)
 
 ### Phase 11 ★: Multi-Portfolio-Live
 

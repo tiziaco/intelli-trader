@@ -47,6 +47,7 @@ exit). Indentation: 4 spaces (matches ``tests/conftest.py``).
 """
 
 from decimal import Decimal
+from typing import Any
 
 from itrader.core.enums.order import OrderType
 from itrader.core.sizing import (
@@ -80,6 +81,14 @@ class ScriptedEmitter(Strategy):
     sizing_policy : SizingPolicy
         Defaults to ``FractionOfCash(Decimal("0.95"))`` — the same golden sizing
         policy SMA_MACD declares, so entry quantity is hand-derivable.
+    name : str | None
+        Per-instance registry identity. Defaults to the ``scripted_emitter`` class
+        attr; a scenario building TWO emitters MUST give each a distinct name —
+        ``strategy_name`` is the durable per-instance identity and ``add_strategy``
+        rejects a collision loudly (D-02). Two differently-scripted instances
+        sharing one name was always a latent identity bug (ambiguous ``__str__``,
+        colliding name-keyed lookups); it only became observable once the registry
+        keyed on it.
     """
 
     name = "scripted_emitter"
@@ -90,6 +99,7 @@ class ScriptedEmitter(Strategy):
 
     def __init__(self, timeframe: str, tickers: list[str], *,
                  script: dict[str, dict],
+                 name: str | None = None,
                  order_type: OrderType = OrderType.MARKET,
                  direction: TradingDirection = TradingDirection.LONG_ONLY,
                  sizing_policy: SizingPolicy | None = None,
@@ -109,15 +119,22 @@ class ScriptedEmitter(Strategy):
         # allow_increase=False / max_positions=1 preserve every existing leaf's
         # behavior. Per-INSTANCE (not per-bar). FractionOfCash(Decimal("0.95"))
         # is the string-path literal (Pitfall 4 — byte-exact).
-        super().__init__(
-            timeframe=timeframe,
-            tickers=list(tickers),
-            sizing_policy=sizing_policy,
-            direction=direction,
-            allow_increase=allow_increase,
-            max_positions=max_positions,
-            sltp_policy=sltp_policy,
-        )
+        base_kwargs: dict[str, Any] = {
+            "timeframe": timeframe,
+            "tickers": list(tickers),
+            "sizing_policy": sizing_policy,
+            "direction": direction,
+            "allow_increase": allow_increase,
+            "max_positions": max_positions,
+            "sltp_policy": sltp_policy,
+        }
+        # `name` is a DECLARED base param (base.py:186), so it threads through the
+        # same **kwargs surface as the rest: _apply_params takes the kwarg if
+        # present, else the class-attr default. Omit the key entirely when None so
+        # the `scripted_emitter` default stands — name=None would setattr None.
+        if name is not None:
+            base_kwargs["name"] = name
+        super().__init__(**base_kwargs)
         self.script = script
         self.order_type = order_type
 
