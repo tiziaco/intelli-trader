@@ -475,7 +475,7 @@ the wave that touches them.*
 
 **Wave 2** *(blocked on 10.1-01)*
 
-- [ ] 10.1-02-PLAN.md — Extract `ManagedStrategies` (roster state + membership rules) + delegating handler accessors; hot path reads unchanged (DECOMP-01)
+- [x] 10.1-02-PLAN.md — Extract `ManagedStrategies` (roster state + membership rules) + delegating handler accessors; hot path reads unchanged (DECOMP-01)
 
 **Wave 3** *(blocked on 10.1-02)*
 
