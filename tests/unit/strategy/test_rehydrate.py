@@ -42,7 +42,11 @@ from uuid_utils.compat import uuid7
 
 from itrader.config.sql import SqlSettings
 from itrader.core.enums import ErrorSeverity
-from itrader.core.exceptions import StrategyAdmissionError, UnknownParamError
+from itrader.core.exceptions import (
+    MissingParamError,
+    StrategyAdmissionError,
+    UnknownParamError,
+)
 from itrader.core.ids import PortfolioId
 from itrader.core.sizing import FractionOfCash
 from itrader.price_handler.feed.cache_registration import UnwarmableTimeframeError
@@ -783,6 +787,38 @@ class _BareValueErrorStrategy(Strategy):
 
     def generate_signal(self, ticker: str) -> Any:
         return None
+
+
+def test_unknown_param_error_passes_through_the_wrap_unwrapped() -> None:
+    """WR2-02 no-double-wrap — the guard clause must claim admission errors FIRST.
+
+    The wrap's ``ValueError`` clause would otherwise also catch ``UnknownParamError``
+    (``StrategyAdmissionError`` subclasses ``ValueError``) and re-raise it as a
+    ``StrategyValidationError``, DESTROYING the ``ValidationError`` structured fields
+    the ``ljn`` task deliberately preserved. Clause ORDER is what prevents that.
+    """
+    with pytest.raises(UnknownParamError) as excinfo:
+        SMAMACDStrategy(timeframe="1d", tickers=["BTCUSD"], no_such_knob=7)
+
+    exc = excinfo.value
+    assert type(exc) is UnknownParamError, "re-wrapped — the guard clause lost the race"
+    assert exc.names == ["no_such_knob"]
+    assert exc.field == "strategy_params"
+    assert "no_such_knob" in str(exc)
+    assert exc.__cause__ is None, "the wrap must not attach a __cause__ to a pass-through"
+
+
+def test_missing_param_error_passes_through_the_wrap_unwrapped() -> None:
+    """WR2-02 no-double-wrap — same guarantee for the D-07 required-param refusal."""
+    # ``EmptyStrategy`` does not pin ``sizing_policy`` as a class attr, so omitting it
+    # leaves the bare base annotation with no value and no prior (D-07).
+    with pytest.raises(MissingParamError) as excinfo:
+        EmptyStrategy(timeframe="1d", tickers=["BTCUSD"])
+
+    exc = excinfo.value
+    assert type(exc) is MissingParamError
+    assert exc.field == exc.name == "sizing_policy"
+    assert exc.__cause__ is None
 
 
 def test_bare_value_error_from_validate_quarantines_the_row_not_the_boot() -> None:

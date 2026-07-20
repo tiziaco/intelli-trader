@@ -10,7 +10,12 @@ from typing import Any, cast, get_type_hints
 import pandas as pd
 
 from itrader.core.enums import OrderType, Side, Timeframe
-from itrader.core.exceptions.strategy import UnknownParamError, MissingParamError
+from itrader.core.exceptions.strategy import (
+	StrategyAdmissionError,
+	StrategyValidationError,
+	UnknownParamError,
+	MissingParamError,
+)
 from itrader.core.ids import PortfolioId, StrategyId
 from itrader.core.money import to_money
 from itrader.core.sizing import SignalIntent, SizingPolicy, SLTPPolicy, TradingDirection
@@ -205,10 +210,46 @@ class Strategy(ABC):
 		# mutator). Never invalidated in backtest (no reconfigure on the run path).
 		# CACHE-CLASS: (c) explicitly-invalidated memo (via _invalidate_to_dict_cache) — see docs/CACHE-CLASSIFICATION.md
 		self._to_dict_static_cache: dict[str, Any] | None = None
-		# D-06/D-07/D-08: required/unknown detection + enum coercion + setattr.
-		self._apply_params(**kwargs)
-		# D-09: cross-field validation hook (no-op by default).
-		self.validate()
+		# WR2-02 / IN2-02 — TYPE the bare-``ValueError`` residue escaping this span.
+		#
+		# 1. WHY. Four collaborators inside this span raise a BARE ``ValueError``:
+		#    ``Strategy.validate``, any subclass override of it (``SMAMACDStrategy.validate``,
+		#    ``PairStrategy.validate``, and third-party overrides outside our hierarchy),
+		#    ``_apply_params``'s malformed-``tickers`` guard, and its ``_COERCE`` enum
+		#    coercion off a bogus enum string. Untyped, that residue sat OUTSIDE
+		#    ``StrategyAdmissionError`` and therefore outside
+		#    ``registry.rehydrate._QUARANTINABLE``, so ONE stale registry row whose class
+		#    had gained a cross-field rule aborted the whole live boot instead of being
+		#    quarantined — a bad ROW becoming a bad SYSTEM. Converting at the raise
+		#    boundary (rather than asking every strategy class to opt into our hierarchy)
+		#    is what lets ``_QUARANTINABLE`` stay narrow.
+		# 2. CLAUSE ORDER IS LOAD-BEARING — do not reorder, and do not collapse the two
+		#    clauses into one with an ``isinstance`` test. ``StrategyAdmissionError``
+		#    already subclasses ``ValueError``, so a lone ``ValueError`` clause would also
+		#    claim ``UnknownParamError`` / ``MissingParamError`` / ``StrategyConfigError`` /
+		#    ``UnknownStrategyTypeError``. Re-raising those as ``StrategyValidationError``
+		#    would DESTROY the ``ValidationError`` structured fields (``field`` /
+		#    ``message`` / ``.names``) that the ``ljn`` task deliberately preserved,
+		#    degrading every rejection diagnostic. The guard clause below claims them first
+		#    and re-raises them completely untouched.
+		# 3. ``_run_init`` / ``init()`` are deliberately OUTSIDE this span — ``init()`` is
+		#    arbitrary user-authored strategy code, and
+		#    ``StrategyLifecycleManager._add_strategy_verb``'s tier-2 guard already owns
+		#    that zone.
+		# 4. ACCEPTED TRADE, stated plainly: this reclassifies a genuine PROGRAMMING BUG
+		#    inside a strategy's ``validate()`` (say a typo'd comparison) as an admission
+		#    failure rather than a crash. That is the SAME trade
+		#    ``_add_strategy_verb``'s tier-2 catch-all already accepted at the add site,
+		#    so it is consistent with the established boundary rather than a new concession.
+		try:
+			# D-06/D-07/D-08: required/unknown detection + enum coercion + setattr.
+			self._apply_params(**kwargs)
+			# D-09: cross-field validation hook (no-op by default).
+			self.validate()
+		except StrategyAdmissionError:
+			raise
+		except ValueError as exc:
+			raise StrategyValidationError(str(exc)) from exc
 		# D-03/D-08: register declared indicators (init() calls self.indicator())
 		# then auto-derive warmup/max_window from the registered handles.
 		self._run_init()
@@ -744,8 +785,18 @@ class Strategy(ABC):
 		restores ``None``); a caller who expects "omitted == default" will be
 		surprised. Only an explicitly-supplied kwarg overrides the prior value.
 		"""
-		self._apply_params(**kwargs)
-		self.validate()
+		# WR2-02 / IN2-02 — the SAME wrap as ``Strategy.__init__``; see the full rationale
+		# there (clause order is the no-double-wrap enforcement, and ``_run_init`` stays
+		# outside on purpose). Both construction paths must type the residue identically,
+		# otherwise a reconfigure refusal would still escape
+		# ``StrategyLifecycleManager._reconfigure_strategy_verb``'s narrowed catch.
+		try:
+			self._apply_params(**kwargs)
+			self.validate()
+		except StrategyAdmissionError:
+			raise
+		except ValueError as exc:
+			raise StrategyValidationError(str(exc)) from exc
 		# D-08/D-10: re-register handles + re-derive warmup (idempotent).
 		self._run_init()
 		# D-06 (08-03 Req 4): _apply_params re-commits DECLARED params, so the
