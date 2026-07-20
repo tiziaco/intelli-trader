@@ -158,7 +158,7 @@ class ManagedStrategies:
 		DECOMP-01: added for 10.1-03's ``on_fill`` motion. The moved body's
 		``if not self._pending_removals: return`` cannot resolve on the lifecycle
 		manager (it owns NO roster state), and giving that manager its own set
-		would be silently catastrophic: ``get_universe`` above reads THIS set to
+		would be silently catastrophic: ``get_universe`` below reads THIS set to
 		exclude a pending strategy's tickers, so a second set would never
 		re-derive membership, the D-11 force-close poll would never fire, and
 		``remove`` would hang forever with NO error raised. One set, read here.
@@ -267,7 +267,7 @@ class ManagedStrategies:
 		# D-02 duplicate-name loud reject. `strategy_name` is the DURABLE
 		# per-instance identity: the registry keys on it, STRATEGY_COMMAND
 		# addresses by it, and rehydrate reconstructs by it. (The ephemeral
-		# `strategy_id` UUIDv7 at base.py:192 is minted per construction and
+		# `strategy_id` UUIDv7 at base.py:194 is minted per construction and
 		# is NOT restart-stable, so keying durability on it would corrupt
 		# rehydrate.) A silent second registration under the same name would
 		# shadow the first instance and overwrite its persisted state, so a

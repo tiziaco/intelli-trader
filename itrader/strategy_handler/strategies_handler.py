@@ -2,7 +2,6 @@ from typing import Any, Optional, TYPE_CHECKING
 
 from itrader.core.enums import OrderType
 from itrader.core.exceptions import ConfigurationError
-from itrader.core.ids import PortfolioId
 from itrader.core.money import to_money
 from itrader.core.sizing import SignalIntent
 from itrader.price_handler.feed.base import BarFeed
@@ -288,8 +287,12 @@ class StrategiesHandler(object):
 	# short-circuit _request_rewarm, which would then never re-warm.
 	@property
 	def _universe(self) -> "Universe | None":
-		"""The injected dynamic universe — owned by the lifecycle manager."""
-		return self._lifecycle._universe
+		"""The injected dynamic universe — owned by the lifecycle manager.
+
+		IN2-03: reads the manager's PUBLIC ``universe`` accessor, not its private
+		attribute — same-object read-through, no copy.
+		"""
+		return self._lifecycle.universe
 
 	def set_universe(self, universe: "Universe") -> None:
 		"""Wire the dynamic universe for the WR-02 readiness gate (D-01).
@@ -356,7 +359,7 @@ class StrategiesHandler(object):
 			The bar event of the trading system
 		"""
 		for strategy in self.strategies:
-			# D-07: the enable/disable gate — `is_active` (base.py:193) was an INERT
+			# D-07: the enable/disable gate — `is_active` (base.py:195) was an INERT
 			# flag before P10 (flipped by activate/deactivate_strategy, read by
 			# nothing); this wires it. Placed FIRST so the skip is unconditional and
 			# covers the PairStrategy branch below (D-16: a pair uses the same gate).
