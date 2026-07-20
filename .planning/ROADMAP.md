@@ -479,7 +479,7 @@ the wave that touches them.*
 
 **Wave 3** *(blocked on 10.1-02)*
 
-- [ ] 10.1-03-PLAN.md — Extract `StrategyLifecycleManager` into `strategy_handler/lifecycle/`; move the 13 verb helpers + `on_strategy_command`/`on_fill` + the 4 module-level verb constants; all imports at module top; add the SQL-absence assertion to `test_okx_inertness.py` (DECOMP-02)
+- [x] 10.1-03-PLAN.md — Extract `StrategyLifecycleManager` into `strategy_handler/lifecycle/`; move the 13 verb helpers + `on_strategy_command`/`on_fill` + the 4 module-level verb constants; all imports at module top; add the SQL-absence assertion to `test_okx_inertness.py` (DECOMP-02)
 
 **Wave 4** *(blocked on 10.1-03)*
 
