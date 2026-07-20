@@ -54,7 +54,7 @@ import uuid
 from typing import Any, Optional, TYPE_CHECKING
 
 from itrader.core.enums import ErrorSeverity
-from itrader.core.exceptions import MissingParamError, UnknownParamError
+from itrader.core.exceptions import StrategyAdmissionError
 from itrader.core.ids import PortfolioId
 from itrader.core.policy_codec import default_policy_registry
 from itrader.events_handler.bus import EventBus
@@ -71,9 +71,7 @@ from itrader.price_handler.feed.cache_registration import (
 from itrader.strategy_handler.base import Strategy
 from itrader.strategy_handler.managed_strategies import ManagedStrategies
 from itrader.strategy_handler.pair_base import PairStrategy
-from itrader.strategy_handler.registry.catalog import UnknownStrategyTypeError
 from itrader.strategy_handler.registry.config_codec import (
-	StrategyConfigError,
 	decode_strategy_config,
 	encode_strategy_config,
 )
@@ -392,18 +390,17 @@ class StrategyLifecycleManager:
 		}
 		try:
 			strategy = build_strategy(rec, catalog=self.strategy_catalog)
-		except (
-			UnknownStrategyTypeError,
-			StrategyConfigError,
-			UnknownParamError,
-			MissingParamError,
-			ValueError,
-		) as exc:
+		except (StrategyAdmissionError, ValueError) as exc:
 			# Tier 1 — EXPECTED validation kinds, i.e. "the operator sent junk". A loud
 			# no-op naming the error KIND (not the payload values — the P8
-			# declared-fields-only precedent). ValueError last, matching the sibling
-			# reconfigure site: it covers validate() + the _apply_params tickers/enum
-			# guards, both of which raise BARE ValueError (base.py, SMA_MACD_strategy.py).
+			# declared-fields-only precedent). StrategyAdmissionError is the shared
+			# ancestor of every strategy-payload refusal (unknown strategy_type,
+			# undeserializable blob, param drift either direction) — one name instead of
+			# a hand-listed tuple that can drift out of sync with its siblings, which is
+			# what caused CR-01. ValueError stays as the residue: validate() and the
+			# _apply_params tickers/enum guards raise BARE ValueError (base.py,
+			# SMA_MACD_strategy.py), and a third-party strategy's validate() override can
+			# never be brought into our hierarchy.
 			self.logger.warning(
 				'add for strategy %s rejected (%s) — nothing registered or persisted',
 				event.strategy_name, type(exc).__name__)
@@ -798,17 +795,14 @@ class StrategyLifecycleManager:
 			cls, params = decode_strategy_config(
 				rec, self.strategy_catalog, default_policy_registry())
 			trial = cls(**params)
-		except (
-			StrategyConfigError,
-			UnknownStrategyTypeError,
-			UnknownParamError,
-			MissingParamError,
-			ValueError,
-		) as exc:
+		except (StrategyAdmissionError, ValueError) as exc:
 			# Loud no-op naming the error KIND (not the payload values — the P8
-			# declared-fields-only precedent). SPECIFIC types (ValueError covers validate()
-			# + the _apply_params tickers/enum guards); never a bare except, so a store/infra
-			# fault is not silently eaten.
+			# declared-fields-only precedent). StrategyAdmissionError is the shared ancestor
+			# of every strategy-payload refusal; ValueError is the residue that can never
+			# join it (validate() + the _apply_params tickers/enum guards raise BARE
+			# ValueError, and a third-party validate() override is outside our hierarchy).
+			# Still NARROW — never a bare except, so a store/infra fault is not silently
+			# eaten.
 			self.logger.warning(
 				'reconfigure for strategy %s rejected (%s) — live instance untouched',
 				event.strategy_name, type(exc).__name__)
@@ -858,12 +852,10 @@ class StrategyLifecycleManager:
 		# the NEW config and a restart heals (the deliberate persist-then-apply asymmetry).
 		try:
 			strategy.reconfigure(**params)
-		except (
-			StrategyConfigError,
-			UnknownParamError,
-			MissingParamError,
-			ValueError,
-		) as exc:
+		except (StrategyAdmissionError, ValueError) as exc:
+			# Same narrow pair as the TRIAL site above. This site previously omitted
+			# UnknownStrategyTypeError (defensibly — apply resolves no class); folding it
+			# in via the shared base is harmless because apply cannot raise it.
 			self._emit_reconfigure_apply_failure(event, strategy, exc)
 			return
 		# D-12: NO force-flat. Open positions stay open and their subsequent exits are

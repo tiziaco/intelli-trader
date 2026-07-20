@@ -70,7 +70,7 @@ import uuid
 from typing import Any, Mapping, Optional, Protocol
 
 from itrader.core.enums import ErrorSeverity
-from itrader.core.exceptions import MissingParamError, UnknownParamError
+from itrader.core.exceptions import StrategyAdmissionError
 from itrader.core.ids import PortfolioId
 from itrader.core.policy_codec import PolicyRegistry, default_policy_registry
 from itrader.logger import get_itrader_logger
@@ -79,10 +79,7 @@ from itrader.price_handler.feed.cache_registration import (
 	required_base_depth,
 )
 from itrader.strategy_handler.base import Strategy
-from itrader.strategy_handler.registry.catalog import (
-	StrategyCatalog,
-	UnknownStrategyTypeError,
-)
+from itrader.strategy_handler.registry.catalog import StrategyCatalog
 from itrader.strategy_handler.registry.config_codec import (
 	StrategyConfigError,
 	decode_strategy_config,
@@ -98,17 +95,28 @@ __all__ = [
 # "this one instance cannot be reconstructed" and nothing about the health of its siblings,
 # so each is quarantined rather than raised.
 #
-# Enumerated EXPLICITLY rather than caught as a bare ``except`` on the base class: a broad
-# catch here would also swallow a genuine infrastructure fault (a store/driver error raised
-# mid-loop) and silently quarantine every strategy in turn — reporting a data problem while
-# hiding an outage. The narrow tuple keeps the two D-19 arms actually separable.
+# The property that matters is that this catch stays NARROW. A broad catch here would also
+# swallow a genuine infrastructure fault (a store/driver error raised mid-loop) and silently
+# quarantine every strategy in turn — reporting a data problem while hiding an outage. The
+# two D-19 arms must stay actually separable.
+#
+# ``StrategyAdmissionError`` PRESERVES that property: it is the shared ancestor of the
+# strategy-payload REFUSALS only, and ``RehydrateInfrastructureError`` roots at
+# ``RuntimeError`` and is NOT a subclass of it — so an infrastructure fault raised inside the
+# per-row try still propagates out instead of quarantining the row. That non-subclass
+# relationship is now LOAD-BEARING rather than incidental, and it is pinned by an explicit
+# regression test (``tests/unit/strategy/test_rehydrate.py``).
+#
+# Do NOT widen this tuple toward a bare ``except``.
 _QUARANTINABLE: tuple[type[Exception], ...] = (
-	UnknownStrategyTypeError,  # the class was retired from the catalog
-	StrategyConfigError,       # the blob will not deserialize (version/type/coercion)
-	UnknownParamError,         # param drift: the blob names a param the class dropped
-	MissingParamError,         # param drift: the class gained a required param
-	UnwarmableTimeframeError,  # finer-than-base / non-whole-multiple tf: can never warm from
-	                           # the base-bar ring (F-1) — a bad ROW, quarantined not raised (WR-01)
+	StrategyAdmissionError,    # the payload was refused at admission: unknown strategy_type,
+	                           # undeserializable blob, or param drift in either direction
+	UnwarmableTimeframeError,  # a SEPARATE explicit member, deliberately NOT folded into the
+	                           # base: it is a FEED exception and a payload-x-environment
+	                           # interaction (the same config is valid on the backtest feed,
+	                           # which has no base_timeframe). Finer-than-base /
+	                           # non-whole-multiple tf can never warm from the base-bar ring
+	                           # (F-1) — a bad ROW, quarantined not raised (WR-01)
 )
 
 

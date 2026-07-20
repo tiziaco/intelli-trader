@@ -38,6 +38,7 @@ from enum import Enum
 from types import NoneType, UnionType
 from typing import Any, Union, get_args, get_origin
 
+from itrader.core.exceptions import StrategyAdmissionError
 from itrader.core.money import to_money
 from itrader.core.policy_codec import PolicyRegistry, decode_policy, encode_policy
 from itrader.core.sizing import SizingPolicy, SLTPPolicy
@@ -110,8 +111,13 @@ _POLICY_ARMS: frozenset[Any] = frozenset(get_args(SizingPolicy)) | frozenset(get
 _PASSTHROUGH: tuple[type, ...] = (bool, int, str)
 
 
-class StrategyConfigError(ValueError):
-	"""A ``config_json`` blob could not be encoded or decoded (D-04 fail-loud)."""
+class StrategyConfigError(StrategyAdmissionError):
+	"""A ``config_json`` blob could not be encoded or decoded (D-04 fail-loud).
+
+	Still a ``ValueError`` through ``StrategyAdmissionError``, so every pre-existing
+	catch site — and every plain-message raise site below — is unaffected by the
+	reparent.
+	"""
 
 
 def _unwrap_optional(declared: Any) -> tuple[Any, bool]:
