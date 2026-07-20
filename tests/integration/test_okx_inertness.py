@@ -98,6 +98,43 @@ assert not leaked, (
     "stack: " + repr(leaked) + " (must be lazy-imported inside the live path only)"
 )
 
+# Phase 10.1 (DECOMP-02): GATE-01's REAL invariant, asserted POSITIVELY.
+#
+# The _FORBIDDEN tuple above is a hardcoded NAME LIST, so it can only catch a
+# regression that arrives through a module someone already thought to list. This
+# assertion instead states the property the gate actually exists to protect: the
+# backtest import graph pulls NO SQL, no matter which module carries it. Strictly
+# stronger, and it needs no maintenance as modules are added.
+#
+# Matching on the TOP-LEVEL package (split on "." and take element 0) rather than
+# exact names is the point: "sqlalchemy.orm" and "sqlalchemy.engine.base" must both
+# trip the gate, and a submodule-only import is exactly how a regression sneaks in.
+#
+# ⚠ WHY itrader.strategy_handler.lifecycle.manager IS DELIBERATELY *NOT* IN
+# _FORBIDDEN — do not "restore" it. Phase 10.1 moved the STRATEGY_COMMAND control
+# plane into that module and hoisted its five formerly function-local import blocks
+# to module top; StrategiesHandler constructs StrategyLifecycleManager
+# UNCONDITIONALLY in __init__ from a module-top import, so the module IS on the
+# backtest import graph BY DESIGN and a _FORBIDDEN entry would redden this gate the
+# moment it landed. The old lazy-import comments claimed those imports "would pull
+# SQL onto the BACKTEST import graph"; that was re-tested in a clean interpreter
+# during 10.1-03 and is false — registry/ reaches the store through an INJECTED
+# handle, never an import. The invariant those comments were reaching for is
+# SQL-absence, which this assertion states directly.
+_SQL_ROOTS = (
+    "sqlalchemy",
+    "psycopg2",
+    "alembic",
+)
+_sql_leaked = sorted({name.split(".")[0] for name in sys.modules} & set(_SQL_ROOTS))
+assert not _sql_leaked, (
+    "DECOMP-02 INERTNESS VIOLATION: the backtest import path pulled the SQL stack: "
+    + repr(_sql_leaked)
+    + " — the backtest composition root must reach no sqlalchemy/psycopg2/alembic at "
+    "import (the durable stores are live-only and reached through INJECTED handles, "
+    "never a module-top import)"
+)
+
 # Phase 06.1 (SEAM-04, D-12): the trading_system barrel DROPPED the live surface
 # entirely — importing the backtest root (above) pulls ONLY the backtest composition
 # root, so the live module itself must be ABSENT from sys.modules at this point. Before

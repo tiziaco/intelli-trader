@@ -142,6 +142,30 @@ class ManagedStrategies:
 		"""True when ``name`` is awaiting a D-11 removal completion."""
 		return name in self._pending_removals
 
+	def has_pending(self) -> bool:
+		"""True when ANY removal is awaiting completion — the ``on_fill`` fast-exit.
+
+		DECOMP-01: added for 10.1-03's ``on_fill`` motion. The moved body's
+		``if not self._pending_removals: return`` cannot resolve on the lifecycle
+		manager (it owns NO roster state), and giving that manager its own set
+		would be silently catastrophic: ``get_universe`` above reads THIS set to
+		exclude a pending strategy's tickers, so a second set would never
+		re-derive membership, the D-11 force-close poll would never fire, and
+		``remove`` would hang forever with NO error raised. One set, read here.
+		"""
+		return bool(self._pending_removals)
+
+	def pending_names(self) -> list[str]:
+		"""A snapshot LIST of the pending-removal names — safe to iterate while mutating.
+
+		The moved ``on_fill`` loop completes removals as it goes, each of which
+		calls ``discard_pending``; iterating the live set would raise
+		``RuntimeError: Set changed size during iteration``. This reproduces the
+		original body's explicit ``list(self._pending_removals)`` copy — a copy of
+		the NAMES for iteration safety, never a second copy of the STATE.
+		"""
+		return list(self._pending_removals)
+
 	def get_universe(self) -> list[str]:
 		"""
 		Return a list with all the coins traded from the differents strategies.
