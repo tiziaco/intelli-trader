@@ -157,7 +157,7 @@ class StrategiesHandler(object):
 		#self.portfolios: dict = {}
 		# WR-02 (D-01) live-only readiness seam: the injected dynamic universe,
 		# wired ONLY on the live path via set_universe. Defaults None so the
-		# backtest wires no universe → the calculate_signals readiness gate is a
+		# backtest wires no universe → the on_bar readiness gate is a
 		# single `is None` short-circuit (oracle byte-exact, RESEARCH OQ8).
 		self._universe: "Universe | None" = None
 
@@ -272,7 +272,7 @@ class StrategiesHandler(object):
 		unaffected, and by construction rather than by absence: ``Universe.__init__``
 		marks every member ``Readiness.READY`` and backtest membership derives FROM
 		the strategy tickers, so ``is_ready(ticker)`` always holds at the per-tick
-		gate in ``calculate_signals`` and the gate never skips — oracle-inert, proven
+		gate in ``on_bar`` and the gate never skips — oracle-inert, proven
 		by the byte-exact double-run.
 
 		DECOMP-01: also forwarded to the lifecycle manager, whose ``_request_rewarm``
@@ -281,7 +281,7 @@ class StrategiesHandler(object):
 		unconditionally in ``__init__``, so it always exists by the time this runs
 		(an ``assert`` here would abort every backtest run, since
 		``universe_wiring`` reaches this method on the backtest path too). The
-		handler keeps its OWN reference because ``calculate_signals`` reads it on
+		handler keeps its OWN reference because ``on_bar`` reads it on
 		the per-tick readiness gate — two references to ONE object is the intended
 		shape, not a duplicated state.
 		"""
@@ -310,7 +310,7 @@ class StrategiesHandler(object):
 			if symbol in strategy.tickers
 		)
 
-	def calculate_signals(self, event: BarEvent) -> None:
+	def on_bar(self, event: BarEvent) -> None:
 		"""
 		Calculate the signal for every strategy to be traded.
 
@@ -532,7 +532,7 @@ class StrategiesHandler(object):
 	def _dispatch_pair(self, strategy: PairStrategy, event: BarEvent) -> None:
 		"""Two-leg pair dispatch (PAIR-01, D-01/D-02): both legs, once per tick.
 
-		Routed from ``calculate_signals`` for any ``PairStrategy`` (a typed
+		Routed from ``on_bar`` for any ``PairStrategy`` (a typed
 		``isinstance`` branch). Reads the pair's two tickers, requires BOTH legs'
 		bars present this tick (D-02 — skip silently, NO forward-fill so no
 		stale/forward-filled price ever enters the spread, T-06-01), pushes BOTH

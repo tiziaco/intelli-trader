@@ -204,7 +204,7 @@ class StrategyWarmupConsumer:
     the ``derive()`` ladder by construction) registered on the LIVE feed so the ring
     + warmup derive to the max strategy warmup (100 for SMA_MACD), not the
     newest-bar floor (1). Without it the indicators never warm and
-    ``calculate_signals`` short-circuits to zero trades — the single most likely
+    ``on_bar`` short-circuits to zero trades — the single most likely
     correctness failure of the live path (RESEARCH Pitfall 1).
 
     ONE global ring (a single scalar ``required_history_depth``): per-symbol ring
