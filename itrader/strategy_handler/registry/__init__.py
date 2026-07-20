@@ -15,7 +15,7 @@ The reason is NOT an inertness one. This package leaks no SQL: 10.1-03 verified 
 interpreter, and it was re-measured on 2026-07-20 (``import
 itrader.strategy_handler.registry`` -> zero ``sqlalchemy`` / ``psycopg2`` / ``alembic``
 modules in ``sys.modules``). Since barrel-exporting performs exactly that import, an earlier
-SQL-leak claim made here about exporting was false and has been removed (WR-05/IN-06). The
+SQL-leak claim made here about exporting was false and has been removed (IN-06). The
 surrounding GATE-01 inertness discipline that
 ``tests/integration/test_okx_inertness.py`` locks is real and unaffected — only this module's
 own SQL-leak assertion was wrong.
