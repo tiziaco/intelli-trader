@@ -19,10 +19,13 @@ TWO tables on the shared ``SqlEngine`` spine (D-06 / D-18):
   3 portfolios" is 1 instance row + 3 portfolio rows. Per-portfolio "off" is ROW PRESENCE (not
   a per-row enabled flag); whole-instance "off" is the ``enabled`` column. Rehydrate JOINs both.
 
-``portfolio_id`` is a ``String``: ``Strategy.subscribed_portfolios`` is typed
-``list[PortfolioId | int]`` (``base.py``) — both shapes are legal and ``to_dict`` already
-serializes via ``str(pid)``, so a ``Uuid`` column (as used by the portfolio-owned tables, whose
-key is strictly a ``PortfolioId``) would reject the legal ``int`` arm.
+``portfolio_id`` is a ``String`` because the stored form is a string by the round trip's own
+construction: ``Strategy.to_dict`` serializes each handle via ``str(pid)`` (``base.py``) and
+``registry/rehydrate.py::_resolve_portfolio_id`` parses it back. Unlike the portfolio-owned
+tables — whose key is a ``PortfolioId`` written directly, hence their ``Uuid`` column — this
+column stores the serialized projection of that handle, not the handle itself. Whether it
+should instead become a ``Uuid`` column (the handle is now homogeneously ``PortfolioId``, so
+nothing type-level forbids it) is a separate open question, filed as B2 and NOT settled here.
 
 **DROPPED (D-06): the P4 ``strategy_subscriptions`` (venue, symbol, timeframe) table.** It
 modelled the wrong edge and was redundant: its columns are derivable from (the live venue,
@@ -118,7 +121,8 @@ def build_strategy_registry_tables(metadata: MetaData) -> dict[str, Table]:
                 primary_key=True,
                 nullable=False,
             ),
-            # String (not Uuid): subscribed_portfolios is list[PortfolioId | int].
+            # String (not Uuid): to_dict serializes each handle via str(pid) and
+            # rehydrate parses it back. A Uuid column is open as B2, not decided.
             Column("portfolio_id", String, primary_key=True, nullable=False),
         )
 

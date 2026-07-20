@@ -88,8 +88,8 @@ def test_build_strategy_registry_tables_shape() -> None:
         fk = next(iter(subs.c.strategy_name.foreign_keys))
         assert fk.column.table.name == "strategy_registry"
         assert fk.column.name == "strategy_name"
-        # portfolio_id is String: subscribed_portfolios is list[PortfolioId | int] — a
-        # Uuid column would reject the legal int arm. base.py serializes via str(pid).
+        # portfolio_id is String because base.py serializes each handle via str(pid)
+        # and rehydrate parses it back. A Uuid column is open as B2, not decided.
         assert isinstance(subs.c.portfolio_id.type, String)
         # idempotent reuse
         assert build_strategy_registry_tables(backend.metadata) == tables
