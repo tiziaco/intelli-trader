@@ -336,7 +336,10 @@ def rehydrate_strategies(
 			# timeframe can never warm from the base-bar ring. Keyed on base_timeframe so
 			# ONLY the LIVE feed runs the check — the backtest/in-memory feed has no
 			# base_timeframe -> None -> skip cleanly (the SAME degrade the add/reconfigure
-			# gates use, strategies_handler.py:770/:1005). Called for its RAISE only (the
+			# gates use — ``StrategyLifecycleManager._add_strategy_verb`` and
+			# ``._reconfigure_warmability_check``; WR-05: cited by SYMBOL, not by line
+			# number, because the former positional citation had already rotted onto a
+			# module that no longer holds either gate). Called for its RAISE only (the
 			# ring sizing stays owned by register_strategy_warmup — discard the return). It
 			# runs BEFORE add_strategy, so a raise leaves the instance unregistered and the
 			# row unmutated: UnwarmableTimeframeError is now in _QUARANTINABLE, turning a
