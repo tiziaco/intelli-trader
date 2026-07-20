@@ -280,13 +280,14 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 
 ### Strategies Handler Decomposition (P10.1)
 
-- [ ] **DECOMP-01**: `strategies_handler.py` (1648 LOC) is split into a thin data-plane `StrategiesHandler`
+- [x] **DECOMP-01**: `strategies_handler.py` (1648 LOC) is split into a thin data-plane `StrategiesHandler`
   (queue seam), a shared `ManagedStrategies` holder (owns `strategies`/`min_timeframe`/`_pending_removals`
+
   + registration/membership rules), and a `StrategyLifecycleManager` (the ~700-LOC control plane
   + the D-11 fill-driven removal completion); no behaviour change to any verb, the signal path, or
   pending-removal semantics (follow-up to P10; spec 2026-07-18).
 
-- [ ] **DECOMP-01a**: The three live deps stop being `None`-then-assigned. `registry_store` becomes
+- [x] **DECOMP-01a**: The three live deps stop being `None`-then-assigned. `registry_store` becomes
   handler-owned, derived in `__init__` from `(environment, sql_engine)` through a new
   `StrategyRegistryStorageFactory` (mirroring `SignalStorageFactory`/`OrderStorageFactory`, with the
   `has_table("strategy_registry")` probe inside the live arm so the D-21 first-start state still yields
@@ -297,7 +298,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   deleted. `ManagedStrategies` and `StrategyLifecycleManager` are then both constructed unconditionally in
   `StrategiesHandler.__init__` from module-top imports — no `Optional`, no guard, no late-init helper.
 
-- [ ] **DECOMP-02**: The backtest import graph pulls **no SQL stack** — no `sqlalchemy`, `psycopg2`, or
+- [x] **DECOMP-02**: The backtest import graph pulls **no SQL stack** — no `sqlalchemy`, `psycopg2`, or
   `alembic` — and `test_okx_inertness.py` asserts that positively, not merely by the hardcoded `_FORBIDDEN`
   module-name list it checks today (a named list cannot catch a regression through an unlisted module).
   Every function-local import in `strategies_handler.py` is gone: the six blocks at 566 / 723-730 / 1010 /
@@ -308,7 +309,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   `__init__`-time construction decision deliberately supersedes the second. The invariant GATE-01 actually
   protects is SQL-absence, so the requirement now names that directly.)*
 
-- [ ] **DECOMP-03**: `calculate_signals` is renamed `on_bar` (matches the `on_<event>()` callback
+- [x] **DECOMP-03**: `calculate_signals` is renamed `on_bar` (matches the `on_<event>()` callback
   convention) across the `_routes` literal (`full_event_handler.py`), the 59 test call-sites, and the docs
   (incl. the CLAUDE.md flow diagram); no compat shim; `test_dispatch_registry` passes.
 
@@ -452,10 +453,10 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | STRAT-01 | P10 | Complete |
 | STRAT-02 | P10 | Complete |
 | STRAT-03 | P10 | Complete |
-| DECOMP-01 | P10.1 | Pending |
-| DECOMP-01a | P10.1 | Pending |
-| DECOMP-02 | P10.1 | Pending |
-| DECOMP-03 | P10.1 | Pending |
+| DECOMP-01 | P10.1 | Complete |
+| DECOMP-01a | P10.1 | Complete |
+| DECOMP-02 | P10.1 | Complete |
+| DECOMP-03 | P10.1 | Complete |
 | MPORT-01 | P11 | Pending |
 | MPORT-02 | P11 | Pending |
 | MPORT-03 | P11 | Pending |
