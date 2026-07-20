@@ -26,9 +26,11 @@ from typing import Any
 
 import pandas as pd
 import pytest
+from uuid_utils.compat import uuid7
 
 from itrader.core.bar import Bar
 from itrader.core.enums import Side
+from itrader.core.ids import PortfolioId
 from itrader.core.sizing import FixedQuantity, FractionOfCash, SignalIntent, TradingDirection
 from itrader.events_handler.events import (
     BarEvent,
@@ -40,6 +42,9 @@ from itrader.strategy_handler.storage import InMemorySignalStore
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
 
 pytestmark = pytest.mark.unit
+
+# Portfolio handles are ALWAYS UUIDv7-backed ``PortfolioId`` values (FL-02).
+_PID = PortfolioId(uuid7())
 
 _T0 = datetime(2020, 1, 1, tzinfo=timezone.utc)  # midnight UTC -> 1d aligned
 
@@ -175,7 +180,7 @@ def test_cr01_pair_strategy_command_refused(factory: str) -> None:
     handler = _pair_handler()
     pair = _SpyPair(timeframe="1d", tickers=[_TICKER_A, _TICKER_B])
     handler.add_strategy(pair)
-    pair.subscribe_portfolio(1)
+    pair.subscribe_portfolio(_PID)
 
     make = getattr(StrategyCommandEvent, factory)
     handler.on_strategy_command(make("spy_pair", "XRPUSD", time=_T0))
@@ -190,7 +195,7 @@ def test_cr01_next_bar_does_not_raise_after_refusal() -> None:
     handler = _pair_handler()
     pair = _SpyPair(timeframe="1d", tickers=[_TICKER_A, _TICKER_B])
     handler.add_strategy(pair)
-    pair.subscribe_portfolio(1)
+    pair.subscribe_portfolio(_PID)
 
     handler.on_strategy_command(
         StrategyCommandEvent.add_ticker("spy_pair", "XRPUSD", time=_T0)
@@ -267,7 +272,7 @@ def test_wr01_pending_leg_skips_pair_dispatch() -> None:
     handler = _pair_handler()
     pair = _SpyPair(timeframe="1d", tickers=[_TICKER_A, _TICKER_B])
     handler.add_strategy(pair)
-    pair.subscribe_portfolio(1)
+    pair.subscribe_portfolio(_PID)
     handler.set_universe(_FakeUniverse({_TICKER_A: True, _TICKER_B: False}))
 
     handler.on_bar(_bar_event(both_legs=True, day=1))
@@ -282,7 +287,7 @@ def test_wr01_both_ready_pair_evaluates() -> None:
     handler = _pair_handler()
     pair = _SpyPair(timeframe="1d", tickers=[_TICKER_A, _TICKER_B])
     handler.add_strategy(pair)
-    pair.subscribe_portfolio(1)
+    pair.subscribe_portfolio(_PID)
     handler.set_universe(_FakeUniverse(True))
 
     # Prime the pair buffers to one-below-ready, draining each tick.

@@ -67,6 +67,13 @@ pytestmark = pytest.mark.unit
 
 _AT = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 
+# Portfolio handles are ALWAYS UUIDv7-backed ``PortfolioId`` values (FL-02). Module-level
+# constants so the seed side and the round-trip assertion name the same value.
+_PID_A = PortfolioId(uuid7())
+_PID_B = PortfolioId(uuid7())
+_PID_C = PortfolioId(uuid7())
+_PID_PAIR = PortfolioId(uuid7())
+
 
 class _StubFeed:
     """A minimal BarFeed stand-in — add_strategy never touches the feed.
@@ -204,10 +211,10 @@ def test_rehydrate_registers_seeded_instances_with_params_and_subscriptions() ->
     store = _make_store()
     try:
         sma = _sma(sizing_policy=FractionOfCash(Decimal("0.75")))
-        sma.subscribe_portfolio(11)
-        sma.subscribe_portfolio(22)
+        sma.subscribe_portfolio(_PID_A)
+        sma.subscribe_portfolio(_PID_B)
         empty = _empty()
-        empty.subscribe_portfolio(33)
+        empty.subscribe_portfolio(_PID_C)
         _seed(store, [sma, empty])
 
         handler = _make_handler()
@@ -231,12 +238,14 @@ def test_rehydrate_registers_seeded_instances_with_params_and_subscriptions() ->
         # A NON-default sizing policy: a defaults-only assertion would pass even against a
         # codec that dropped the field entirely.
         assert rebuilt_sma.sizing_policy == FractionOfCash(Decimal("0.75"))
-        assert sorted(str(p) for p in rebuilt_sma.subscribed_portfolios) == ["11", "22"]
+        assert sorted(str(p) for p in rebuilt_sma.subscribed_portfolios) == sorted(
+            [str(_PID_A), str(_PID_B)]
+        )
 
         rebuilt_empty = by_name["empty"]
         assert type(rebuilt_empty) is EmptyStrategy
         assert rebuilt_empty.timeframe_alias == "1h"
-        assert [str(p) for p in rebuilt_empty.subscribed_portfolios] == ["33"]
+        assert [str(p) for p in rebuilt_empty.subscribed_portfolios] == [str(_PID_C)]
     finally:
         store.dispose()
 
@@ -548,7 +557,7 @@ def test_pair_row_rehydrates_with_no_special_case() -> None:
             timeframe="1d", entry_units=Decimal("2"), use_log_prices=False
         )
         pair.name = "eth_btc"
-        pair.subscribe_portfolio(9)
+        pair.subscribe_portfolio(_PID_PAIR)
         _seed(store, [pair])
 
         handler = _make_pair_handler()
@@ -565,7 +574,7 @@ def test_pair_row_rehydrates_with_no_special_case() -> None:
         assert type(rebuilt.entry_units) is Decimal
         assert rebuilt.entry_units == Decimal("2")
         assert rebuilt.use_log_prices is False
-        assert [str(p) for p in rebuilt.subscribed_portfolios] == ["9"]
+        assert [str(p) for p in rebuilt.subscribed_portfolios] == [str(_PID_PAIR)]
     finally:
         store.dispose()
 

@@ -27,9 +27,11 @@ from queue import Queue
 
 import pandas as pd
 import pytest
+from uuid_utils.compat import uuid7
 
 from itrader.core.bar import Bar
 from itrader.core.enums import Side
+from itrader.core.ids import PortfolioId
 from itrader.core.sizing import FixedQuantity, FractionOfCash, SignalIntent, TradingDirection
 from itrader.events_handler.events import BarEvent, SignalEvent
 from itrader.strategy_handler.base import Strategy
@@ -39,6 +41,9 @@ from itrader.strategy_handler.storage import InMemorySignalStore
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
 
 pytestmark = pytest.mark.unit
+
+# Portfolio handles are ALWAYS UUIDv7-backed ``PortfolioId`` values (FL-02).
+_PID = PortfolioId(uuid7())
 
 _TICKER = "BTCUSD"
 _TICKER_B = "ETHUSD"
@@ -161,7 +166,7 @@ def _make_handler(**kwargs: object) -> StrategiesHandler:
 
 def _add(handler: StrategiesHandler, strategy: Strategy) -> Strategy:
     handler.add_strategy(strategy)
-    strategy.subscribe_portfolio(1)
+    strategy.subscribe_portfolio(_PID)
     return strategy
 
 

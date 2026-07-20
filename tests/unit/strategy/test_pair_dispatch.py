@@ -22,9 +22,11 @@ from uuid import UUID
 
 import pandas as pd
 import pytest
+from uuid_utils.compat import uuid7
 
 from itrader.core.bar import Bar
 from itrader.core.enums import OrderType, Side, TradingDirection
+from itrader.core.ids import PortfolioId
 from itrader.core.sizing import FixedQuantity, SignalIntent
 from itrader.events_handler.events import (
     BarEvent,
@@ -36,6 +38,9 @@ from itrader.strategy_handler.storage import InMemorySignalStore
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
 
 pytestmark = pytest.mark.unit
+
+# Portfolio handles are ALWAYS UUIDv7-backed ``PortfolioId`` values (FL-02).
+_PID = PortfolioId(uuid7())
 
 # Pair legs: leg A (tickers[0]) is the RICH leg (SELL), leg B (tickers[1]) is the
 # CHEAP leg (BUY). The stub returns a fixed β-weighted entry: SELL N of A, BUY
@@ -135,7 +140,7 @@ def _make_handler() -> StrategiesHandler:
 def _make_subscribed_pair(handler: StrategiesHandler) -> _StubPair:
     strategy = _StubPair(timeframe="1d", tickers=[_TICKER_A, _TICKER_B])
     handler.add_strategy(strategy)
-    strategy.subscribe_portfolio(1)
+    strategy.subscribe_portfolio(_PID)
     return strategy
 
 
