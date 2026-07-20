@@ -200,6 +200,18 @@ class StrategyLifecycleManager:
 		# `_request_rewarm` is the sole reader (mark_failed) and it lives here.
 		self._universe: "Universe | None" = None
 
+	@property
+	def universe(self) -> "Universe | None":
+		"""The WR-02 (D-01) universe handle — THIS object, never a copy (IN2-03).
+
+		The public same-object read seam the handler's ``_universe`` property
+		forwards to, so no caller has to reach across into this object's private
+		attribute (the pattern IN-01 closed for ``pending_removals``). Read-only
+		by design: ``set_universe`` below stays the SOLE write path, so widening
+		the read surface cannot widen the write surface.
+		"""
+		return self._universe
+
 	def set_universe(self, universe: "Universe") -> None:
 		"""Wire the dynamic universe so ``_request_rewarm`` can mark symbols FAILED (D-01).
 
