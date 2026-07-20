@@ -1425,7 +1425,8 @@ def build_live_system(
     )
     engine = compose_engine(
         ctx, exchange_config=None, results_store=None,
-        alert_sink=alert_sink, system_store=system_store, error_policy=error_policy)
+        alert_sink=alert_sink, system_store=system_store, error_policy=error_policy,
+        strategy_catalog=strategy_catalog)
 
     # compose already wired portfolio_handler.set_order_storage(order_handler.storage) and
     # the FeeModelCommissionEstimator admission gate (D-05), so the former inline commission
@@ -1589,57 +1590,38 @@ def build_live_system(
         #  (3) NOT inside _initialize_live_session: three integration tests — including a
         #      RESTART test — monkeypatch that method to a no-op, so rehydrate placed there
         #      would be silently lost exactly where it matters most.
-        #  (4) the store + collaborator imports stay LAZY inside this gate and are never
-        #      barrel-exported, keeping the backtest import path SQL-free (GATE-01).
+        #  (4) the rehydrate collaborator import stays LAZY inside this gate and is never
+        #      barrel-exported, keeping the backtest import path SQL-free (GATE-01). The
+        #      STORE's own SQL imports moved with it into StrategyRegistryStorageFactory,
+        #      where they stay equally lazy inside that factory's 'live' arm.
         # Deliberately NOT wrapped in try/except _degrade_clean: D-19's semantics are finer
         # grained than that pattern. Per-instance failures are ALREADY handled inside
         # rehydrate_strategies (skip + CRITICAL alert + the row left untouched), while an
         # infrastructure failure must fail LOUD — the opposite of degrade-clean. A blanket
         # wrap would convert the loud arm into a silent boot with zero strategies, which is
         # precisely the outcome D-19 rates as worse than not booting.
-        from sqlalchemy import inspect as _sa_inspect
-
-        from itrader.storage.strategy_registry_store import StrategyRegistryStore
         from itrader.strategy_handler.registry.rehydrate import rehydrate_strategies
 
-        # An UNPROVISIONED registry table is not a D-19 infrastructure failure — it is the
-        # D-21 first-start state expressed at the schema level. The distinction is exact
-        # rather than convenient: D-19's loud arm exists to stop a boot with zero
-        # strategies WHILE ROWS EXIST, and without the table there provably are no rows, so
-        # skipping here cannot produce the outcome D-19 forbids. Probed explicitly with
-        # has_table instead of swallowing the query's error, so a genuine store fault
-        # (connection lost, permissions, corrupt data) still PROPAGATES loud out of
-        # rehydrate_strategies — an exception-swallow could not tell those apart. Logged at
-        # WARNING, not silently: on a live deployment an absent table means the Alembic
-        # chain was never run, which the operator needs to see.
-        if not _sa_inspect(system_db_backend.engine).has_table("strategy_registry"):
-            logger.warning(
-                "strategy_registry table absent — skipping strategy rehydrate and booting "
-                "with ZERO strategies (D-21 first-start). On a live deployment this means "
-                "the Alembic migration chain has not been applied to this database.")
-        else:
-            strategy_registry_store = StrategyRegistryStore(system_db_backend)
-            # D-09: inject the durable registry the runtime STRATEGY_COMMAND verbs write
-            # through. Post-construction attribute injection inside the gate, mirroring
-            # the `facade._config_router = ConfigRouter(...)` precedent above. Assigned
-            # BEFORE rehydrate so a rehydrated strategy's FIRST runtime verb already has
-            # a store to persist to — otherwise an enable/disable landing between boot
-            # and the next wiring step would apply live and vanish at restart. The
-            # backtest composition root never reaches here, so its handler keeps
-            # registry_store=None and every persist arm stays a no-op.
-            engine.strategies_handler.registry_store = strategy_registry_store
-            # D-10/D-11 (Plan 07): inject the two seams the heavy lifecycle verbs need,
-            # next to registry_store and BEFORE rehydrate so a rehydrated strategy's first
-            # runtime `add`/`remove` already has them. `strategy_catalog` is the SAME
-            # injected allowlist rehydrate uses (D-01) — the `add` verb resolves an
-            # untrusted external `strategy_type` through it and nothing else (D-10 access
-            # control). `portfolio_handler` structurally satisfies `PortfolioReadModel`, so
-            # it IS the flat-detect the `remove` verb consults on FILL (D-11) — a READ
-            # through an injected read-model, never a cross-domain handler call. The
-            # backtest composition root never reaches here, so its handler keeps both None
-            # (add is never driven there; remove drops directly).
-            engine.strategies_handler.strategy_catalog = strategy_catalog
-            engine.strategies_handler.portfolio_read_model = portfolio_handler
+        # DECOMP-01a: the store is READ BACK off the handler that now OWNS it, derived in
+        # StrategiesHandler.__init__ from (environment, sql_engine) via
+        # StrategyRegistryStorageFactory — no post-construction dep assignment happens
+        # here any more. The D-09 ordering constraint that used to justify assigning
+        # registry_store BEFORE rehydrate (so a rehydrated strategy's FIRST runtime verb
+        # already has a store to persist to — otherwise an enable/disable landing between
+        # boot and the next wiring step would apply live and vanish at restart) is now
+        # satisfied STRUCTURALLY: the store exists from construction, which is strictly
+        # earlier than any point this function could have assigned it.
+        #
+        # A None store here is the D-21 first-start state (unprovisioned strategy_registry
+        # table) or an unwired SQL spine; the factory owns that probe and its WARNING. It
+        # is NOT a D-19 infrastructure failure, so skipping rehydrate cannot produce the
+        # zero-strategies-while-rows-exist outcome D-19 forbids — a genuine store fault
+        # still PROPAGATES loud out of rehydrate_strategies.
+        #
+        # rehydrate_strategies itself stays HERE: it needs a fully-built handler and is a
+        # genuine runtime operation, not dependency injection.
+        strategy_registry_store = engine.strategies_handler.registry_store
+        if strategy_registry_store is not None:
             facade._quarantined_strategies = rehydrate_strategies(
                 store=strategy_registry_store,
                 catalog=strategy_catalog,

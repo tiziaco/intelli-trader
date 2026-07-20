@@ -159,14 +159,18 @@ class StrategiesHandler(object):
 		# verb resolves an untrusted external `strategy_type` through (catalog.py). None
 		# is the backtest/in-memory path (`add` is never driven there); `add` LOUD-rejects
 		# when it is None so no external payload can be instantiated. Typed `Any` so the
-		# SQL/registry stack stays off this module's import graph (GATE-01 inertness);
-		# live wiring injects it inside build_live_system's `system_store is not None` gate.
+		# SQL/registry stack stays off this module's import graph (GATE-01 inertness).
+		# DECOMP-01a: passed at CONSTRUCTION as a compose_engine kwarg (build_live_system
+		# forwards its own `strategy_catalog`), not assigned afterwards.
 		self.strategy_catalog: "Optional[Any]" = strategy_catalog
 		# D-11 injected portfolio READ-model (PortfolioReadModel) — the flat-detect the
 		# `remove` verb consults on FILL to know when a force-closed strategy is flat. A
 		# READ through an injected read-model (the same seam the order domain uses), NOT a
-		# cross-domain handler call, so the queue-only contract holds. None on the
-		# backtest/in-memory path (remove never force-closes there). Typed `Any` (GATE-01).
+		# cross-domain handler call, so the queue-only contract holds. Typed `Any` (GATE-01).
+		# DECOMP-01a: compose_engine passes the `portfolio_handler` here on BOTH paths, so
+		# this is NON-None in backtest too. Backtest stays unaffected because the
+		# pending-removal machinery that reads it is never driven there: `on_fill` is not
+		# on the backtest FILL route and STRATEGY_COMMAND routes to an empty list.
 		self.portfolio_read_model: "Optional[Any]" = portfolio_read_model
 		# D-11 pending-removal state. A `remove` force-flats FIRST and drops the object
 		# only once the flat is OBSERVED on a later FILL cycle, so it is a PENDING state
@@ -907,8 +911,11 @@ class StrategiesHandler(object):
 		queue-mediated). Checks the strategy's tickers across its subscribed portfolios, so
 		a pair's BOTH legs must be flat (D-16).
 
-		With no read model injected there is nothing to observe: return True (the
-		backtest/in-memory degrade arm, where remove never force-closes and drops directly).
+		With no read model injected there is nothing to observe: return True. Since
+		DECOMP-01a this arm is UNREACHABLE from either composition root — compose_engine
+		passes the portfolio_handler on both paths — so it now guards only
+		directly-constructed handlers (the unit tests) rather than the backtest path it
+		was originally written for. Kept as a defensive default, not a live degrade arm.
 		A strategy with no subscribed portfolios is likewise vacuously flat.
 		"""
 		read_model = self.portfolio_read_model
