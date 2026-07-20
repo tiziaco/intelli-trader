@@ -4,9 +4,9 @@ milestone: v1.8
 milestone_name: Live System Refactor & Live-Readiness Hardening
 current_phase: 11
 current_phase_name: Test Migration + Gates
-status: planning
+status: executing
 stopped_at: Phase 10 context gathered
-last_updated: "2026-07-18T10:20:22.470Z"
+last_updated: "2026-07-20T09:17:03.388Z"
 last_activity: 2026-07-18
 last_activity_desc: "Completed quick task 260718-fxm: reorganized events package to one-class-per-domain layout (pure relocation, oracle byte-exact)"
 progress:
@@ -35,7 +35,7 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 
 Phase: 11 — Multi-Portfolio-Live
 Plan: Not started
-Status: Ready to plan
+Status: Ready to execute
 Last activity: 2026-07-18 — Completed quick task 260718-fxm: reorganized events package to one-class-per-domain layout (pure relocation, oracle byte-exact)
 
 Note: `phase.complete` again advanced current_phase to 12 (its next-phase dir-scan skips the not-yet-created P10/P11 ★ dirs);
