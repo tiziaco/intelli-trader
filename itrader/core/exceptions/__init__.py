@@ -40,7 +40,8 @@ from .order import (
 from .strategy import (
     StrategyAdmissionError,
     UnknownParamError,
-    MissingParamError
+    MissingParamError,
+    StrategyValidationError
 )
 
 # Data exceptions
@@ -85,6 +86,7 @@ __all__ = [
     'StrategyAdmissionError',
     'UnknownParamError',
     'MissingParamError',
+    'StrategyValidationError',
 
     # Data exceptions
     'DataError',

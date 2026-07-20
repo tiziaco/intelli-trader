@@ -31,6 +31,7 @@ import pytest
 from itrader.config.sql import SqlSettings
 from itrader.core.bar import Bar
 from itrader.core.enums import TradingDirection
+from itrader.core.exceptions import StrategyValidationError
 from itrader.core.sizing import PercentFromDecision
 from itrader.events_handler.events import (
     ErrorEvent,
@@ -207,7 +208,12 @@ def test_apply_failure_after_persist_alerts_critical_and_db_holds_new(
     _warm(strategy)
 
     def _boom(**kwargs: Any) -> None:
-        raise ValueError("simulated apply failure")
+        # IN2-02 — the double must raise what the REAL collaborator raises. A validation
+        # refusal escaping ``Strategy.reconfigure`` is now typed as
+        # ``StrategyValidationError`` by the wrap around its _apply_params + validate()
+        # span; a bare ``ValueError`` here would be a shape the production path can no
+        # longer produce, and would false-fail against the narrowed APPLY-site catch.
+        raise StrategyValidationError("simulated apply failure")
 
     monkeypatch.setattr(strategy, "reconfigure", _boom)
 

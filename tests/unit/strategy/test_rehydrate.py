@@ -42,7 +42,11 @@ from uuid_utils.compat import uuid7
 
 from itrader.config.sql import SqlSettings
 from itrader.core.enums import ErrorSeverity
-from itrader.core.exceptions import StrategyAdmissionError, UnknownParamError
+from itrader.core.exceptions import (
+    MissingParamError,
+    StrategyAdmissionError,
+    UnknownParamError,
+)
 from itrader.core.ids import PortfolioId
 from itrader.core.sizing import FractionOfCash
 from itrader.price_handler.feed.cache_registration import UnwarmableTimeframeError
@@ -761,6 +765,93 @@ def test_admission_refusal_row_is_quarantined_through_the_shared_base() -> None:
         )
 
         assert quarantined == ["drifted"]
+        assert len(sink.events) == 1
+        assert sink.events[0].severity is ErrorSeverity.CRITICAL
+    finally:
+        store.dispose()
+
+
+class _BareValueErrorStrategy(Strategy):
+    """A catalog strategy whose ``validate()`` raises a BARE ``ValueError``.
+
+    Models the realistic WR2-02 trigger: a strategy class GAINS a cross-field
+    ``validate()`` rule (exactly what ``SMAMACDStrategy.validate`` and
+    ``PairStrategy.validate`` already do) after its row was written, so a stored row
+    that was valid under the old build is refused under the new one.
+    """
+
+    sizing_policy = FractionOfCash(Decimal("0.5"))
+
+    def validate(self) -> None:
+        raise ValueError("cross-field rule added after this row was written")
+
+    def generate_signal(self, ticker: str) -> Any:
+        return None
+
+
+def test_unknown_param_error_passes_through_the_wrap_unwrapped() -> None:
+    """WR2-02 no-double-wrap — the guard clause must claim admission errors FIRST.
+
+    The wrap's ``ValueError`` clause would otherwise also catch ``UnknownParamError``
+    (``StrategyAdmissionError`` subclasses ``ValueError``) and re-raise it as a
+    ``StrategyValidationError``, DESTROYING the ``ValidationError`` structured fields
+    the ``ljn`` task deliberately preserved. Clause ORDER is what prevents that.
+    """
+    with pytest.raises(UnknownParamError) as excinfo:
+        SMAMACDStrategy(timeframe="1d", tickers=["BTCUSD"], no_such_knob=7)
+
+    exc = excinfo.value
+    assert type(exc) is UnknownParamError, "re-wrapped — the guard clause lost the race"
+    assert exc.names == ["no_such_knob"]
+    assert exc.field == "strategy_params"
+    assert "no_such_knob" in str(exc)
+    assert exc.__cause__ is None, "the wrap must not attach a __cause__ to a pass-through"
+
+
+def test_missing_param_error_passes_through_the_wrap_unwrapped() -> None:
+    """WR2-02 no-double-wrap — same guarantee for the D-07 required-param refusal."""
+    # ``EmptyStrategy`` does not pin ``sizing_policy`` as a class attr, so omitting it
+    # leaves the bare base annotation with no value and no prior (D-07).
+    with pytest.raises(MissingParamError) as excinfo:
+        EmptyStrategy(timeframe="1d", tickers=["BTCUSD"])
+
+    exc = excinfo.value
+    assert type(exc) is MissingParamError
+    assert exc.field == exc.name == "sizing_policy"
+    assert exc.__cause__ is None
+
+
+def test_bare_value_error_from_validate_quarantines_the_row_not_the_boot() -> None:
+    """WR2-02 — a ``validate()`` refusal is a bad ROW, never a bad SYSTEM.
+
+    A bare ``ValueError`` from ``validate()`` used to escape ``_QUARANTINABLE``
+    entirely and propagate out of ``rehydrate_strategies``, turning ONE stale
+    registry row into a whole-engine boot outage. Typed as
+    ``StrategyValidationError`` under ``StrategyAdmissionError``, the existing
+    tuple claims it: the row is quarantined, the healthy sibling still registers,
+    and the engine boots.
+    """
+    store = _make_store()
+    try:
+        rows, _ = seeded_registry_rows([_empty(name="stale")])
+        blob = dict(rows[0]["config_json"])
+        blob["strategy_type"] = "_BareValueErrorStrategy"
+        store.upsert("stale", "_BareValueErrorStrategy", blob, True, _AT)
+        _seed(store, [_sma()])  # the healthy sibling
+
+        catalog = {**test_catalog(), "_BareValueErrorStrategy": _BareValueErrorStrategy}
+        handler = _make_handler()
+        sink = _RecordingAlertSink()
+
+        quarantined = rehydrate_strategies(
+            store=store,
+            catalog=catalog,
+            strategies_handler=handler,
+            alert_sink=sink,
+        )
+
+        assert quarantined == ["stale"]
+        assert [s.name for s in handler.strategies] == ["sma_macd"]
         assert len(sink.events) == 1
         assert sink.events[0].severity is ErrorSeverity.CRITICAL
     finally:
