@@ -605,6 +605,48 @@ class _CapFeed:
         )
 
 
+class _LogSpy:
+    """Records ``warning``/``error`` calls so the TIER is assertable without ``caplog``.
+
+    The module docstring bans log-capture assertions because ``make test`` exports
+    ``ITRADER_DISABLE_LOGS=true``, which would false-green a ``caplog`` assertion. A
+    COLLABORATOR SPY honours that intent: replacing the lifecycle manager's ``logger``
+    object records calls deterministically under BOTH runners, independent of any logging
+    configuration, while still proving WARNING (bad operator payload) is distinct from
+    ERROR (a defect in our construction path).
+    """
+
+    def __init__(self) -> None:
+        self.warnings: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+        self.errors: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    def warning(self, *args: Any, **kwargs: Any) -> None:
+        self.warnings.append((args, kwargs))
+
+    def error(self, *args: Any, **kwargs: Any) -> None:
+        self.errors.append((args, kwargs))
+
+
+class _BoomStrategy(Strategy):
+    """A catalog strategy whose ``init()`` raises an arbitrary, non-validation type.
+
+    WHY this exists: ``build_strategy`` -> ``cls(**params)`` -> ``_apply_params`` ->
+    ``validate()`` -> ``_run_init()`` -> ``self.init()``, and ``init()`` is ARBITRARY
+    USER-AUTHORED strategy code (``my_strategies/``). The set of exceptions escaping
+    construction is therefore unbounded BY CONSTRUCTION — no finite catch tuple can be
+    complete. This stands in for a buggy ``my_strategies/`` entry and proves the zone-1
+    guard covers the whole class of failures, not just the enumerated validation kinds.
+    """
+
+    sizing_policy = FractionOfCash(Decimal("0.5"))
+
+    def init(self) -> None:
+        raise ZeroDivisionError("arbitrary failure inside user-authored init()")
+
+    def generate_signal(self, ticker: str) -> Any:
+        return None
+
+
 def _add_handler(
     registry: StrategyRegistryStore | None,
     *,
@@ -737,6 +779,87 @@ def test_add_with_an_unknown_param_registers_nothing(
 
     assert [s.name for s in handler.strategies] == []
     assert store.get("smuggle") is None
+
+
+def test_add_with_empty_tickers_is_a_loud_no_op(
+    store: StrategyRegistryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CR-01 — a bare ``ValueError`` from ``validate()`` must NOT escape into the queue.
+
+    ``STRATEGY_COMMAND`` is externally admitted (D-10). An escape here reaches
+    ``ErrorPolicy.record_failure`` -> the failure-rate tripwire -> ``halt()``, and
+    ``HALTED`` has no legal exit except operator ``reset_halt()``. So a payload as routine
+    as ``tickers: []`` could latch live trading into HALT.
+    """
+    handler = _add_handler(store)
+    spy = _LogSpy()
+    monkeypatch.setattr(handler._lifecycle, "logger", spy)
+    config = _sma_add_config(["ETHUSD"])
+    config["tickers"] = []
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="empty_tickers", strategy_type="SMAMACDStrategy",
+        config=config, time=_T))
+
+    assert [s.name for s in handler.strategies] == []
+    assert store.get("empty_tickers") is None
+    assert _drain(handler.global_queue) == []
+    assert spy.warnings, "a bad operator payload must be a LOUD no-op at the WARNING tier"
+    assert spy.errors == [], "operator junk is not a defect in our construction path"
+
+
+def test_add_with_an_invalid_window_pair_is_a_loud_no_op(
+    store: StrategyRegistryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CR-01 — the second bare-``ValueError`` site (``SMA_MACD_strategy.py`` ``validate()``).
+
+    Same halt-latch consequence: an externally-admitted ``add`` whose windows are
+    misordered must be a logged no-op, never a raise that feeds the failure-rate tripwire.
+    """
+    handler = _add_handler(store)
+    spy = _LogSpy()
+    monkeypatch.setattr(handler._lifecycle, "logger", spy)
+    config = _sma_add_config(["ETHUSD"])
+    config["short_window"] = 100
+    config["long_window"] = 50
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="bad_windows", strategy_type="SMAMACDStrategy",
+        config=config, time=_T))
+
+    assert [s.name for s in handler.strategies] == []
+    assert store.get("bad_windows") is None
+    assert _drain(handler.global_queue) == []
+    assert spy.warnings, "a bad operator payload must be a LOUD no-op at the WARNING tier"
+    assert spy.errors == []
+
+
+def test_add_whose_init_raises_an_arbitrary_type_is_a_loud_no_op_at_the_error_tier(
+    store: StrategyRegistryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CR-01 — an UNBOUNDED exception type from user-authored ``init()`` still cannot halt.
+
+    ``init()`` is arbitrary user code, so enumerating catch types fixes the instance and
+    not the class. This must still be a no-op — but at the ERROR tier with ``exc_info``,
+    because an unexpected type means a defect in OUR construction path and must stay
+    visibly distinct from "the operator sent junk".
+    """
+    handler = _add_handler(store, catalog={"_BoomStrategy": _BoomStrategy})
+    spy = _LogSpy()
+    monkeypatch.setattr(handler._lifecycle, "logger", spy)
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="boom", strategy_type="_BoomStrategy",
+        config={"config_version": 1, "timeframe": "1d", "tickers": ["BTCUSD"]},
+        time=_T))
+
+    assert [s.name for s in handler.strategies] == []
+    assert store.get("boom") is None
+    assert _drain(handler.global_queue) == []
+    assert spy.errors, "an unexpected construction failure belongs at the ERROR tier"
+    assert spy.warnings == [], "it must not be laundered into the operator-junk tier"
+    assert spy.errors[0][1].get("exc_info") is True, (
+        "the ERROR tier carries the traceback; the message itself names no payload values")
 
 
 def test_add_beyond_ring_capacity_is_a_loud_reject(store: StrategyRegistryStore) -> None:
