@@ -2,17 +2,17 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: Live System Refactor & Live-Readiness Hardening
-current_phase: 11
-current_phase_name: Test Migration + Gates
+current_phase: 10.1
+current_phase_name: strategies-handler-decomposition
 status: executing
 stopped_at: Phase 10 context gathered
-last_updated: "2026-07-20T09:17:03.388Z"
-last_activity: 2026-07-18
-last_activity_desc: "Completed quick task 260718-fxm: reorganized events package to one-class-per-domain layout (pure relocation, oracle byte-exact)"
+last_updated: "2026-07-20T09:37:54.903Z"
+last_activity: 2026-07-20
+last_activity_desc: Phase 10.1 execution started
 progress:
   total_phases: 11
   completed_phases: 9
-  total_plans: 39
+  total_plans: 43
   completed_plans: 39
   percent: 82
 ---
@@ -26,17 +26,17 @@ See: .planning/PROJECT.md (Current Milestone: v1.8 — Live System Refactor & Li
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct,
 deterministic, cross-validated numbers (oracle **134 / `46189.87730727451`**; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 shipped a live operating mode (paper-first on OKX) without disturbing that oracle.
-**Current focus:** Phase 11 — Multi-Portfolio-Live
+**Current focus:** Phase 10.1 — strategies-handler-decomposition
 thin ~200-line facade over focused, venue-parametrized, FastAPI-ready collaborators — **without
 disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI itself is out of scope
 (LR-01). Full scope: core refactor (P1–P8 + P12) + the three ★ feature-adds (P9–P11).
 
 ## Current Position
 
-Phase: 11 — Multi-Portfolio-Live
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-07-18 — Completed quick task 260718-fxm: reorganized events package to one-class-per-domain layout (pure relocation, oracle byte-exact)
+Phase: 10.1 (strategies-handler-decomposition) — EXECUTING
+Plan: 1 of 4
+Status: Executing Phase 10.1
+Last activity: 2026-07-20 — Phase 10.1 execution started
 
 Note: `phase.complete` again advanced current_phase to 12 (its next-phase dir-scan skips the not-yet-created P10/P11 ★ dirs);
 corrected to 10 per the roadmap sequence. P10{P4,P6} + P11{P5,P7} are dependency-available now; P12 (core-final) depends on P11.

@@ -471,7 +471,7 @@ the wave that touches them.*
 
 **Wave 1** *(no deps — wiring only, no code moved)*
 
-- [ ] 10.1-01-PLAN.md — Constructor-own the three live deps: add `StrategyRegistryStorageFactory`, pass `portfolio_read_model` from compose, thread `strategy_catalog` as a `compose_engine` kwarg, delete the three post-construction assignments; correct the stale `set_universe` docstring (DECOMP-01a)
+- [x] 10.1-01-PLAN.md — Constructor-own the three live deps: add `StrategyRegistryStorageFactory`, pass `portfolio_read_model` from compose, thread `strategy_catalog` as a `compose_engine` kwarg, delete the three post-construction assignments; correct the stale `set_universe` docstring (DECOMP-01a)
 
 **Wave 2** *(blocked on 10.1-01)*
 
