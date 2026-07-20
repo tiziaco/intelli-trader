@@ -273,8 +273,7 @@ def rehydrate_strategies(
 	The store is the source of truth for the roster. Rows are reconstructed via
 	``read_all()`` — the deterministic ``strategy_name`` ASC roster with each record's
 	``portfolio_ids`` in ``portfolio_id`` ASC order (IN-01), so registration order — and
-	therefore ``min_timeframe`` derivation and universe membership — is reproducible across
-	runs and dialects.
+	therefore universe membership — is reproducible across runs and dialects.
 
 	CR-01 — ``read_all()`` loads EVERY row, not just the enabled ones. A row's ``enabled``
 	column becomes the reconstructed instance's ``is_active``: a disabled (``enabled=False``)

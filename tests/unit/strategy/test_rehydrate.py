@@ -845,8 +845,8 @@ def test_rehydrated_instance_mints_a_fresh_ephemeral_strategy_id() -> None:
 def test_registration_order_follows_read_all_name_ordering() -> None:
     """IN-01 — ``read_all()`` is ``strategy_name`` ASC, so registration order is stable.
 
-    Registration order drives ``min_timeframe`` derivation and universe membership, so an
-    unordered SELECT would make both irreproducible across runs.
+    Registration order drives universe membership, so an unordered SELECT would
+    make it irreproducible across runs.
     """
     store = _make_store()
     try:

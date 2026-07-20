@@ -160,7 +160,7 @@ class Strategy(ABC):
 	# pinned by a subclass class-attr or passed as a kwarg, else MissingParamError.
 	# Pitfall 1: the kwarg arrives as a "1d" str / Timeframe enum (coerced by
 	# _COERCE), but the RESOLVED runtime value on self.timeframe is a timedelta
-	# (consumed by check_timeframe / min_timeframe and SMA's
+	# (consumed by check_timeframe and SMA's
 	# `last_time - self.timeframe * self.short_window`). The annotation reflects
 	# the resolved consumer type; the bare annotation (no value) still marks it
 	# REQUIRED for get_type_hints-driven detection (D-07).
@@ -298,7 +298,7 @@ class Strategy(ABC):
 		for nm, val in resolved.items():
 			setattr(self, nm, val)
 		# Pitfall 1 (the #1 oracle trap): self.timeframe is consumed as a
-		# TIMEDELTA by check_timeframe / min_timeframe and SMA's
+		# TIMEDELTA by check_timeframe and SMA's
 		# `last_time - self.timeframe * self.short_window`. The coerced
 		# Timeframe enum was just setattr'd onto self.timeframe by the loop —
 		# stash it on a stable instance attr, then resolve BOTH the timedelta
