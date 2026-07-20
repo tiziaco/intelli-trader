@@ -470,8 +470,8 @@ class StrategyLifecycleManager:
 					'cannot resize, so it would stay permanently dark)',
 					event.strategy_name, depth, capacity)
 				return
-		# Register through add_strategy (its SHORT-01/D-07 direction gate + the IN-01/IN-06
-		# min_timeframe block). D-02 duplicate is already pre-checked, so the only remaining
+		# Register through add_strategy (its SHORT-01/D-07 direction gate).
+		# D-02 duplicate is already pre-checked, so the only remaining
 		# raise is the SHORT-01 system-config mismatch — convert THAT to a loud no-op so an
 		# operator add never raises into the queue.
 		try:
@@ -593,9 +593,7 @@ class StrategyLifecycleManager:
 		Only once flat: delete the rows (the store removes the portfolio-subscription CHILD
 		rows BEFORE the ``strategy_registry`` parent — P-6; the FK forbids the reverse and
 		the SQLite ``PRAGMA foreign_keys=ON`` hook enforces it on both dialects), then drop
-		the object from the MANAGED ROSTER and discard the name from ``_pending_removals``,
-		and recompute ``min_timeframe`` (it was derived at ``add_strategy`` time and dropping
-		the only strategy at the minimum leaves it stale).
+		the object from the MANAGED ROSTER and discard the name from ``_pending_removals``.
 
 		⚠ THE STORE DELETE RUNS FIRST, AND THE ORDER IS LOAD-BEARING. It is the only
 		operation here that can raise — the roster drop is membership-guarded and the
@@ -614,7 +612,6 @@ class StrategyLifecycleManager:
 			self.registry_store.delete(strategy.name)
 		self._managed.remove(strategy)
 		self._managed.discard_pending(strategy.name)
-		self._managed.recompute_min_timeframe()
 
 	def on_fill(self, event: "Any") -> None:
 		"""D-11 completion hook: drop a pending-removal strategy once its positions are flat.

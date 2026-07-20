@@ -1,4 +1,3 @@
-from datetime import timedelta
 from typing import Any, Optional, TYPE_CHECKING, cast
 
 from itrader.core.enums import OrderType
@@ -156,7 +155,7 @@ class StrategiesHandler(object):
 			registry_store if registry_store is not None
 			else StrategyRegistryStorageFactory.create(environment, sql_engine=sql_engine)
 		)
-		# DECOMP-01: the roster collaborator OWNS `strategies`, `min_timeframe`,
+		# DECOMP-01: the roster collaborator OWNS `strategies`,
 		# `_pending_removals`, and the two SHORT-01/D-07 gate flags — the handler
 		# holds NONE of that state itself and reaches all of it through the
 		# delegating accessors below. Constructed unconditionally (no Optional, no
@@ -191,18 +190,13 @@ class StrategiesHandler(object):
 	# the collaborator's OWN objects — never a copy, never a snapshot. The
 	# roster list is mutated in place at 21 test sites (`.append` / `.extend`),
 	# so a defensive copy here would silently turn every one of them into a
-	# no-op. Read-only: all four `min_timeframe` write sites and both container
-	# assignments moved into the collaborator, so no setter is needed.
+	# no-op. Read-only: both container assignments moved into the collaborator,
+	# so no setter is needed.
 
 	@property
 	def strategies(self) -> list[Strategy]:
 		"""The managed roster — the IDENTICAL list object the collaborator holds."""
 		return self._managed.strategies
-
-	@property
-	def min_timeframe(self) -> timedelta | None:
-		"""The IN-06 derived minimum timeframe across the roster (None when empty)."""
-		return self._managed.min_timeframe
 
 	@property
 	def _pending_removals(self) -> set[str]:
@@ -732,10 +726,6 @@ class StrategiesHandler(object):
 	def add_strategy(self, strategy: Strategy) -> None:
 		"""
 		Add a new strategy in the list of strategies to trade.
-		At the same time, calculate the minimum timeframe among 
-		the different strategies to be traded. 
-		This timeframe will be used from the price handler to 
-		download historical prices
 		
 		Parameters
 		----------

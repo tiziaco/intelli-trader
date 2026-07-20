@@ -7,18 +7,16 @@ the roster) and the CONTROL plane (every STRATEGY_COMMAND verb mutates it)
 both reach for. Giving it one owner is what lets 10.1-03 lift the control plane
 out without the two planes reaching into each other's attributes.
 
-The four method bodies here are VERBATIM code motion out of
+The three method bodies here are VERBATIM code motion out of
 `strategies_handler.py` — docstrings and their decision tags moved with them.
 The only edits were de-underscoring where a handler-private becomes this
 class's public surface (`_direction_admissible` -> `direction_admissible`,
-`_recompute_min_timeframe` -> `recompute_min_timeframe`,
 `get_strategies_universe` -> `get_universe`).
 
 State owned here (the handler now holds NONE of it, reaching it through
 delegating accessors):
   - `strategies`          the roster list  (assigned ONCE, mutated in place)
   - `_pending_removals`   the D-11 pending-removal name set (likewise)
-  - `min_timeframe`       the IN-06 derived minimum
   - `allow_short_selling` / `enable_margin`  the SHORT-01/D-07 gate flags
 
 ⚠ SAME-OBJECT INVARIANT. `strategies` and `_pending_removals` are assigned
@@ -54,8 +52,6 @@ than `ValueError` (the registration-gate contract), so it stays on the handler.
 
 TABS file (matching `strategy_handler/` source).
 """
-
-from datetime import timedelta
 
 from itrader.core.sizing import TradingDirection
 from itrader.logger import ITraderStructLogger
@@ -108,11 +104,6 @@ class ManagedStrategies:
 		# docstring); only the collaborator-side name lost its underscore.
 		self.allow_short_selling: bool = allow_short_selling
 		self.enable_margin: bool = enable_margin
-		# IN-06: initialize to None rather than a 100-week magic sentinel. A
-		# downstream consumer reading min_timeframe before any strategy is
-		# registered gets a clear "no strategies" signal (None) instead of
-		# meaningless garbage. add_strategy computes the real min defensively.
-		self.min_timeframe: timedelta | None = None
 		self.strategies: list[Strategy] = []
 
 	def by_name(self) -> dict[str, Strategy]:
@@ -216,19 +207,6 @@ class ManagedStrategies:
 
 		return list(set(traded_tickers))
 
-	def recompute_min_timeframe(self) -> None:
-		"""Re-derive ``min_timeframe`` from the current roster after a drop (IN-01/IN-06).
-
-		``min_timeframe`` is derived only in ``add_strategy`` and never recomputed on
-		removal, so dropping the strategy at the minimum would leave it stale. An EMPTY
-		roster returns to the ``None`` seed — the legal "no strategies" state (IN-06),
-		mirroring the None-seed handling in ``add_strategy``.
-		"""
-		if not self.strategies:
-			self.min_timeframe = None
-			return
-		self.min_timeframe = min(strategy.timeframe for strategy in self.strategies)
-
 	def direction_admissible(self, direction: TradingDirection) -> bool:
 		"""SHORT-01/D-07 two-flag registration predicate — the SHARED gate (audit 10-08 F1).
 
@@ -250,10 +228,6 @@ class ManagedStrategies:
 	def add_strategy(self, strategy: Strategy) -> None:
 		"""
 		Add a new strategy in the list of strategies to trade.
-		At the same time, calculate the minimum timeframe among
-		the different strategies to be traded.
-		This timeframe will be used from the price handler to
-		download historical prices
 
 		Parameters
 		----------
@@ -309,17 +283,5 @@ class ManagedStrategies:
 
 		# Add the strategy in the strategies list
 		self.strategies.append(strategy)
-
-		# Find the minimum timeframe (IN-06: defensive against the None seed —
-		# the first registered strategy establishes the baseline).
-		if self.min_timeframe is None:
-			self.min_timeframe = strategy.timeframe
-		else:
-			# IN-01: min_timeframe is guaranteed non-None here — the None seed
-			# (IN-06) is handled by the branch above. This `else` arm is the
-			# load-bearing non-None branch; moving min(...) out from under the
-			# `is None` guard would feed min() a None and raise TypeError at
-			# wiring time. Keep the guard and this arm coupled.
-			self.min_timeframe = min(self.min_timeframe, strategy.timeframe)
 
 		self.logger.info(f'New strategy added: {strategy.name}')

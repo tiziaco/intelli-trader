@@ -1,7 +1,7 @@
 """Isolation contract tests for ``ManagedStrategies`` — the single roster owner.
 
 DECOMP-01 (phase 10.1, plan 02). ``ManagedStrategies`` owns ``strategies``,
-``min_timeframe``, ``_pending_removals``, and the SHORT-01/D-07 two-flag
+``_pending_removals``, and the SHORT-01/D-07 two-flag
 registration gate. The genuine test-surface win of the extraction is that every
 roster rule below is exercised by constructing the collaborator **directly** —
 no ``StrategiesHandler``, no ``EventBus``, no feed, no store.
@@ -16,16 +16,12 @@ SHORT-01/D-07 — a non-``LONG_ONLY`` direction is admissible ONLY when BOTH
 golden ``LONG_ONLY`` path (SMA_MACD) is unaffected and the oracle stays
 byte-exact (134 / ``46189.87730727451``).
 
-IN-06 — ``min_timeframe`` seeds to ``None`` (not a magic sentinel) and returns
-to ``None`` on an empty roster.
-
 D-11 — a name in ``_pending_removals`` stops CONTRIBUTING to the derived
 universe while its instance stays in the roster.
 
 Folder-derived ``unit`` marker only (tests/conftest.py applies it).
 """
 
-from datetime import timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -149,54 +145,6 @@ def test_add_strategy_rejects_duplicate_name() -> None:
 
     assert "alpha" in str(exc.value)
     assert len(managed.strategies) == 1
-
-
-# --- IN-06 / IN-01 min_timeframe derivation --------------------------------
-
-
-def test_min_timeframe_seeds_none_then_tracks_running_min() -> None:
-    """IN-06: None seed; the first strategy establishes the baseline, then min()."""
-    managed = _managed()
-    assert managed.min_timeframe is None
-
-    managed.add_strategy(_strategy(name="slow", timeframe="1d"))
-    assert managed.min_timeframe == timedelta(days=1)
-
-    managed.add_strategy(_strategy(name="fast", timeframe="4h"))
-    assert managed.min_timeframe == timedelta(hours=4)
-
-    # A slower late arrival does not raise the running minimum.
-    managed.add_strategy(_strategy(name="slower", timeframe="1w"))
-    assert managed.min_timeframe == timedelta(hours=4)
-
-
-def test_recompute_min_timeframe_empty_roster_returns_to_none_seed() -> None:
-    """IN-06: an EMPTY roster returns min_timeframe to the legal None seed."""
-    managed = _managed()
-    strategy = _strategy(name="only", timeframe="4h")
-    managed.add_strategy(strategy)
-    assert managed.min_timeframe == timedelta(hours=4)
-
-    managed.remove(strategy)
-    managed.recompute_min_timeframe()
-
-    assert managed.strategies == []
-    assert managed.min_timeframe is None
-
-
-def test_recompute_min_timeframe_after_dropping_the_minimum() -> None:
-    """IN-01: dropping the strategy AT the minimum re-derives from the roster."""
-    managed = _managed()
-    slow = _strategy(name="slow", timeframe="1d")
-    fast = _strategy(name="fast", timeframe="4h")
-    managed.add_strategy(slow)
-    managed.add_strategy(fast)
-    assert managed.min_timeframe == timedelta(hours=4)
-
-    managed.remove(fast)
-    managed.recompute_min_timeframe()
-
-    assert managed.min_timeframe == timedelta(days=1)
 
 
 # --- universe derivation ---------------------------------------------------

@@ -1168,12 +1168,3 @@ def test_a_store_fault_during_removal_completion_mutates_nothing(
     assert store.get(_NAME) is None
 
 
-def test_min_timeframe_is_recomputed_after_a_remove(store: StrategyRegistryStore) -> None:
-    """Removing the only strategy at the minimum must not leave min_timeframe stale."""
-    handler, strategy = _handler(store)
-    handler.portfolio_read_model = _FakeReadModel(held=set())  # flat -> immediate drop
-    assert handler.min_timeframe == timedelta(days=1)
-
-    handler.on_strategy_command(StrategyCommandEvent.remove(strategy_name=_NAME, time=_T))
-
-    assert handler.min_timeframe is None  # empty roster -> legal None seed (IN-06)
