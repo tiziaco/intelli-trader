@@ -316,8 +316,10 @@ class StrategyLifecycleManager:
 
 		The phase's highest-value trust boundary (T-10-41): an operator/FastAPI-supplied
 		``strategy_type`` + config becomes a live Python object. Every rejection below is a
-		LOUD no-op (``logger.warning`` + return) that registers and persists NOTHING — a
-		half-built strategy never enters the roster.
+		LOUD no-op (a log + return) that registers and persists NOTHING — a half-built
+		strategy never enters the roster. That contract holds for ANY construction failure,
+		not merely the enumerated validation kinds: ``init()`` is arbitrary user-authored
+		strategy code, so the zone-1 guard below is two-tier (CR-01).
 
 		D-10 access control: the injected ``strategy_catalog`` IS the allowlist. Without it
 		nothing may be instantiated from an external payload, and resolution goes ONLY
@@ -395,13 +397,48 @@ class StrategyLifecycleManager:
 			StrategyConfigError,
 			UnknownParamError,
 			MissingParamError,
+			ValueError,
 		) as exc:
-			# Every construction failure is a loud no-op naming the error KIND (not the
-			# payload values — the P8 declared-fields-only precedent). Caught by SPECIFIC
-			# type, never a bare except: a store/driver fault must not be silently eaten.
+			# Tier 1 — EXPECTED validation kinds, i.e. "the operator sent junk". A loud
+			# no-op naming the error KIND (not the payload values — the P8
+			# declared-fields-only precedent). ValueError last, matching the sibling
+			# reconfigure site: it covers validate() + the _apply_params tickers/enum
+			# guards, both of which raise BARE ValueError (base.py, SMA_MACD_strategy.py).
 			self.logger.warning(
 				'add for strategy %s rejected (%s) — nothing registered or persisted',
 				event.strategy_name, type(exc).__name__)
+			return
+		except Exception as exc:
+			# Tier 2 — CR-01. Any OTHER construction failure is STILL a loud no-op.
+			#
+			# 1. CR-01 / D-10. STRATEGY_COMMAND is externally admitted
+			#    (LiveTradingSystem.add_event), so an escape from here does not merely
+			#    fail one command: it reaches ErrorPolicy.record_failure -> the
+			#    failure-rate tripwire -> halt(), and HALTED has NO legal exit except an
+			#    operator reset_halt(). Routine bad operator input must never be able to
+			#    latch live trading into HALT.
+			# 2. Why no finite tuple suffices. build_strategy -> cls(**params) ->
+			#    _apply_params -> validate() -> _run_init() -> self.init(), and init() is
+			#    ARBITRARY USER-AUTHORED strategy code from my_strategies/. The set of
+			#    exceptions escaping construction is unbounded BY CONSTRUCTION; enumerating
+			#    more types fixes the instance, never the class. (TypeError needs no
+			#    separate decision — this arm subsumes it.)
+			# 3. Why this does NOT violate the "never a bare except" doctrine. That
+			#    doctrine governs ZONE 2 — register / persist / emit (add_strategy,
+			#    _persist_strategy, add_portfolio_subscription, global_queue.put) — where a
+			#    store or driver fault MUST stay loud so D-19 fail-loud holds. This guard
+			#    covers ZONE 1 ONLY: untrusted payload -> live object, exactly the one
+			#    build_strategy call above, which contains no store call. Do not widen it
+			#    past that boundary, and do not "simplify" it back to a type tuple.
+			# 4. Why the ERROR tier is separate. An unexpected type means a bug in OUR
+			#    construction path, not operator junk, so it must be visibly distinct
+			#    rather than laundered into the same warning. exc_info carries the
+			#    diagnostic; the message itself names no payload values (tier-1 rule).
+			self.logger.error(
+				'add for strategy %s failed with an UNEXPECTED error kind (%s) — nothing '
+				'registered or persisted; this indicates a defect in the construction '
+				'path rather than a bad payload',
+				event.strategy_name, type(exc).__name__, exc_info=True)
 			return
 		# F-1 warmability gate. `cache_capacity()` re-derives lazily, but an existing ring is
 		# a `deque(maxlen=...)` fixed at creation (live_bar_feed) and CANNOT resize, so
