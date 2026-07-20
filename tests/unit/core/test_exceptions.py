@@ -20,6 +20,7 @@ from itrader.core.exceptions import (
     StrategyAdmissionError,
     UnknownParamError,
     MissingParamError,
+    StrategyValidationError,
     ConfigurationError,
     PortfolioError,
     PortfolioNotFoundError,
@@ -128,6 +129,7 @@ _REPARENTED = [
     lambda: MissingParamError("x"),
     lambda: StrategyConfigError("bad blob"),
     lambda: UnknownStrategyTypeError("unknown type"),
+    lambda: StrategyValidationError("short_window must be < long_window"),
 ]
 
 
@@ -168,6 +170,31 @@ def test_registry_refusals_construct_from_a_plain_message(cls):
     ``(field, value, message)`` signature.
     """
     assert str(cls("plain msg")) == "plain msg"
+
+
+def test_strategy_validation_error_joins_the_admission_ancestor():
+    """WR2-02 / IN2-02 — the typed home for the bare-``ValueError`` residue.
+
+    Catchability through ``StrategyAdmissionError`` is the whole point: it is what
+    puts a ``validate()`` refusal inside ``registry.rehydrate._QUARANTINABLE`` so a
+    stale row is quarantined instead of aborting the boot. ``ValueError`` keeps
+    every pre-existing catch site (and the ``pytest.raises(ValueError, ...)``
+    assertions in ``tests/unit/strategy/test_strategy.py``) working unchanged.
+    """
+    exc = StrategyValidationError("short_window must be < long_window")
+    assert isinstance(exc, StrategyAdmissionError)
+    assert isinstance(exc, ITraderError)
+    assert isinstance(exc, ValueError)
+
+
+def test_strategy_validation_error_round_trips_the_plain_message():
+    """The wrap carries only ``str(exc)``, so plain-message construction is required.
+
+    It is NOT parented on the house ``ValidationError`` — that signature is
+    ``(field, value, message)`` and there are no structured fields to supply here.
+    """
+    assert str(StrategyValidationError("plain msg")) == "plain msg"
+    assert not issubclass(StrategyValidationError, ValidationError)
 
 
 def test_unknown_param_error_mro_order_is_pinned():

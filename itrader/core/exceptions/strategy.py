@@ -11,8 +11,11 @@ rejected at admission". The two param errors below are its structured members:
 - ``MissingParamError`` — a required bare-annotation attribute was not supplied
   (D-07). An under-specified strategy is rejected rather than running with a
   missing required parameter.
+- ``StrategyValidationError`` — the param-application + cross-field validation
+  span rejected the payload with a bare ``ValueError`` (WR2-02 / IN2-02). Unlike
+  the two above it carries no structured fields, only the original message.
 
-Both carry BOTH the house ``ValidationError`` structured-field convention
+Both param errors carry BOTH the house ``ValidationError`` structured-field convention
 (RESEARCH §Don't Hand-Roll — never a bare ``raise ValueError``) AND the shared
 ``StrategyAdmissionError`` admission ancestor.
 """
@@ -79,3 +82,30 @@ class MissingParamError(ValidationError, StrategyAdmissionError):
             field=name,
             message="required parameter was not supplied",
         )
+
+
+class StrategyValidationError(StrategyAdmissionError):
+    """A bare ``ValueError`` refused the param-apply + validate span (WR2-02 / IN2-02).
+
+    Raised when the ``_apply_params`` + ``validate()`` span in
+    ``Strategy.__init__`` / ``Strategy.reconfigure`` rejects a payload with a BARE
+    ``ValueError``. Four sources feed it: ``Strategy.validate()``, a subclass
+    ``validate()`` override (including a third-party one outside our hierarchy),
+    the ``_apply_params`` malformed-``tickers`` guard, and ``_COERCE`` enum
+    coercion off a bogus enum string.
+
+    WHY IT EXISTS. That bare-``ValueError`` residue previously sat OUTSIDE
+    ``StrategyAdmissionError`` and therefore outside
+    ``registry.rehydrate._QUARANTINABLE``, so one stale registry row whose class
+    had gained a cross-field ``validate()`` rule aborted the WHOLE live boot
+    instead of being quarantined — a bad ROW becoming a bad SYSTEM, the exact
+    outcome the D-19 arm split exists to prevent. Typing the residue closes
+    WR2-02 AT THE SOURCE rather than widening the quarantine tuple (which would
+    have let an unrelated programming-bug ``ValueError`` silently quarantine a
+    row, collapsing the D-19 arm separability).
+
+    NO ``__init__`` override, and deliberately NOT parented on the house
+    ``ValidationError``: that class's signature is ``(field, value=None,
+    message=None)``, while the wrap has only a message string to carry. Plain-message
+    construction is inherited through ``ITraderError``.
+    """
