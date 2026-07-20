@@ -359,7 +359,7 @@ class StrategiesHandler(object):
 			The bar event of the trading system
 		"""
 		for strategy in self.strategies:
-			# D-07: the enable/disable gate — `is_active` (base.py:193) was an INERT
+			# D-07: the enable/disable gate — `is_active` (base.py:195) was an INERT
 			# flag before P10 (flipped by activate/deactivate_strategy, read by
 			# nothing); this wires it. Placed FIRST so the skip is unconditional and
 			# covers the PairStrategy branch below (D-16: a pair uses the same gate).
