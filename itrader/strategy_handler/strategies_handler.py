@@ -82,6 +82,19 @@ class StrategiesHandler(object):
 			notional to "spend"; spot debit-notional cannot express it). With the
 			default ``max_leverage == 1`` this gives fully-collateralized shorts
 			(no leverage); levered shorts are a separate opt-in dial. Defaults off.
+		environment: `str`
+			The storage-selection key — ``'backtest'`` / ``'test'`` / ``'live'``.
+			CTX-02/D-02 handler-owns-storage-init: the handler derives BOTH
+			``signal_store`` and ``registry_store`` from this (together with
+			``sql_engine``) through their factories, rather than having a caller
+			assign them after construction. An explicitly passed store still WINS
+			over the derived one.
+		sql_engine: `SqlEngine | None`
+			The already-constructed shared SQL spine handed to those same two
+			factories. ``None`` on the backtest path, where both factories return
+			their in-memory concretes (``registry_store`` becomes ``None`` and every
+			persist arm short-circuits). Typed ``Any`` so the SQL stack stays off
+			this module's annotations (GATE-01 inertness).
 		registry_store: `StrategyRegistryStore | None`
 			D-09: the durable instance registry every mutating STRATEGY_COMMAND
 			verb writes through. DECOMP-01a: the handler OWNS this — it is derived
@@ -93,6 +106,21 @@ class StrategiesHandler(object):
 			no SQL. An explicitly passed ``registry_store`` still WINS: it is the
 			override seam the tests inject through. Typed ``Any`` so the SQL stack
 			stays off this module's import graph (GATE-01 inertness).
+		strategy_catalog: `StrategyCatalog | None`
+			**D-10**: the access-control ALLOWLIST through which the ``add`` and
+			``reconfigure`` verbs resolve an untrusted, externally-supplied
+			``strategy_type`` string. ``None`` LOUD-rejects both verbs.
+			Security-relevant: this is the boundary that stops an external
+			STRATEGY_COMMAND payload from naming an arbitrary class. Owned by the
+			lifecycle manager and reached through the read-through property below,
+			so a post-construction swap cannot leave the enforcement path reading
+			a stale catalog (T-10.1-03).
+		portfolio_read_model: `PortfolioReadModel | None`
+			**D-11**: the flat-detect read-model consulted on FILL to decide
+			whether a pending removal has completed. A READ through an injected
+			read-model, NOT a cross-domain handler call, so the queue-only contract
+			holds. Passed by ``compose_engine`` on BOTH paths, so it is non-``None``
+			in backtest too — do NOT infer the run mode from it.
 		"""
 		self.global_queue: "EventBus" = global_queue
 		self.feed: BarFeed = feed
@@ -154,7 +182,6 @@ class StrategiesHandler(object):
 			portfolio_read_model=portfolio_read_model,
 			logger=self.logger,
 		)
-		#self.portfolios: dict = {}
 		# WR-02 (D-01) live-only readiness seam: the injected dynamic universe,
 		# wired ONLY on the live path via set_universe. Defaults None so the
 		# backtest wires no universe → the on_bar readiness gate is a

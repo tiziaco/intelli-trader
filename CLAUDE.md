@@ -100,7 +100,7 @@ Both wire up the identical component graph around one shared queue in their `__i
 
 ### Shared core
 
-`core/` depends on nothing inside `itrader`. It holds `enums/` (`OrderType`, `OrderStatus` + `VALID_ORDER_TRANSITIONS`, `EventType`, `Side`, portfolio/execution enums), `exceptions/` (`base.py`, `order.py`, `portfolio.py`, `data.py`), and the cross-cutting primitives `ids.py`, `money.py`, `clock.py`, `bar.py`, `sizing.py`, `portfolio_read_model.py`. Use the enum maps (e.g. `order_type_map`) to convert string inputs to enums.
+`core/` depends on nothing inside `itrader`. It holds `enums/` (`OrderType`, `OrderStatus` + `VALID_ORDER_TRANSITIONS`, `EventType`, `Side`, portfolio/execution enums), `exceptions/` (`base.py`, `order.py`, `portfolio.py`, `data.py`, `strategy.py`, `results.py`), and the cross-cutting primitives `ids.py`, `money.py`, `clock.py`, `bar.py`, `sizing.py`, `portfolio_read_model.py`. Use the enum maps (e.g. `order_type_map`) to convert string inputs to enums.
 
 ### Live trading (v1.7 — inert on the backtest hot path)
 
@@ -488,7 +488,7 @@ must import, run, and yield trustworthy results.
 - `PortfolioHandler._operation_context()` tracks active operations and publishes `PortfolioErrorEvent` on failure.
 - `SimulatedExchange` emits `FillEvent(REFUSED)` on rejection so the order mirror reconciles.
 - `ExecutionHandler.on_order` / `on_market_data` catch per-exchange exceptions and log without re-raising (prevents queue stalls).
-- Domain exceptions live in `itrader/core/exceptions/` (`base.py`, `order.py`, `portfolio.py`, `data.py`).
+- Domain exceptions live in `itrader/core/exceptions/` (`base.py`, `order.py`, `portfolio.py`, `data.py`, `strategy.py`, `results.py`). `strategy.py` holds `StrategyAdmissionError` — introduced by quick task `260720-ljn` as the shared ancestor of every strategy-payload refusal (unknown type, undeserializable config blob, param drift), and the one ancestor a caller names to catch "a bad strategy payload". `results.py` holds `ResultsNotFound`.
 
 ## Cross-Cutting Concerns
 

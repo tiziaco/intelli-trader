@@ -14,8 +14,13 @@ do before (backtest injected exchange/order/portfolio only). The addition is
 INERT BY CONSTRUCTION, not fragile: ``Universe.__init__`` marks every member
 ``Readiness.READY`` at construction time and backtest membership is derived FROM
 strategy tickers, so ``is_ready(ticker)`` is always True at the readiness gate
-(``strategies_handler.py:214``) — the gate never skips. The byte-exact +
-determinism double-run oracle gate on the extraction PLAN PROVES this.
+in ``StrategiesHandler.on_bar`` (the ``_universe.is_ready`` short-circuit in its
+per-ticker loop) — the gate never skips. The byte-exact + determinism double-run
+oracle gate on the extraction PLAN PROVES this.
+
+WR-05: cited by SYMBOL, not by line number. The former positional citation had
+already rotted onto an unrelated delegating property; a symbol reference survives
+the next rename.
 
 D-02: this is a FREE FUNCTION homed in ``trading_system/`` (NOT ``universe/``).
 The pure ``universe/membership.py`` + ``instruments.py`` derivations are
@@ -102,8 +107,9 @@ def wire_universe(engine: Engine) -> Universe:
 	# call new to the backtest path (backtest injected exchange/order/portfolio
 	# only). INERT BY CONSTRUCTION: Universe.__init__ marks every member
 	# Readiness.READY and backtest membership derives FROM strategy tickers, so
-	# is_ready(ticker) is always True at the strategies_handler.py:214 readiness
-	# gate — the gate never skips (proven by the byte-exact oracle double-run).
+	# is_ready(ticker) is always True at the readiness gate in
+	# StrategiesHandler.on_bar (its per-ticker _universe.is_ready short-circuit)
+	# — the gate never skips (proven by the byte-exact oracle double-run).
 	# Placed after the portfolio injection, before feed.bind, so the ordering is
 	# stable and shared with the live SessionInitializer (plan 06-04).
 	engine.strategies_handler.set_universe(universe)
