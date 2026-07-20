@@ -9,6 +9,7 @@ from itrader.core.money import to_money
 from itrader.core.sizing import SignalIntent, TradingDirection
 from itrader.price_handler.feed.base import BarFeed
 from itrader.strategy_handler.base import Strategy
+from itrader.strategy_handler.managed_strategies import ManagedStrategies
 from itrader.strategy_handler.pair_base import PairStrategy
 from itrader.strategy_handler.signal_record import SignalRecord
 from itrader.strategy_handler.storage import (
@@ -132,6 +133,10 @@ class StrategiesHandler(object):
 		"""
 		self.global_queue: "EventBus" = global_queue
 		self.feed: BarFeed = feed
+		# DECOMP-01: bound BEFORE the collaborator block — ManagedStrategies takes
+		# the logger by injection (its moved add_strategy body logs through it), so
+		# the bind can no longer sit at the end of __init__ as it historically did.
+		self.logger = get_itrader_logger().bind(component="StrategiesHandler")
 		# CTX-02/D-02: the handler now OWNS its signal-store init from
 		# (environment, sql_engine), mirroring the PortfolioHandler template
 		# (LR-13). `SignalStorageFactory.create('backtest', sql_engine=None)` returns
@@ -172,32 +177,76 @@ class StrategiesHandler(object):
 		# pending-removal machinery that reads it is never driven there: `on_fill` is not
 		# on the backtest FILL route and STRATEGY_COMMAND routes to an empty list.
 		self.portfolio_read_model: "Optional[Any]" = portfolio_read_model
-		# D-11 pending-removal state. A `remove` force-flats FIRST and drops the object
-		# only once the flat is OBSERVED on a later FILL cycle, so it is a PENDING state
-		# (mirroring the pending-bracket / reconnect-resume precedents), not an inline
-		# mutation. A name lives here from the `remove` command until `on_fill` sees its
-		# positions flat; while pending, `get_strategies_universe` excludes its tickers so
-		# the poll's REMOVE branch drives the P7 force-close, but its registry ROW is KEPT
-		# until flat (crash-safety: restart rehydrates and resumes managing the positions).
-		self._pending_removals: set[str] = set()
-		# SHORT-01/D-07 two-flag registration gate — read, never mutated here.
-		self._allow_short_selling: bool = allow_short_selling
-		self._enable_margin: bool = enable_margin
-		# IN-06: initialize to None rather than a 100-week magic sentinel. A
-		# downstream consumer reading min_timeframe before any strategy is
-		# registered gets a clear "no strategies" signal (None) instead of
-		# meaningless garbage. add_strategy computes the real min defensively.
-		self.min_timeframe: timedelta | None = None
+		# DECOMP-01: the roster collaborator OWNS `strategies`, `min_timeframe`,
+		# `_pending_removals`, and the two SHORT-01/D-07 gate flags — the handler
+		# holds NONE of that state itself and reaches all of it through the
+		# delegating accessors below. Constructed unconditionally (no Optional, no
+		# late init): the comment blocks that documented each field moved WITH the
+		# state into managed_strategies.py rather than being duplicated here.
+		self._managed: ManagedStrategies = ManagedStrategies(
+			allow_short_selling=allow_short_selling,
+			enable_margin=enable_margin,
+			logger=self.logger,
+		)
 		#self.portfolios: dict = {}
-		self.strategies: list[Strategy]= []
 		# WR-02 (D-01) live-only readiness seam: the injected dynamic universe,
 		# wired ONLY on the live path via set_universe. Defaults None so the
 		# backtest wires no universe → the calculate_signals readiness gate is a
 		# single `is None` short-circuit (oracle byte-exact, RESEARCH OQ8).
 		self._universe: "Universe | None" = None
 
-		self.logger = get_itrader_logger().bind(component="StrategiesHandler")
 		self.logger.info('Strategies Handler initialized')
+
+	# --- DECOMP-01 roster accessors ---------------------------------------
+	#
+	# The handler's public surface is preserved by delegation to the single
+	# `ManagedStrategies` owner. `strategies` and `_pending_removals` hand back
+	# the collaborator's OWN objects — never a copy, never a snapshot. The
+	# roster list is mutated in place at 21 test sites (`.append` / `.extend`),
+	# so a defensive copy here would silently turn every one of them into a
+	# no-op. Read-only: all four `min_timeframe` write sites and both container
+	# assignments moved into the collaborator, so no setter is needed.
+
+	@property
+	def strategies(self) -> list[Strategy]:
+		"""The managed roster — the IDENTICAL list object the collaborator holds."""
+		return self._managed.strategies
+
+	@property
+	def min_timeframe(self) -> timedelta | None:
+		"""The IN-06 derived minimum timeframe across the roster (None when empty)."""
+		return self._managed.min_timeframe
+
+	@property
+	def _pending_removals(self) -> set[str]:
+		"""The D-11 pending-removal name set — the collaborator's OWN set object."""
+		return self._managed._pending_removals
+
+	# The two SHORT-01/D-07 flags are read/WRITE by delegation. They are a
+	# CAPABILITY gate, so there must be exactly ONE copy: `direction_admissible`
+	# reads the collaborator's, and 11 short/pair test files flip these privates
+	# on the handler AFTER construction and then register a non-LONG_ONLY
+	# strategy. A handler-side shadow attribute would let the gate the tests
+	# think they opened diverge from the gate `add_strategy` actually consults —
+	# precisely the drift the shared predicate exists to prevent (T-10-55).
+
+	@property
+	def _allow_short_selling(self) -> bool:
+		"""SHORT-01/D-07 gate flag — single source of truth is the collaborator."""
+		return self._managed._allow_short_selling
+
+	@_allow_short_selling.setter
+	def _allow_short_selling(self, value: bool) -> None:
+		self._managed._allow_short_selling = value
+
+	@property
+	def _enable_margin(self) -> bool:
+		"""SHORT-01/D-07 gate flag — single source of truth is the collaborator."""
+		return self._managed._enable_margin
+
+	@_enable_margin.setter
+	def _enable_margin(self, value: bool) -> None:
+		self._managed._enable_margin = value
 
 	def set_universe(self, universe: "Universe") -> None:
 		"""Wire the dynamic universe for the WR-02 readiness gate (D-01).
@@ -883,7 +932,7 @@ class StrategiesHandler(object):
 		"""
 		# Idempotency: a name already pending is a no-op — no second force-close, no second
 		# poll (D-10 idempotency). The unknown-name case is the shared loud no-op upstream.
-		if strategy.name in self._pending_removals:
+		if self._managed.is_pending(strategy.name):
 			return
 		# Deactivate FIRST — the D-07 `is_active` gate stops NEW entries while the
 		# force-close plays out (this is why D-07 is a Plan 03 dependency).
@@ -891,7 +940,7 @@ class StrategiesHandler(object):
 			strategy.deactivate_strategy()
 		# Enter the pending state BEFORE emitting the poll, so get_strategies_universe
 		# already excludes this strategy when the poll re-derives membership.
-		self._pending_removals.add(strategy.name)
+		self._managed.mark_pending(strategy.name)
 		# Persist enabled=False — the row must reflect "should not be trading" even if the
 		# process dies mid-removal. Do NOT delete the row here: D-11's order is force-flat
 		# -> wait flat -> THEN drop. Deleting first would leave a crash mid-force-close with
@@ -939,12 +988,11 @@ class StrategiesHandler(object):
 		"""
 		if not self._strategy_is_flat(strategy):
 			return
-		if strategy in self.strategies:
-			self.strategies.remove(strategy)
+		self._managed.remove(strategy)
 		if self.registry_store is not None:
 			# Child-then-parent delete (P-6) — the store owns the FK ordering.
 			self.registry_store.delete(strategy.name)
-		self._pending_removals.discard(strategy.name)
+		self._managed.discard_pending(strategy.name)
 		self._recompute_min_timeframe()
 
 	def _recompute_min_timeframe(self) -> None:
@@ -955,10 +1003,7 @@ class StrategiesHandler(object):
 		roster returns to the ``None`` seed — the legal "no strategies" state (IN-06),
 		mirroring the None-seed handling in ``add_strategy``.
 		"""
-		if not self.strategies:
-			self.min_timeframe = None
-			return
-		self.min_timeframe = min(strategy.timeframe for strategy in self.strategies)
+		self._managed.recompute_min_timeframe()
 
 	def on_fill(self, event: "Any") -> None:
 		"""D-11 completion hook: drop a pending-removal strategy once its positions are flat.
@@ -982,12 +1027,12 @@ class StrategiesHandler(object):
 		"""
 		if not self._pending_removals:
 			return
-		by_name = {strategy.name: strategy for strategy in self.strategies}
+		by_name = self._managed.by_name()
 		for name in list(self._pending_removals):
 			strategy = by_name.get(name)
 			if strategy is None:
 				# Already dropped — a stale pending entry; clear it defensively.
-				self._pending_removals.discard(name)
+				self._managed.discard_pending(name)
 				continue
 			self._try_complete_removal(strategy)
 
@@ -1304,7 +1349,7 @@ class StrategiesHandler(object):
 		if event.verb == "add":
 			self._add_strategy_verb(event)
 			return
-		by_name = {strategy.name: strategy for strategy in self.strategies}
+		by_name = self._managed.by_name()
 		strategy = by_name.get(event.strategy_name)
 		if strategy is None:
 			# Unknown target — loud no-op (no mutation, no follow-on).
@@ -1503,27 +1548,7 @@ class StrategiesHandler(object):
 		traded_tickers: `list`
 			List of strings with the traded symbols
 		"""
-		traded_tickers: list[str] = []
-		for strategy in self.strategies:
-			# D-11: a pending-removal strategy is EXCLUDED from the derived membership so
-			# the poll's REMOVE branch force-closes its now-unmembered symbols — the trigger
-			# that drives the P7 force-close machinery. The instance STAYS in
-			# self.strategies (its row is kept until flat for crash-safety); it simply stops
-			# CONTRIBUTING to membership. A symbol shared with a non-pending strategy stays a
-			# member via that other strategy (correct: it is still needed) — the force-close
-			# is symbol-scoped, so a shared symbol's position is not force-closed by removing
-			# only one of its strategies (the accepted P10-scope limitation).
-			if strategy.name in self._pending_removals:
-				continue
-			# IN-01: the declared config contract is `tickers: list[str]`, so
-			# `tickers[0]` is always a `str` — the legacy pairs-trading branch
-			# (`isinstance(tickers[0], tuple)`) was dead on every supported path
-			# and has been removed. A typed pairs API will replace it if/when
-			# pairs trading is reintroduced, rather than runtime isinstance
-			# sniffing on the first element.
-			traded_tickers += strategy.tickers
-
-		return list(set(traded_tickers))
+		return self._managed.get_universe()
 
 	
 	def _direction_admissible(self, direction: TradingDirection) -> bool:
@@ -1541,8 +1566,7 @@ class StrategiesHandler(object):
 		short-enabling reconfigure. This predicate, called on the reconfigure apply path
 		against the trial's resolved direction, is what actually closes T-10-55.
 		"""
-		return direction is TradingDirection.LONG_ONLY or (
-			self._allow_short_selling and self._enable_margin)
+		return self._managed.direction_admissible(direction)
 
 	def add_strategy(self, strategy: Strategy) -> None:
 		"""
@@ -1573,53 +1597,7 @@ class StrategiesHandler(object):
 			are a separate opt-in dial. Both flags default off → the golden
 			``LONG_ONLY`` path (SMA_MACD) is unaffected, oracle byte-exact.
 		"""
-		# SHORT-01/D-07 two-flag registration gate, via the SHARED predicate so `add` and
-		# `reconfigure(direction=...)` cannot drift (audit 10-08 F1): a non-LONG_ONLY
-		# direction is admissible ONLY when BOTH allow_short_selling AND enable_margin are on.
-		# enable_margin is coupled in because it enables the lock-and-settle model that can
-		# actually represent a short. Both default off → the golden LONG_ONLY path is
-		# unaffected (oracle byte-exact).
-		if not self._direction_admissible(strategy.direction):
-			raise ValueError(
-				"Non-LONG_ONLY strategies (LONG_SHORT / SHORT_ONLY) require "
-				"BOTH allow_short_selling AND enable_margin to be enabled "
-				"(SHORT-01/D-07) — enable_margin turns on the lock-and-settle "
-				"model that can represent a short. Both flags default off."
-			)
-
-		# D-02 duplicate-name loud reject. `strategy_name` is the DURABLE
-		# per-instance identity: the registry keys on it, STRATEGY_COMMAND
-		# addresses by it, and rehydrate reconstructs by it. (The ephemeral
-		# `strategy_id` UUIDv7 at base.py:192 is minted per construction and
-		# is NOT restart-stable, so keying durability on it would corrupt
-		# rehydrate.) A silent second registration under the same name would
-		# shadow the first instance and overwrite its persisted state, so a
-		# collision rejects loudly instead — including the rehydrate cases
-		# (rehydrating twice, or rehydrating a name already hand-added).
-		if any(existing.name == strategy.name for existing in self.strategies):
-			raise ValueError(
-				f"A strategy named {strategy.name!r} is already registered "
-				"(D-02) — strategy_name is the durable per-instance identity, "
-				"so a duplicate would silently shadow the existing instance "
-				"and overwrite its persisted state. Rename one of them."
-			)
-
-		# Add the strategy in the strategies list
-		self.strategies.append(strategy)
-
-		# Find the minimum timeframe (IN-06: defensive against the None seed —
-		# the first registered strategy establishes the baseline).
-		if self.min_timeframe is None:
-			self.min_timeframe = strategy.timeframe
-		else:
-			# IN-01: min_timeframe is guaranteed non-None here — the None seed
-			# (IN-06) is handled by the branch above. This `else` arm is the
-			# load-bearing non-None branch; moving min(...) out from under the
-			# `is None` guard would feed min() a None and raise TypeError at
-			# wiring time. Keep the guard and this arm coupled.
-			self.min_timeframe = min(self.min_timeframe, strategy.timeframe)
-
-		self.logger.info(f'New strategy added: {strategy.name}')
+		self._managed.add_strategy(strategy)
 
 	def update_config(self, updates: dict[str, Any]) -> None:
 		"""Re-validate -> re-run init() -> re-derive warmup, per strategy (D-09).
@@ -1653,7 +1631,7 @@ class StrategiesHandler(object):
 			A mapping ``{strategy.name: {param: value, ...}}``; each inner dict
 			is forwarded as ``reconfigure(**inner)`` to the named strategy.
 		"""
-		by_name = {strategy.name: strategy for strategy in self.strategies}
+		by_name = self._managed.by_name()
 		for name, kwargs in updates.items():
 			strategy = by_name.get(name)
 			if strategy is None:
