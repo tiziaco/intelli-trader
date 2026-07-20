@@ -1,8 +1,9 @@
 """
 Strategy-specific exceptions for the iTrader system.
 
-These are the loud-rejection errors the Strategy param-introspection engine raises
-when a strategy is constructed (or reconfigured) with a contract violation:
+``StrategyAdmissionError`` is the shared ancestor of every strategy-payload
+REFUSAL — the single type a caller catches to mean "this strategy payload was
+rejected at admission". The two param errors below are its structured members:
 
 - ``UnknownParamError`` — an unknown construction kwarg was supplied (D-06). The
   engine never silently drops a typo'd or stray kwarg; it rejects loudly so an
@@ -11,14 +12,44 @@ when a strategy is constructed (or reconfigured) with a contract violation:
   (D-07). An under-specified strategy is rejected rather than running with a
   missing required parameter.
 
-Both subclass the house ``ValidationError`` (RESEARCH §Don't Hand-Roll — never a
-bare ``raise ValueError``) so they carry the structured-field convention.
+Both carry BOTH the house ``ValidationError`` structured-field convention
+(RESEARCH §Don't Hand-Roll — never a bare ``raise ValueError``) AND the shared
+``StrategyAdmissionError`` admission ancestor.
 """
 
-from .base import ValidationError
+from .base import ITraderError, ValidationError
 
 
-class UnknownParamError(ValidationError):
+class StrategyAdmissionError(ITraderError, ValueError):
+    """A strategy payload was REFUSED at admission.
+
+    The payload is either an externally-supplied ``STRATEGY_COMMAND`` or a stored
+    registry row; either way it describes a strategy that could not be admitted —
+    an unknown type, an undeserializable config blob, or param drift in either
+    direction. This is the one ancestor a caller names to catch "a bad strategy
+    payload".
+
+    BOTH bases are load-bearing; do not "simplify" either away.
+
+    * ``ITraderError`` joins the house hierarchy, consistent with
+      ``PortfolioError`` / ``OrderError`` / ``DataError``.
+    * ``ValueError`` preserves every pre-existing catch site AND keeps
+      plain-message construction working (``ITraderError`` is a bare
+      ``Exception`` subclass). That second property is precisely why the
+      alternative — rooting the whole family at the house ``ValidationError`` —
+      is impossible: ``StrategyConfigError`` is raised roughly 25 times with a
+      plain message string, while ``ValidationError.__init__`` takes
+      ``(field, value=None, message=None)``.
+
+    Motivating defect — CR-01. Before this base existed, catching "a bad strategy
+    payload" meant hand-listing unrelated names across four separate sites. Those
+    sets drifted, and one drifted tuple let a bare ``ValueError`` escape a
+    never-raise boundary into a live HALT vector. The shared ancestor removes the
+    drift surface itself.
+    """
+
+
+class UnknownParamError(ValidationError, StrategyAdmissionError):
     """Raised when a strategy is constructed with an unknown kwarg (D-06).
 
     The engine rejects any construction/reconfigure kwarg that does not name a
@@ -35,7 +66,7 @@ class UnknownParamError(ValidationError):
         )
 
 
-class MissingParamError(ValidationError):
+class MissingParamError(ValidationError, StrategyAdmissionError):
     """Raised when a required bare-annotation attr is not supplied (D-07).
 
     The engine rejects an under-specified strategy, calling
