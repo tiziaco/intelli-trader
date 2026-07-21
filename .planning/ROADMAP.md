@@ -520,7 +520,7 @@ the wave that touches them.*
 
 **Wave 4** *(blocked on 11-03, 11-07 — D-28 W4 bootstrap)*
 
-- [ ] 11-08-PLAN.md — portfolio rehydrate with persisted ids; the layering call moves below it; the four-constraint comment rewritten; distinct-account invariant over the union, refuse-to-start (MPORT-02, MPORT-03)
+- [x] 11-08-PLAN.md — portfolio rehydrate with persisted ids; the layering call moves below it; the four-constraint comment rewritten; distinct-account invariant over the union, refuse-to-start (MPORT-02, MPORT-03)
 
 **Wave 5** *(blocked on 11-07, 11-08 — D-28 W6 reconcile, first half)*
 
@@ -528,7 +528,7 @@ the wave that touches them.*
 
 **Wave 6** *(blocked on 11-07, 11-09 — the deletions, sequenced last)*
 
-- [ ] 11-07b-PLAN.md — split out of 11-07: delete `_link_venue_account_to_portfolios`, its `RuntimeError(>1)` guard and the facade `_venue_account` singleton, **after** rehoming the reconnect re-snapshot and the startup venue reconcile onto per-account accounts. *Sequenced after 11-08's invariant and 11-09's coordinator rehome because both deletions destroy live-safety wiring whose existing tests stay green (they assign the fields directly rather than driving the real path).* (MPORT-01)
+- [x] 11-07b-PLAN.md — split out of 11-07: delete `_link_venue_account_to_portfolios`, its `RuntimeError(>1)` guard and the facade `_venue_account` singleton, **after** rehoming the reconnect re-snapshot and the startup venue reconcile onto per-account accounts. *Sequenced after 11-08's invariant and 11-09's coordinator rehome because both deletions destroy live-safety wiring whose existing tests stay green (they assign the fields directly rather than driving the real path).* (MPORT-01)
 
 **Wave 7** *(blocked on 11-09 — D-28 W6 reconcile, second half)*
 
