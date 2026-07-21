@@ -112,9 +112,13 @@ def test_venue_bundle_optional_arm_defaults_to_none() -> None:
     bundle = VenueBundle(exchange=exchange, account_factory=account_factory)
     assert bundle.exchange is exchange
     assert bundle.account_factory is account_factory
-    # D-02: the optional live arm defaults to None (paper carries neither).
+    # D-02: the optional live arm defaults to None (paper carries none).
     assert bundle.connector is None
-    assert bundle.lifecycle is None
+    # 11-09: the dead ``lifecycle`` field is GONE. It was never populated by anything —
+    # assemble_venue returns the lifecycle ALONGSIDE the bundle — so its only references
+    # in the whole tree were three tests asserting it was None. The composition root now
+    # holds one lifecycle per account; the bundle carries none.
+    assert not hasattr(bundle, "lifecycle")
 
 
 def test_venue_bundle_is_frozen() -> None:

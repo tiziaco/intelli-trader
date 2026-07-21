@@ -181,6 +181,99 @@ def test_assemble_unregistered_execution_venue_fails_loud() -> None:
         assemble_venue(_fake_ctx(), spec, connectors, exec_reg, data_reg)
 
 
+# --------------------------------------------------------------------------- #
+# assemble_venues — the PLURAL form (11-09)
+#
+# Driven here, with NO LiveTradingSystem, for exactly the reason the singular form is:
+# the assembly logic is authored ONCE in venues/assemble.py, and a plural form that
+# could only be exercised through the live composition root would put it back in the
+# facade in everything but name.
+# --------------------------------------------------------------------------- #
+
+
+def test_assemble_venues_returns_one_lifecycle_per_account() -> None:
+    """Two account specs -> two lifecycles, keyed by account id, over two connectors.
+
+    The DISTINCT-connector assertion is the load-bearing half. Two entries in a map
+    prove only that the loop ran twice; two accounts sharing one authenticated session
+    would satisfy that while routing account B's orders through account A's credentials.
+    """
+    from itrader.venues.assemble import assemble_venues
+    from itrader.venues.lifecycle import VenueLifecycle
+
+    exec_reg, data_reg = _okx_registries()
+    connectors = _FakeConnectorProvider()
+    specs = [_spec("okx", "okx", "acct-a"), _spec("okx", "okx", "acct-b")]
+
+    lifecycles = assemble_venues(_fake_ctx(), specs, connectors, exec_reg, data_reg)
+
+    assert set(lifecycles) == {"acct-a", "acct-b"}
+    assert all(isinstance(v, VenueLifecycle) for v in lifecycles.values())
+    assert (lifecycles["acct-a"].bundle.connector
+            is not lifecycles["acct-b"].bundle.connector)
+
+
+def test_assemble_venues_preserves_spec_order_so_the_primary_is_deterministic() -> None:
+    """Insertion order IS the primary contract — the first spec is the primary.
+
+    The facade binds ONE data provider to the ONE feed and reads it off the first
+    entry, so an order-losing implementation (a set, or a sorted key) would silently
+    re-point the feed at a different account's stream between boots.
+    """
+    from itrader.venues.assemble import assemble_venues
+
+    exec_reg, data_reg = _okx_registries()
+    specs = [_spec("okx", "okx", "z-last"), _spec("okx", "okx", "a-first")]
+
+    lifecycles = assemble_venues(
+        _fake_ctx(), specs, _FakeConnectorProvider(), exec_reg, data_reg)
+
+    assert list(lifecycles) == ["z-last", "a-first"]
+
+
+def test_assemble_venues_normalizes_an_unnamed_account_to_default() -> None:
+    """``account_id=None`` keys under "default" — the same key the plugins memoize on.
+
+    The venue plugins, ``ExecutionHandler.exchanges`` and the UID guard all apply
+    ``account_id or "default"``. Keying differently here would make the lifecycle map
+    disagree with the exchange registry for exactly the unnamed single-account run that
+    is the most common deployment.
+    """
+    from itrader.venues.assemble import assemble_venues
+
+    exec_reg, data_reg = _okx_registries()
+
+    lifecycles = assemble_venues(
+        _fake_ctx(), [_spec("okx", "okx", None)], _FakeConnectorProvider(),
+        exec_reg, data_reg)
+
+    assert list(lifecycles) == ["default"]
+
+
+def test_assemble_venues_on_an_empty_spec_list_is_a_clean_empty_map() -> None:
+    """No specs -> no lifecycles, and no exception. The unregistered-venue edge."""
+    from itrader.venues.assemble import assemble_venues
+
+    exec_reg, data_reg = _okx_registries()
+
+    assert assemble_venues(
+        _fake_ctx(), [], _FakeConnectorProvider(), exec_reg, data_reg) == {}
+
+
+def test_assemble_venues_propagates_an_unregistered_venue_loudly() -> None:
+    """One bad spec fails the whole assembly (D-01) — no partial, half-wired venue map."""
+    import pytest
+
+    from itrader.venues.assemble import assemble_venues
+
+    exec_reg, data_reg = _okx_registries()
+    specs = [_spec("okx", "okx", "acct-a"), _spec("binance", "okx", "acct-b")]
+
+    with pytest.raises(KeyError):
+        assemble_venues(
+            _fake_ctx(), specs, _FakeConnectorProvider(), exec_reg, data_reg)
+
+
 def test_assemble_unregistered_data_provider_fails_loud() -> None:
     """An unregistered data_provider raises KeyError (fail loud, D-01)."""
     import pytest

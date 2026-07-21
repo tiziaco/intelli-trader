@@ -37,6 +37,16 @@ def _set_okx_env(monkeypatch) -> None:
     monkeypatch.setenv("OKX_API_PASSPHRASE", "test-pass")
 
 
+def _exchange(system: LiveTradingSystem):
+    """The primary account's execution arm (11-09: read through its lifecycle)."""
+    return system._primary_lifecycle.bundle.exchange
+
+
+def _provider(system: LiveTradingSystem):
+    """The one feed data provider — the primary account's (11-09)."""
+    return system._primary_lifecycle.provider
+
+
 def _paused_offline_okx_system(monkeypatch) -> LiveTradingSystem:
     """A paused OKX live system with both blocking resume legs stubbed offline.
 
@@ -48,13 +58,17 @@ def _paused_offline_okx_system(monkeypatch) -> LiveTradingSystem:
     """
     _set_okx_env(monkeypatch)
     system = LiveTradingSystem.for_exchange("okx")
-    assert system._okx_exchange is not None
-    assert system._okx_data_provider is not None
+    # 11-09: the venue arms are read through the PRIMARY account's lifecycle (the six
+    # facade scalars are deleted), and the handler holds the per-account lifecycle map
+    # plus a CALLABLE over the accounts the portfolios hold.
+    lifecycle = system._primary_lifecycle
+    assert lifecycle is not None and lifecycle.bundle.connector is not None
     # Neutralize the two blocking venue-I/O legs the resume runs before the gate
     # (missed-fill catch-up + REST snapshot) so the resume path runs socket-free.
-    system._okx_exchange.catch_up_missed_fills = MagicMock(  # type: ignore[method-assign]
+    lifecycle.bundle.exchange.catch_up_missed_fills = MagicMock(  # type: ignore[method-assign]
         name="catch_up_missed_fills")
-    system._stream_recovery._venue_account = MagicMock(name="venue_account")
+    system._stream_recovery._venue_accounts = lambda: [
+        MagicMock(name="venue_account")]
     system.pause_submission("paused-on-disconnect")
     return system
 
@@ -68,8 +82,8 @@ def test_resume_stays_paused_while_fill_arm_down(monkeypatch) -> None:
     system = _paused_offline_okx_system(monkeypatch)
 
     # FILL/exchange arm still down; DATA/candle arm reconnected.
-    system._okx_exchange._supervisor._streams_down = {"fills"}
-    system._okx_data_provider._supervisor._streams_down = set()
+    _exchange(system)._supervisor._streams_down = {"fills"}
+    _provider(system)._supervisor._streams_down = set()
 
     system._stream_recovery.on_reconnect()
 
@@ -77,7 +91,7 @@ def test_resume_stays_paused_while_fill_arm_down(monkeypatch) -> None:
     assert system._safety.is_submission_paused() is True
 
     # The fill arm now recovers; the still-down arm's next up-event re-fires on_reconnect.
-    system._okx_exchange._supervisor._streams_down = set()
+    _exchange(system)._supervisor._streams_down = set()
     system._stream_recovery.on_reconnect()
 
     # Both arms healthy → resume exactly once.
@@ -89,13 +103,13 @@ def test_resume_stays_paused_while_data_arm_down(monkeypatch) -> None:
     system = _paused_offline_okx_system(monkeypatch)
 
     # DATA/candle arm still down; FILL/exchange arm reconnected.
-    system._okx_exchange._supervisor._streams_down = set()
-    system._okx_data_provider._supervisor._streams_down = {"candle"}
+    _exchange(system)._supervisor._streams_down = set()
+    _provider(system)._supervisor._streams_down = {"candle"}
 
     system._stream_recovery.on_reconnect()
     assert system._safety.is_submission_paused() is True
 
-    system._okx_data_provider._supervisor._streams_down = set()
+    _provider(system)._supervisor._streams_down = set()
     system._stream_recovery.on_reconnect()
     assert system._safety.is_submission_paused() is False
 
@@ -104,20 +118,27 @@ def test_resume_when_both_arms_healthy(monkeypatch) -> None:
     """Both arms healthy on the first drain → resume immediately (no false gate)."""
     system = _paused_offline_okx_system(monkeypatch)
 
-    system._okx_exchange._supervisor._streams_down = set()
-    system._okx_data_provider._supervisor._streams_down = set()
+    _exchange(system)._supervisor._streams_down = set()
+    _provider(system)._supervisor._streams_down = set()
 
     system._stream_recovery.on_reconnect()
     assert system._safety.is_submission_paused() is False
 
 
-def test_none_arm_never_blocks_resume(monkeypatch) -> None:
-    """An unwired (None) arm is treated as healthy — it never blocks resume (absent ⇒ healthy)."""
+def test_an_unwired_venue_never_blocks_resume(monkeypatch) -> None:
+    """An UNWIRED venue is treated as healthy — it never blocks resume (absent ⇒ healthy).
+
+    11-09: "an arm is absent" is now expressed as an EMPTY lifecycle map, which is what a
+    non-OKX wiring actually produces (no account assembles, so neither the exchange arm
+    nor the data arm exists). The old spelling — nulling one scalar while leaving the
+    other — described a state the composition root never builds. The mixed case, where
+    one of several accounts' arms is down while the rest are healthy, is gated in
+    ``tests/unit/trading_system/test_stream_recovery_handler.py``.
+    """
     system = _paused_offline_okx_system(monkeypatch)
 
-    # Simulate a non-OKX wiring where an arm is absent; the present arm is healthy.
-    system._stream_recovery._okx_exchange = None
-    system._okx_data_provider._supervisor._streams_down = set()
+    system._stream_recovery._lifecycles = {}
+    _provider(system)._supervisor._streams_down = set()
 
     system._stream_recovery.on_reconnect()
     assert system._safety.is_submission_paused() is False

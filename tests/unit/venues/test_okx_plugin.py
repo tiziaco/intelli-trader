@@ -118,8 +118,9 @@ def test_okx_venue_plugin_builds_bundle_wrapping_the_connector() -> None:
     # The bundle carries the SAME connector the provider handed out.
     assert bundle.exchange._connector is connectors.get("okx", "default", spec)
     assert bundle.connector is connectors.get("okx", "default", spec)
-    # lifecycle is built later (05-06) — the plugin leaves it None.
-    assert bundle.lifecycle is None
+    # 11-09: the dead ``VenueBundle.lifecycle`` field is gone — assemble_venue returns
+    # the lifecycle beside the bundle, so there was never anything to store here.
+    assert not hasattr(bundle, "lifecycle")
     # account_factory mints a VenueAccount bound to the same connector.
     assert callable(bundle.account_factory)
     account = bundle.account_factory()

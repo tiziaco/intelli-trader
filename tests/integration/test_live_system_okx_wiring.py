@@ -55,10 +55,10 @@ def test_construct_non_okx_venue_needs_no_okx_credentials(monkeypatch) -> None:
     # Must NOT raise pydantic.ValidationError for missing OKX_API_* — the OKX arm is gated.
     system = LiveTradingSystem.for_exchange("binance")
 
-    assert system._okx_connector is None
-    assert system._okx_exchange is None
-    assert system._okx_data_provider is None
-    assert system._venue_account is None
+    # 11-09: the six scalar venue aliases are gone; "unwired" is now an EMPTY
+    # per-account lifecycle map. An unregistered venue assembles nothing at all.
+    assert system._venue_lifecycles == {}
+    assert system._primary_lifecycle is None
     # The OKX execution arm is not registered for a non-OKX venue.
     # D-27: the registry is pair-keyed, so assert over the VENUE HALF. Checking
     # only ("okx", DEFAULT_ACCOUNT_ID) would silently weaken this test — an OKX
@@ -78,7 +78,7 @@ def test_construct_does_not_connect_in_constructor(monkeypatch) -> None:
     system = LiveTradingSystem.for_exchange("binance")
 
     # No connector was built, so there is nothing connected and nothing to leak.
-    assert system._okx_connector is None
+    assert system._venue_lifecycles == {}
     # stop() before any start() must not raise even though nothing is wired/running.
     assert system.stop() is True
 
@@ -98,11 +98,13 @@ def test_okx_arm_injects_real_provider_into_live_feed(monkeypatch) -> None:
 
     system = LiveTradingSystem.for_exchange("okx")
 
-    # The OKX data arm was constructed for the okx venue.
-    assert system._okx_data_provider is not None
+    # The OKX data arm was constructed for the okx venue — read through the PRIMARY
+    # account's lifecycle (11-09), which is where the one feed provider comes from.
+    provider = system._primary_lifecycle.provider
+    assert provider is not None
     # The feed is the LIVE feed, and the real provider was injected via set_provider —
     # so the PRIVATE _provider the warmup path reads IS the constructed provider.
-    assert system.feed._provider is system._okx_data_provider
+    assert system.feed._provider is provider
 
 
 def test_okx_arm_wires_provider_sink_to_feed_update(monkeypatch) -> None:
@@ -115,9 +117,10 @@ def test_okx_arm_wires_provider_sink_to_feed_update(monkeypatch) -> None:
 
     system = LiveTradingSystem.for_exchange("okx")
 
-    assert system._okx_data_provider is not None
+    provider = system._primary_lifecycle.provider
+    assert provider is not None
     # The provider holds the feed's update() as its closed-bar sink.
-    assert system._okx_data_provider._bar_sink == system.feed.update
+    assert provider._bar_sink == system.feed.update
 
 
 def test_okx_arm_binds_provider_to_engine_queue(monkeypatch) -> None:
@@ -137,10 +140,11 @@ def test_okx_arm_binds_provider_to_engine_queue(monkeypatch) -> None:
 
     system = LiveTradingSystem.for_exchange("okx")
 
-    assert system._okx_data_provider is not None
+    provider = system._primary_lifecycle.provider
+    assert provider is not None
     # The provider's warmup-emit queue IS the engine queue — spawn_warmup can now put
     # BarsLoaded/BarsLoadFailed without raising the unbound StateError.
-    assert system._okx_data_provider._global_queue is system.global_queue
+    assert provider._global_queue is system.global_queue
 
 
 def test_okx_live_feed_capacity_derives_to_strategy_warmup(monkeypatch) -> None:
@@ -169,14 +173,19 @@ def test_okx_live_feed_capacity_derives_to_strategy_warmup(monkeypatch) -> None:
 def _stub_okx_network(system: LiveTradingSystem) -> None:
     """Stub every network-touching call in start() so it runs fully offline.
 
-    Leaves ``system._okx_exchange.connect`` untouched — that is the call under
+    Leaves the venue exchange's ``connect`` untouched — that is the call under
     test (CR-01). The VenueReconciler path is skipped because the in-memory order
     store does not expose ``rehydrate`` (start() guards on ``hasattr``).
+
+    11-09: reached through the PRIMARY account's lifecycle rather than the deleted
+    ``_okx_connector`` / ``_okx_data_provider`` / ``_venue_account`` scalars. No venue
+    account is stubbed on the facade any more — accounts live on portfolios, and this
+    system has none, so the venue reconcile is a clean skip.
     """
-    system._okx_connector.connect = MagicMock(name="connector.connect")
+    lifecycle = system._primary_lifecycle
+    lifecycle.bundle.connector.connect = MagicMock(name="connector.connect")
     system.feed.warmup = MagicMock(name="feed.warmup")
-    system._okx_data_provider.start_stream = MagicMock(name="provider.start_stream")
-    system._venue_account = MagicMock(name="venue_account")
+    lifecycle.provider.start_stream = MagicMock(name="provider.start_stream")
 
 
 def test_start_spawns_okx_order_arm_fill_stream(monkeypatch) -> None:
@@ -196,7 +205,7 @@ def test_start_spawns_okx_order_arm_fill_stream(monkeypatch) -> None:
             success=True,
             status=ExchangeConnectionStatus.CONNECTED,
             exchange_name="okx"))
-    system._okx_exchange.connect = connect_spy
+    system._primary_lifecycle.bundle.exchange.connect = connect_spy
 
     try:
         started = system.start()
@@ -223,7 +232,7 @@ def test_start_arms_okx_connector_halt_signal(monkeypatch) -> None:
     _set_okx_env(monkeypatch)
     system = LiveTradingSystem.for_exchange("okx")
     _stub_okx_network(system)
-    system._okx_exchange.connect = MagicMock(
+    system._primary_lifecycle.bundle.exchange.connect = MagicMock(
         name="okx_exchange.connect",
         return_value=ConnectionResult(
             success=True,
@@ -238,7 +247,8 @@ def test_start_arms_okx_connector_halt_signal(monkeypatch) -> None:
         # (== not is: each `self._request_connector_halt` access is a fresh bound-method
         # object; bound methods compare equal by function+instance, mirroring this file's
         # `_bar_sink == system.feed.update` check.)
-        assert system._okx_connector._halt_signal == system._request_connector_halt
+        assert (system._primary_lifecycle.bundle.connector._halt_signal
+                == system._request_connector_halt)
     finally:
         system.stop()
 
@@ -252,7 +262,7 @@ def test_start_fails_when_okx_exchange_connect_fails(monkeypatch) -> None:
     _set_okx_env(monkeypatch)
     system = LiveTradingSystem.for_exchange("okx")
     _stub_okx_network(system)
-    system._okx_exchange.connect = MagicMock(
+    system._primary_lifecycle.bundle.exchange.connect = MagicMock(
         name="okx_exchange.connect",
         return_value=ConnectionResult(
             success=False,
@@ -268,64 +278,49 @@ def test_start_fails_when_okx_exchange_connect_fails(monkeypatch) -> None:
         system.stop()
 
 
-# --- WR-02: one VenueAccount per portfolio; single-portfolio-live fail-loud ----
+# --- MPORT-05: the single-account link is GONE; the coordinator takes no scalars ----
 
 
-def test_link_venue_account_single_portfolio_assigns(monkeypatch) -> None:
-    """One active portfolio: the venue account is linked onto it (WR-02, unchanged path).
+def test_the_coordinator_the_facade_builds_carries_no_venue_scalars(monkeypatch) -> None:
+    """The facade builds a coordinator with no account / connector / exchange scalar.
 
-    Exercises the extracted wiring seam directly (no network) — the single active
-    portfolio receives the venue-cached account so the engine-thread drift compare
-    reads venue truth.
+    This replaces the two ``_link_venue_account_to_portfolios`` tests that lived here.
+    That method assigned ONE scalar ``VenueAccount`` to every active portfolio and
+    raised ``RuntimeError`` at N>1 — the single-portfolio-live assumption in its last
+    hiding place. It is deleted, not merely bypassed, because a dead-but-callable
+    "assign one account to all portfolios" helper inside the per-portfolio coordinator
+    is a footgun waiting for its next caller.
+
+    Its N>1 refusal is not lost: 11-08's ``assert_distinct_accounts`` refuses two
+    portfolios sharing one account EARLIER (before any account is minted) and over the
+    union of persisted and spec-supplied portfolios, which is strictly wider.
     """
     _set_okx_env(monkeypatch)
     system = LiveTradingSystem.for_exchange("okx")
 
-    venue_account = MagicMock(name="venue_account")
-    system._venue_account = venue_account
-    portfolio = MagicMock(name="portfolio")
-    system.portfolio_handler.get_active_portfolios = MagicMock(  # type: ignore[method-assign]
-        return_value=[portfolio])
-
-    # WR-01/WR-03: the venue-link logic lives on the ReconciliationCoordinator now — the
-    # copy production actually runs via _build_reconciliation_coordinator()
-    # .run_startup_reconcile(). Exercise the coordinator the facade builds (mirrors the
-    # production call `account = self._venue_account; self._link_...(account)`), NOT the
-    # deleted facade copy.
     coordinator = system._build_reconciliation_coordinator()
-    coordinator._link_venue_account_to_portfolios(venue_account)
 
-    assert portfolio.account is venue_account
+    assert not hasattr(coordinator, "_venue_account")
+    assert not hasattr(coordinator, "_connector")
+    assert not hasattr(coordinator, "_exchange")
+    assert not hasattr(coordinator, "_link_venue_account_to_portfolios")
+    # It reads the pair-keyed registry instead, so each portfolio resolves its OWN
+    # account's exchange rather than sharing the primary's.
+    assert coordinator._execution_handler is system.execution_handler
 
 
-def test_link_venue_account_two_portfolios_fails_loud(monkeypatch) -> None:
-    """Two active portfolios: wiring FAILS LOUD rather than sharing one VenueAccount (WR-02).
+def test_a_facade_with_no_portfolios_reconciles_nothing(monkeypatch) -> None:
+    """Zero active portfolios: run_startup_reconcile rehydrates and returns cleanly.
 
-    Sharing a single VenueAccount across portfolios would conflate their buying
-    power / positions and silently discard each SimulatedAccount ledger. Until a
-    per-portfolio VenueAccount keyed by venue sub-account exists, the wiring must
-    refuse (RuntimeError) — a second portfolio can never silently mis-attribute
-    venue truth.
+    The MPORT-05 empty edge through the facade's OWN coordinator — no portfolios means
+    no accounts means nothing to snapshot, stream, reconcile or halt on.
     """
     _set_okx_env(monkeypatch)
     system = LiveTradingSystem.for_exchange("okx")
+    assert system.portfolio_handler.get_active_portfolios() == []
 
-    system._venue_account = MagicMock(name="venue_account")
-    p1 = MagicMock(name="portfolio_1")
-    p2 = MagicMock(name="portfolio_2")
-    system.portfolio_handler.get_active_portfolios = MagicMock(  # type: ignore[method-assign]
-        return_value=[p1, p2])
-
-    # WR-01/WR-03: fail-loud guard lives on the ReconciliationCoordinator (the copy
-    # production runs); exercise the coordinator the facade builds, not the deleted copy.
-    coordinator = system._build_reconciliation_coordinator()
-    with pytest.raises(RuntimeError, match="at most one active portfolio"):
-        coordinator._link_venue_account_to_portfolios(system._venue_account)
-
-    # The guard raises BEFORE any assignment — no portfolio received the shared
-    # venue account (each ``.account`` is an untouched auto-child mock, not it).
-    assert p1.account is not system._venue_account
-    assert p2.account is not system._venue_account
+    # Must not raise, must not touch the venue.
+    system._build_reconciliation_coordinator().run_startup_reconcile()
 
 
 # --- SAFE-03/§11c: connector stream/fatal arrive as CONTROL events on the engine ---

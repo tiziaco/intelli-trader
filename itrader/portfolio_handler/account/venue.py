@@ -493,6 +493,23 @@ class VenueAccount(Account):
         return True
 
     @property
+    def connector(self) -> "LiveConnector":
+        """The authenticated session this leaf caches truth over (11-09, D-19).
+
+        READ-ONLY, and that is the point. Once the reconciliation coordinator stopped
+        taking a SCALAR connector parameter, it needed the connector belonging to the
+        account it is currently reconciling — resolved FROM that account rather than
+        handed in beside it. Exposing the connector the leaf already holds is one
+        source of truth; a separate parameter is a second one that can disagree, which
+        is exactly how portfolio A's reconcile ends up reading account B's session.
+
+        No setter: the session is injected at construction (D-04) and swapping it
+        underneath a populated cache would silently re-point cached venue truth at a
+        different real account.
+        """
+        return self._connector
+
+    @property
     def balance(self) -> Decimal:
         """Settled cash balance — cached venue balance + local fill-delta (D-01/D-14).
 

@@ -31,11 +31,19 @@ from datetime import UTC, datetime
 
 import pytest
 
-from itrader.config.sql import SqlSettings
+import uuid
+from decimal import Decimal
+from types import SimpleNamespace
+
+from itrader.config.sql import SqlDriver, SqlSettings
+from itrader.core.exceptions import ValidationError
+from itrader.core.ids import PortfolioId
 from itrader.storage import SqlEngine
+from itrader.storage.portfolio_definition_store import PortfolioDefinitionStore
 from itrader.storage.venue_account_store import VenueAccountStore
 from itrader.trading_system.live_trading_system import (
     _account_ids_for_spec,
+    _attach_venue_accounts,
     _build_account_specs,
     build_live_system,
 )
@@ -155,21 +163,40 @@ def test_two_accounts_produce_two_exchanges_over_two_connectors(okx_env) -> None
         system.stop()
 
 
-def test_the_primary_accounts_bundle_owns_the_facade_lifecycle(okx_env) -> None:
-    """The facade holds ONE lifecycle and it is the PRIMARY account's (D-07/D-08).
+def test_the_facade_holds_one_lifecycle_per_account_primary_first(okx_env) -> None:
+    """The facade holds ONE lifecycle PER ACCOUNT, keyed by account id (D-07/11-09).
 
-    Also pins that ``_venue_account`` — the facade's account field, minted at
-    construction from ``lifecycle.bundle.account_factory()`` — is still populated
-    and is now SCOPED to the primary account rather than unscoped. That call site is
-    the only production account-minting path that existed before this plan; the
-    deletions that retire it belong to plan 11-07b.
+    11-09 replaced the facade's six scalar venue aliases — ``_venue_lifecycle`` /
+    ``_venue_bundle`` / ``_okx_connector`` / ``_okx_exchange`` / ``_venue_account`` /
+    ``_okx_data_provider``, five of which were pre-derived ``lifecycle.<something>``
+    reads — with this single map. Six scalars cannot describe two accounts; one
+    lifecycle per account can, and every former alias is now a read THROUGH the
+    lifecycle.
+
+    Insertion order is load-bearing, not incidental: the PRIMARY is the first entry,
+    and exactly one data provider is bound to the one feed, so a primary that moved
+    between boots would re-point the feed at a different account's stream.
     """
     system = build_live_system(_spec(["acct-a", "acct-b"], primary="acct-a"))
     try:
-        assert system._venue_lifecycle is not None
-        assert system._venue_account is not None
-        assert system._venue_account.account_id == "acct-a"
-        assert system._okx_exchange is _okx_entries(system)[(_VENUE, "acct-a")]
+        assert set(system._venue_lifecycles) == {"acct-a", "acct-b"}
+        # PRIMARY FIRST — the spec-level account leads.
+        assert list(system._venue_lifecycles)[0] == "acct-a"
+        assert system._primary_lifecycle is system._venue_lifecycles["acct-a"]
+
+        # Every former alias is reachable through the account's own lifecycle, and each
+        # account's is its OWN — which is precisely what a scalar could not express.
+        entries = _okx_entries(system)
+        for account_id in ("acct-a", "acct-b"):
+            lifecycle = system._venue_lifecycles[account_id]
+            assert lifecycle.bundle.exchange is entries[(_VENUE, account_id)]
+            assert lifecycle.bundle.connector is not None
+
+        # The five deleted scalar aliases are GONE, not renamed. Asserted explicitly so
+        # a future "convenience" read-through property cannot quietly restore them.
+        for alias in ("_venue_bundle", "_okx_connector", "_okx_exchange",
+                      "_venue_account", "_okx_data_provider"):
+            assert not hasattr(system, alias), f"{alias} was resurrected"
     finally:
         system.stop()
 
@@ -304,6 +331,188 @@ def test_minting_never_clobbers_an_operators_configured_pointer() -> None:
         assert row["secret_ref"] == "env:OKX_A"
     finally:
         store.dispose()
+
+
+# --------------------------------------------------------------------------- #
+# MPORT-05 — THE ATTACH: each portfolio holds the account its own account_id names
+#
+# These are the gates that make plan 11-07b's deletion safe, and they are the reason
+# Task 0 exists at all. Dropping the coordinator's scalar `venue_account` without an
+# attach path would leave every portfolio on the SimulatedCashAccount leaf that
+# Portfolio._initialize_components builds — `is_venue_truth` False for all of them, so
+# `run_startup_reconcile` would skip snapshot(), start_streaming(), VenueReconciler AND
+# the D-04 baseline HALT gate for every portfolio, silently, behind a green suite.
+#
+# Fake portfolios with a test-assigned `.account` cannot gate this: they would prove the
+# assertion, not the wiring. Everything below drives the REAL build_live_system with the
+# minting and attach paths unstubbed.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def live_db(pg_database_env):
+    """A handle on the SAME database ``build_live_system`` builds its own engine on.
+
+    Purges before and after: the container is session-scoped, and because ``portfolios``
+    carries a composite FK onto ``venue_accounts`` a row leaked by a sibling test makes
+    the NEXT test's account upsert fail with a foreign-key violation rather than
+    anything that points at the real cause.
+    """
+    engine = SqlEngine(SqlSettings(driver=SqlDriver.POSTGRESQL_PSYCOPG2))
+    PortfolioDefinitionStore(engine)
+    VenueAccountStore(engine)
+    provision_schema(engine)
+    _purge(engine)
+    try:
+        yield engine
+    finally:
+        _purge(engine)
+        engine.dispose()
+
+
+def _purge(engine) -> None:
+    """Drop every portfolio + account row so the session-scoped container stays clean."""
+    metadata = engine.metadata
+    with engine.engine.begin() as connection:
+        connection.execute(metadata.tables["portfolios"].delete())
+        connection.execute(metadata.tables["venue_accounts"].delete())
+
+
+def _seed_definition(engine, *, name: str, account_id: str) -> PortfolioId:
+    """Persist ONE definition row plus the ``venue_accounts`` parent its FK needs."""
+    store = PortfolioDefinitionStore(engine)
+    accounts = VenueAccountStore(engine)
+    portfolio_id = PortfolioId(uuid.uuid4())
+    accounts.upsert(
+        _VENUE, account_id, secret_ref=None, venue_uid=None, enabled=True,
+        config={}, at=_AT)
+    store.upsert(
+        portfolio_id, name=name, venue_name=_VENUE, account_id=account_id,
+        initial_cash=Decimal("10000.00"), enabled=True, config=None, at=_AT)
+    return portfolio_id
+
+
+def test_two_portfolios_hold_two_distinct_venue_accounts(okx_env, live_db) -> None:
+    """THE MPORT-05 attach gate: each portfolio holds ITS OWN account, by IDENTITY.
+
+    Asserted on object identity rather than on equality or on account_id alone. Two
+    portfolios sharing ONE account object is the conflation the whole phase exists to
+    prevent, and it is invisible to an equality check: both would report the "right"
+    account_id while reading and reserving against a single real venue balance.
+    """
+    _seed_definition(live_db, name="pf-a", account_id="acct-a")
+    _seed_definition(live_db, name="pf-b", account_id="acct-b")
+
+    system = build_live_system(_spec([]))
+    try:
+        portfolios = {
+            p.name: p for p in system.portfolio_handler._portfolios.values()}
+        assert set(portfolios) == {"pf-a", "pf-b"}
+        pf_a, pf_b = portfolios["pf-a"], portfolios["pf-b"]
+
+        # Two DISTINCT account objects — not one shared instance.
+        assert pf_a.account is not pf_b.account
+        # Each holds the account ITS OWN account_id names.
+        assert pf_a.account.account_id == "acct-a"
+        assert pf_b.account.account_id == "acct-b"
+        # And each is venue-cached truth, NOT the simulated leaf Portfolio builds at
+        # construction. This is the direct guard against the silent-regression mode:
+        # a False here means the entire venue reconcile no-ops for that portfolio.
+        assert pf_a.account.is_venue_truth is True
+        assert pf_b.account.is_venue_truth is True
+        # Two accounts, two authenticated sessions (the D-12 isolation premise).
+        assert pf_a.account.connector is not pf_b.account.connector
+    finally:
+        system.stop()
+
+
+def test_a_rehydrated_portfolios_account_is_assembled_and_attached(
+    okx_env, live_db,
+) -> None:
+    """A portfolio restored from a definition row — with NO spec entry — gets its account.
+
+    11-08 flagged this deliberately rather than building a second path: the account set
+    was derived from the SPEC alone, so a rehydrated portfolio had no account assembled
+    for it at all. Deriving from the UNION is what closes it, and the spec here is
+    EMPTY on purpose — a spec portfolio naming the persisted account would be a genuine
+    cross-source collision that 11-08's invariant refuses.
+
+    Reverting ``_account_ids_for_spec`` to spec-only turns this RED: the rehydrated
+    portfolio names an account with no assembled lifecycle, so the attach refuses loudly.
+    """
+    _seed_definition(live_db, name="pf-restored", account_id="acct-restored")
+
+    system = build_live_system(_spec([]))
+    try:
+        assert "acct-restored" in system._venue_lifecycles
+        portfolio = next(iter(system.portfolio_handler._portfolios.values()))
+        assert portfolio.name == "pf-restored"
+        assert portfolio.account.account_id == "acct-restored"
+        assert portfolio.account.is_venue_truth is True
+    finally:
+        system.stop()
+
+
+def test_a_portfolio_naming_an_unassembled_account_is_refused() -> None:
+    """A named account with no assembled lifecycle FAILS LOUD — no fallback, no leaf.
+
+    Both silent outcomes are worse than the raise, in different ways. Falling back to
+    the PRIMARY wires this portfolio to another portfolio's real venue balance. Leaving
+    it on its simulated leaf makes ``is_venue_truth`` False, which silently disables
+    snapshot, streaming, the VenueReconciler and the D-04 baseline HALT gate for it —
+    the engine then trades that portfolio believing it has reconciled.
+
+    Driven against the attach function directly: through the real composition root the
+    union derivation ALWAYS assembles an account for every portfolio, so the refusal
+    branch is unreachable there by construction. That is the desired production posture;
+    the guard still has to hold if a future caller supplies a partial map.
+    """
+    primary = SimpleNamespace(
+        bundle=SimpleNamespace(
+            connector=object(),
+            account_factory=lambda portfolio: SimpleNamespace(
+                account_id="acct-primary")))
+    orphan = SimpleNamespace(name="pf-orphan", account_id="acct-missing", account=None)
+    handler = SimpleNamespace(_portfolios={1: orphan})
+
+    with pytest.raises(ValidationError) as exc_info:
+        _attach_venue_accounts(handler, {"acct-primary": primary})
+
+    assert "acct-missing" in str(exc_info.value)
+    # The refusal happened BEFORE any assignment — the portfolio was never quietly
+    # handed the primary's account on the way to raising.
+    assert orphan.account is None
+
+
+def test_a_portfolio_naming_no_account_keeps_its_construction_time_leaf() -> None:
+    """A portfolio that names NO venue account is left alone — that is the paper shape.
+
+    Re-minting here would be actively harmful, not merely redundant: the compute arm's
+    ``account_factory`` builds a fresh leaf whose ``initial_cash`` defaults to zero, so
+    an "attach everything" loop would silently reset the portfolio's opening balance.
+    """
+    original = object()
+    portfolio = SimpleNamespace(name="pf-paper", account_id=None, account=original)
+    handler = SimpleNamespace(_portfolios={1: portfolio})
+
+    assert _attach_venue_accounts(handler, {}) == {}
+    assert portfolio.account is original
+
+
+def test_the_account_set_unions_spec_portfolios_with_rehydrated_ones() -> None:
+    """The union, in the documented order: spec-level, then spec portfolios, then rehydrated.
+
+    Order is the primary-selection contract. A set would be correct on membership and
+    wrong on which account the one feed provider belongs to.
+    """
+    rehydrated = [
+        SimpleNamespace(account_id="acct-r1"),
+        SimpleNamespace(account_id="acct-a"),   # already named by the spec — deduped
+        SimpleNamespace(account_id="acct-r2"),
+    ]
+    assert _account_ids_for_spec(
+        _spec(["acct-a"], primary="acct-p"), rehydrated,
+    ) == ["acct-p", "acct-a", "acct-r1", "acct-r2"]
 
 
 def test_every_accounts_exchange_is_wired_to_the_halt_signal(okx_env) -> None:

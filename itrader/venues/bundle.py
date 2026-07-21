@@ -13,8 +13,10 @@ Symbols
 -------
 - ``VenueBundle`` — a ``@dataclass(frozen=True, slots=True)`` carrying ONLY the
   execution arm (D-02): mandatory ``exchange`` + ``account_factory``; Optional
-  ``connector`` / ``lifecycle`` defaulting to ``None`` (``None`` for paper, which
-  reuses the compose-built ``'simulated'`` exchange and has no live connector).
+  ``connector`` defaulting to ``None`` (``None`` for paper, which reuses the
+  compose-built ``'simulated'`` exchange and has no live connector). The dead
+  ``lifecycle`` field was deleted in 11-09 — the lifecycle lives beside the bundle
+  in the composition root's per-account lifecycle map, never inside it.
   The DATA provider is deliberately NOT carried here — it is built by
   ``DataProviderRegistry`` so the two registries stay independently selectable
   (VENUE-01: OKX execution + a different data feed).
@@ -44,7 +46,6 @@ if TYPE_CHECKING:
     from itrader.execution_handler.exchanges.base import AbstractExchange
     from itrader.portfolio_handler.account.base import Account
     from itrader.price_handler.providers.live_provider import LiveDataProvider
-    from itrader.venues.lifecycle import VenueLifecycle
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,9 +94,8 @@ class VenueBundle:
     Carries ONLY the execution concerns: the ``exchange`` (an
     ``AbstractExchange`` — simulated for paper, ``OkxExchange`` for OKX) and the
     per-portfolio ``account_factory`` (builds the balance/margin ``Account`` leaf).
-    Both are mandatory. The Optional live arm — ``connector`` (the shared
-    ``LiveConnector`` session) and ``lifecycle`` (the 05-06 ``VenueLifecycle``
-    orchestrator) — defaults to ``None``; paper carries neither and is the
+    Both are mandatory. The Optional live arm — ``connector``, the shared
+    ``LiveConnector`` session — defaults to ``None``; paper carries none and is the
     ``None``-guarded case the lifecycle handles (D-10).
 
     The DATA provider is NOT a field here (D-02): it is built separately by
@@ -106,13 +106,13 @@ class VenueBundle:
     exchange: AbstractExchange
     account_factory: Callable[..., Account]
     connector: LiveConnector | None = None
-    # 05-06: ``lifecycle`` carries the ``VenueLifecycle`` orchestrator. Now that the
-    # type exists (``venues/lifecycle.py``) the 05-04 ``Any`` forward-seam is retyped
-    # to ``VenueLifecycle | None``; the annotation stays a TYPE_CHECKING forward-ref
-    # (``from __future__ import annotations`` in force) so this substrate module
-    # remains import-inert. Plugins leave it ``None`` — ``assemble_venue`` returns the
-    # lifecycle alongside the bundle rather than mutating this frozen field.
-    lifecycle: "VenueLifecycle | None" = None
+    # 11-09: the former ``lifecycle: VenueLifecycle | None = None`` field is DELETED.
+    # It was never populated by anything — ``assemble_venue`` returns the lifecycle
+    # ALONGSIDE the bundle rather than mutating this frozen dataclass — so its only
+    # three references in the tree were tests asserting it was ``None``. A field that
+    # can only ever be None is not an optional arm, it is dead weight that reads like
+    # a second (empty) home for the lifecycle now that the composition root holds one
+    # lifecycle per account.
 
 
 @runtime_checkable
