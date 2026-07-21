@@ -32,6 +32,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 from itrader.config.sql import SqlDriver, SqlSettings
+from itrader.core.exceptions import PortfolioStateError
 from itrader.portfolio_handler.storage.sql_storage import SqlPortfolioStateStorage
 from itrader.storage import SqlEngine
 from itrader.storage.engine import NAMING_CONVENTION
@@ -393,23 +394,32 @@ def test_save_config_writes_the_definition_row_not_the_state_row() -> None:
         store.dispose()
 
 
-def test_save_config_falls_back_to_the_state_row_without_a_definition_row() -> None:
-    """The zero-sentinel arm SURVIVES this plan (owner decision, deferred to 11-08).
+def test_save_config_without_a_definition_row_now_fails_loud() -> None:
+    """The zero-sentinel arm is GONE (plan 11-08 created the guarantee it depended on).
 
-    Nothing constructs ``PortfolioDefinitionStore`` yet, so no ``portfolios`` row exists for
-    a portfolio built in waves 2-4. Deleting the sentinel arm now — as the original plan text
-    proposed, on the premise that "a definition row is guaranteed to exist" — would turn
-    every ``save_config`` in that window into a hard error. 11-08 removes the arm once it
-    creates the guarantee it depends on.
+    This test previously pinned the OPPOSITE behaviour, and deliberately so: through
+    waves 2-4 nothing constructed ``PortfolioDefinitionStore`` and nothing wrote a
+    ``portfolios`` row, so deleting the fallback would have turned every ``save_config``
+    in that window into a hard error. Plan 11-08 added the production writer
+    (``PortfolioHandler._persist_definition``), so a live portfolio now always has a
+    definition row and a MISSING one is a wiring bug.
+
+    Keeping the fallback past that point would have been actively harmful, not merely
+    dead: after the D-09 rehome ``load_config`` reads ONLY the definition row, so the
+    legacy arm would have written the blob to a column nothing reads back — a silent
+    loss, because the restart-layering caller swallows failures into a warning and boots
+    clean on defaults.
     """
     backend = SqlEngine(SqlSettings.default())
     portfolio_id = uuid.uuid4()
     try:
         store = SqlPortfolioStateStorage(backend, portfolio_id)
         provision_schema(backend)
-        # No portfolios row for this id — the legacy arm must carry the write.
-        store.save_config(_CONFIG_BLOB, _NOW)
-        assert store.load_config() == _CONFIG_BLOB
+        # No portfolios row for this id — there is nowhere legitimate for the blob to go.
+        with pytest.raises(PortfolioStateError, match="definition-row"):
+            store.save_config(_CONFIG_BLOB, _NOW)
+        # And nothing was written anywhere: load_config reads the definition row only.
+        assert store.load_config() is None
     finally:
         backend.dispose()
 
