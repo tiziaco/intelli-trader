@@ -206,6 +206,40 @@ class PortfolioReadModel(Protocol):
         """
         ...
 
+    def account_for(self, portfolio_id: PortfolioId) -> str | None:
+        """Return the venue account the portfolio's orders reach.
+
+        Admission metadata (D-27, plan 11-05): an order's target is the PAIR
+        ``(venue, account_id)`` — ``exchange_for`` reads the venue half, this
+        reads the account half. Once a live system runs several portfolios
+        against several venue accounts, routing an order needs both.
+
+        **This is deliberately a read-model member, not a direct import.**
+        ``ExecutionHandler`` receives this Protocol injected and must NEVER
+        import ``PortfolioHandler`` — the queue-only cross-domain contract
+        governs handler-to-handler access, and the read-model seam is the
+        sanctioned exception for reads. Do not "simplify" this into a concrete
+        handler import.
+
+        Returns ``None`` when the portfolio names no account. The type is
+        ``str | None`` because ``Portfolio.account_id`` is optional: the default
+        exists ONLY so the byte-exact backtest composition-root call stays
+        untouched, and the composition-time invariant (plan 11-08) is what
+        refuses to start a LIVE system whose portfolios do not each name a
+        distinct account.
+
+        Parameters
+        ----------
+        portfolio_id : PortfolioId
+            The portfolio to read.
+
+        Returns
+        -------
+        str | None
+            The venue account id, or ``None`` when no account is named.
+        """
+        ...
+
     def open_position_count(self, portfolio_id: PortfolioId) -> int:
         """Return the number of currently open positions.
 

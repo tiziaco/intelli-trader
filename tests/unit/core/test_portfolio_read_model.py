@@ -97,7 +97,7 @@ def test_position_view_uses_slots():
 
 
 class _ConformingFake:
-    """Minimal fake implementing all eleven Protocol members."""
+    """Minimal fake implementing all twelve Protocol members."""
 
     def active_portfolio_ids(self) -> list[PortfolioId]:
         return []
@@ -119,6 +119,9 @@ class _ConformingFake:
 
     def exchange_for(self, portfolio_id: PortfolioId) -> str:
         return "csv"
+
+    def account_for(self, portfolio_id: PortfolioId) -> str | None:
+        return "acct_a"
 
     def open_position_count(self, portfolio_id: PortfolioId) -> int:
         return 0
@@ -168,7 +171,7 @@ class _MissingReserveFake:
 
 
 def test_protocol_is_runtime_checkable_and_fake_conforms():
-    """D-16: structural typing — a fake with all eleven methods passes isinstance."""
+    """D-16: structural typing — a fake with all twelve methods passes isinstance."""
     assert isinstance(_ConformingFake(), PortfolioReadModel)
 
 
@@ -177,11 +180,13 @@ def test_object_missing_reserve_fails_isinstance():
     assert not isinstance(_MissingReserveFake(), PortfolioReadModel)
 
 
-def test_protocol_declares_exactly_eleven_methods():
-    """OQ1 + Plan 07-01 + Phase 06 WR-02 + Plan 02-05 + Plan 05.3-04: six original
-    members + total_equity (RiskPercent input) + active_portfolio_ids (run-end TIF
-    sweep) + maintenance_margin/margin_ratio (D-13/MARGIN-03 compute-on-demand
-    accessors) + drop_pending (D-15/V17-13 venue-ack overlay drop)."""
+def test_protocol_declares_exactly_twelve_methods():
+    """OQ1 + Plan 07-01 + Phase 06 WR-02 + Plan 02-05 + Plan 05.3-04 + Plan 11-05:
+    six original members + total_equity (RiskPercent input) + active_portfolio_ids
+    (run-end TIF sweep) + maintenance_margin/margin_ratio (D-13/MARGIN-03
+    compute-on-demand accessors) + drop_pending (D-15/V17-13 venue-ack overlay
+    drop) + account_for (D-27 account-routing half of the (venue, account_id)
+    order target)."""
     expected = {
         "active_portfolio_ids",
         "available_cash",
@@ -190,6 +195,7 @@ def test_protocol_declares_exactly_eleven_methods():
         "release",
         "drop_pending",
         "exchange_for",
+        "account_for",
         "open_position_count",
         "total_equity",
         "maintenance_margin",

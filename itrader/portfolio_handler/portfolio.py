@@ -52,7 +52,10 @@ class Portfolio(object):
 	def __init__(self, name: str, exchange: str, cash: Decimal, time: datetime,
 	             config: Optional[PortfolioConfig] = None,
 	             environment: str = "backtest",
-	             sql_engine: "Optional[SqlEngine]" = None) -> None:
+	             sql_engine: "Optional[SqlEngine]" = None,
+	             portfolio_id: Optional[PortfolioId] = None,
+	             account_id: Optional[str] = None,
+	             venue_name: Optional[str] = None) -> None:
 		"""
 		Initialize enhanced portfolio with integrated capabilities.
 
@@ -65,12 +68,48 @@ class Portfolio(object):
 		in-memory backend (the SMA_MACD byte-exact oracle path — unchanged); the
 		live composition root passes "live" + the shared ``SqlEngine`` so this
 		portfolio's state persists to the durable SQL ledger keyed by
-		``portfolio_id`` (surviving a process restart).
+		``portfolio_id``.
+
+		F-1 (11-05): that durable state SURVIVES a process restart because
+		``portfolio_id`` is SUPPLIED on rehydrate rather than regenerated. Before
+		this plan the id was minted fresh on EVERY construction, so a restart
+		orphaned the prior run's portfolio-scoped rows and dangled the persisted
+		strategy-subscription rows — the restart-stability this docstring claimed
+		held only within a single process. The id is never RE-SCHEMED: omitting
+		``portfolio_id`` still mints a UUIDv7 through the single ``idgen``
+		singleton, exactly as before.
+
+		Parameters
+		----------
+		portfolio_id : Optional[PortfolioId]
+			An EXISTING id to reattach to (rehydrate, F-1). ``None`` mints a fresh
+			UUIDv7 via ``idgen``. Uniqueness across a running system is the
+			composition-time invariant's job, not the constructor's.
+		account_id : Optional[str]
+			The venue account this portfolio's orders reach (D-06). Every portfolio
+			names an account — there are not two classes of portfolio. It defaults
+			ONLY so the byte-exact backtest call site stays untouched.
+		venue_name : Optional[str]
+			The venue half of the ``(venue_name, account_id)`` account reference and
+			the SOURCE OF TRUTH for the portfolio's exchange going forward (D-07).
+			When supplied, ``self.exchange`` is DERIVED from it — storing the venue
+			twice creates two sources of truth that can drift once orders are routed
+			per-account. The ``exchange`` parameter is the LEGACY input path (the
+			backtest/oracle call site and ~100 test call sites pass it); it is used
+			as-is only when ``venue_name`` is absent, never alongside it.
 		"""
-		# Core portfolio identity
-		self.portfolio_id: PortfolioId = PortfolioId(idgen.generate_portfolio_id())
+		# Core portfolio identity. F-1: SUPPLYABLE, never re-schemed — a supplied
+		# id is what reattaches the portfolio-scoped durable child tables on a
+		# restart; omitting it mints through the single UUIDv7 idgen singleton.
+		self.portfolio_id: PortfolioId = (
+			portfolio_id if portfolio_id is not None
+			else PortfolioId(idgen.generate_portfolio_id())
+		)
 		self.name = name
-		self.exchange = exchange
+		self.account_id = account_id
+		# D-07: venue_name WINS when supplied; `exchange` is the legacy fallback.
+		self.venue_name = venue_name
+		self.exchange = venue_name if venue_name is not None else exchange
 		self.creation_time = time
 		self.current_time = time
 		
