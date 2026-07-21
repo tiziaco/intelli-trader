@@ -572,7 +572,7 @@ def test_resume_after_reconnect_snapshots_then_clears_pause(monkeypatch: Any) ->
     """The engine-thread resume takes a fresh REST snapshot then clears the pause (D-19)."""
     system = _live_system(monkeypatch)
     venue = MagicMock(name="venue_account")
-    system._stream_recovery._venue_account = venue
+    system._stream_recovery._venue_accounts = lambda: [venue]
     system.pause_submission("paused-on-disconnect")
 
     # The connector-loop reconnect callback only EMITS a STREAM_STATE(up) CONTROL event
@@ -612,7 +612,7 @@ def test_resume_snapshots_before_clearing_pause(monkeypatch: Any) -> None:
     """
     system = _live_system(monkeypatch)
     venue = MagicMock(name="venue_account")
-    system._stream_recovery._venue_account = venue
+    system._stream_recovery._venue_accounts = lambda: [venue]
 
     # Happy path: pause, drive the engine-thread reconnect-resume — snapshot runs, pause clears.
     system.pause_submission("paused-on-disconnect")

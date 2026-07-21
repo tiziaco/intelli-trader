@@ -108,9 +108,11 @@ def test_paper_venue_plugin_reuses_the_injected_simulated_exchange() -> None:
     # D-05: reuse AS-IS — the bundle's exchange IS the injected instance (identity),
     # not a new exchange/adapter.
     assert bundle.exchange is simulated
-    # Paper has no live connector (D-05) and no lifecycle yet (05-06 builds it).
+    # Paper has no live connector (D-05).
     assert bundle.connector is None
-    assert bundle.lifecycle is None
+    # 11-09: the dead ``VenueBundle.lifecycle`` field is gone — the lifecycle is returned
+    # beside the bundle by assemble_venue, never stored inside it.
+    assert not hasattr(bundle, "lifecycle")
     # The connectors arg is untouched (the exploding provider was never called).
     assert callable(bundle.account_factory)
 

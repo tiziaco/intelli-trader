@@ -23,6 +23,7 @@ import queue
 import threading
 from datetime import timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -51,8 +52,8 @@ def test_resume_drain_recovers_fill_settled_during_disconnect(monkeypatch) -> No
     _set_okx_env(monkeypatch)
     system = LiveTradingSystem.for_exchange("okx")
 
-    exchange = system._okx_exchange
-    assert exchange is not None
+    # 11-09: the execution arm is read through the primary account's lifecycle.
+    exchange = system._primary_lifecycle.bundle.exchange
 
     # A trade settled on the venue while the fill stream was down.
     settled_trade = {"id": "trade-during-outage"}
@@ -75,7 +76,7 @@ def test_resume_drain_recovers_fill_settled_during_disconnect(monkeypatch) -> No
     venue_account = MagicMock(name="venue_account")
     venue_account.snapshot = MagicMock(
         name="snapshot", side_effect=lambda: call_order.append("snapshot"))
-    system._stream_recovery._venue_account = venue_account
+    system._stream_recovery._venue_accounts = lambda: [venue_account]
 
     # Stand the system in the reconnect-resume precondition: paused on disconnect, then
     # drive the engine-thread reconnect-resume (the STREAM_STATE(up) route target).
@@ -93,17 +94,19 @@ def test_resume_drain_recovers_fill_settled_during_disconnect(monkeypatch) -> No
     assert system._safety.is_submission_paused() is False
 
 
-def test_resume_drain_skips_catchup_when_no_okx_exchange(monkeypatch) -> None:
-    """The catch-up call is guard-claused on _okx_exchange (mirrors the _venue_account guard).
+def test_resume_drain_skips_catchup_when_no_venue_arm(monkeypatch) -> None:
+    """The catch-up is skipped when no account carries an execution arm.
 
-    A non-OKX resume path (no OKX exchange arm) must resume cleanly without the catch-up.
+    11-09: "no OKX exchange" is an EMPTY lifecycle map — the shape a non-OKX wiring
+    actually produces — rather than a nulled scalar. The snapshot leg still runs and the
+    resume still completes: absent ⇒ healthy, never a blocked resume.
     """
     _set_okx_env(monkeypatch)
     system = LiveTradingSystem.for_exchange("okx")
 
-    system._stream_recovery._okx_exchange = None  # simulate the guard's None branch
+    system._stream_recovery._lifecycles = {}
     venue_account = MagicMock(name="venue_account")
-    system._stream_recovery._venue_account = venue_account
+    system._stream_recovery._venue_accounts = lambda: [venue_account]
 
     system.pause_submission("paused-on-disconnect")
 
@@ -161,11 +164,14 @@ def test_on_reconnect_does_no_engine_thread_ring_write_cf2() -> None:
     venue_account = MagicMock(name="venue_account")
     provider = MagicMock(name="okx_data_provider")
     provider.is_streaming_healthy = MagicMock(return_value=True)
+    # 11-09: the per-account lifecycle map replaces the exchange/provider scalars, and
+    # the accounts arrive through a callable (they live on the portfolios).
     handler = StreamRecoveryHandler(
         safety=safety,
-        okx_exchange=exchange,
-        venue_account=venue_account,
-        okx_data_provider=provider,
+        lifecycles={"acct-1": SimpleNamespace(
+            bundle=SimpleNamespace(connector=object(), exchange=exchange),
+            provider=provider)},
+        venue_accounts=lambda: [venue_account],
     )
 
     # Run on a stand-in ENGINE thread (NOT the connector loop).

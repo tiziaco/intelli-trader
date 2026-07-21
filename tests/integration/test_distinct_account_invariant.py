@@ -456,7 +456,16 @@ def test_a_persisted_portfolio_rehydrates_before_start_with_its_id(
         assert portfolio.portfolio_id == persisted
         assert portfolio.name == "pf-durable"
         assert portfolio.account_id == "acct-a"
-        assert portfolio.cash == Decimal("10000.00")
+        # 11-09: the stored ``initial_cash`` is asserted at the STORE, not through
+        # ``portfolio.cash``. The portfolio now holds a venue-truth ``VenueAccount``
+        # (attached at composition by account_id, MPORT-05), and ``cash`` delegates to
+        # ``account.balance`` — which is venue truth and fails LOUD until the first
+        # snapshot rather than returning a stale persisted number (D-15: surface
+        # unsnapshotted loud, never 0). Reading a persisted figure through a live venue
+        # account would be reporting a balance the venue never confirmed.
+        assert PortfolioDefinitionStore(live_db).read_all()[0]["initial_cash"] == (
+            Decimal("10000.00"))
+        assert portfolio.account.is_venue_truth is True
     finally:
         system.stop(timeout=5.0)
 
@@ -492,8 +501,15 @@ def test_a_persisted_portfolio_survives_a_full_teardown_and_rebuild(
             "persisted no definition row, or rehydrate minted a fresh id")
         portfolio = system2.portfolio_handler.get_portfolio(first_id)
         assert portfolio.name == "pf-restart"
-        assert portfolio.cash == Decimal("25000.00")
         assert portfolio.account_id == "acct-a"
+        # 11-09: read the surviving cash off the DEFINITION ROW rather than through
+        # ``portfolio.cash``. The rebuilt portfolio holds a venue-truth account
+        # (MPORT-05 attach), so ``cash`` is venue truth and is deliberately unreadable
+        # until the first snapshot — the persisted figure is a definition, not a balance.
+        row = next(
+            r for r in PortfolioDefinitionStore(live_db).read_all()
+            if r["portfolio_id"] == first_id)
+        assert row["initial_cash"] == Decimal("25000.00")
     finally:
         system2.stop(timeout=5.0)
 

@@ -138,8 +138,8 @@ def _assert_sandbox_routed(system) -> None:
     keys real-money-free; a ``sandbox=False`` misroute placing a real-money order is the
     phase's highest-severity threat. Every live test calls this BEFORE submitting.
     """
-    assert system._okx_connector is not None, "OKX arm not composed — no connector to route"
-    assert system._okx_connector.sandbox is True
+    assert system._primary_lifecycle.bundle.connector is not None, "OKX arm not composed — no connector to route"
+    assert system._primary_lifecycle.bundle.connector.sandbox is True
 
 
 def _install_emit_spy(system):
@@ -151,7 +151,7 @@ def _install_emit_spy(system):
     the mutable record list.
     """
     emitted = []
-    exchange = system._okx_exchange
+    exchange = system._primary_lifecycle.bundle.exchange
     original = exchange._emit_fill
 
     def spy(trade, order, venue_id):
@@ -239,7 +239,7 @@ def _assert_trade_id_dedup(system, emitted) -> None:
     assert _count(trade_id) == 1, "a single venue trade id was emitted more than once"
 
     # Re-deliver the exact same venue trade — _seen_trade_ids must dedup it.
-    system._okx_exchange._handle_trade(trade)
+    system._primary_lifecycle.bundle.exchange._handle_trade(trade)
     time.sleep(1.0)
     assert _count(trade_id) == 1, "duplicate venue trade id yielded a second FillEvent (dedup broken)"
 
@@ -512,8 +512,8 @@ def _assert_settlement(system, portfolio_id, order, emitted, cash_before, positi
     # (4) SPOT venue truth: fetch_positions() is [] for the spot pair (V17-04 — spot
     #     holdings are balances, not positions; the derivatives channel is structurally
     #     blind here). This is also ARCH-3 finalization point #3.
-    positions_payload = system._okx_connector.call(
-        system._okx_connector.client.fetch_positions([_OKX_SYMBOL]))
+    positions_payload = system._primary_lifecycle.bundle.connector.call(
+        system._primary_lifecycle.bundle.connector.client.fetch_positions([_OKX_SYMBOL]))
     assert positions_payload == [], (
         f"fetch_positions({_OKX_SYMBOL}) returned {positions_payload!r}, expected [] "
         f"for a spot pair (V17-04)")
@@ -573,7 +573,7 @@ def _capture_arch3_finalization(system, order, settlement, venue_id_check):
     """
     from datetime import datetime, timezone
 
-    connector = system._okx_connector
+    connector = system._primary_lifecycle.bundle.connector
 
     # --- Point 1: fetch_my_trades window / pagination / id presence ------------
     since_ms = int(order.time.timestamp() * 1000)
@@ -672,7 +672,7 @@ def test_demo_order_produces_real_fill_event() -> None:
     emitted = _install_emit_spy(system)
     try:
         # T-05-04: final routing guard — the connector MUST be sandbox is True before we submit.
-        assert system._okx_connector.sandbox is True
+        assert system._primary_lifecycle.bundle.connector.sandbox is True
         assert system.start() is True
         assert system.get_status()["status"] == SystemStatus.RUNNING.value
 
@@ -739,7 +739,7 @@ def test_venue_account_reconciles_post_fill_within_tolerance() -> None:
     _seed_believed_position_to_venue(system, portfolio_id)
     try:
         # T-05-04: final routing guard — the connector MUST be sandbox is True before we submit.
-        assert system._okx_connector.sandbox is True
+        assert system._primary_lifecycle.bundle.connector.sandbox is True
         assert system.start() is True
 
         order = _submit_min_demo_order(system, portfolio_id)
@@ -747,9 +747,12 @@ def test_venue_account_reconciles_post_fill_within_tolerance() -> None:
         assert filled is not None
         assert filled.status == OrderStatus.FILLED
 
-        # Fresh REST snapshot of venue truth (post-fill).
-        system._venue_account.snapshot()
-        venue_positions = system._venue_account.positions
+        # Fresh REST snapshot of venue truth (post-fill). 11-09: the venue account is
+        # no longer a facade field — it belongs to the PORTFOLIO whose account_id names
+        # it, attached at composition by ``_attach_venue_accounts``.
+        venue_account = system.portfolio_handler.get_portfolio(portfolio_id).account
+        venue_account.snapshot()
+        venue_positions = venue_account.positions
 
         # Per-symbol engine-vs-venue drift WITHIN one least-significant unit — never beyond band.
         for symbol, venue_qty in venue_positions.items():
