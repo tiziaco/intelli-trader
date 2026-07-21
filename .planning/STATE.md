@@ -5,14 +5,14 @@ milestone_name: Live System Refactor & Live-Readiness Hardening
 current_phase: 11
 current_phase_name: Multi-Portfolio-Live
 status: planning
-stopped_at: Phase 11 context gathered
-last_updated: "2026-07-21T07:57:33.844Z"
+stopped_at: Phase 11 planned — 11 plans in 7 waves, ready to execute
+last_updated: "2026-07-21T10:35:50.000Z"
 last_activity: 2026-07-21
-last_activity_desc: "Phase 11 ★ context gathered (13945336) — 11 gray areas discussed, 30 decisions locked. New requirement MPORT-07 added (D-27: the EXCHANGE must become per-`(venue, account_id)`; today `ExecutionHandler` keys by bare name while `OkxExchange` holds one connector → account B's orders would submit through account A's session). Two defects carried in: F-1 (`portfolio_id` not restart-stable, `portfolio.py:71`, contradicting two in-tree comments) and F-2 (baseline guard returns on first mismatch). B2 todo folded (String→Uuid + FK). Next: `/gsd-plan-phase 11`."
+last_activity_desc: "Phase 11 ★ planned (d683078d) — 11 plans in 7 waves, matching D-28's locked seven-wave decomposition. Research verified 56/60 CONTEXT citations exact (1 correction: `clOrdId` spans three files, not two) and surfaced three findings the design did not have: F-3 (the D-25 two-paper-account test structurally CANNOT prove MPORT-07 — both paper accounts resolve to one exchange object by construction, so MPORT-07 got its own fake-multi-account-plugin gate in 11-06), F-4 (bare-name `exchanges` lookups are 35 sites across 22 files, not the 1 CONTEXT named — including three backtest-shared hardcoded `'simulated'` sites, an oracle risk), F-5 (F-1's `portfolio_id` fix and D-06's `account_id` are one signature edit — merged into 11-05 and pulled into wave 1 because `account_for` reads `portfolio.account_id`). Gates: 7/7 MPORT covered, 30/30 decisions covered, 14/14 probe edges authored. Highest residual risk stays D-09's config migration (11-03) — a lost blob yields a GREEN suite and silently default-config portfolios, so the gate asserts the migrated value by equality and prohibits `is not None`. Next: `/gsd-execute-phase 11`."
 progress:
   total_phases: 11
   completed_phases: 10
-  total_plans: 43
+  total_plans: 54
   completed_plans: 43
   percent: 91
 ---
@@ -34,10 +34,14 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 ## Current Position
 
 Phase: 11 ★ — Multi-Portfolio-Live
-Plan: Not started
-Status: Context gathered — ready to plan
-Last activity: 2026-07-21 — Phase 11 CONTEXT.md + DISCUSSION-LOG.md written and committed (13945336). Eleven gray
-areas discussed, 30 decisions (D-01..D-30) locked, three sub-decisions explicitly superseded and reconciled in-file.
+Plan: 0/11 complete (7 waves)
+Status: Ready to execute
+Last activity: 2026-07-21 — Phase 11 planning complete (d683078d). 11 plans in 7 waves, landing 1:1 on D-28's
+locked seven-wave decomposition. Plan-checker: VERIFICATION PASSED, zero blockers, zero warnings. Gates green —
+7/7 MPORT requirements covered, 30/30 CONTEXT decisions cited by ID in must_haves, 14/14 spec-less probe edges
+authored (8 covered truths + 3 flat-scalar backstop markers + 3 flagged unclassified assumptions). Preceded by
+CONTEXT.md + DISCUSSION-LOG.md (13945336): eleven gray areas discussed, 30 decisions (D-01..D-30) locked, three
+sub-decisions explicitly superseded and reconciled in-file.
 
 **Carried into planning (found during discussion):**
 
@@ -75,6 +79,19 @@ MPORT-01..07 manually into the researcher/planner/checker prompts, and expect `r
 no-op so the wave list must be written by hand. Also: `state.record-session` does not refresh `last_activity_desc`
 (no registered handler for that field) — it was corrected by direct edit.
 
+Note (P11 planning, CONFIRMED + two new failure modes): every prediction above held — `roadmap.get-phase 11`
+`found:false`, `phase_req_ids:null` (MPORT-01..07 injected by hand into all three agent prompts),
+`roadmap.annotate-dependencies` `updated:false` (wave list written by hand). Two more starred-header casualties
+found this session, both silent:
+1. **The BLOCKING decision-coverage gate could not parse 7 of the 30 decision bullets** (D-02/04/11/17/18/24/27),
+   reporting `could-not-parse, total: 23`. Causes: a line-wrapped `):**` header (D-02/11/17), a second colon in
+   the header with no em-dash (D-04/18/27), and a bare `*` inside `` `state.*` `` (D-24). The parser accepts
+   `- **D-NN <no colon, no asterisk>:**`, or one colon then `**`, or an em-dash form with the closing `**` on the
+   SAME line. Fixed by reformatting headers only (`dc47ff08`); all 30 now parse and the gate passes 30/30.
+2. **`state.planned-phase` no-opped (`updated: []`).** It is template-aware by design — it only overwrites
+   KNOWN_TEMPLATE_DEFAULTS, so the executor-authored `Status:`/`Last activity:` in `## Current Position` were
+   preserved and nothing moved. STATE.md was updated by hand to what the handler would have written.
+
 Note: `phase.complete` again advanced current_phase to 12 (its next-phase dir-scan skips the not-yet-created
 P11 ★ dir); corrected to 11 per the roadmap sequence. P12 (core-final) depends on P11.
 
@@ -83,7 +100,46 @@ Note (P10 planning): the starred header `### Phase 10 ★:` again broke `roadmap
 checker prompts, and `roadmap.annotate-dependencies` no-opped (`updated:false`) so the ROADMAP wave list was
 written by hand. Expect the same on P11 ★.
 
-**Carried into execution (found during planning, not in CONTEXT):**
+**Carried into execution (P11 — found during planning, not in CONTEXT):**
+
+- **F-3 (HIGH):** **the D-25 two-paper-account test structurally CANNOT prove MPORT-07.**
+  `live_trading_system.py:1473` builds `PaperVenuePlugin(execution_handler.exchanges['simulated'])`, so both paper
+  accounts resolve to the *same* exchange object by construction. Paper stays the right venue for the
+  lifecycle/restart path, but MPORT-07 got its own gate in **11-06** using a fake multi-account plugin. 11-11's
+  docstring must state why it does not gate routing.
+
+- **F-4 (MEDIUM, and larger than research found):** bare-name `exchanges[...]` lookups are **35 sites across 22
+  files**, not the single `on_order` site CONTEXT names (`execution_handler.py:126`). Research found 10 source
+  sites; the planner grepped `tests/`/`scripts/` too and found 25 more, including **all 10 e2e scenario files**.
+  Three of the source sites hardcode `'simulated'` on the **backtest-shared** path — missing those is an oracle
+  break, so 11-06 enumerates them and gates on the e2e suite.
+
+- **F-5 (LOW, sequencing):** F-1's pinnable `portfolio_id` and D-06's `account_id` are the **same signature edit**
+  on the same lines of `Portfolio.__init__` / `add_portfolio`. Merged into one task (**11-05**) and pulled into
+  **wave 1** — D-28 groups it under W4, but `account_for` reads `portfolio.account_id`, making it a hard
+  prerequisite of the W3 exchange keying. A sequencing change, not a decomposition change.
+
+- **C-1 (correction to D-16):** `clOrdId` spans **three** files, not the two CONTEXT claims — `okx.py` (23),
+  `venue_correlation.py` (22), and one at `reconciliation_coordinator.py:172` inside the `RuntimeError` string
+  MPORT-01 deletes. Since W5 is parallelizable, a two-file completion grep false-passes or false-fails depending
+  on W3/W5 ordering: 11-02 scopes its check by file allowlist, 11-07 carries the repo-wide assertion.
+
+- **`id()` alias dedup in `on_market_data` is DO-NOT-TOUCH.** It dedups *aliases* (one object under two keys);
+  distinct per-account exchanges have distinct `id()` and are correctly driven separately. It is what keeps the
+  oracle byte-exact through D-27. Marked explicitly in 11-06 so an executor does not "fix" it.
+
+- **Two open questions assigned, not dropped:** (a) whether two paper portfolios sharing one `MatchingEngine`
+  resting book interfere on brackets/OCO — an 11-07 task that **must complete before 11-11 writes the lifecycle
+  test**; if interference exists it is a real defect, not a test artifact. (b) the D-15 invariant runs over the
+  **union** of persisted and spec portfolios (11-08) — checking one source is a hole.
+
+- **Watch item — D-09 (11-03).** `load_config()` returning `None` degrades clean with no warning
+  (`live_trading_system.py:1266,1268`), so a repointed-but-unmoved config yields a **green suite and silently
+  default-config portfolios**. The gate asserts the migrated value by **equality**; a non-null assertion is
+  written into the prohibitions as insufficient. PATTERNS found **no shipped analog** — all 11 existing Alembic
+  revisions are pure DDL, none move data.
+
+**Carried into execution (P10 — found during planning, not in CONTEXT):**
 
 - **F-1 (HIGH, confirmed real):** `cache_registration.py:226::derive_warmup_depth` is a bare `max(s.warmup)` with no
   timeframe scaling, while `warmup` counts strategy-timeframe bars and the ring is sized in base bars → a coarser-
