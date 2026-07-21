@@ -24,9 +24,21 @@ from itrader.venues import (
 
 
 class _FakeVenuePlugin:
-    """Structural ``VenuePlugin`` — exposes ``build_bundle`` (body irrelevant here)."""
+    """Structural ``VenuePlugin`` — exposes the full Protocol surface (bodies irrelevant).
+
+    11-04 widened ``VenuePlugin`` with ``credential_model`` (D-03) and
+    ``fetch_venue_uid`` (D-04). ``isinstance`` against a ``runtime_checkable``
+    Protocol is a hasattr check over EVERY member, so a fake that only implements
+    ``build_bundle`` stops conforming the moment the Protocol grows — which is why
+    both members are declared here in the same commit as the Protocol change.
+    """
+
+    credential_model = None
 
     def build_bundle(self, ctx, spec, connectors):  # noqa: ANN001, ANN201
+        return None
+
+    def fetch_venue_uid(self, connector):  # noqa: ANN001, ANN201
         return None
 
 

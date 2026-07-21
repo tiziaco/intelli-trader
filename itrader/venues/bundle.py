@@ -87,8 +87,40 @@ class VenuePlugin(Protocol):
     ``(venue, account_id)`` (D-03).
     """
 
+    @property
+    def credential_model(self) -> type[Any] | None:
+        """The venue's credential/settings model class, or ``None`` if it has none (D-03).
+
+        Makes the venue REGISTRY self-describing for credentials: a future
+        integrations page renders per-venue form fields by reading this off the
+        registry, with ZERO hardcoding. The rejected alternative — the web app
+        importing each venue's settings model directly — means adding a venue
+        requires editing the web app too, reintroducing the per-venue branching an
+        earlier phase spent itself deleting.
+
+        Declared as a ``@property`` rather than a plain class attribute so a concrete
+        plugin can LAZY-import its settings concretion in the body: the OKX plugin's
+        AST gate (``test_okx_plugin.py``) rejects any module-level import whose name
+        contains ``okx_settings``, so ``credential_model = OkxSettings`` would redden
+        the inertness discipline this package exists to protect.
+        """
+        ...
+
     def build_bundle(self, ctx: Any, spec: Any, connectors: Any) -> VenueBundle:
         """Build the execution ``VenueBundle`` (concretions lazy-imported inside)."""
+        ...
+
+    def fetch_venue_uid(self, connector: Any) -> str | None:
+        """The venue's own account UID for the connected session, or ``None`` (D-04).
+
+        Keeps the trust-on-first-use guard (``venue_uid_guard.py``) VENUE-AGNOSTIC:
+        the guard compares and alerts, the plugin knows the venue's endpoint and
+        field. ``None`` means "this venue exposes no account UID" (paper), which the
+        guard treats as a clean no-op.
+
+        MUST NOT raise. D-04 is observe-only, so an exception here would abort a
+        connect path that is otherwise healthy (T-11-19).
+        """
         ...
 
 

@@ -245,6 +245,57 @@ def test_read_all_order_is_stable_across_calls() -> None:
         store.dispose()
 
 
+def test_record_venue_uid_updates_only_the_uid_column() -> None:
+    """11-04 (D-04): the engine-written ``venue_uid`` write touches NOTHING else.
+
+    ``venue_uid`` is written by the engine on first connect while ``secret_ref`` /
+    ``config_json`` / ``enabled`` are operator-authored. Routing the engine's write
+    through the operator ``upsert`` path would let a connect-time code path restate —
+    and therefore clobber — the operator's own columns.
+    """
+    store = _make_store()
+    try:
+        config = {"region": "eea", "sandbox": True}
+        store.upsert(
+            "okx",
+            "main",
+            secret_ref="env:OKX_ACCT_MAIN",
+            venue_uid=None,
+            enabled=True,
+            config=config,
+            at=_AT,
+        )
+        later = datetime(2026, 2, 2, 9, 30, 0, tzinfo=UTC)
+
+        store.record_venue_uid("okx", "main", "uid-777", later)
+
+        row = store.get("okx", "main")
+        assert row is not None
+        assert row["venue_uid"] == "uid-777"
+        assert row["updated_at"] == later
+        # Untouched operator columns.
+        assert row["secret_ref"] == "env:OKX_ACCT_MAIN"
+        assert row["enabled"] is True
+        assert row["config"] == config
+    finally:
+        store.dispose()
+
+
+def test_record_venue_uid_on_a_missing_pair_is_a_silent_no_op() -> None:
+    """No row for the pair -> zero rows matched; the guard never MINTS an account row.
+
+    Account minting is plan 11-07's job. A guard that created rows would invent an
+    operator record (with a NULL ``secret_ref``) from a connect-time code path.
+    """
+    store = _make_store()
+    try:
+        store.record_venue_uid("okx", "never-minted", "uid-777", _AT)
+        assert store.get("okx", "never-minted") is None
+        assert store.read_all() == []
+    finally:
+        store.dispose()
+
+
 def test_build_venue_accounts_table_is_idempotent() -> None:
     """The registrar reuses an already-registered table; the PK is the composite pair (D-01)."""
     backend = SqlEngine(SqlSettings.default())

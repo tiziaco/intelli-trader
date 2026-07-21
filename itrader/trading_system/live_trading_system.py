@@ -1273,6 +1273,49 @@ def _layer_persisted_overrides(
             "stored override is invalid (%s); boot degrades clean", exc)
 
 
+def _read_account_secret_ref(
+    venue_account_store: Optional[Any],
+    venue_name: str,
+    account_id: Optional[str],
+) -> Optional[str]:
+    """This account's credential POINTER off its ``venue_accounts`` row (11-04, D-02).
+
+    Returns ``None`` — the legacy single-account path, where the connector plugin
+    constructs ``OkxSettings()`` from the ambient ``OKX_API_*`` environment — when
+    there is no SQL arm, no row for the pair, or a NULL ``secret_ref`` (the D-06 paper
+    shape). Those are all "this account has no per-account credentials", NOT the
+    T-11-18 fail-open case: a well-formed pointer that resolves to no material RAISES
+    inside the resolver and is never degraded here.
+
+    A read failure degrades clean with a WARNING rather than aborting the boot: the
+    account row is a credentials-ROUTING optimisation, and a schema/storage outage
+    should not take down a single-account deployment that never needed it.
+
+    The pair is normalized with the same ``account_id or 'default'`` idiom the venue
+    plugins apply inside ``build_bundle``, so the lookup key matches the row the
+    account was minted under (plan 11-07).
+    """
+    if venue_account_store is None:
+        return None
+    # NOTE: ``logger`` is a FUNCTION-LOCAL binding everywhere else in this module
+    # (build_live_system / _layer_persisted_overrides each bind their own), so this
+    # helper must bind its own — a module-level ``logger`` does not exist here. This
+    # module is under a mypy ``ignore_errors`` override, so the resulting NameError
+    # was invisible to mypy and surfaced only in tests/integration/test_store_live_drive.py.
+    logger = get_itrader_logger().bind(component="build_live_system")
+    try:
+        row = venue_account_store.get(venue_name, account_id or DEFAULT_ACCOUNT_ID)
+    except Exception as exc:
+        logger.warning(
+            "Could not read the venue account row for credential resolution "
+            "(%s); falling back to the ambient single-account credentials", exc)
+        return None
+    if row is None:
+        return None
+    secret_ref = row.get('secret_ref')
+    return str(secret_ref) if secret_ref else None
+
+
 def build_live_system(
     spec: Any,
     *,
@@ -1470,11 +1513,32 @@ def build_live_system(
         ExecutionVenueRegistry,
     )
 
+    # (0) 11-04 (D-02/D-04): the credentials boundary's two collaborators.
+    #   - venue_account_store: the durable (venue_name, account_id) home. It supplies
+    #     the account's secret_ref POINTER for credential resolution AND is where the
+    #     D-04 trust-on-first-use venue_uid is recorded/asserted. Gated on the SQL arm
+    #     exactly like system_store above; the import stays LAZY inside the gate
+    #     (storage.venue_store, which it composes, is OKX-inertness _FORBIDDEN).
+    #   - credential_resolver: the env-backed CredentialResolver injected into the OKX
+    #     connector plugin. WITHOUT this injection the plugin falls back to a bare
+    #     OkxSettings() reading the ONE global OKX_API_* set, so two account_ids would
+    #     connect with IDENTICAL credentials while the system believes they are
+    #     separate accounts (the D-12 caveat) — the exact misroute D-04 detects.
+    from itrader.config.credential_resolver import EnvCredentialResolver
+
+    if system_db_backend is not None:
+        from itrader.storage.venue_account_store import VenueAccountStore
+        venue_account_store: Optional[Any] = VenueAccountStore(system_db_backend)
+    else:
+        venue_account_store = None
+    credential_resolver = EnvCredentialResolver()
+
     # (1) Build the two registries + the shared ConnectorProvider and register the
     # concrete plugins (store-only — no build*() runs, so this pulls no ccxt).
     exec_registry = ExecutionVenueRegistry()
     data_registry = DataProviderRegistry()
-    connectors = ConnectorProvider({'okx': OkxConnectorPlugin()})
+    connectors = ConnectorProvider(
+        {'okx': OkxConnectorPlugin(resolver=credential_resolver)})
     exec_registry.register('okx', OkxVenuePlugin())
     exec_registry.register(
         'paper',
@@ -1498,17 +1562,34 @@ def build_live_system(
     # feed left production for tests/). A TEST fixture injects a 'replay' plugin via
     # data_plugins and passes data_provider='replay' explicitly; production never does.
     # build_venue_spec owns the {okx,paper}->okx default-provider map (D-11 — one home).
+    # 11-04 (D-02): read this ACCOUNT's credential POINTER off its durable row so the
+    # connector plugin can resolve per-account material. A missing store or a missing
+    # row yields None, which is the legacy single-account path — NOT the T-11-18
+    # fail-open case (a well-formed pointer that resolves to nothing RAISES inside the
+    # resolver). Account MINTING is plan 11-07; this only reads what is already there.
+    requested_account_id = getattr(spec, 'account_id', None)
+    account_secret_ref = _read_account_secret_ref(
+        venue_account_store, exchange, requested_account_id)
+
     venue_spec = build_venue_spec(
         exchange,
         data_provider=getattr(spec, 'data_provider', None),
-        account_id=getattr(spec, 'account_id', None),
+        account_id=requested_account_id,
+        secret_ref=account_secret_ref,
     )
 
     # (3) Delegate venue assembly (registry membership replaces the venue-string branch).
     provider: Optional[Any] = None
     if exchange in exec_registry:
+        # 11-04 (D-04): account_store + alert_sink are what make the trust-on-first-use
+        # UID guard RUN. assemble_venue accepts them as optional kwargs so existing
+        # call sites keep working — which means omitting them here would ship the only
+        # high-severity spoofing mitigation in this phase as dead code behind a fully
+        # green suite. tests/unit/venues/test_venue_uid_guard.py asserts this call
+        # passes both.
         bundle, venue_lifecycle = assemble_venue(
-            ctx, venue_spec, connectors, exec_registry, data_registry)
+            ctx, venue_spec, connectors, exec_registry, data_registry,
+            account_store=venue_account_store, alert_sink=alert_sink)
         provider = venue_lifecycle.provider
 
         # bundle.connector is the STREAMING-venue discriminator (okx present, paper None).

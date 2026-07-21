@@ -59,7 +59,17 @@ class OkxSettings(BaseSettings):
     rather than silently shipping a half-authenticated client.
     """
 
-    model_config = SettingsConfigDict(env_prefix="", extra="ignore")  # NO prefix (D-10)
+    # ``populate_by_name`` (11-04 / D-02): WITHOUT it this model is constructible ONLY
+    # from the ambient ``OKX_API_*`` environment. Each field binds a ``validation_alias``,
+    # and ``extra="ignore"`` silently DROPS a field-named kwarg — so
+    # ``OkxSettings(api_key=...)`` drops the kwarg and then fails "OKX_API_KEY Field
+    # required". That is fine while ONE global credential set exists, but per-account
+    # credentials (MPORT-06) must construct this model from a resolved mapping instead of
+    # the process environment, or two ``account_id``s connect with IDENTICAL keys (the
+    # D-12 caveat). ``populate_by_name`` only ADDS the field-name input form; the
+    # ``OKX_API_*`` alias path is untouched.
+    model_config = SettingsConfigDict(
+        env_prefix="", extra="ignore", populate_by_name=True)  # NO prefix (D-10)
 
     api_key: SecretStr = Field(validation_alias="OKX_API_KEY")
     api_secret: SecretStr = Field(validation_alias="OKX_API_SECRET")

@@ -91,6 +91,15 @@ _FORBIDDEN = (
     # this probe fails loudly, protecting the oracle byte-exactness + the W1/W2 perf gate.
     "itrader.venues.okx_plugin",
     "itrader.venues.paper_plugin",
+    # Phase 11 (11-04, D-02 credentials boundary): the CredentialResolver seam is
+    # LIVE-ONLY — it is constructed inside build_live_system and reached by PATH import
+    # (mirroring okx_settings), never through the config barrel. Listing it here makes
+    # "do not barrel-export the resolver" STRUCTURAL rather than prose: the moment a
+    # future edit adds it to itrader/config/__init__.py, importing itrader (which the
+    # backtest root does) pulls it onto the hot path and this probe fails loudly. The
+    # module itself is pure (os + pydantic) — this guards the barrel discipline, not a
+    # heavy import.
+    "itrader.config.credential_resolver",
 )
 leaked = [name for name in _FORBIDDEN if name in sys.modules]
 assert not leaked, (

@@ -143,6 +143,21 @@ def test_relocated_test_data_plugin_builds_a_test_provider() -> None:
     assert isinstance(provider, TestLiveDataProvider)
 
 
+def test_paper_venue_plugin_has_no_credential_model_and_no_venue_uid() -> None:
+    """Paper exposes ``credential_model = None`` and ``fetch_venue_uid -> None`` (D-03/D-04).
+
+    A paper account has no secret to point at and no venue-side account to assert
+    against, so it is the clean no-op case for BOTH new Protocol members. The UID
+    guard must therefore skip paper entirely rather than record a placeholder.
+    """
+    from itrader.venues.paper_plugin import PaperVenuePlugin
+
+    plugin = PaperVenuePlugin(_FakeSimulatedExchange())
+
+    assert plugin.credential_model is None
+    assert plugin.fetch_venue_uid(object()) is None
+
+
 def test_paper_plugins_satisfy_venue_and_data_protocols() -> None:
     """The paper execution plugin + the relocated data plugin satisfy their Protocols."""
     from itrader.venues.bundle import DataProviderPlugin, VenuePlugin
