@@ -516,7 +516,7 @@ the wave that touches them.*
 
 **Wave 3** *(blocked on 11-04, 11-06 — D-28 W3 accounts)*
 
-- [ ] 11-07-PLAN.md — **RESCOPED 2026-07-21**: `new_account()` Protocol method, required `account_id` on `VenueAccount`, per-account connector + exchange, **plus the multi-account composition-root loop and `venue_accounts` minting that make them live** (MPORT-01, MPORT-06). *Deletes nothing — a pre-execution audit found the original would have created `new_account` with zero production callers while deleting `account_factory()`, its only caller, leaving fewer working accounts than before behind a green suite. The D-26 spec-field rename was dropped: its premise was stale post-11-04 and the `getattr` read would have survived it silently, disarming both 11-04 mitigations.*
+- [x] 11-07-PLAN.md — **RESCOPED 2026-07-21**: `new_account()` Protocol method, required `account_id` on `VenueAccount`, per-account connector + exchange, **plus the multi-account composition-root loop and `venue_accounts` minting that make them live** (MPORT-01, MPORT-06). *Deletes nothing — a pre-execution audit found the original would have created `new_account` with zero production callers while deleting `account_factory()`, its only caller, leaving fewer working accounts than before behind a green suite. The D-26 spec-field rename was dropped: its premise was stale post-11-04 and the `getattr` read would have survived it silently, disarming both 11-04 mitigations.*
 
 **Wave 4** *(blocked on 11-03, 11-07 — D-28 W4 bootstrap)*
 
