@@ -27,7 +27,10 @@ import pytest
 from itrader.core.enums import OrderCommand, OrderType, Side
 from itrader.core.exceptions import ValidationError
 from itrader.events_handler.events import OrderEvent
-from itrader.execution_handler.exchanges.venue_correlation import VenueCorrelationIndex
+from itrader.execution_handler.exchanges.venue_correlation import (
+    VenueCorrelationIndex,
+    _extract_client_order_id,
+)
 
 
 def _make_order(
@@ -258,6 +261,88 @@ def test_capacity_below_one_is_rejected() -> None:
         VenueCorrelationIndex(capacity=-5)
     # capacity == 1 is the accepted boundary.
     assert VenueCorrelationIndex(capacity=1).seen_count() == 0
+
+
+# --- D-16 / MPORT-04: the venue-vocabulary seam ---------------------------------
+
+
+def test_extract_client_order_id_prefers_the_top_level_ccxt_spelling() -> None:
+    """ccxt surfaces the echoed client order id as top-level ``clientOrderId``.
+
+    Characterization of the existing helper: this behavior predates the D-16 rename and is
+    asserted here so the rename cannot silently change what the seam reads off the wire.
+    """
+    assert _extract_client_order_id({"clientOrderId": "it7"}) == "it7"
+    # The top level WINS over the nested venue spelling when both are present.
+    assert _extract_client_order_id(
+        {"clientOrderId": "it-top", "info": {"clOrdId": "it-nested"}}) == "it-top"
+
+
+def test_extract_client_order_id_falls_back_to_the_nested_venue_spelling() -> None:
+    """A trade carrying ONLY the venue's nested spelling still resolves (D-16).
+
+    ``info["clOrdId"]`` is OKX's own field name and ``info["clientOrderId"]`` is the
+    ccxt-normalized nested form. Both are WIRE vocabulary and must keep working verbatim —
+    the D-16 rename touches engine identifiers only, never what the venue echoes back.
+    """
+    assert _extract_client_order_id({"info": {"clOrdId": "it42"}}) == "it42"
+    assert _extract_client_order_id({"info": {"clientOrderId": "it43"}}) == "it43"
+    # OKX's own spelling wins over the nested ccxt alias when both are present.
+    assert _extract_client_order_id(
+        {"info": {"clOrdId": "it-okx", "clientOrderId": "it-ccxt"}}) == "it-okx"
+
+
+def test_extract_client_order_id_returns_none_for_every_degenerate_shape() -> None:
+    """T-11-07: venue trade dicts are UNTRUSTED input — every degenerate shape returns
+    ``None`` (never a raise, never an empty string) so the caller falls through to the
+    buffer path instead of correlating a fill to the wrong order."""
+    # Not a dict at all.
+    assert _extract_client_order_id(None) is None
+    assert _extract_client_order_id("not-a-dict") is None
+    assert _extract_client_order_id(["not", "a", "dict"]) is None
+    # A dict carrying neither field.
+    assert _extract_client_order_id({}) is None
+    assert _extract_client_order_id({"id": "T-1", "order": "OID-1"}) is None
+    # A dict whose ``info`` is not a dict (venue-supplied shape drift).
+    assert _extract_client_order_id({"info": "not-a-dict"}) is None
+    assert _extract_client_order_id({"info": None}) is None
+    assert _extract_client_order_id({"info": ["clOrdId"]}) is None
+    # A field that is PRESENT but falsy — an empty clOrdId correlates nothing.
+    assert _extract_client_order_id({"clientOrderId": ""}) is None
+    assert _extract_client_order_id({"info": {"clOrdId": ""}}) is None
+
+
+def test_registration_lands_in_the_renamed_client_order_id_map() -> None:
+    """D-16 / LR-19: the engine-side map is ``_orders_by_client_order_id`` — no engine
+    identifier spells the venue's ``clOrdId`` field name. Registering an order then
+    resolving it by client order id returns the SAME OrderEvent under the renamed map."""
+    idx = VenueCorrelationIndex()
+    order = _make_order(order_id=11)
+
+    idx.register_pending("it11", order)
+    assert idx._orders_by_client_order_id["it11"] is order
+
+    # The renamed map is what the resolve path actually consults.
+    res = idx.resolve({"id": "T-1", "clientOrderId": "it11", "amount": "0.1"})
+    assert res.order is order
+    assert res.outcome == "emit"
+
+
+def test_release_drops_the_renamed_client_order_id_map_entry() -> None:
+    """R2 bound under the renamed identifiers: ``release`` still drops the client-order-id
+    map entry (and its venue-id link), so a terminalized order leaves no residue."""
+    idx = VenueCorrelationIndex()
+    order = _make_order(order_id=12)
+
+    idx.register("OID-12", order, "it12")
+    assert idx._orders_by_client_order_id["it12"] is order
+    assert idx._client_order_id_by_venue_id["OID-12"] == "it12"
+
+    released_order, _drained = idx.release("OID-12")
+    assert released_order is order
+    # Both renamed maps are empty — the R2 bound holds.
+    assert idx._orders_by_client_order_id == {}
+    assert idx._client_order_id_by_venue_id == {}
 
 
 # --- D-16: bound + alarm the uncorrelated-fill buffer ---------------------------
