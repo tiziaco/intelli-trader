@@ -51,6 +51,25 @@ class PaperVenuePlugin:
         # FillEvent -> PortfolioHandler.on_fill), so it is reused verbatim.
         self._simulated_exchange = simulated_exchange
 
+    @property
+    def credential_model(self) -> type[Any] | None:
+        """``None`` — a paper account has no credentials to collect (D-03).
+
+        The integrations page reads this off the registry and renders NO credential
+        form for paper, with no per-venue branching on its side.
+        """
+        return None
+
+    def fetch_venue_uid(self, connector: Any) -> str | None:
+        """``None`` — paper has no venue-side account to assert against (D-04).
+
+        The clean no-op case for the trust-on-first-use guard: there is no external
+        identity to spoof, so nothing is recorded and nothing is alerted. A paper
+        bundle also carries ``connector=None``, so the guard is skipped upstream by
+        the lifecycle's structural ``None``-guard before it ever reaches here.
+        """
+        return None
+
     def build_bundle(self, ctx: Any, spec: Any, connectors: Any) -> VenueBundle:
         """Build the paper ``VenueBundle`` over the injected simulated exchange (connector=None)."""
         # D-04: the compute-account concretion is lazy-imported inside the body.

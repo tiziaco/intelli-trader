@@ -26,6 +26,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 
 class _FakeConnector:
     """Trivial ``LiveConnector`` stand-in — the OKX concretions only bind it."""
@@ -162,6 +164,189 @@ def test_okx_plugins_honor_explicit_account_id() -> None:
         ("okx", "sub-7", spec),
         ("okx", "sub-7", spec),
     ]
+
+
+# --------------------------------------------------------------------------- #
+# 11-04 (D-03): the plugin is self-describing for credentials + venue UID
+# --------------------------------------------------------------------------- #
+def test_okx_venue_plugin_exposes_its_credential_model() -> None:
+    """``credential_model`` is the OKX settings class (D-03).
+
+    This is what lets a future integrations page render per-venue form fields from
+    the venue REGISTRY with zero hardcoding: the alternative — the web app importing
+    each venue's settings model directly — makes the registry stop being
+    self-describing, so adding a venue would mean editing the web app too.
+    """
+    from itrader.config.okx_settings import OkxSettings
+    from itrader.venues.okx_plugin import OkxVenuePlugin
+
+    assert OkxVenuePlugin().credential_model is OkxSettings
+
+
+def test_okx_venue_plugin_fetches_the_account_uid_through_the_connector() -> None:
+    """``fetch_venue_uid`` returns the venue's own account UID for the session (D-04)."""
+    from itrader.venues.okx_plugin import OkxVenuePlugin
+
+    class _UidConnector:
+        """A connector whose ``call`` returns the OKX account-config envelope."""
+
+        @property
+        def client(self) -> Any:
+            return SimpleNamespace(
+                private_get_account_config=lambda: {"data": [{"uid": "44219871"}]}
+            )
+
+        def call(self, coro: Any) -> Any:
+            return coro
+
+    assert OkxVenuePlugin().fetch_venue_uid(_UidConnector()) == "44219871"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"data": []},            # authenticated but no account entry
+        {"data": [{}]},          # entry present, uid field absent (venue renamed it)
+        {"code": "50119"},       # an OKX error envelope, no data key at all
+        None,                    # the venue returned nothing
+    ],
+)
+def test_okx_fetch_venue_uid_returns_none_for_any_unexpected_shape(payload: Any) -> None:
+    """A venue that does not supply the expected shape yields ``None``, never raises.
+
+    D-04 is observe-only: an exception here would take down a connect path that is
+    otherwise perfectly healthy (T-11-19).
+    """
+    from itrader.venues.okx_plugin import OkxVenuePlugin
+
+    class _OddConnector:
+        @property
+        def client(self) -> Any:
+            return SimpleNamespace(private_get_account_config=lambda: payload)
+
+        def call(self, coro: Any) -> Any:
+            return coro
+
+    assert OkxVenuePlugin().fetch_venue_uid(_OddConnector()) is None
+
+
+def test_okx_fetch_venue_uid_swallows_a_raising_connector() -> None:
+    """A connector that RAISES (network down, auth revoked) yields ``None`` (T-11-19)."""
+    from itrader.venues.okx_plugin import OkxVenuePlugin
+
+    class _BrokenConnector:
+        @property
+        def client(self) -> Any:
+            raise RuntimeError("session is not connected")
+
+        def call(self, coro: Any) -> Any:  # pragma: no cover - never reached
+            return coro
+
+    assert OkxVenuePlugin().fetch_venue_uid(_BrokenConnector()) is None
+
+
+# --------------------------------------------------------------------------- #
+# 11-04 (D-02/D-12): the connector plugin resolves PER-ACCOUNT credentials
+# --------------------------------------------------------------------------- #
+def test_okx_connector_plugin_builds_from_the_resolved_secret_ref() -> None:
+    """``build(spec)`` resolves ``spec.secret_ref`` through the injected resolver.
+
+    THE load-bearing test for the D-12 caveat. Without this the plugin does a bare
+    ``OkxConnector(OkxSettings())`` — reading the ONE global ``OKX_API_*`` set — so
+    two ``account_id``s connect with IDENTICAL credentials while the phase claims
+    per-account isolation is real. That is the exact misroute D-04's UID guard exists
+    to detect, shipped green.
+    """
+    from pydantic import SecretStr
+
+    from itrader.venues.okx_plugin import OkxConnectorPlugin
+
+    class _RecordingResolver:
+        def __init__(self) -> None:
+            self.seen: list[str | None] = []
+
+        def resolve(self, secret_ref: str | None) -> dict[str, SecretStr]:
+            self.seen.append(secret_ref)
+            return {
+                "api_key": SecretStr(f"key-for-{secret_ref}"),
+                "api_secret": SecretStr("secret"),
+                "api_passphrase": SecretStr("passphrase"),
+            }
+
+    resolver = _RecordingResolver()
+    spec = SimpleNamespace(account_id="acct-a", secret_ref="env:OKX_ACCT_A")
+
+    connector = OkxConnectorPlugin(resolver=resolver).build(spec)
+
+    assert resolver.seen == ["env:OKX_ACCT_A"]
+    assert (
+        connector._settings.api_key.get_secret_value() == "key-for-env:OKX_ACCT_A"
+    )
+
+
+def test_okx_connector_plugin_isolates_two_accounts() -> None:
+    """Two specs with different ``secret_ref``s build connectors with DIFFERENT keys."""
+    from pydantic import SecretStr
+
+    from itrader.venues.okx_plugin import OkxConnectorPlugin
+
+    class _PerRefResolver:
+        def resolve(self, secret_ref: str | None) -> dict[str, SecretStr]:
+            return {
+                "api_key": SecretStr(f"{secret_ref}-key"),
+                "api_secret": SecretStr("s"),
+                "api_passphrase": SecretStr("p"),
+            }
+
+    plugin = OkxConnectorPlugin(resolver=_PerRefResolver())
+    a = plugin.build(SimpleNamespace(account_id="a", secret_ref="env:A"))
+    b = plugin.build(SimpleNamespace(account_id="b", secret_ref="env:B"))
+
+    assert a._settings.api_key.get_secret_value() == "env:A-key"
+    assert b._settings.api_key.get_secret_value() == "env:B-key"
+
+
+def test_okx_connector_plugin_falls_back_to_ambient_env_only_without_a_pointer(
+    monkeypatch: Any,
+) -> None:
+    """No ``secret_ref`` at all -> the legacy single-account ambient-env construction.
+
+    This is NOT the T-11-18 fail-open case: T-11-18 forbids falling back when a
+    well-formed pointer resolves to nothing (the resolver raises there). An account
+    with NO pointer is the pre-MPORT-06 single-account deployment, which must keep
+    working unchanged.
+    """
+    from itrader.venues.okx_plugin import OkxConnectorPlugin
+
+    monkeypatch.setenv("OKX_API_KEY", "ambient-key")
+    monkeypatch.setenv("OKX_API_SECRET", "ambient-secret")
+    monkeypatch.setenv("OKX_API_PASSPHRASE", "ambient-passphrase")
+
+    connector = OkxConnectorPlugin().build(SimpleNamespace(account_id=None))
+
+    assert connector._settings.api_key.get_secret_value() == "ambient-key"
+
+
+def test_okx_connector_plugin_propagates_a_resolution_failure(monkeypatch: Any) -> None:
+    """A pointer that fails to resolve RAISES — it never degrades to ambient creds.
+
+    The T-11-18 elevation-of-privilege gate at the wiring boundary: an operator
+    typo in ``secret_ref`` must stop the connect, not quietly authenticate as
+    whichever account the process environment happens to hold.
+    """
+    from itrader.config.credential_resolver import EnvCredentialResolver
+    from itrader.core.exceptions import CredentialResolutionError
+    from itrader.venues.okx_plugin import OkxConnectorPlugin
+
+    monkeypatch.setenv("OKX_API_KEY", "ambient-key")
+    monkeypatch.setenv("OKX_API_SECRET", "ambient-secret")
+    monkeypatch.setenv("OKX_API_PASSPHRASE", "ambient-passphrase")
+
+    plugin = OkxConnectorPlugin(resolver=EnvCredentialResolver())
+    spec = SimpleNamespace(account_id="typo", secret_ref="env:OKX_ACCT_TYPO")
+
+    with pytest.raises(CredentialResolutionError):
+        plugin.build(spec)
 
 
 def test_okx_connector_plugin_is_runtime_checkable_connector_plugin() -> None:
