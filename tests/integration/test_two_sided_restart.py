@@ -172,7 +172,7 @@ def _build_reconciler(store, connector, halt_spy):
     from itrader.portfolio_handler.reconcile.venue_reconciler import VenueReconciler
 
     gq: "queue.Queue[Any]" = queue.Queue()
-    venue_account = VenueAccount(connector)
+    venue_account = VenueAccount(connector, account_id="acct-test")
     reconciler = VenueReconciler(
         store=store,
         venue_account=venue_account,

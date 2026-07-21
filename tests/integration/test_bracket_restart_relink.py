@@ -168,7 +168,7 @@ def _build_reconciler(store, connector, halt_spy):
     gq: "queue.Queue[Any]" = queue.Queue()
     reconciler = VenueReconciler(
         store=store,
-        venue_account=VenueAccount(connector),
+        venue_account=VenueAccount(connector, account_id="acct-test"),
         connector=connector,
         global_queue=gq,
         halt_signal=halt_spy,

@@ -280,7 +280,7 @@ def test_supervisor_catchall_venue_stream_survives_networkerror() -> None:
     connector = MagicMock(name="connector")
     connector.client = client
 
-    venue = VenueAccount(connector, quote_currency="USDT")
+    venue = VenueAccount(connector, quote_currency="USDT", account_id="acct-test")
     try:
         asyncio.run(venue._stream_account())
     except Exception:

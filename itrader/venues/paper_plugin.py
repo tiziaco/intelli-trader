@@ -70,22 +70,42 @@ class PaperVenuePlugin:
         """
         return None
 
-    def build_bundle(self, ctx: Any, spec: Any, connectors: Any) -> VenueBundle:
-        """Build the paper ``VenueBundle`` over the injected simulated exchange (connector=None)."""
-        # D-04: the compute-account concretion is lazy-imported inside the body.
+    def new_account(self, portfolio_ref: Any, config: Any) -> Account:
+        """Mint a FRESH compute account for one portfolio (D-10, 11-07).
+
+        The leaf-selection body is the pre-11-07 ``account_factory`` VERBATIM: the
+        margin superset when the portfolio's rules enable margin, else the
+        verbatim-critical spot cash leaf that is the SMA_MACD byte-exact oracle path
+        (D-04). It is copied, not restructured.
+
+        No ``account_id`` is required or consulted here, and that asymmetry with the
+        venue arm is deliberate: D-11 scopes VENUE accounts, whose balances and
+        positions are one real venue account's truth and therefore conflatable. A
+        simulated leaf computes its own truth from its own portfolio, so there is
+        nothing to conflate and nothing for an account id to protect — requiring one
+        would push a venue concept onto the oracle path for no safety gain.
+        """
+        # D-04: the compute-account concretions are lazy-imported inside the body.
         from itrader.portfolio_handler.account import (
             SimulatedCashAccount,
             SimulatedMarginAccount,
         )
-        from itrader.venues.bundle import VenueBundle
+
+        initial_cash = getattr(config, "initial_cash", 0.0)
+        if portfolio_ref.config.trading_rules.enable_margin:
+            return SimulatedMarginAccount(portfolio_ref, initial_cash=initial_cash)
+        return SimulatedCashAccount(portfolio_ref, initial_cash=initial_cash)
+
+    def build_bundle(self, ctx: Any, spec: Any, connectors: Any) -> VenueBundle:
+        """Build the paper ``VenueBundle`` over the injected simulated exchange (connector=None)."""
+        # D-04: the bundle/config value objects are lazy-imported inside the body.
+        from itrader.venues.bundle import VenueAccountConfig, VenueBundle
 
         def account_factory(portfolio: Any, initial_cash: Any = 0.0) -> Account:
-            # Mirror the portfolio leaf-selection (portfolio.py:136-140): the margin
-            # superset when enabled, else the verbatim-critical spot cash leaf (the
-            # SMA_MACD byte-exact oracle path, D-04).
-            if portfolio.config.trading_rules.enable_margin:
-                return SimulatedMarginAccount(portfolio, initial_cash=initial_cash)
-            return SimulatedCashAccount(portfolio, initial_cash=initial_cash)
+            # 11-07: a thin adapter DELEGATING to the typed `new_account`, so the
+            # bundle field and the Protocol method can never mint different accounts.
+            return self.new_account(
+                portfolio, VenueAccountConfig(initial_cash=initial_cash))
 
         # D-05: reuse the simulated exchange AS-IS (identity); connector=None — the
         # `connectors` arg is deliberately unused (paper has no venue session).

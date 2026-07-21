@@ -29,5 +29,5 @@ class _FakeSession:
 def test_venue_account_stores_injected_session() -> None:
     """The constructor accepts and stores the injected session (the wiring seam)."""
     session = _FakeSession()
-    account = VenueAccount(session)
+    account = VenueAccount(session, account_id="acct-test")
     assert account._connector is session

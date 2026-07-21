@@ -167,3 +167,63 @@ def test_paper_plugins_satisfy_venue_and_data_protocols() -> None:
 
     assert isinstance(PaperVenuePlugin(_FakeSimulatedExchange()), VenuePlugin)
     assert isinstance(TestDataPlugin(), DataProviderPlugin)
+
+
+# --------------------------------------------------------------------------- #
+# new_account — per-portfolio compute minting (11-07, D-10)
+# --------------------------------------------------------------------------- #
+def test_paper_new_account_mints_a_fresh_leaf_per_portfolio() -> None:
+    """Two portfolios get two DISTINCT compute accounts (no shared leaf)."""
+    from itrader.portfolio_handler.account import SimulatedCashAccount
+    from itrader.venues.bundle import VenueAccountConfig
+    from itrader.venues.paper_plugin import PaperVenuePlugin
+
+    plugin = PaperVenuePlugin(_FakeSimulatedExchange())
+    config = VenueAccountConfig(initial_cash=1000.0)
+
+    account_a = plugin.new_account(_fake_portfolio(), config)
+    account_b = plugin.new_account(_fake_portfolio(), config)
+
+    assert isinstance(account_a, SimulatedCashAccount)
+    assert isinstance(account_b, SimulatedCashAccount)
+    assert account_a is not account_b
+
+
+def test_paper_new_account_selects_the_margin_leaf_when_enabled() -> None:
+    """The leaf selection is the pre-11-07 factory body VERBATIM (D-04).
+
+    The non-margin branch is the SMA_MACD byte-exact oracle path, so this asserts
+    the selection was copied rather than restructured — a reordered or
+    'simplified' branch here is a silent oracle risk.
+    """
+    from itrader.portfolio_handler.account import (
+        SimulatedCashAccount,
+        SimulatedMarginAccount,
+    )
+    from itrader.venues.bundle import VenueAccountConfig
+    from itrader.venues.paper_plugin import PaperVenuePlugin
+
+    plugin = PaperVenuePlugin(_FakeSimulatedExchange())
+    config = VenueAccountConfig(initial_cash=1000.0)
+
+    margin_portfolio = _fake_portfolio()
+    margin_portfolio.config.trading_rules.enable_margin = True
+    cash_portfolio = _fake_portfolio()
+
+    assert isinstance(plugin.new_account(margin_portfolio, config),
+                      SimulatedMarginAccount)
+    assert isinstance(plugin.new_account(cash_portfolio, config),
+                      SimulatedCashAccount)
+
+
+def test_paper_account_factory_delegates_to_new_account() -> None:
+    """The retained bundle field is a thin adapter over the Protocol method."""
+    from itrader.portfolio_handler.account import SimulatedCashAccount
+    from itrader.venues.paper_plugin import PaperVenuePlugin
+
+    plugin = PaperVenuePlugin(_FakeSimulatedExchange())
+    bundle = plugin.build_bundle(_fake_ctx(), _fake_spec(), _ExplodingConnectorProvider())
+
+    account = bundle.account_factory(_fake_portfolio(), initial_cash=2500.0)
+
+    assert isinstance(account, SimulatedCashAccount)

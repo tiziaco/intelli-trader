@@ -18,6 +18,9 @@ Symbols
   The DATA provider is deliberately NOT carried here — it is built by
   ``DataProviderRegistry`` so the two registries stay independently selectable
   (VENUE-01: OKX execution + a different data feed).
+- ``VenueAccountConfig`` — the frozen ``config`` argument of
+  ``VenuePlugin.new_account`` (11-07, D-10): the per-account knobs the two shipped
+  arms need to mint one ``Account`` leaf.
 - ``VenuePlugin`` / ``DataProviderPlugin`` — ``@runtime_checkable`` Protocols
   mirroring the ``LiveConnector`` shape (``connectors/base.py``). ``build_bundle``
   / ``build_provider`` are the D-04 lazy-import seams: a concrete plugin (05-05)
@@ -32,7 +35,7 @@ Indentation: 4-SPACE (new top-level ``venues/`` package; no tab sibling to match
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -42,6 +45,45 @@ if TYPE_CHECKING:
     from itrader.portfolio_handler.account.base import Account
     from itrader.price_handler.providers.live_provider import LiveDataProvider
     from itrader.venues.lifecycle import VenueLifecycle
+
+
+@dataclass(frozen=True, slots=True)
+class VenueAccountConfig:
+    """The ``config`` argument of ``VenuePlugin.new_account`` (D-10, 11-07).
+
+    A small frozen value object carrying exactly what the TWO shipped arms need to
+    mint one account — nothing speculative:
+
+    * ``account_id`` — the account the BUNDLE was built for. It is the fallback used
+      ONLY when ``new_account`` is called with no portfolio (the facade's
+      ``account_factory()`` call site). It is deliberately NOT a fallback for a
+      portfolio that names no account: silently minting a named-bundle account for
+      an unnamed portfolio is precisely the conflation D-11 exists to prevent.
+    * ``connectors`` / ``spec`` — the shared ``ConnectorProvider`` memo and the venue
+      spec, so ``new_account`` resolves the connector for ITS OWN
+      ``(venue, account_id)`` pair (D-12). Because the memo is pair-keyed, the
+      account and the bundle's exchange share ONE authenticated session per account.
+    * ``quote_currency`` / ``market_type`` / ``symbol`` — the venue-truth channel
+      knobs the venue arm threads onto its ``VenueAccount`` (D-03).
+    * ``initial_cash`` — the compute arm's opening balance (the paper/simulated leaf).
+
+    Typed ``Any`` for ``connectors`` / ``spec`` for the same import-inertness reason
+    the rest of this module is: naming the concrete types would drag the venue
+    substrate onto the backtest import graph.
+
+    It lives HERE and not in ``paper_plugin.py`` because that module has a
+    test-enforced single-class gate (``test_paper_plugin.py`` asserts the module
+    defines ONLY ``PaperVenuePlugin``) — and because it is the shape of a Protocol
+    argument, so the Protocol's own module is its home.
+    """
+
+    account_id: str | None = None
+    connectors: Any = None
+    spec: Any = None
+    quote_currency: str = "USDT"
+    market_type: Literal["spot", "derivative"] = "derivative"
+    symbol: str | None = None
+    initial_cash: Any = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +150,29 @@ class VenuePlugin(Protocol):
 
     def build_bundle(self, ctx: Any, spec: Any, connectors: Any) -> VenueBundle:
         """Build the execution ``VenueBundle`` (concretions lazy-imported inside)."""
+        ...
+
+    def new_account(self, portfolio_ref: Any, config: VenueAccountConfig) -> Account:
+        """Mint the ``Account`` leaf for ONE portfolio (D-10, 11-07).
+
+        Promotes the untyped ``VenueBundle.account_factory`` field to a real typed
+        member so account construction is a declared part of the venue seam rather
+        than a closure a plugin happens to return. The venue-truth arm returns an
+        account scoped to the portfolio's ``account_id``, built over the connector
+        memoized for that ``(venue, account_id)`` pair (D-12); the compute arm
+        returns a fresh simulated leaf per portfolio.
+
+        **This method is NOT the guard, and that correction is recorded here so it
+        is not re-litigated.** A catch-all ``(*args, **kwargs)`` signature is the
+        universally-compatible signature under strict type checking and satisfies
+        ANY Protocol method, and this Protocol is STRUCTURAL — plugins do not
+        subclass it — so an arg-swallowing arm would type-check clean. The guard is
+        D-11: ``VenueAccount.account_id`` is a REQUIRED keyword argument with no
+        default, so no arm can produce an unscoped account without naming one.
+
+        Fails LOUD when no account can be named for ``portfolio_ref`` — there is no
+        legitimate "default" venue account to fall back to (T-11-32).
+        """
         ...
 
     def fetch_venue_uid(self, connector: Any) -> str | None:

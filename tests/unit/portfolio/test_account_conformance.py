@@ -120,7 +120,7 @@ def _build_venue_leaf(venue_connectors):
     # from the SPOT fixture (quote from wiring == USDC, never the USDT default).
     portfolio = Portfolio("venue_pf", "okx", Decimal("150000"), datetime.now())
     connector = venue_connectors(_spot_payloads())
-    account = VenueAccount(connector, quote_currency="USDC")
+    account = VenueAccount(connector, quote_currency="USDC", account_id="acct-test")
     account.snapshot()
     portfolio.account = account
     return portfolio, account
@@ -270,7 +270,7 @@ def test_margin_op_on_venue_account_raises_before_mutation(venue_connectors):
     portfolio = Portfolio("venue_margin_pf", "okx", Decimal("150000"),
                           datetime.now(), config=_margin_config())
     connector = venue_connectors(_spot_payloads())
-    account = VenueAccount(connector, quote_currency="USDC")
+    account = VenueAccount(connector, quote_currency="USDC", account_id="acct-test")
     account.snapshot()
     portfolio.account = account
 

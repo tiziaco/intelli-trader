@@ -27,15 +27,20 @@ class _FakeVenuePlugin:
     """Structural ``VenuePlugin`` — exposes the full Protocol surface (bodies irrelevant).
 
     11-04 widened ``VenuePlugin`` with ``credential_model`` (D-03) and
-    ``fetch_venue_uid`` (D-04). ``isinstance`` against a ``runtime_checkable``
-    Protocol is a hasattr check over EVERY member, so a fake that only implements
-    ``build_bundle`` stops conforming the moment the Protocol grows — which is why
-    both members are declared here in the same commit as the Protocol change.
+    ``fetch_venue_uid`` (D-04); 11-07 widened it again with ``new_account`` (D-10).
+    ``isinstance`` against a ``runtime_checkable`` Protocol is a hasattr check over
+    EVERY member, so a fake that only implements ``build_bundle`` stops conforming
+    the moment the Protocol grows — which is why every member is declared here in
+    the same commit as the Protocol change. This has now caught three plans in a
+    row; the lesson is that a Protocol widening is never a one-file change.
     """
 
     credential_model = None
 
     def build_bundle(self, ctx, spec, connectors):  # noqa: ANN001, ANN201
+        return None
+
+    def new_account(self, portfolio_ref, config):  # noqa: ANN001, ANN201
         return None
 
     def fetch_venue_uid(self, connector):  # noqa: ANN001, ANN201
