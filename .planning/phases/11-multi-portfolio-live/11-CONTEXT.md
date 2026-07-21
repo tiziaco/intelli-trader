@@ -8,7 +8,7 @@
 > breaks `roadmap.get-phase`, exactly as it did for Phase 9 and Phase 10. Ground truth was injected
 > manually: phase 11, name **Multi-Portfolio-Live**, working dir
 > `.planning/phases/11-multi-portfolio-live/` (created this session), requirements
-> **MPORT-01..06** (+ the discovered **MPORT-07**, D-27), depends on Phase 5 + Phase 7. Ignore any
+> **MPORT-01..07** (MPORT-07 discovered this session — D-27), depends on Phase 5 + Phase 7. Ignore any
 > null / `has_context:false` flags from init — they reflect the failed lookup, not this phase.
 > Expect `init.plan-phase` to return `phase_req_ids: null` and `roadmap.annotate-dependencies` to
 > no-op (`updated:false`) as well; inject REQ IDs by hand and write the wave list manually.
@@ -17,7 +17,7 @@
 ## Phase Boundary
 
 Let multiple portfolios trade live **independently**, each against its own venue account
-(MPORT-01..06): per-`account_id` account minting via the venue plugin, a distinct-`account_id`
+(MPORT-01..07): per-`account_id` account minting via the venue plugin, a distinct-`account_id`
 invariant that fails loud at composition time, per-portfolio reconciliation, and two-key
 attribution (`client_order_id` for venue↔engine correlation, `portfolio_id` for attribution).
 (★ feature-add — LR-03 mandate, never trim.)
@@ -25,8 +25,8 @@ attribution (`client_order_id` for venue↔engine correlation, `portfolio_id` fo
 **Live-only, backtest-dark.** Per-phase gates: the backtest oracle stays byte-exact
 (`134 / 46189.87730727451`) and `tests/integration/test_okx_inertness.py` stays green.
 
-**The load-bearing reframe of this phase (D-27):** the discussion found that MPORT-01..06 is
-**necessary but not sufficient**. The requirements say *connectors* are keyed `(venue, account_id)`
+**The load-bearing reframe of this phase (D-27 / MPORT-07):** the discussion found that the original MPORT-01..06 was
+**necessary but not sufficient**, which is why **MPORT-07** was added. They say *connectors* are keyed `(venue, account_id)`
 — but the **exchange** is keyed by bare name (`ExecutionHandler.exchanges.get(event.exchange)`,
 `execution_handler.py:126`) while `OkxExchange` holds exactly **one** connector
 (`okx.py:101`). Two portfolios on venue `okx` with different accounts therefore both route to the
@@ -374,7 +374,7 @@ multi-provider feed-router deferral) and per-`account_id` pre-trade throttle key
   it under-trades rather than mis-trades, costing opportunity, not correctness. Given P11's load, this
   is the right thing to cut. Todo required.
 
-### Discovered scope beyond MPORT-01..06 (Area 11)
+### Discovered scope — MPORT-07 (Area 11)
 
 - **D-27 (MPORT-07, discovered: the EXCHANGE becomes per-`(venue, account_id)`):** See `<domain>` for
   the full finding and why it is architecturally correct rather than merely convenient.
@@ -387,9 +387,10 @@ multi-provider feed-router deferral) and per-`account_id` pre-trade throttle key
   per call (the exchange holds connector-bound state, and `watch_my_trades` is a *private per-account*
   stream — there is no correct version of this) and encoding the account into the exchange **name**
   string (stringly-typed, and `Order.exchange` is a **persisted column**, so the composite would leak
-  into durable data and every query over it). **Traceability:** record as a discovered requirement in
-  the phase audit; the planner should confirm with the owner whether it also warrants an explicit
-  MPORT-07 entry in `REQUIREMENTS.md` to keep the 64/64 coverage table honest.
+  into durable data and every query over it). **Traceability — SETTLED, do not re-ask:** this is now
+  a numbered requirement, **MPORT-07** in `.planning/REQUIREMENTS.md`, mapped to P11 in the
+  traceability table and carried as success criterion 5 in the ROADMAP's Phase 11 block. Treat it as
+  first-class phase scope, not as an optional extra.
 
 ### Decomposition & migrations (Areas 10 & 12)
 
@@ -466,7 +467,7 @@ multi-provider feed-router deferral) and per-`account_id` pre-trade throttle key
 **Downstream agents MUST read these before planning or implementing.**
 
 ### Requirements & roadmap
-- `.planning/REQUIREMENTS.md` — **MPORT-01..06** (lines 318–338) + the milestone-wide gates.
+- `.planning/REQUIREMENTS.md` — **MPORT-01..07** (MPORT-07 added 2026-07-21 for D-27) + the milestone-wide gates.
 - `.planning/ROADMAP.md` → "Phase 11 ★: Multi-Portfolio-Live" (goal + 5 success criteria,
   lines 488–500); Phase 12 (lines 503–515) for the TEST-03/TEST-04 boundary D-25 splits against.
 
@@ -715,9 +716,6 @@ multi-provider feed-router deferral) and per-`account_id` pre-trade throttle key
   enough to be operationally annoying.
 - **Splitting `Portfolio.exchange` semantics further** — D-07 derives it from `venue_name`; if a
   portfolio ever needs to trade multiple venues, this becomes a real modelling question.
-- **An explicit MPORT-07 entry in REQUIREMENTS.md for D-27** — the planner should confirm with the
-  owner whether the discovered exchange-cardinality scope warrants a numbered requirement to keep the
-  64/64 coverage table honest, or stays a recorded discovered-scope note.
 
 ### Reviewed Todos (not folded)
 - `shared-strategy-admission-seam.md` — strategy-admission exception policy; unrelated to portfolio

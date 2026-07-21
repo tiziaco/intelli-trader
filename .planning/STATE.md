@@ -8,7 +8,7 @@ status: planning
 stopped_at: Phase 11 context gathered
 last_updated: "2026-07-21T07:57:33.844Z"
 last_activity: 2026-07-21
-last_activity_desc: "Phase 11 ★ context gathered (13945336) — 11 gray areas discussed, 30 decisions locked. Discovered scope beyond MPORT-01..06: D-27 (the EXCHANGE must become per-`(venue, account_id)`; today `ExecutionHandler` keys by bare name while `OkxExchange` holds one connector → account B's orders would submit through account A's session). Two defects carried in: F-1 (`portfolio_id` not restart-stable, `portfolio.py:71`, contradicting two in-tree comments) and F-2 (baseline guard returns on first mismatch). B2 todo folded (String→Uuid + FK). Next: `/gsd-plan-phase 11`."
+last_activity_desc: "Phase 11 ★ context gathered (13945336) — 11 gray areas discussed, 30 decisions locked. New requirement MPORT-07 added (D-27: the EXCHANGE must become per-`(venue, account_id)`; today `ExecutionHandler` keys by bare name while `OkxExchange` holds one connector → account B's orders would submit through account A's session). Two defects carried in: F-1 (`portfolio_id` not restart-stable, `portfolio.py:71`, contradicting two in-tree comments) and F-2 (baseline guard returns on first mismatch). B2 todo folded (String→Uuid + FK). Next: `/gsd-plan-phase 11`."
 progress:
   total_phases: 11
   completed_phases: 10
@@ -39,16 +39,16 @@ Status: Context gathered — ready to plan
 Last activity: 2026-07-21 — Phase 11 CONTEXT.md + DISCUSSION-LOG.md written and committed (13945336). Eleven gray
 areas discussed, 30 decisions (D-01..D-30) locked, three sub-decisions explicitly superseded and reconciled in-file.
 
-**Carried into planning (found during discussion, beyond MPORT-01..06):**
+**Carried into planning (found during discussion):**
 
-- **D-27 (discovered scope — MPORT-07 candidate):** the **exchange** must become per-`(venue, account_id)`.
+- **D-27 / MPORT-07 (discovered, now a numbered requirement):** the **exchange** must become per-`(venue, account_id)`.
   `ExecutionHandler.exchanges` is keyed by bare name (`execution_handler.py:66,126`) while `OkxExchange` holds
   exactly one connector (`okx.py:101`) — so two portfolios on `okx` with different accounts both route to the same
   exchange and **account B's orders would submit through account A's connector**, even with per-account credentials
   and accounts all correct. Verified architecturally sound: every mutable field on `OkxExchange` is already
   account-scoped and the markets/precision map lives on the connector (`okx.py:952-955`), so this makes an existing
   dimension explicit rather than adding one. `watch_my_trades` being a private per-account stream makes it mandatory.
-  Planner should confirm whether it warrants a numbered MPORT-07 in REQUIREMENTS.md (64/64 coverage table).
+  Now a numbered requirement: **MPORT-07** in REQUIREMENTS.md, mapped to P11, ROADMAP success criterion 5. SETTLED.
 
 - **F-1 (HIGH, confirmed):** `portfolio.py:71` mints a fresh UUIDv7 `portfolio_id` on every construction with no way
   to supply one, while `portfolio.py:68` and `live_trading_system.py:1583-1585` both assert restart-stability that
@@ -71,7 +71,7 @@ areas discussed, 30 decisions (D-01..D-30) locked, three sub-decisions explicitl
 
 Note (P11 planning): as predicted, the starred header `### Phase 11 ★:` broke `roadmap.get-phase` (`found:false`)
 and the phase dir had to be created by hand. Expect `init.plan-phase` to return `phase_req_ids: null` — inject
-MPORT-01..06 manually into the researcher/planner/checker prompts, and expect `roadmap.annotate-dependencies` to
+MPORT-01..07 manually into the researcher/planner/checker prompts, and expect `roadmap.annotate-dependencies` to
 no-op so the wave list must be written by hand. Also: `state.record-session` does not refresh `last_activity_desc`
 (no registered handler for that field) — it was corrected by direct edit.
 
@@ -135,10 +135,10 @@ Dependency graph (not strict numeric order): `P1 · P2` (no deps) → `P3{P1,P2}
 | 8 | Error Subsystem | ERR-01..04 | **CF-1 aggregate breaker MUST trip** (hard criterion); CF-5 |
 | 9 ★ | Runtime-Config Platform | RTCFG-01..06 | feature-add; allowlist + venue-kind-aware fee/slippage gate |
 | 10 ★ | Strategies Registry | STRAT-01..03 | feature-add; STRAT-03 atomic re-config folds pair-strategy TODO |
-| 11 ★ | Multi-Portfolio-Live | MPORT-01..06 | LR-03 (never trim); distinct-`account_id` fails loud |
+| 11 ★ | Multi-Portfolio-Live | MPORT-01..07 | LR-03 (never trim); distinct-`account_id` fails loud |
 | 12 | Test Migration + Gates | TEST-01..04 | lands last; production replay-free; attribution gate |
 
-**Coverage: 64/64 mapped, 0 orphans.** ★ = trimmable feature-add (in scope — owner chose full scope; the
+**Coverage: 69/69 mapped, 0 orphans.** *(was stated as 64/64 through 2026-07-20 — stale: it predated the four `DECOMP-*` reqs from the inserted P10.1, so the true count was 68 before MPORT-07 was added 2026-07-21.)* ★ = trimmable feature-add (in scope — owner chose full scope; the
 trim boundary P1–P8+P12 core vs P9–P11 ★ is noted, not taken). Research flags (plan-time research): P6
 (`UniverseWiring` byte-exact discipline), P8 (CF-1 route-classification + livelock test), P11
 (`client_order_id`/`portfolio_id` two-key attribution). Skip research-phase: P2/P4/P5 (specified/mechanical).

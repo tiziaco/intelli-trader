@@ -65,8 +65,9 @@ makes the engine *interfacable*, shipping no ASGI code.
 **Design source:** `docs/superpowers/specs/2026-07-07-v1.8-live-system-refactor-design.md` (LR-00..LR-22,
 CF-1..CF-10). **Research:** `.planning/research/SUMMARY.md` (validates the design vs Nautilus/LEAN; zero
 new third-party dependencies; 4 build-order refinements folded in). Requirements + traceability:
-`.planning/REQUIREMENTS.md` (64 v1 requirements across 13 categories → 12 phases; the SQL + STORE
-categories share the merged storage-schema phase P4).
+`.planning/REQUIREMENTS.md` (**69** v1 requirements across 13 categories → 12 phases; the SQL + STORE
+categories share the merged storage-schema phase P4). *(Was 64 at 2026-07-09; +4 `DECOMP-*` from the
+inserted Phase 10.1, +1 `MPORT-07` discovered during P11 discussion 2026-07-21.)*
 
 **Milestone-wide gates (apply to EVERY phase — restated as success criteria):**
 
@@ -489,14 +490,15 @@ the wave that touches them.*
 
 **Goal**: Let multiple portfolios trade live independently — a per-`account_id` account factory replacing the single-portfolio guard, a distinct-`account_id` invariant that fails loud, per-portfolio reconciliation, and two-key attribution (`client_order_id` vs `portfolio_id`). (★ feature-add — LR-03 mandate, never trim.)
 **Depends on**: Phase 5, Phase 7
-**Requirements**: MPORT-01, MPORT-02, MPORT-03, MPORT-04, MPORT-05, MPORT-06
+**Requirements**: MPORT-01, MPORT-02, MPORT-03, MPORT-04, MPORT-05, MPORT-06, MPORT-07
 **Success Criteria** (what must be TRUE):
 
   1. The venue plugin's `new_account(portfolio_ref, config)` mints a per-portfolio account (venue-truth → `VenueAccount` scoped to `portfolio.account_id`; compute → a fresh `SimulatedAccount`); `_link_venue_account_to_portfolios` + its `RuntimeError(>1)` guard are deleted, and `PortfolioSpec` gains `account_id`.
   2. A distinct-`account_id` invariant fails **loud** at composition time — multiple portfolios sharing one venue `account_id` is rejected (pooled buying power the venue can't split is deferred).
   3. A signal fans out to each subscribed portfolio, each sizing/ordering independently against its own account; `clOrdId` is renamed `client_order_id` (distinct from `portfolio_id`) and fills route via `client_order_id`/`venue_order_id` → engine order → `FillEvent(portfolio_id)` → the right `Portfolio.on_fill`.
   4. Connectors are keyed `(venue, account_id)` (VENUE-03) so multi-account portfolios share/decouple correctly, and the `ReconciliationCoordinator` iterates active portfolios reconciling each against its own `VenueAccount`/`account_id`.
-  5. The backtest oracle stays byte-exact and `test_okx_inertness.py` stays green.
+  5. *(MPORT-07 — discovered 2026-07-21)* The **execution exchange** is keyed `(venue, account_id)` too: `ExecutionHandler.exchanges` keys on the pair and `on_order` resolves the account from `event.portfolio_id`, so one account's orders can never be submitted through another account's authenticated session. Without this, per-account credentials and accounts are all correct and orders still route to the wrong venue account.
+  6. The backtest oracle stays byte-exact and `test_okx_inertness.py` stays green.
 
 **Plans**: TBD
 

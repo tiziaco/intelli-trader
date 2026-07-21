@@ -337,6 +337,19 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 - [ ] **MPORT-06**: Connectors are keyed `(venue, account_id)` (VENUE-03) so multi-account portfolios share
   or decouple connectors correctly without a combinatorial matrix (LR-20/§8c).
 
+- [ ] **MPORT-07** *(DISCOVERED during P11 discussion, 2026-07-21 — not in the 2026-07-07 design)*: The
+  **execution exchange** is keyed `(venue, account_id)`, not by venue name alone. `ExecutionHandler.exchanges`
+  keys on the pair, `on_order` resolves the account from `event.portfolio_id` (via a new
+  `PortfolioReadModel.account_for`), and `VenueBundle` carries per-account exchanges. **Why this is required, not
+  an optimization:** `ExecutionHandler.on_order` currently does a bare `self.exchanges.get(event.exchange)`
+  (`execution_handler.py:126`) while `OkxExchange` holds exactly one connector (`okx.py:101`) — so two portfolios
+  on one venue with distinct `account_id`s both resolve to the *same* exchange and one account's orders would be
+  submitted through the other account's authenticated session, silently defeating MPORT-01/03/06 even when
+  credentials, accounts and the distinct-`account_id` invariant are all correct. `watch_my_trades` is a **private
+  per-account stream**, so a shared exchange cannot subscribe to both accounts' fills at all. Architecturally this
+  makes an existing dimension explicit rather than adding one: every mutable field on `OkxExchange` is already
+  account-scoped, and the markets/precision map lives on the connector (`okx.py:952-955`). (P11 CONTEXT D-27.)
+
 ### Test Migration + Gates (P12 — except TEST-01, pulled forward into P6)
 
 - [x] **TEST-01** *(delivered in **P6**, pulled forward from P12)*: the ENTIRE replay test-harness moves
@@ -463,6 +476,7 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | MPORT-04 | P11 | Pending |
 | MPORT-05 | P11 | Pending |
 | MPORT-06 | P11 | Pending |
+| MPORT-07 | P11 | Pending |
 | TEST-01 | P6 | Complete |
 | TEST-02 | P12 | Pending |
 | TEST-03 | P12 | Pending |
@@ -476,4 +490,6 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 
 ---
 *Requirements defined: 2026-07-09*
-*Last updated: 2026-07-09 — roadmap revised to 12 phases (old P4 SqlEngine Migrations Relocation folded into old P5 New Durable Stores → merged storage-schema phase P4; all downstream phases renumbered −1); 64/64 requirements mapped, 0 orphans; full scope P1–P12 + 3 owner refinements*
+*Last updated: 2026-07-21 — added **MPORT-07** (discovered during P11 discussion: the execution exchange must be keyed `(venue, account_id)`, not by venue name alone). **69/69 requirements mapped, 0 orphans.** Note the previously-stated "64/64" was stale from 2026-07-09: it predated the four `DECOMP-*` requirements added by the inserted Phase 10.1, so the true count was already 68 before MPORT-07. Full scope P1–P12 + 3 owner refinements.*
+
+*Prior: 2026-07-09 — roadmap revised to 12 phases (old P4 SqlEngine Migrations Relocation folded into old P5 New Durable Stores → merged storage-schema phase P4; all downstream phases renumbered −1); full scope P1–P12 + 3 owner refinements*
