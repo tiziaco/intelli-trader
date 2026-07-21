@@ -8,7 +8,7 @@ status: planning
 stopped_at: Phase 11 context gathered
 last_updated: "2026-07-21T07:57:33.844Z"
 last_activity: 2026-07-21
-last_activity_desc: Codebase map refreshed for v1.8 Phases 8–10.1 (506f20a9); CLAUDE.md factual drift corrected (quick 260721-b68, e10ee1ef); residual drift fixed at its source in `.planning/codebase/{ARCHITECTURE,STRUCTURE,CONVENTIONS}.md` (fast 260721-cdx, f475d170) so the next `/gsd-map-codebase` regenerates CLAUDE.md's managed blocks correctly.
+last_activity_desc: "Phase 11 ★ context gathered (13945336) — 11 gray areas discussed, 30 decisions locked. Discovered scope beyond MPORT-01..06: D-27 (the EXCHANGE must become per-`(venue, account_id)`; today `ExecutionHandler` keys by bare name while `OkxExchange` holds one connector → account B's orders would submit through account A's session). Two defects carried in: F-1 (`portfolio_id` not restart-stable, `portfolio.py:71`, contradicting two in-tree comments) and F-2 (baseline guard returns on first mismatch). B2 todo folded (String→Uuid + FK). Next: `/gsd-plan-phase 11`."
 progress:
   total_phases: 11
   completed_phases: 10
@@ -35,8 +35,45 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 
 Phase: 11 ★ — Multi-Portfolio-Live
 Plan: Not started
-Status: Ready to discuss/plan
-Last activity: 2026-07-21 — Codebase map refreshed for v1.8 Phases 8–10.1 (506f20a9); CLAUDE.md factual drift corrected (quick 260721-b68, e10ee1ef); residual drift fixed at its source in `.planning/codebase/{ARCHITECTURE,STRUCTURE,CONVENTIONS}.md` (fast 260721-cdx, f475d170) so the next `/gsd-map-codebase` regenerates CLAUDE.md's managed blocks correctly.
+Status: Context gathered — ready to plan
+Last activity: 2026-07-21 — Phase 11 CONTEXT.md + DISCUSSION-LOG.md written and committed (13945336). Eleven gray
+areas discussed, 30 decisions (D-01..D-30) locked, three sub-decisions explicitly superseded and reconciled in-file.
+
+**Carried into planning (found during discussion, beyond MPORT-01..06):**
+
+- **D-27 (discovered scope — MPORT-07 candidate):** the **exchange** must become per-`(venue, account_id)`.
+  `ExecutionHandler.exchanges` is keyed by bare name (`execution_handler.py:66,126`) while `OkxExchange` holds
+  exactly one connector (`okx.py:101`) — so two portfolios on `okx` with different accounts both route to the same
+  exchange and **account B's orders would submit through account A's connector**, even with per-account credentials
+  and accounts all correct. Verified architecturally sound: every mutable field on `OkxExchange` is already
+  account-scoped and the markets/precision map lives on the connector (`okx.py:952-955`), so this makes an existing
+  dimension explicit rather than adding one. `watch_my_trades` being a private per-account stream makes it mandatory.
+  Planner should confirm whether it warrants a numbered MPORT-07 in REQUIREMENTS.md (64/64 coverage table).
+
+- **F-1 (HIGH, confirmed):** `portfolio.py:71` mints a fresh UUIDv7 `portfolio_id` on every construction with no way
+  to supply one, while `portfolio.py:68` and `live_trading_system.py:1583-1585` both assert restart-stability that
+  does not exist. On restart the prior run's `portfolio_account_state` rows orphan and P10's persisted
+  `strategy_portfolio_subscriptions` rows dangle. Pre-existing; P11 is where it stops being survivable. Fix + correct
+  both comments in the W4 bootstrap plan.
+
+- **F-2 (MEDIUM):** `_run_session_baseline_guard` (`reconciliation_coordinator.py:216`) returns on the first
+  portfolio mismatch — benign at N=1, wrong at N>1. Must become evaluate-all.
+
+- **Highest regression risk:** D-09 moves per-portfolio config off `portfolio_account_state.config_json` (P9 D-25)
+  onto the new `portfolios` row — that is the tested RTCFG-03 path **P12's TEST-03 gate verifies**. The migration
+  must move data, not just repoint reads.
+
+- **Folded todo:** `b2-strategy-subscription-portfolio-id-uuid-column` — String→Uuid **and** the FK to `portfolios`
+  (CASCADE). The type change is a prerequisite for the FK, not cosmetic.
+
+- **Decomposition locked (D-28):** seven waves, ONE phase — W1 Schema → W2 Credentials → W3 Accounts →
+  W4 Bootstrap → W6 Reconcile, with W5 Attribution parallelizable and W7 Tests last.
+
+Note (P11 planning): as predicted, the starred header `### Phase 11 ★:` broke `roadmap.get-phase` (`found:false`)
+and the phase dir had to be created by hand. Expect `init.plan-phase` to return `phase_req_ids: null` — inject
+MPORT-01..06 manually into the researcher/planner/checker prompts, and expect `roadmap.annotate-dependencies` to
+no-op so the wave list must be written by hand. Also: `state.record-session` does not refresh `last_activity_desc`
+(no registered handler for that field) — it was corrected by direct edit.
 
 Note: `phase.complete` again advanced current_phase to 12 (its next-phase dir-scan skips the not-yet-created
 P11 ★ dir); corrected to 11 per the roadmap sequence. P12 (core-final) depends on P11.
