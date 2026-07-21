@@ -122,3 +122,48 @@ class PortfolioValidationError(ValidationError):
 class ReconciliationError(ITraderError):
     """A venue resting-order payload is missing/uncoercible where reconciliation needs an id (CF-7/SAFE-05)."""
     pass
+
+
+class DuplicateVenueAccountError(PortfolioError):
+    """Two portfolios name the SAME ``(venue_name, account_id)`` account (D-14/D-15, MPORT-02).
+
+    The composition-time half of a deliberate two-layer defense. The database carries a
+    PLAIN ``UniqueConstraint('venue_name', 'account_id')`` on ``portfolios`` (plan 11-01),
+    which also binds out-of-band writers; this application check runs at boot over the
+    UNION of persisted rows and composition-supplied spec portfolios, and its real job is
+    the SPEC half — a duplicate the database has never seen and therefore cannot reject.
+    Raising here also turns what would otherwise surface as a raw integrity error into a
+    message an operator can act on.
+
+    D-15: the correct response is REFUSE TO START, before any account is minted. There is
+    no safe way to choose which of the colliding portfolios is the legitimate one, and
+    conflated buying power across two portfolios is a money-losing wrong answer the venue
+    cannot split back out afterwards. This is deliberately NOT the per-instance quarantine
+    a bad strategy gets: skipping a strategy is harmless, whereas skipping a portfolio may
+    abandon open positions.
+
+    Carries the colliding pair and both portfolio labels as structured fields, and builds
+    its message in ``__init__`` (the project's exception convention). The message names the
+    consequence and the remediation, matching the loud-rejection discipline of the
+    single-portfolio guard in ``reconciliation_coordinator``.
+    """
+
+    def __init__(
+        self,
+        venue_name: str,
+        account_id: str,
+        first_portfolio: str,
+        second_portfolio: str,
+    ):
+        self.venue_name = venue_name
+        self.account_id = account_id
+        self.first_portfolio = first_portfolio
+        self.second_portfolio = second_portfolio
+        super().__init__(
+            f"Portfolios {first_portfolio!r} and {second_portfolio!r} both name venue "
+            f"account ({venue_name!r}, {account_id!r}). Refusing to start (D-15): two "
+            f"portfolios sharing one venue account would conflate their buying power and "
+            f"positions into a single balance the venue cannot split back out, and there "
+            f"is no safe way to decide which portfolio the account belongs to. Give each "
+            f"portfolio its own account_id on this venue, or remove one of them."
+        )
