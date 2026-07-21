@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: Live System Refactor & Live-Readiness Hardening
 current_phase: 11
-current_phase_name: Multi-Portfolio-Live
-status: planning
+current_phase_name: multi-portfolio-live
+status: executing
 stopped_at: Phase 11 planned — 11 plans in 7 waves, ready to execute
-last_updated: "2026-07-21T10:35:50.000Z"
+last_updated: "2026-07-21T10:54:26.427Z"
 last_activity: 2026-07-21
-last_activity_desc: "Phase 11 ★ planned (d683078d) — 11 plans in 7 waves, matching D-28's locked seven-wave decomposition. Research verified 56/60 CONTEXT citations exact (1 correction: `clOrdId` spans three files, not two) and surfaced three findings the design did not have: F-3 (the D-25 two-paper-account test structurally CANNOT prove MPORT-07 — both paper accounts resolve to one exchange object by construction, so MPORT-07 got its own fake-multi-account-plugin gate in 11-06), F-4 (bare-name `exchanges` lookups are 35 sites across 22 files, not the 1 CONTEXT named — including three backtest-shared hardcoded `'simulated'` sites, an oracle risk), F-5 (F-1's `portfolio_id` fix and D-06's `account_id` are one signature edit — merged into 11-05 and pulled into wave 1 because `account_for` reads `portfolio.account_id`). Gates: 7/7 MPORT covered, 30/30 decisions covered, 14/14 probe edges authored. Highest residual risk stays D-09's config migration (11-03) — a lost blob yields a GREEN suite and silently default-config portfolios, so the gate asserts the migrated value by equality and prohibits `is not None`. Next: `/gsd-execute-phase 11`."
+last_activity_desc: Phase 11 execution started
 progress:
   total_phases: 11
   completed_phases: 10
-  total_plans: 54
+  total_plans: 43
   completed_plans: 43
   percent: 91
 ---
@@ -26,17 +26,17 @@ See: .planning/PROJECT.md (Current Milestone: v1.8 — Live System Refactor & Li
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct,
 deterministic, cross-validated numbers (oracle **134 / `46189.87730727451`**; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 shipped a live operating mode (paper-first on OKX) without disturbing that oracle.
-**Current focus:** Phase 11 ★ — Multi-Portfolio-Live (10.1 complete)
+**Current focus:** Phase 11 — multi-portfolio-live
 thin ~200-line facade over focused, venue-parametrized, FastAPI-ready collaborators — **without
 disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI itself is out of scope
 (LR-01). Full scope: core refactor (P1–P8 + P12) + the three ★ feature-adds (P9–P11).
 
 ## Current Position
 
-Phase: 11 ★ — Multi-Portfolio-Live
-Plan: 0/11 complete (7 waves)
-Status: Ready to execute
-Last activity: 2026-07-21 — Phase 11 planning complete (d683078d). 11 plans in 7 waves, landing 1:1 on D-28's
+Phase: 11 (multi-portfolio-live) — EXECUTING
+Plan: 1 of 11
+Status: Executing Phase 11
+Last activity: 2026-07-21 — Phase 11 execution started
 locked seven-wave decomposition. Plan-checker: VERIFICATION PASSED, zero blockers, zero warnings. Gates green —
 7/7 MPORT requirements covered, 30/30 CONTEXT decisions cited by ID in must_haves, 14/14 spec-less probe edges
 authored (8 covered truths + 3 flat-scalar backstop markers + 3 flagged unclassified assumptions). Preceded by
@@ -83,11 +83,13 @@ Note (P11 planning, CONFIRMED + two new failure modes): every prediction above h
 `found:false`, `phase_req_ids:null` (MPORT-01..07 injected by hand into all three agent prompts),
 `roadmap.annotate-dependencies` `updated:false` (wave list written by hand). Two more starred-header casualties
 found this session, both silent:
+
 1. **The BLOCKING decision-coverage gate could not parse 7 of the 30 decision bullets** (D-02/04/11/17/18/24/27),
    reporting `could-not-parse, total: 23`. Causes: a line-wrapped `):**` header (D-02/11/17), a second colon in
    the header with no em-dash (D-04/18/27), and a bare `*` inside `` `state.*` `` (D-24). The parser accepts
    `- **D-NN <no colon, no asterisk>:**`, or one colon then `**`, or an em-dash form with the closing `**` on the
    SAME line. Fixed by reformatting headers only (`dc47ff08`); all 30 now parse and the gate passes 30/30.
+
 2. **`state.planned-phase` no-opped (`updated: []`).** It is template-aware by design — it only overwrites
    KNOWN_TEMPLATE_DEFAULTS, so the executor-authored `Status:`/`Last activity:` in `## Current Position` were
    preserved and nothing moved. STATE.md was updated by hand to what the handler would have written.

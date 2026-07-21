@@ -504,9 +504,9 @@ the wave that touches them.*
 
 **Wave 1** *(no dependencies — D-28 W1 schema, W5 attribution, and the identity plumbing W3 needs)*
 
-- [ ] 11-01-PLAN.md — `venue_accounts` + `portfolios` definition tables and stores; composite natural PK, plain unique constraint, composite FK; B2 fold-in (Uuid + CASCADE FK) (MPORT-02)
-- [ ] 11-02-PLAN.md — attribution: engine identifiers renamed off the venue's wire spelling, extraction consolidated behind one venue-vocabulary helper, strippable `assert` converted to a real raise (MPORT-04)
-- [ ] 11-05-PLAN.md — one signature change: supplyable `portfolio_id` (F-1), `account_id`, `venue_name`-derived exchange; `account_for` on the read-model; `PortfolioSpec.account_id` (MPORT-05)
+- [x] 11-01-PLAN.md — `venue_accounts` + `portfolios` definition tables and stores; composite natural PK, plain unique constraint, composite FK; B2 fold-in (Uuid + CASCADE FK) (MPORT-02)
+- [x] 11-02-PLAN.md — attribution: engine identifiers renamed off the venue's wire spelling, extraction consolidated behind one venue-vocabulary helper, strippable `assert` converted to a real raise (MPORT-04)
+- [x] 11-05-PLAN.md — one signature change: supplyable `portfolio_id` (F-1), `account_id`, `venue_name`-derived exchange; `account_for` on the read-model; `PortfolioSpec.account_id` (MPORT-05)
 
 **Wave 2** *(blocked on 11-01 / 11-05)*
 
