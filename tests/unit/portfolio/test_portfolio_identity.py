@@ -25,7 +25,7 @@ from types import SimpleNamespace
 import pytest
 
 from itrader import idgen
-from itrader.core.exceptions import PortfolioNotFoundError
+from itrader.core.exceptions import PortfolioNotFoundError, PortfolioValidationError
 from itrader.core.ids import PortfolioId
 from itrader.core.portfolio_read_model import PortfolioReadModel
 from itrader.portfolio_handler.portfolio import Portfolio
@@ -167,7 +167,7 @@ def test_duplicate_supplied_portfolio_id_raises_instead_of_clobbering(env):
     portfolio, its cash and its positions."""
     existing = PortfolioId(idgen.generate_portfolio_id())
     env.handler.add_portfolio(name=_NAME, exchange=_EXCHANGE, cash=_CASH, portfolio_id=existing)
-    with pytest.raises(Exception):
+    with pytest.raises(PortfolioValidationError):
         env.handler.add_portfolio(
             name="second", exchange=_EXCHANGE, cash=_CASH, portfolio_id=existing
         )

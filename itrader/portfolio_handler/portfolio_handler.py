@@ -195,24 +195,49 @@ class PortfolioHandler:
         yield correlation_id
     
     # Main portfolio management methods (keeping same names for compatibility)
-    def add_portfolio(self, name: str, exchange: str, cash: float, portfolio_config: Optional[PortfolioConfig] = None) -> PortfolioId:
+    def add_portfolio(self, name: str, exchange: str, cash: float,
+                      portfolio_config: Optional[PortfolioConfig] = None,
+                      portfolio_id: Optional[PortfolioId] = None,
+                      account_id: Optional[str] = None,
+                      venue_name: Optional[str] = None) -> PortfolioId:
         """Create a new portfolio with enhanced capabilities.
 
         ACCT-04: the former owning-user first positional parameter was dropped —
         that mapping is an app-layer (FastAPI) concern, not a Portfolio concern,
-        and is not relocated onto the Account. The surviving signature is
-        ``(name, exchange, cash, portfolio_config=None)``.
+        and is not relocated onto the Account.
+
+        F-5 (11-05): ``portfolio_id`` / ``account_id`` / ``venue_name`` mirror the
+        ``Portfolio.__init__`` parameters one-for-one and are threaded straight
+        through. All three DEFAULT so the byte-exact backtest composition-root call
+        — ``add_portfolio(name=, exchange='csv', cash=)`` — stays untouched.
+
+        * ``portfolio_id`` — an EXISTING id to reattach to on rehydrate (F-1).
+          Supplying an id already registered here RAISES rather than overwriting:
+          a silent overwrite would destroy the first portfolio's cash and positions.
+        * ``account_id`` — the venue account this portfolio's orders reach (D-06).
+        * ``venue_name`` — the source of truth for the portfolio's exchange (D-07);
+          when supplied it wins and ``exchange`` is derived from it.
         """
-        
+
         with self._operation_context("add_portfolio") as correlation_id:
             try:
                 # Global validations
                 if cash <= 0:
                     raise PortfolioValidationError(0, "initial_cash", "Initial cash must be positive")
-                
+
                 if not name.strip():
                     raise PortfolioValidationError(0, "name", "Portfolio name cannot be empty")
-                
+
+                # F-1 (11-05): now that ids are supplyable, a duplicate must fail
+                # loud. The store below is an unconditional dict assignment, so
+                # without this guard a re-add would SILENTLY destroy the first
+                # portfolio along with its cash and open positions.
+                if portfolio_id is not None and portfolio_id in self._portfolios:
+                    raise PortfolioValidationError(
+                        portfolio_id, "portfolio_id",
+                        "A portfolio with this id is already registered"
+                    )
+
                 # Check global limits
                 if len(self._portfolios) >= self.max_portfolios:
                     raise PortfolioConfigurationError("max_portfolios", self.max_portfolios, "maximum portfolios limit reached")
@@ -229,6 +254,9 @@ class PortfolioHandler:
                     config=portfolio_config,
                     environment=self._environment,
                     sql_engine=self._sql_engine,
+                    portfolio_id=portfolio_id,
+                    account_id=account_id,
+                    venue_name=venue_name,
                 )
                 
                 # Store portfolio
