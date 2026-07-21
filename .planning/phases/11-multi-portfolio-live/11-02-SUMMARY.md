@@ -185,5 +185,12 @@ None.
 | `687a7be6` | refactor | GREEN — rename + seam documentation (D-16/LR-19) |
 | `c3ea8b92` | test | RED — D-18 typed-guard test |
 | `2e6b4158` | fix | GREEN — assert → `ValidationError` raise (D-18) |
+
+## Self-Check: PASSED
+
+All 5 modified files verified present on disk; all 4 task commits verified in `git log`; working
+tree clean after the SUMMARY commit. No shared orchestrator artifacts (STATE.md, ROADMAP.md) were
+modified — confirmed by `git diff --stat` against the base, which lists only the 5 code/test files
+plus this summary.
 </content>
 </invoke>
