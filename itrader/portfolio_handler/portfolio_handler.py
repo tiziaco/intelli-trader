@@ -395,6 +395,24 @@ class PortfolioHandler:
         exchange: str = self.get_portfolio(portfolio_id).exchange
         return exchange
 
+    def account_for(self, portfolio_id: PortfolioId) -> Optional[str]:
+        """Return the venue account the portfolio's orders reach (D-27, plan 11-05).
+
+        The direct mirror of ``exchange_for``: an order's target is the pair
+        ``(venue, account_id)`` and this reads the account half. Routed through
+        ``get_portfolio`` so an unknown id raises ``PortfolioNotFoundError``,
+        identically to ``exchange_for``.
+
+        ``Optional[str]`` because ``Portfolio.account_id`` is optional — the
+        default keeps the byte-exact backtest call site untouched; plan 11-08's
+        composition-time invariant is what requires a named account in live.
+
+        ExecutionHandler reads this through the injected ``PortfolioReadModel``
+        Protocol (11-06) and never imports this class.
+        """
+        account_id: Optional[str] = self.get_portfolio(portfolio_id).account_id
+        return account_id
+
     def open_position_count(self, portfolio_id: PortfolioId) -> int:
         """Return the number of open positions (position-limit check, OQ1)."""
         count: int = self.get_portfolio(portfolio_id).n_open_positions
