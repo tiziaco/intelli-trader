@@ -510,9 +510,9 @@ the wave that touches them.*
 
 **Wave 2** *(blocked on 11-01 / 11-05)*
 
-- [ ] 11-03-PLAN.md — two chained Alembic revisions off `p10_strategy_portfolio_subs`; refuse-if-non-empty guard, `batch_alter_table`, the D-09 config data move + a value-asserting migration test; **plus the B2 fold-in ORM half moved here from 11-01** (MPORT-02)
+- [x] 11-03-PLAN.md — two chained Alembic revisions off `p10_strategy_portfolio_subs`; refuse-if-non-empty guard, `batch_alter_table`, the D-09 config data move + a value-asserting migration test; **plus the B2 fold-in ORM half moved here from 11-01** (MPORT-02)
 - [ ] 11-04-PLAN.md — `CredentialResolver` Protocol + env resolver over a `secret_ref` pointer; `credential_model` on the plugin Protocol; trust-on-first-use venue-UID guard (MPORT-06)
-- [ ] 11-06-PLAN.md — **MPORT-07**: `ExecutionHandler.exchanges` keyed on `(venue, account_id)`; `on_order` resolves the account from the order's portfolio; 10 source + 25 test sites; fake-multi-account routing gate
+- [x] 11-06-PLAN.md — **MPORT-07**: `ExecutionHandler.exchanges` keyed on `(venue, account_id)`; `on_order` resolves the account from the order's portfolio; 10 source + 25 test sites; fake-multi-account routing gate
 
 **Wave 3** *(blocked on 11-04, 11-06 — D-28 W3 accounts)*
 
