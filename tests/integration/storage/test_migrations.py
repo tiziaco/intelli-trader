@@ -66,7 +66,7 @@ _NEW_TABLES = (
 # The single head of the relocated chain. Updated by every migration-owner plan that chains
 # a new revision on top (P9: ``system_stats``; P10/10-02: ``p10_strategy_portfolio_subs``;
 # P11/11-03: ``p11_venue_accounts_portfolios`` then ``p11_b2_uuid_fk_config_move``).
-_HEAD = "p11_venue_accounts_portfolios"
+_HEAD = "p11_b2_uuid_fk_config_move"
 
 # The pre-P10 revision — what the P10 assertions downgrade BACK to. Named rather than
 # reached by a relative ``-1``: every revision chained on top silently changes what ``-1``
