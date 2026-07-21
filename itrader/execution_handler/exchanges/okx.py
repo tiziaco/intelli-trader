@@ -37,6 +37,7 @@ from typing import Any, Callable, Dict, List, Optional
 from itrader.connectors.base import LiveConnector
 from itrader.core.enums import ErrorSeverity, OrderCommand, OrderType, Side
 from itrader.core.enums.execution import ExchangeConnectionStatus, ExecutionErrorCode
+from itrader.core.exceptions import ValidationError
 from itrader.core.instrument import Instrument
 from itrader.core.money import precision_to_scale, to_money
 from itrader.events_handler.events import ErrorEvent, FillEvent, OrderAckEvent, OrderEvent
@@ -213,6 +214,11 @@ class OkxExchange(AbstractExchange):
 		maps straight back to the pending correlation registered before the submit
 		RPC. ``order_id`` is a ``uuid.UUID`` on every live path (``.bytes``); the
 		``int`` fallback keeps the encoder total for the int-id test doubles.
+
+		Raises ``ValidationError`` (D-18) when the rendering would violate the
+		venue's charset/length contract — a REAL raise, not a strippable
+		``assert``, so the guard still holds under ``python -O``. The rendering
+		itself is unchanged: every valid input produces a byte-identical result.
 		"""
 		oid = event.order_id
 		n = (int.from_bytes(oid.bytes, "big")
@@ -228,8 +234,21 @@ class OkxExchange(AbstractExchange):
 		clordid = "it" + token
 		# WR-04 rendering contract: alphanumeric + within OKX's 32-char clOrdId
 		# limit. A full 128-bit base62 token is <=22 chars, so "it" + token <=24.
-		assert clordid.isalnum() and len(clordid) <= 32, (
-			f"clOrdId {clordid!r} violates the OKX charset/length contract")
+		# D-18 (T-11-06): a REAL raise, never a bare ``assert`` — ``python -O`` strips
+		# asserts, which would leave the ONLY guard on a venue-bound identifier
+		# silently absent in an optimized production run. Mirrors the loud-rejection
+		# precedent in reconciliation_coordinator.py.
+		if not clordid.isalnum() or len(clordid) > 32:
+			raise ValidationError(
+				field="clOrdId", value=clordid,
+				message=(
+					"rendered client order id violates the OKX clOrdId contract "
+					"(must be ASCII alphanumeric and at most 32 characters — the "
+					f"venue's own limit; got {len(clordid)} characters, "
+					f"alphanumeric={clordid.isalnum()}). This identifier is bound "
+					"for a live venue and is the only handle correlating a fill "
+					"back to an engine order, so it is REFUSED rather than "
+					"submitted or silently truncated."))
 		return clordid
 
 	@staticmethod
