@@ -500,7 +500,39 @@ the wave that touches them.*
   5. *(MPORT-07 — discovered 2026-07-21)* The **execution exchange** is keyed `(venue, account_id)` too: `ExecutionHandler.exchanges` keys on the pair and `on_order` resolves the account from `event.portfolio_id`, so one account's orders can never be submitted through another account's authenticated session. Without this, per-account credentials and accounts are all correct and orders still route to the wrong venue account.
   6. The backtest oracle stays byte-exact and `test_okx_inertness.py` stays green.
 
-**Plans**: TBD
+**Plans**: 11 plans in 7 waves *(wave list written by hand — the starred header makes `roadmap.annotate-dependencies` no-op)*
+
+**Wave 1** *(no dependencies — D-28 W1 schema, W5 attribution, and the identity plumbing W3 needs)*
+
+- [ ] 11-01-PLAN.md — `venue_accounts` + `portfolios` definition tables and stores; composite natural PK, plain unique constraint, composite FK; B2 fold-in (Uuid + CASCADE FK) (MPORT-02)
+- [ ] 11-02-PLAN.md — attribution: engine identifiers renamed off the venue's wire spelling, extraction consolidated behind one venue-vocabulary helper, strippable `assert` converted to a real raise (MPORT-04)
+- [ ] 11-05-PLAN.md — one signature change: supplyable `portfolio_id` (F-1), `account_id`, `venue_name`-derived exchange; `account_for` on the read-model; `PortfolioSpec.account_id` (MPORT-05)
+
+**Wave 2** *(blocked on 11-01 / 11-05)*
+
+- [ ] 11-03-PLAN.md — two chained Alembic revisions off `p10_strategy_portfolio_subs`; refuse-if-non-empty guard, `batch_alter_table`, the D-09 config data move + a value-asserting migration test (MPORT-02)
+- [ ] 11-04-PLAN.md — `CredentialResolver` Protocol + env resolver over a `secret_ref` pointer; `credential_model` on the plugin Protocol; trust-on-first-use venue-UID guard (MPORT-06)
+- [ ] 11-06-PLAN.md — **MPORT-07**: `ExecutionHandler.exchanges` keyed on `(venue, account_id)`; `on_order` resolves the account from the order's portfolio; 10 source + 25 test sites; fake-multi-account routing gate
+
+**Wave 3** *(blocked on 11-04, 11-06 — D-28 W3 accounts)*
+
+- [ ] 11-07-PLAN.md — `new_account()` Protocol method, required `account_id` on `VenueAccount`, per-account connector + exchange; delete the link function, its guard and the facade singleton; D-26 naming guard + deferral todos (MPORT-01, MPORT-06)
+
+**Wave 4** *(blocked on 11-03, 11-07 — D-28 W4 bootstrap)*
+
+- [ ] 11-08-PLAN.md — portfolio rehydrate with persisted ids; the layering call moves below it; the four-constraint comment rewritten; distinct-account invariant over the union, refuse-to-start (MPORT-02, MPORT-03)
+
+**Wave 5** *(blocked on 11-07, 11-08 — D-28 W6 reconcile, first half)*
+
+- [ ] 11-09-PLAN.md — coordinator drops its scalar account/connector and reads each portfolio's own; all-symbols baseline guard with per-instrument precision in the loop; evaluate-all (F-2) (MPORT-05)
+
+**Wave 6** *(blocked on 11-09 — D-28 W6 reconcile, second half)*
+
+- [ ] 11-10-PLAN.md — per-portfolio quarantine replacing the global halt; one-clause admission gate; operator-only CONTROL release; quarantined-portfolios read-model surface (MPORT-02, MPORT-05)
+
+**Wave 7** *(blocked on all — D-28 W7 tests)*
+
+- [ ] 11-11-PLAN.md — two-paper-account lifecycle: independent sizing, fill attribution with the negative asserted, restart with stable ids and config proven equal by value (MPORT-03, MPORT-04)
 
 ### Phase 12: Test Migration + Gates
 
