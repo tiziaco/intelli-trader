@@ -11,9 +11,19 @@ persisted override on restart FROM ITS OWN MODULE STORE — never centralized in
   ``portfolio.update_config`` (the fourth D-21 scope, NOT ``SystemStore``);
 
 plus the frozen-base guard (``rng_seed`` is NEVER persisted-overridden — RTCFG-04) and the
-D-25 storage mechanics: the zero-sentinel INSERT-if-absent arm (config saved before any
-account-state row) and the delete-then-insert CARRY-FORWARD clobber-safety (a subsequent
-``save_account_state`` never drops the persisted ``config_json``).
+D-25 storage mechanics: config persists to the portfolio's ``portfolios`` DEFINITION row
+(D-09) and a subsequent ``save_account_state`` — which rewrites the whole
+``portfolio_account_state`` row — cannot touch it, because the two blobs now live in
+different tables.
+
+**11-08 removed the legacy zero-sentinel arm.** ``save_config`` used to fall back to
+INSERT-ing a ``portfolio_account_state`` row with zero-sentinel accumulators when the
+portfolio had no definition row. That arm existed ONLY because nothing wrote the
+``portfolios`` table yet; 11-08's writer
+(``PortfolioHandler._persist_definition``) created that guarantee, so a missing
+definition row is now a wiring bug and ``save_config`` raises. These tests therefore
+provision a real definition row via ``seed_portfolio_definitions`` — the same test-side
+seam the strategy-subscription tests use — instead of exercising the deleted arm.
 
 Fully offline: the durable schema is provisioned via ``provision_schema`` on an in-memory
 SQLite ``SqlEngine`` (never ``create_all`` on the run path — WR-03/D-14). Package-less dir.
@@ -39,7 +49,7 @@ from itrader.storage import SqlEngine
 from itrader.storage.system_store import SystemStore
 from itrader.storage.venue_store import VenueStore
 from itrader.trading_system.live_trading_system import _layer_persisted_overrides
-from tests.support.schema import provision_schema
+from tests.support.schema import provision_schema, seed_portfolio_definitions
 
 _NOW = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)
 
@@ -98,6 +108,11 @@ def wiring():
     base_portfolio_store = SqlPortfolioStateStorage(engine, portfolio_id)
     portfolio_store = CachedSqlPortfolioStateStorage(base_portfolio_store)
     provision_schema(engine)
+    # 11-08: the D-09 config blob lives on the ``portfolios`` DEFINITION row, and the
+    # legacy zero-sentinel account-state arm that used to cover a missing one is gone.
+    # A portfolio with no definition row is now a wiring bug, so seed the row (with its
+    # ``venue_accounts`` FK parent) exactly as production's writer would have.
+    seed_portfolio_definitions(engine, [portfolio_id])
     return SimpleNamespace(
         engine=engine,
         order_store=order_store,
@@ -120,7 +135,8 @@ def test_restart_layering_reapplies_every_scope_from_its_own_store(wiring):
     # (order) persist an override via the ORDER store's OWN save_config (NOT SystemStore).
     wiring.order_store.save_config({"market_execution": "next_bar"}, _NOW)
     # (portfolio) persist an override via the Portfolio's OWN bound state_storage — BEFORE any
-    # account-state row exists (exercises the zero-sentinel INSERT-if-absent arm, D-25).
+    # account-state row exists. Post-11-08 this writes the ``portfolios`` DEFINITION row
+    # (D-09), which the fixture seeded; the account-state table is untouched.
     portfolio_override = {"limits": {"max_positions": 7}}
     wiring.portfolio_store.save_config(portfolio_override, _NOW)
 
@@ -162,13 +178,19 @@ def test_restart_layering_reapplies_every_scope_from_its_own_store(wiring):
 def test_portfolio_config_survives_a_subsequent_fill_carry_forward(wiring):
     """save_config (no account row) -> save_account_state -> load_config STILL returns config.
 
-    Proves the D-25 delete-then-insert carry-forward clobber-safety: a fill's
-    ``save_account_state`` rewrites the whole ``portfolio_account_state`` row but carries the
-    persisted ``config_json`` forward, so the portfolio config is not dropped before restart.
-    Also proves the zero-sentinel INSERT-if-absent arm (config saved before any fill).
+    The D-09 separation is what makes this hold post-11-08: the config blob lives on the
+    ``portfolios`` DEFINITION row while ``save_account_state`` rewrites the
+    ``portfolio_account_state`` STATE row, so a fill structurally cannot clobber the
+    persisted config. (Before the rehome both shared one row and the property depended on
+    an explicit carry-forward in the delete-then-insert.)
+
+    Also pins that config can be written BEFORE any account-state row exists — the
+    restart-layering path only READS ``load_config``, so a portfolio's first config write
+    is construction-time or a runtime ``portfolio:{id}`` ConfigUpdateEvent, and both can
+    precede its first fill.
     """
     store = wiring.portfolio_store
-    # No account-state row yet — the zero-sentinel INSERT-if-absent arm.
+    # A seeded definition row with a NULL config_json reads back as "no override".
     assert store.load_config() is None
     override = {"risk_management": {"max_concentration_pct": 25.0}}
     store.save_config(override, _NOW)
