@@ -73,8 +73,7 @@ multi-provider feed-router deferral) and per-`account_id` pre-trade throttle key
   (diverges from the shipped memo key and pushes namespacing onto operator convention like
   `"okx_main"` — convention instead of structure).
 
-- **D-02 (Credentials: a `CredentialResolver` Protocol + the secret-ref pattern — the DB stores a
-  POINTER, never a secret):** `itrader` defines the Protocol and ships an **env-backed resolver**;
+- **D-02 (Credentials: a `CredentialResolver` Protocol + the secret-ref pattern — the DB stores a POINTER, never a secret):** `itrader` defines the Protocol and ships an **env-backed resolver**;
   the durable record holds a `secret_ref` string pointing at wherever the secret actually lives. The
   web app later registers a Vault/AWS/GCP-backed resolver **in its own repo with its own
   dependency** — `itrader` never imports a cloud SDK. **The owner's stated target was credentials
@@ -108,7 +107,7 @@ multi-provider feed-router deferral) and per-`account_id` pre-trade throttle key
   means editing the web app too — reintroducing the per-venue branching P5 spent a whole phase
   deleting).
 
-- **D-04 (Venue-UID assertion: OBSERVE-ONLY, trust-on-first-use):** After `connect()`, capture the
+- **D-04 (Venue-UID assertion — OBSERVE-ONLY, trust-on-first-use):** After `connect()`, capture the
   venue's own account UID and compare it to the recorded value for that `(venue, account_id)`. A
   mismatch fires a **CRITICAL alert** via the existing `alert_sink` (P10 D-19's channel) and is
   surfaced in the read-model — it does **NOT** halt. Expected value is **trust-on-first-use**: the
@@ -200,8 +199,7 @@ multi-provider feed-router deferral) and per-`account_id` pre-trade throttle key
   every option considered. The surface choice governs **where code lives**, NOT whether wrong-wiring
   is possible. The actual guard is D-11.
 
-- **D-11 (`account_id` becomes a REQUIRED keyword ctor arg on `VenueAccount` — THE structural
-  guard):** `VenueAccount(connector, *, account_id: str, ...)`, no default. Today **every**
+- **D-11 (`account_id` becomes a REQUIRED keyword ctor arg on `VenueAccount` — THE structural guard):** `VenueAccount(connector, *, account_id: str, ...)`, no default. Today **every**
   parameter has a default or is optional (`account/venue.py:75-82`), which is exactly why returning
   an unscoped shared singleton is expressible — and why `okx_plugin.py:101-110`'s
   `account_factory(*args, **kwargs)` can absorb a `portfolio` argument and hand back the shared
@@ -266,8 +264,7 @@ multi-provider feed-router deferral) and per-`account_id` pre-trade throttle key
   (`_extract_client_order_id`, `venue_correlation.py:81-94`, is already most of this) — makes adding
   a second venue with a different field name cheaper.
 
-- **D-17 (Portfolio attribution rides the index + the durable `orders` row — do NOT change the id
-  format):** MPORT-04's "every submitted order is tagged with its portfolio" is **already satisfied**:
+- **D-17 (Portfolio attribution rides the index + the durable `orders` row — do NOT change the id format):** MPORT-04's "every submitted order is tagged with its portfolio" is **already satisfied**:
   `SignalEvent`, `OrderEvent`, `OrderAckEvent`, `FillEvent` and `Order` all carry a typed
   `portfolio_id` today (`events/order.py:62,165`, `events/fill.py:64`, `events/signal.py:88`,
   `order_handler/order.py:57`). Attribution is derivable **three** independent ways without touching
@@ -281,7 +278,7 @@ multi-provider feed-router deferral) and per-`account_id` pre-trade throttle key
   32-char budget — currently ≤24 — needs a new encode/decode contract plus tests, and buys
   attribution three existing mechanisms already provide).
 
-- **D-18 (Convert the bare `assert` at `okx.py:230` to a real raise):** `assert clordid.isalnum() and
+- **D-18 (Convert the bare `assert` at `okx.py:230` to a real raise — it vanishes under `python -O`):** `assert clordid.isalnum() and
   len(clordid) <= 32` is **stripped entirely under `python -O`**, so the only guard on a venue-bound
   identifier silently disappears in an optimized run. Same reasoning as the deliberate
   `RuntimeError`-over-`assert` choice at `reconciliation_coordinator.py:164`. Small, and P11 is
@@ -335,7 +332,7 @@ multi-provider feed-router deferral) and per-`account_id` pre-trade throttle key
   residual that quietly disappears is exactly the thing you want a human to have seen) and a
   both/threshold hybrid (two paths and a tuning knob, in a phase already carrying a lot).
 
-- **D-24 (Quarantine state surfaces in the RTCFG-06 `state.*` read-model):** A quarantined-portfolios
+- **D-24 (Quarantine state surfaces in the RTCFG-06 `state` read-model namespace):** A quarantined-portfolios
   list with reason and timestamp, reusing the same P9 surface P10 D-19 uses for its strategy
   quarantine list. One consistent place an operator (and later the web app) asks "what is not trading
   and why" — and D-23's release command needs something to tell the operator what to release. The
@@ -376,7 +373,7 @@ multi-provider feed-router deferral) and per-`account_id` pre-trade throttle key
 
 ### Discovered scope — MPORT-07 (Area 11)
 
-- **D-27 (MPORT-07, discovered: the EXCHANGE becomes per-`(venue, account_id)`):** See `<domain>` for
+- **D-27 (MPORT-07, discovered — the EXCHANGE becomes per-`(venue, account_id)`):** See `<domain>` for
   the full finding and why it is architecturally correct rather than merely convenient.
   `ExecutionHandler.exchanges` keys on the **pair**; `on_order` (`execution_handler.py:123-131`)
   resolves the account from `event.portfolio_id`; `VenueBundle` carries per-account exchanges. Each
