@@ -524,7 +524,7 @@ the wave that touches them.*
 
 **Wave 5** *(blocked on 11-07, 11-08 — D-28 W6 reconcile, first half)*
 
-- [ ] 11-09-PLAN.md — coordinator drops its scalar account/connector and reads each portfolio's own; all-symbols baseline guard with per-instrument precision in the loop; evaluate-all (F-2) (MPORT-05)
+- [x] 11-09-PLAN.md — coordinator drops its scalar account/connector and reads each portfolio's own; all-symbols baseline guard with per-instrument precision in the loop; evaluate-all (F-2) (MPORT-05)
 
 **Wave 6** *(blocked on 11-07, 11-09 — the deletions, sequenced last)*
 
