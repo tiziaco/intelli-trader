@@ -58,6 +58,7 @@ from itrader.trading_system.venue_spec import build_venue_spec
 from itrader.universe.membership import StrategyDerivedSelectionModel
 from itrader.universe.universe import Universe
 from itrader.universe.universe_handler import UniverseHandler, UniverseHandlerConfig
+from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
 from tests.support.replay_harness import TestDataPlugin
 from tests.support.schema import provision_schema
 
@@ -184,7 +185,7 @@ class _LifecycleSystem:
         if system._system_db_backend is not None:
             provision_schema(system._system_db_backend)
 
-        simulated = system.execution_handler.exchanges["simulated"]
+        simulated = system.execution_handler.exchanges[("simulated", DEFAULT_ACCOUNT_ID)]
         # Size the feed ring to the strategy warmup so the F-1 warmability gate admits SMA(3)
         # (an unsized ring holds only the newest-bar floor and would reject it).
         system.feed.register_raw_bar_consumer(

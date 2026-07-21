@@ -60,7 +60,11 @@ def test_construct_non_okx_venue_needs_no_okx_credentials(monkeypatch) -> None:
     assert system._okx_data_provider is None
     assert system._venue_account is None
     # The OKX execution arm is not registered for a non-OKX venue.
-    assert "okx" not in system.execution_handler.exchanges
+    # D-27: the registry is pair-keyed, so assert over the VENUE HALF. Checking
+    # only ("okx", DEFAULT_ACCOUNT_ID) would silently weaken this test — an OKX
+    # arm registered under a NAMED account would satisfy it.
+    assert not any(venue == "okx"
+                   for venue, _account_id in system.execution_handler.exchanges)
 
 
 def test_construct_does_not_connect_in_constructor(monkeypatch) -> None:

@@ -87,6 +87,7 @@ from itrader.core.sizing import FixedQuantity, SignalIntent
 from itrader.strategy_handler.base import Strategy
 from itrader.trading_system.backtest_trading_system import BacktestTradingSystem
 from itrader.universe import Universe
+from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
 
 HERE = pathlib.Path(__file__).resolve().parent
 
@@ -178,7 +179,7 @@ def _build_scalpc_system():
 
     system.runner._initialise_backtest_session()
     universe = Universe(members=[_TICKER], instrument_map={_TICKER: _scalpc_instrument()})
-    system.execution_handler.exchanges["simulated"].set_universe(universe)
+    system.execution_handler.exchanges[("simulated", DEFAULT_ACCOUNT_ID)].set_universe(universe)
     system.order_handler.set_universe(universe)
     system.portfolio_handler.set_universe(universe)
 
