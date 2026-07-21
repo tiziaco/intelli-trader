@@ -44,6 +44,11 @@ from .strategy import (
     StrategyValidationError
 )
 
+# Credential exceptions
+from .credential import (
+    CredentialResolutionError
+)
+
 # Data exceptions
 from .data import (
     DataError,
@@ -87,6 +92,9 @@ __all__ = [
     'UnknownParamError',
     'MissingParamError',
     'StrategyValidationError',
+
+    # Credential exceptions
+    'CredentialResolutionError',
 
     # Data exceptions
     'DataError',
