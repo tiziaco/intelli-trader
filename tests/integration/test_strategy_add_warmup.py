@@ -45,7 +45,7 @@ from itrader.universe.membership import StrategyDerivedSelectionModel
 from itrader.universe.universe import Universe
 from itrader.universe.universe_handler import UniverseHandler, UniverseHandlerConfig
 from tests.support.replay_harness import build_paper_replay_system
-from tests.support.schema import provision_schema
+from tests.support.schema import provision_schema, seed_portfolio_definitions
 
 pytestmark = pytest.mark.integration
 
@@ -124,6 +124,11 @@ class _AddHarness:
         self.universe = Universe(members=[], instrument_map={_COLD: instrument})
         self.portfolio_id = system.portfolio_handler.add_portfolio(
             name="add_pf", exchange="simulated", cash=1_000_000)
+        # B2 (11-03): the subscription child FKs onto ``portfolios`` with ON DELETE CASCADE.
+        # ``add_portfolio`` builds the in-memory runtime portfolio; the durable DEFINITION
+        # row is a separate concern that nothing writes until 11-08 wires
+        # PortfolioDefinitionStore, so the test seeds it explicitly.
+        seed_portfolio_definitions(self.store.backend, [self.portfolio_id])
 
         sh: StrategiesHandler = system.strategies_handler
         sh.strategy_catalog = _catalog()

@@ -575,8 +575,11 @@ class StrategyLifecycleManager:
 		# Persist parent-first (the child FK requires the registry row to exist first).
 		self._persist_strategy(strategy, event)
 		if portfolio_id is not None and self.registry_store is not None:
+			# B2 (11-03): the column is Uuid now — pass the PortfolioId handle straight
+			# through. A str() here would bind a str to a Uuid column and raise
+			# StatementError at RUNTIME while mypy stayed green.
 			self.registry_store.add_portfolio_subscription(
-				strategy_name=strategy.name, portfolio_id=str(portfolio_id))
+				strategy_name=strategy.name, portfolio_id=portfolio_id)
 		# The poll IS the warmup wiring (D-10) — see the method docstring. Queue-only.
 		self.global_queue.put(UniversePollEvent(time=event.time))
 
@@ -1179,10 +1182,10 @@ class StrategyLifecycleManager:
 		mutated = False
 		# A deferred (op, portfolio_id) child-table write, applied AFTER the parent
 		# upsert below — the child row carries an FK to the registry row (see there).
-		# The id is stringified for the store: the column is String and `to_dict`
-		# writes `str(pid)`, so this is the same normalization the rest of the system
-		# round-trips through (rehydrate parses it straight back).
-		child_write: "Optional[tuple[str, str]]" = None
+		# B2 (11-03): the id travels as the PortfolioId HANDLE, not `str(pid)` — the
+		# column is Uuid now, so the DB enforces well-formedness and a stringified id
+		# would raise StatementError at runtime.
+		child_write: "Optional[tuple[str, PortfolioId]]" = None
 		if event.verb == "enable":
 			if not strategy.is_active:
 				strategy.activate_strategy()
@@ -1224,7 +1227,7 @@ class StrategyLifecycleManager:
 				# base.py's sanctioned idempotent mutator (WR-01) — a duplicate would
 				# fan ONE decision out to the same portfolio twice.
 				strategy.subscribe_portfolio(portfolio_id)
-				child_write = ("add", str(portfolio_id))
+				child_write = ("add", portfolio_id)
 				mutated = True
 		elif event.verb == "unsubscribe_portfolio":
 			portfolio_id = self._portfolio_id_from(event)
@@ -1236,7 +1239,7 @@ class StrategyLifecycleManager:
 				return
 			if portfolio_id in strategy.subscribed_portfolios:
 				strategy.unsubscribe_portfolio(portfolio_id)
-				child_write = ("remove", str(portfolio_id))
+				child_write = ("remove", portfolio_id)
 				# D-09: removing the LAST portfolio leaves an empty list and zero child
 				# rows — a legal state (the strategy computes but fans out to nobody).
 				# Deliberately NOT guarded against.

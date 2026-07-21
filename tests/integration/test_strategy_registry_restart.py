@@ -38,7 +38,7 @@ from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrateg
 from itrader.trading_system.live_trading_system import build_live_system
 from itrader.trading_system.venue_spec import build_venue_spec
 from tests.support.replay_harness import TestDataPlugin
-from tests.support.schema import provision_schema
+from tests.support.schema import provision_schema, seed_portfolio_definitions
 from tests.support.strategy_catalog import seeded_registry_rows, test_catalog
 
 _AT = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
@@ -65,6 +65,11 @@ def _seed(store: StrategyRegistryStore, strategies: Any) -> None:
         store.upsert(
             row["strategy_name"], row["strategy_type"], row["config_json"], row["enabled"], _AT
         )
+    # B2 (11-03): the subscription child FKs onto ``portfolios`` with ON DELETE CASCADE, so
+    # every id being subscribed needs a real definition row first.
+    seed_portfolio_definitions(
+        store.backend, [row["portfolio_id"] for row in subscription_rows]
+    )
     for row in subscription_rows:
         store.add_portfolio_subscription(row["strategy_name"], row["portfolio_id"])
 

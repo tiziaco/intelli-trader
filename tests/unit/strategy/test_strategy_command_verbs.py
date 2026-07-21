@@ -47,7 +47,7 @@ from itrader.strategy_handler.storage import InMemorySignalStore
 from itrader.strategy_handler.strategies.eth_btc_pair_strategy import EthBtcPairStrategy
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
-from tests.support.schema import provision_schema
+from tests.support.schema import provision_schema, seed_portfolio_definitions
 from tests.support.strategy_catalog import test_catalog
 
 pytestmark = pytest.mark.unit
@@ -57,10 +57,11 @@ _TICKER = "BTCUSD"
 _OTHER = "ETHUSD"
 _NAME = "verb_probe"
 _WARMUP = 3
-# Portfolio ids arrive as STRINGS in the untrusted payload (and are stored as String),
-# but `subscribed_portfolios` is typed `list[PortfolioId]` and on_bar puts each entry
-# straight onto SignalEvent.portfolio_id. So the dispatch must PARSE them; a bare str
-# would fan signals at a portfolio matching nothing.
+# Portfolio ids arrive as STRINGS in the untrusted payload, but `subscribed_portfolios` is
+# typed `list[PortfolioId]` and on_bar puts each entry straight onto
+# SignalEvent.portfolio_id. So the dispatch must PARSE them; a bare str would fan signals at
+# a portfolio matching nothing. B2 (11-03): the COLUMN is a Uuid now — not a String — so the
+# store also hands these back as `uuid.UUID`, which is why the assertions wrap in UUID().
 _P1 = "550e8400-e29b-41d4-a716-446655440000"
 _P2 = "550e8400-e29b-41d4-a716-446655440001"
 
@@ -99,6 +100,10 @@ def store() -> Iterator[StrategyRegistryStore]:
     """
     registry = StrategyRegistryStore(SqlEngine(SqlSettings.default()))
     provision_schema(registry.backend)
+    # B2 (11-03): the subscription child now FKs onto ``portfolios`` with ON DELETE CASCADE,
+    # so the ids these verbs subscribe to must exist as real definition rows or the write
+    # raises IntegrityError. The payload carries them as strings; the column stores handles.
+    seed_portfolio_definitions(registry.backend, [UUID(_P1), UUID(_P2)])
     try:
         yield registry
     finally:
@@ -271,7 +276,7 @@ def test_subscribe_portfolio_applies_live_and_writes_the_child_row(
         strategy_name=_NAME, portfolio_id=_P1, time=_T))
 
     assert UUID(_P1) in strategy.subscribed_portfolios
-    assert store.portfolio_subscriptions(_NAME) == [_P1]
+    assert store.portfolio_subscriptions(_NAME) == [UUID(_P1)]
 
 
 def test_subscribed_portfolio_id_is_a_portfolio_id_not_a_str(
@@ -340,7 +345,7 @@ def test_subscribe_portfolio_twice_is_idempotent(
     handler.on_strategy_command(event)
 
     assert strategy.subscribed_portfolios.count(UUID(_P1)) == 1
-    assert store.portfolio_subscriptions(_NAME) == [_P1]
+    assert store.portfolio_subscriptions(_NAME) == [UUID(_P1)]
 
 
 def test_unsubscribe_portfolio_applies_live_and_deletes_the_child_row(
@@ -357,7 +362,7 @@ def test_unsubscribe_portfolio_applies_live_and_deletes_the_child_row(
         strategy_name=_NAME, portfolio_id=_P1, time=_T))
 
     assert UUID(_P1) not in strategy.subscribed_portfolios
-    assert store.portfolio_subscriptions(_NAME) == [_P2]
+    assert store.portfolio_subscriptions(_NAME) == [UUID(_P2)]
 
 
 def test_unsubscribe_of_an_unsubscribed_id_is_an_idempotent_no_op(
@@ -1122,7 +1127,7 @@ def test_add_with_a_valid_portfolio_id_subscribes_and_is_silent(
     assert added is not None
     assert added.subscribed_portfolios == [UUID(_P1)]
     assert store.get("subbed") is not None
-    assert store.portfolio_subscriptions("subbed") == [_P1]
+    assert store.portfolio_subscriptions("subbed") == [UUID(_P1)]
     assert spy.warnings == []
     assert spy.errors == []
 
@@ -1257,7 +1262,7 @@ def test_remove_completes_and_deletes_child_then_parent_once_flat(
     _drain(handler.global_queue)
 
     handler.on_strategy_command(StrategyCommandEvent.remove(strategy_name=_NAME, time=_T))
-    assert store.portfolio_subscriptions(_NAME) == [_P1]  # child row still present, pending
+    assert store.portfolio_subscriptions(_NAME) == [UUID(_P1)]  # child row still present, pending
 
     read_model.held.clear()  # positions went flat
     handler.on_fill(_fill(_TICKER))
