@@ -95,12 +95,12 @@ class PortfolioHandler:
         # would break the GATE-01 inertness gate (tests/integration/test_okx_inertness.py).
         # The backtest composition root passes environment="backtest" + sql_engine=None,
         # so this stays None and the byte-exact oracle path is untouched.
-        self._definition_store: Optional[Any] = None
+        self.definition_store: Optional[Any] = None
         if environment == "live" and sql_engine is not None:
             from itrader.storage.portfolio_definition_store import (
                 PortfolioDefinitionStore,
             )
-            self._definition_store = PortfolioDefinitionStore(sql_engine)
+            self.definition_store = PortfolioDefinitionStore(sql_engine)
 
         # Initialize configuration by constructing the Pydantic model directly
         # (M2-06 / D-01): the registry/provider getters were deleted. Pydantic validates
@@ -336,13 +336,13 @@ class PortfolioHandler:
         account_id)`` pair (the D-14 unique constraint) or an ``account_id`` with no
         ``venue_accounts`` parent row.
         """
-        if self._definition_store is None:
+        if self.definition_store is None:
             return
         if portfolio.venue_name is None or portfolio.account_id is None:
             return
-        if self._definition_store.get(portfolio.portfolio_id) is not None:
+        if self.definition_store.get(portfolio.portfolio_id) is not None:
             return
-        self._definition_store.upsert(
+        self.definition_store.upsert(
             portfolio.portfolio_id,
             name=portfolio.name,
             venue_name=portfolio.venue_name,

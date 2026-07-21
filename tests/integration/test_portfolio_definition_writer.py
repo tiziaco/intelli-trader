@@ -169,7 +169,7 @@ def test_a_backtest_handler_owns_no_definition_store(wiring) -> None:
     engine, definitions = wiring
     handler = PortfolioHandler(queue.Queue(), environment="backtest", sql_engine=None)
 
-    assert handler._definition_store is None
+    assert handler.definition_store is None
     handler.add_portfolio(name="pf-bt", exchange="csv", cash=100_000)
     assert definitions.read_all() == []
 

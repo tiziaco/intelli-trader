@@ -1607,6 +1607,81 @@ def build_live_system(
     event_handler = engine.event_handler
 
     # ------------------------------------------------------------------
+    # PORTFOLIO BOOTSTRAP (11-08, D-08/D-14/D-15 — the W4 bootstrap boundary).
+    #
+    # Placed HERE, ABOVE the venue-wiring block below, and that position is the whole
+    # decision. The two steps run in this order and no other:
+    #
+    #  (1) THE DISTINCT-ACCOUNT INVARIANT, over the UNION of persisted rows and the
+    #      spec-supplied portfolios. It runs FIRST because D-15 says a collision must be
+    #      refused BEFORE any account exists. Running it after rehydrate would leave
+    #      portfolios built but unusable; running it after the account minting below would
+    #      be worse still — by then a colliding pair has already satisfied 11-07's
+    #      required-account_id guard and two portfolios are wired to one real balance.
+    #  (2) PORTFOLIO REHYDRATE, which creates the portfolio objects with their PERSISTED
+    #      ids so the seven portfolio-scoped child tables reattach to the right portfolio
+    #      (T-11-41) and the persisted strategy-subscription rows bind to portfolios that
+    #      still exist.
+    #
+    # Everything downstream then falls into place WITHOUT moving it: `_build_account_specs`
+    # (which mints the venue_accounts rows) is below, and `_layer_persisted_overrides` is
+    # below that inside the `system_store is not None` gate. Note for anyone re-reading the
+    # 11-08 plan text: it predicted the layering call would have to MOVE below rehydrate
+    # because it iterates `portfolio_handler._portfolios` and would otherwise apply nothing.
+    # That hazard is real but the move is NOT needed as the code now stands — plan 11-07
+    # restructured this function and the layering call already sits well below this point.
+    # It is pinned executably by
+    # tests/integration/test_distinct_account_invariant.py::
+    # test_a_persisted_portfolio_config_override_is_applied_on_the_rehydrated_portfolio,
+    # which reddens if rehydrate is ever moved back below the layering call.
+    #
+    # NOT inside _initialize_live_session, for the same reason the strategy rehydrate is
+    # not: two integration test files (three sites) monkeypatch that method to a no-op,
+    # including a RESTART test, so a rehydrate placed there is silently discarded exactly
+    # in the scenario it exists for — and a zero-portfolio boot still passes every
+    # assertion that only checks strategies.
+    #
+    # Imports stay LAZY in-body and neither module is barrel-exported (GATE-01).
+    if system_db_backend is not None:
+        from sqlalchemy import inspect as _sa_inspect
+
+        from itrader.portfolio_handler.rehydrate.distinct_account_invariant import (
+            assert_distinct_accounts,
+        )
+        from itrader.portfolio_handler.rehydrate.portfolio_rehydrate import (
+            rehydrate_portfolios,
+        )
+
+        # The store the handler already OWNS (DECOMP-01a — the same shape as reading the
+        # strategy registry store back off strategies_handler). One instance, so the
+        # rehydrate read and the add_portfolio write-back can never diverge.
+        definition_store = portfolio_handler.definition_store
+
+        # A not-yet-provisioned `portfolios` table is the D-21 first-start state (a fresh
+        # DB, or a deployment whose Alembic chain has not run), NOT a fault: degrade with
+        # a WARNING. This is deliberately narrow — it probes for the TABLE and nothing
+        # else, so a genuine store fault still propagates LOUD out of rehydrate rather
+        # than being converted into the silent zero-portfolio boot D-19 forbids.
+        has_table = definition_store is not None and _sa_inspect(
+            system_db_backend.engine).has_table("portfolios")
+        if definition_store is not None and not has_table:
+            logger.warning(
+                "The `portfolios` table is not provisioned — skipping portfolio "
+                "rehydrate (first start, or the Alembic chain has not run). No "
+                "portfolio will be restored until the schema exists.")
+
+        if has_table:
+            assert_distinct_accounts(
+                persisted=definition_store.read_all(),
+                spec_portfolios=getattr(spec, 'portfolios', None) or (),
+                venue_name=exchange,
+            )
+            rehydrate_portfolios(
+                store=definition_store,
+                portfolio_handler=portfolio_handler,
+            )
+
+    # ------------------------------------------------------------------
     # Venue wiring (Plan 02-05, D-04 / CONN-04 — relocated P5 D-06 assemble_venue call).
     # The whole OKX/paper venue stack is LAZY-imported here so the BACKTEST import path
     # stays async/ccxt/credential-free (the hot-path inertness gate).
@@ -1824,16 +1899,29 @@ def build_live_system(
 
         # STRATEGY REHYDRATE (D-01/STRAT-01): the stored roster becomes live instances.
         # THIS EXACT POSITION satisfies four independent constraints at once:
-        #  (1) portfolios are already layered ABOVE (_layer_persisted_overrides iterates
-        #      portfolio_handler._portfolios), so subscribe_portfolio binds to ids that
-        #      already exist and are restart-stable — portfolios-before-strategies holds.
+        #  (1) portfolios already EXIST, with RESTART-STABLE ids — so subscribe_portfolio
+        #      below binds each stored subscription to a portfolio that is really there and
+        #      will still carry the same id after the next restart. 11-08 REWROTE this
+        #      clause because it was TRUE ONLY VACUOUSLY when it was written: the live
+        #      system had ZERO portfolio-creation call sites, so "portfolios already exist"
+        #      held because there were none, and _layer_persisted_overrides — which this
+        #      clause used to point at — only ITERATES portfolio_handler._portfolios and
+        #      never created any. What now supplies the guarantee is named explicitly:
+        #      rehydrate_portfolios (11-08), which runs ABOVE the venue-wiring block and
+        #      recreates each portfolio with its PERSISTED id, and plan 11-05, which made
+        #      those ids survive a restart instead of being regenerated per construction.
+        #      Do NOT relax this back to a positional claim: the ordering is only
+        #      meaningful now that portfolios are real.
         #  (2) session init BELOW reads the strategy list: wire_universe derives membership
         #      from it via StrategyDerivedSelectionModel, and register_strategy_warmup sizes
         #      the feed ring from it. A strategy registered after either would never enter
         #      the universe and never size the ring — so rehydrate MUST precede them.
-        #  (3) NOT inside _initialize_live_session: three integration tests — including a
-        #      RESTART test — monkeypatch that method to a no-op, so rehydrate placed there
-        #      would be silently lost exactly where it matters most.
+        #  (3) NOT inside _initialize_live_session: two integration test FILES (three call
+        #      sites) — including a RESTART test — monkeypatch that method to a no-op, so
+        #      a rehydrate placed there would be silently lost exactly where it matters
+        #      most. This clause now does DOUBLE DUTY: it is the same reasoning that keeps
+        #      the 11-08 portfolio rehydrate in the builder, where a swallowed call would
+        #      boot zero portfolios and still pass every strategy-only assertion.
         #  (4) the rehydrate collaborator import stays LAZY inside this gate and is never
         #      barrel-exported, keeping the backtest import path SQL-free (GATE-01). The
         #      STORE's own SQL imports moved with it into StrategyRegistryStorageFactory,
