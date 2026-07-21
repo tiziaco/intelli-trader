@@ -22,12 +22,18 @@ Indentation: 4-SPACE (``venues/`` package convention). ``mypy --strict`` applies
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
+
+from itrader.logger import get_itrader_logger
+from itrader.venues.venue_uid_guard import assert_venue_uid
 
 if TYPE_CHECKING:
     from itrader.connectors.provider import ConnectorProvider
     from itrader.price_handler.providers.live_provider import LiveDataProvider
     from itrader.venues.bundle import VenueBundle
+
+_logger = get_itrader_logger().bind(component="VenueLifecycle")
 
 
 class VenueLifecycle:
@@ -46,10 +52,26 @@ class VenueLifecycle:
         provider: LiveDataProvider,
         *,
         connectors: ConnectorProvider | None = None,
+        plugin: Any = None,
+        venue_name: str | None = None,
+        account_id: str | None = None,
+        account_store: Any = None,
+        alert_sink: Any = None,
     ) -> None:
         self._bundle = bundle
         self._provider = provider
         self._connectors = connectors
+        # 11-04 (D-04): the post-connect venue-UID guard's collaborators. Optional so
+        # existing construction sites keep working — but note that "optional" is
+        # exactly how a security guard ships as DEAD CODE, so ``assemble_venue``
+        # supplies ``plugin``/``venue_name``/``account_id`` unconditionally and the
+        # live composition root supplies ``account_store``/``alert_sink``. The guard
+        # is skipped only when a caller genuinely has no store (no Postgres arm).
+        self._plugin = plugin
+        self._venue_name = venue_name
+        self._account_id = account_id
+        self._account_store = account_store
+        self._alert_sink = alert_sink
 
     @property
     def bundle(self) -> VenueBundle:
@@ -68,12 +90,49 @@ class VenueLifecycle:
         carries one. A paper bundle (``connector=None``) skips this step (structural
         None-guard), so ``start()`` is a fail-safe no-op for the connector step.
 
+        Step 2 (11-04, D-04): assert the venue's own account UID immediately after the
+        connect — trust-on-first-use, alert on mismatch, NEVER halt. It lives inside
+        the same structural ``None``-guard so a paper bundle skips it entirely, and it
+        runs FIRST among the post-connect hooks so a misrouted session is flagged
+        before any venue-truth snapshot is trusted.
+
         The venue-truth exchange-stream spawn + account snapshot/link steps remain
         in ``LiveTradingSystem.start()`` this phase (P6 folds them into a
         ``SessionInitializer``); they hook AFTER this connector connect.
         """
         if self._bundle.connector is not None:
             self._bundle.connector.connect()
+            self._assert_venue_uid(self._bundle.connector)
+
+    def _assert_venue_uid(self, connector: Any) -> None:
+        """Run the D-04 trust-on-first-use UID guard for this venue account.
+
+        Skipped only when a collaborator is genuinely absent (e.g. a deployment with
+        no SQL arm, so there is no ``VenueAccountStore`` to record into). The skip is
+        LOGGED — a silently-skipped security guard is indistinguishable from a passing
+        one, which is precisely how this mitigation would ship inert.
+        """
+        if self._account_store is None or self._alert_sink is None or self._plugin is None:
+            _logger.warning(
+                "venue-uid guard skipped — no account store / alert sink wired; the "
+                "D-04 spoofing detector is inert for this venue",
+                venue_name=self._venue_name,
+                account_id=self._account_id,
+            )
+            return
+
+        assert_venue_uid(
+            plugin=self._plugin,
+            connector=connector,
+            venue_name=self._venue_name or "",
+            account_id=self._account_id,
+            store=self._account_store,
+            alert_sink=self._alert_sink,
+            # Wall clock is correct here: this is a LIVE session-identity observation,
+            # not an engine-path business time. The store is clock-free by design
+            # (D-07), so the timestamp is supplied at the call boundary.
+            at=datetime.now(UTC),
+        )
 
     def stop(self) -> None:
         """Tear the venue down in reverse order, None-guarding absent members (D-10).

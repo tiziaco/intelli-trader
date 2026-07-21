@@ -40,7 +40,17 @@ caller-supplied ``at`` via ``UtcIsoText`` (D-07 — clock-free), parameterized C
 from datetime import datetime
 from typing import Any, Mapping, Optional
 
-from sqlalchemy import Boolean, Column, MetaData, String, Table, delete, insert, select
+from sqlalchemy import (
+    Boolean,
+    Column,
+    MetaData,
+    String,
+    Table,
+    delete,
+    insert,
+    select,
+    update,
+)
 from sqlalchemy.engine import Engine, RowMapping
 
 from itrader.logger import get_itrader_logger
@@ -146,6 +156,36 @@ class VenueAccountStore:
                         "updated_at": at,
                     }
                 ],
+            )
+
+    def record_venue_uid(
+        self,
+        venue_name: str,
+        account_id: str,
+        venue_uid: str,
+        at: datetime,
+    ) -> None:
+        """Write the engine-observed ``venue_uid`` for one pair (D-04 trust-on-first-use).
+
+        A TARGETED UPDATE of ``venue_uid`` (and ``updated_at``) only, leaving
+        ``secret_ref`` / ``config_json`` / ``enabled`` untouched. ``venue_uid`` is
+        ENGINE-written on first observation, so it must NOT travel through the
+        operator-authored ``upsert`` path: routing it there would make the engine
+        restate — and therefore able to clobber — the operator's own columns from a
+        connect-time code path.
+
+        Parameterized Core against the constant ``Table`` (SEC-01 / T-11-01). A pair
+        with no row is a silent no-op (zero rows matched): account MINTING is plan
+        11-07's job, not this write's.
+        """
+        with self.engine.begin() as connection:
+            connection.execute(
+                update(self.venue_accounts)
+                .where(
+                    self.venue_accounts.c.venue_name == venue_name,
+                    self.venue_accounts.c.account_id == account_id,
+                )
+                .values(venue_uid=venue_uid, updated_at=at)
             )
 
     def get(self, venue_name: str, account_id: str) -> Optional[Mapping[str, Any]]:

@@ -45,6 +45,8 @@ def assemble_venue(
     connectors: ConnectorProvider,
     exec_registry: ExecutionVenueRegistry,
     data_registry: DataProviderRegistry,
+    account_store: Any = None,
+    alert_sink: Any = None,
 ) -> tuple[VenueBundle, VenueLifecycle]:
     """Resolve the venue/data plugins, build the bundle + provider + lifecycle (D-06).
 
@@ -60,6 +62,14 @@ def assemble_venue(
     exec_registry, data_registry :
         The two explicit-map registries; ``get`` fails loud (``KeyError``) on an
         unregistered venue (D-01).
+    account_store, alert_sink :
+        11-04 (D-04): the trust-on-first-use venue-UID guard's collaborators, handed
+        to the ``VenueLifecycle`` so the guard runs on the post-connect seam. Optional
+        because a deployment without a SQL arm has no ``VenueAccountStore`` — but the
+        LIVE composition root supplies both, and the guard logs loudly when skipped.
+        The ``plugin`` the guard needs is the exec plugin resolved BELOW: this function
+        was previously resolving it locally and discarding it, which is why the
+        lifecycle had no handle on it.
 
     Returns
     -------
@@ -75,5 +85,19 @@ def assemble_venue(
     data_plugin = data_registry.get(spec.data_provider)
     provider = data_plugin.build_provider(ctx, spec, connectors)
 
-    lifecycle = VenueLifecycle(bundle, provider, connectors=connectors)
+    # D-04: the lifecycle carries the exec plugin + the pair identity so its
+    # post-connect hook can run the venue-UID guard. ``account_id`` is passed RAW
+    # (Optional[str]) — the guard applies the same ``or "default"`` normalization the
+    # plugins apply inside ``build_bundle``, keeping that rule in ONE place rather
+    # than duplicating it at every hand-off.
+    lifecycle = VenueLifecycle(
+        bundle,
+        provider,
+        connectors=connectors,
+        plugin=exec_plugin,
+        venue_name=spec.execution_venue,
+        account_id=spec.account_id,
+        account_store=account_store,
+        alert_sink=alert_sink,
+    )
     return bundle, lifecycle
