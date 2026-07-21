@@ -5,7 +5,10 @@ from queue import Queue
 import pytest
 
 from itrader.core.bar import Bar
-from itrader.execution_handler.execution_handler import ExecutionHandler
+from itrader.execution_handler.execution_handler import (
+    DEFAULT_ACCOUNT_ID,
+    ExecutionHandler,
+)
 from itrader.events_handler.events import OrderEvent, BarEvent
 from itrader.core.enums import FillStatus, OrderType, OrderCommand, Side
 
@@ -14,7 +17,7 @@ class _RoutingEnv:
     def __init__(self):
         self.queue = Queue()
         self.handler = ExecutionHandler(self.queue)
-        exchange = self.handler.exchanges["simulated"]
+        exchange = self.handler.exchanges[("simulated", DEFAULT_ACCOUNT_ID)]
         exchange.connect()
         exchange.update_config({"limits": {"supported_symbols": {"BTCUSDT"}}})
 

@@ -15,7 +15,10 @@ from queue import Queue
 import pytest
 
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
-from itrader.execution_handler.execution_handler import ExecutionHandler
+from itrader.execution_handler.execution_handler import (
+    DEFAULT_ACCOUNT_ID,
+    ExecutionHandler,
+)
 from itrader.config import FeeModelType, SlippageModelType
 from itrader.execution_handler.fee_model.percent_fee_model import PercentFeeModel
 from itrader.execution_handler.slippage_model.linear_slippage_model import LinearSlippageModel
@@ -110,7 +113,7 @@ def test_execution_handler_delegates_to_exchange(handler):
     """ExecutionHandler.update_config routes to the simulated exchange."""
     result = handler.update_config({"limits": {"min_order_size": "7"}})
     assert result is None
-    simulated = handler.exchanges.get("simulated")
+    simulated = handler.exchanges.get(("simulated", DEFAULT_ACCOUNT_ID))
     assert simulated._min_order_size == Decimal("7")
 
 

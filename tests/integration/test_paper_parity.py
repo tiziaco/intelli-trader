@@ -43,6 +43,7 @@ from itrader.reporting.frames import (
     build_equity_curve,
     build_trade_log,
 )
+from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
 from itrader.trading_system.backtest_trading_system import BacktestTradingSystem
 from tests.support.replay_harness import (
@@ -127,8 +128,14 @@ def _run_paper_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
     strategy = _build_golden_strategy()
     system.strategies_handler.add_strategy(strategy)
     # 'simulated' routes to the reused SimulatedExchange (D-04) — the paper exchange.
+    # D-27: the paper side is a LIVE system, so its portfolio must NAME the venue
+    # account its orders route through — on_order resolves the account through the
+    # injected read-model and REFUSES a portfolio that names none. The reused
+    # simulated exchange is registered under the default account, so naming it here
+    # is parity-preserving: the same object receives the same orders as before.
     portfolio_id = system.portfolio_handler.add_portfolio(
         name="parity_paper", exchange="simulated", cash=_CASH,
+        account_id=DEFAULT_ACCOUNT_ID,
     )
     strategy.subscribe_portfolio(portfolio_id)
     # Synchronous offline drive (D-02/D-03): replay -> feed.update -> BarEvent -> queue.

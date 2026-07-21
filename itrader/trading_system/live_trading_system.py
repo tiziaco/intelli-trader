@@ -5,6 +5,7 @@ from typing import Optional, Dict, Any, Callable, TYPE_CHECKING
 
 from itrader.core.enums import HaltReason, SystemStatus
 from itrader.core.exceptions import StateError
+from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
 from itrader.outils.time_parser import to_timedelta
 from itrader.trading_system.alert_sink import LogAlertSink
 from itrader.trading_system.venue_spec import build_venue_spec
@@ -581,7 +582,8 @@ class LiveTradingSystem:
             # inside SessionInitializer — no OKX guard, zero OKX coupling.
             venue_exchange = (
                 self._okx_exchange if self._okx_exchange is not None
-                else self.execution_handler.exchanges.get('simulated'))
+                else self.execution_handler.exchanges.get(
+                    ('simulated', DEFAULT_ACCOUNT_ID)))  # D-27 pair key
 
             # RUN-06/D-11 live-plane config: poll timeframe + remove_policy READ FROM the
             # LIVE universe sub-model (NOT the frozen determinism base — P9 D-09 keeps the
@@ -1426,7 +1428,12 @@ def build_live_system(
     engine = compose_engine(
         ctx, exchange_config=None, results_store=None,
         alert_sink=alert_sink, system_store=system_store, error_policy=error_policy,
-        strategy_catalog=strategy_catalog)
+        strategy_catalog=strategy_catalog,
+        # D-27/MPORT-07: LIVE resolves each order's venue account from its
+        # portfolio through the injected read-model, so an account's orders can
+        # never be submitted through another account's authenticated session.
+        # The backtest arm deliberately leaves this False — see compose_engine.
+        route_orders_by_account=True)
 
     # compose already wired portfolio_handler.set_order_storage(order_handler.storage) and
     # the FeeModelCommissionEstimator admission gate (D-05), so the former inline commission
@@ -1470,7 +1477,9 @@ def build_live_system(
     connectors = ConnectorProvider({'okx': OkxConnectorPlugin()})
     exec_registry.register('okx', OkxVenuePlugin())
     exec_registry.register(
-        'paper', PaperVenuePlugin(execution_handler.exchanges['simulated']))
+        'paper',
+        PaperVenuePlugin(
+            execution_handler.exchanges[('simulated', DEFAULT_ACCOUNT_ID)]))
     data_registry.register('okx', OkxDataPlugin())
 
     # TEST-only DATA provider injection (D-21): production registers NO replay/test data
@@ -1511,7 +1520,20 @@ def build_live_system(
         okx_connector = bundle.connector
         if bundle.connector is not None:
             okx_exchange = bundle.exchange
-            execution_handler.exchanges[exchange] = bundle.exchange
+            # D-27/MPORT-07: register under the (venue, account_id) PAIR, using
+            # the account this bundle was actually built for. Registering under
+            # DEFAULT_ACCOUNT_ID here would blackhole every live order for a
+            # NAMED account: on_order resolves the portfolio's real account, so
+            # the lookup would miss and fail closed — silently, with no test
+            # covering it. The `or DEFAULT_ACCOUNT_ID` fallback is the same
+            # `spec.account_id or "default"` idiom the shipped venue plugins
+            # already use to memoize connectors, so venue and exchange agree on
+            # one key. (This is a REGISTRATION-side default for an unnamed
+            # account, NOT a resolution-side fallback — on_order must never
+            # coerce a None account into the default.)
+            execution_handler.exchanges[
+                (exchange, venue_spec.account_id or DEFAULT_ACCOUNT_ID)
+            ] = bundle.exchange
 
         # (4) UNIFORM provider->feed wiring (D-10) that needs NO facade method.
         feed.set_provider(provider)
@@ -1549,10 +1571,18 @@ def build_live_system(
         venue_store: Optional[Any] = VenueStore(system_db_backend)
 
         def _venue_kind(venue_name: str) -> bool:
-            """(venue_name) -> True when the venue's execution arm is a SimulatedExchange (D-14)."""
+            """(venue_name) -> True when the venue's execution arm is a SimulatedExchange (D-14).
+
+            D-27: the registry is pair-keyed, so this matches every registered
+            account on the named venue. The parameter stays a bare VENUE string
+            because the question ("is this venue simulated?") is a property of
+            the venue, not of one account on it.
+            """
             from itrader.execution_handler.exchanges.simulated import SimulatedExchange
-            return isinstance(
-                execution_handler.exchanges.get(venue_name), SimulatedExchange)
+            return any(
+                isinstance(exchange, SimulatedExchange)
+                for (venue, _account_id), exchange in execution_handler.exchanges.items()
+                if venue == venue_name)
 
         facade._config_router = ConfigRouter(
             config=_system_config,

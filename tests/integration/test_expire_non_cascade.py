@@ -28,6 +28,7 @@ from itrader.order_handler.order import Order
 from itrader.events_handler.events import SignalEvent, OrderEvent
 from itrader.core.enums import Side, OrderCommand, OrderStatus, FillStatus
 from itrader.events_handler.events import FillEvent
+from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
 
 pytestmark = pytest.mark.integration
 
@@ -53,7 +54,7 @@ def test_run_end_sweep_then_drain_does_not_cascade():
     """Sweep + final drain emits FillEvent(EXPIRED) but NO SignalEvent and NO
     new OrderEvent(NEW) — the drain is provably non-cascading (T-06-06)."""
     system = build_backtest_system(_btcusd_spec())
-    exchange = system.execution_handler.exchanges["simulated"]
+    exchange = system.execution_handler.exchanges[("simulated", DEFAULT_ACCOUNT_ID)]
     exchange.connect()
 
     portfolio = system.portfolio_handler.get_active_portfolios()[0]

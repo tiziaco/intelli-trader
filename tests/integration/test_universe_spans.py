@@ -29,6 +29,7 @@ import pandas as pd
 from itrader.core.sizing import FixedQuantity, SignalIntent, TradingDirection
 from itrader.strategy_handler.base import Strategy
 from itrader.trading_system.backtest_trading_system import BacktestTradingSystem
+from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
 
 
 KLINE_HEADER = (
@@ -142,7 +143,7 @@ def test_engine_survives_heterogeneous_spans_with_no_look_ahead(tmp_path):
     # D-13/Trap 1), so these synthetic tickers are already admitted. Re-registering
     # each via the public register_symbol seam (D-07) is therefore a no-op union here
     # — kept to exercise that the seam stays additive (never wipes the seeded set).
-    simulated = system.execution_handler.exchanges["simulated"]
+    simulated = system.execution_handler.exchanges[("simulated", DEFAULT_ACCOUNT_ID)]
     for ticker in ("EARLYUSD", "LATEUSD", "ENDSEARLYUSD"):
         simulated.register_symbol(ticker)
     # WR-02: fail loudly at setup if the supported-symbol set drifts. Without

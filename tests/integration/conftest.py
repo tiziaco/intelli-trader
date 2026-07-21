@@ -355,6 +355,7 @@ def remove_policy_harness():
 
     def _make(remove_policy: str = "orphan-and-track", cash: int = 1_000_000):
         from itrader.core.instrument import Instrument
+        from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
         from itrader.execution_handler.exchanges.simulated import SimulatedExchange
         from itrader.universe.universe import Universe
         from itrader.universe.universe_handler import (
@@ -370,14 +371,21 @@ def remove_policy_harness():
         # Production paper re-points to the OKX live feed (D-21); the offline replay DATA
         # provider is injected via the test harness (paper↔replay lives in the fixture).
         system, _ = build_paper_replay_system()
-        simulated = system.execution_handler.exchanges["simulated"]
+        simulated = system.execution_handler.exchanges[
+            ("simulated", DEFAULT_ACCOUNT_ID)]  # D-27 pair key
         simulated.register_symbol(held)
         simulated.register_symbol(other)
         # Bind the live feed to the queue + membership so update() emits BarEvents.
         system.feed.bind(system.global_queue, [held, other])
 
+        # D-27: this is a LIVE (paper) system, so the portfolio must NAME the
+        # venue account whose session its orders reach — on_order resolves the
+        # account through the read-model and REFUSES a portfolio that names
+        # none, rather than falling back to whatever is registered as default.
+        # The reused simulated exchange is registered under the default account.
         portfolio_id = system.portfolio_handler.add_portfolio(
-            name="remove_policy_pf", exchange="simulated", cash=cash)
+            name="remove_policy_pf", exchange="simulated", cash=cash,
+            account_id=DEFAULT_ACCOUNT_ID)
 
         def _instrument(symbol: str) -> Instrument:
             return Instrument(
