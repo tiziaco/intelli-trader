@@ -6,7 +6,10 @@ import pytest
 
 from itrader.core.bar import Bar
 from itrader.order_handler.order_handler import OrderHandler
-from itrader.execution_handler.execution_handler import ExecutionHandler
+from itrader.execution_handler.execution_handler import (
+    DEFAULT_ACCOUNT_ID,
+    ExecutionHandler,
+)
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.order_handler.storage import OrderStorageFactory
 from itrader.events_handler.events import SignalEvent, BarEvent
@@ -23,7 +26,7 @@ class _StopLimitHarness:
         self.storage = OrderStorageFactory.create("test")
         self.order_handler = OrderHandler(self.queue, self.ptf, self.storage)
         self.execution = ExecutionHandler(self.queue)
-        exchange = self.execution.exchanges["simulated"]
+        exchange = self.execution.exchanges[("simulated", DEFAULT_ACCOUNT_ID)]
         exchange.connect()
         exchange.update_config({"limits": {"supported_symbols": {"BTCUSDT"}}})
         self.pid = self.ptf.add_portfolio("p", "simulated", 100000)

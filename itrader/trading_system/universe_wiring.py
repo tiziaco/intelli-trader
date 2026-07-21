@@ -38,6 +38,7 @@ the TAB-indented donor block).
 """
 
 from itrader.core.exceptions import ConfigurationError
+from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.trading_system.compose import Engine
 from itrader.universe import Universe, derive_instruments, derive_membership
@@ -88,7 +89,13 @@ def wire_universe(engine: Engine) -> Universe:
 	# Inject the Universe into the simulated exchange so the admission gate
 	# resolves min_order_size Instrument-first (BTCUSD undeclared -> venue
 	# fallback 0.001 byte-identical, D-01a/Pitfall 2).
-	simulated_exchange = engine.execution_handler.exchanges.get('simulated')
+	# D-27: pair-keyed registry. This lookup MUST be converted with the keying
+	# change — a stale bare-name `.get('simulated')` returns None, the isinstance
+	# guard below SILENTLY fails, and the Universe is never injected into the
+	# exchange. No exception is raised; min_order_size resolution changes and the
+	# money arithmetic moves underneath a green-looking suite.
+	simulated_exchange = engine.execution_handler.exchanges.get(
+		('simulated', DEFAULT_ACCOUNT_ID))
 	if isinstance(simulated_exchange, SimulatedExchange):
 		simulated_exchange.set_universe(universe)
 	# Plan 02-03 (Pitfall 1, BLOCKING): mirror the exchange injection into the

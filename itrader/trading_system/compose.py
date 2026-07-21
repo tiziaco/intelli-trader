@@ -37,7 +37,10 @@ from itrader.events_handler.bus import EventBus
 from itrader.events_handler.error_handler import ErrorHandler
 from itrader.events_handler.error_policy import FailFastPolicy
 from itrader.events_handler.full_event_handler import EventHandler
-from itrader.execution_handler.execution_handler import ExecutionHandler
+from itrader.execution_handler.execution_handler import (
+	DEFAULT_ACCOUNT_ID,
+	ExecutionHandler,
+)
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
@@ -123,7 +126,8 @@ def compose_engine(
 	alert_sink: Optional[Any] = None,
 	system_store: Optional[Any] = None,
 	error_policy: Optional[Any] = None,
-	strategy_catalog: Optional[Any] = None) -> Engine:
+	strategy_catalog: Optional[Any] = None,
+	route_orders_by_account: bool = False) -> Engine:
 	"""Wire the shared component graph from a SPEC-FREE infra ``ctx`` (D-01/D-04).
 
 	Spec-free seam (D-04, the Phase-06.1 centerpiece): ``compose_engine`` no longer
@@ -152,6 +156,22 @@ def compose_engine(
 		``environment`` (selects handler-owned storage backends), ``feed`` (the REQUIRED
 		per-mode read-model), ``store`` (REAL in backtest / ``None`` in live, D-02),
 		``sql_engine`` (``None`` for backtest — keeps the path SQL-import-inert, GATE-01).
+	route_orders_by_account : bool
+		Whether ``ExecutionHandler`` resolves each order's VENUE ACCOUNT from its
+		portfolio through the injected read-model (D-27/MPORT-07). The injection is
+		ASYMMETRIC BY DESIGN and the asymmetry is the point:
+
+		* ``False`` (the BACKTEST default) injects NO read-model, so ``on_order``
+		  resolves ``DEFAULT_ACCOUNT_ID`` unconditionally. Every backtest portfolio
+		  has ``account_id=None``, so injecting the read-model there would turn the
+		  byte-exact oracle route into a refusal.
+		* ``True`` (passed by ``build_live_system``) injects the portfolio handler,
+		  which satisfies ``PortfolioReadModel`` structurally. A live portfolio that
+		  names no account is then REFUSED rather than routed through whatever
+		  session happens to be registered as the default.
+
+		It is an explicit keyword rather than a read of ``ctx.environment`` so a live
+		system built with a test environment string still routes by account.
 	exchange_config : Optional[Any]
 		The already-seeded ``ExchangeConfig`` threaded into the ``ExecutionHandler``
 		(the complete symbol set folded in by the factory, D-13/Trap 1). ``None`` yields
@@ -204,13 +224,20 @@ def compose_engine(
 	# gate's commission estimator can adapt the simulated exchange's fee model
 	# (D-04). The construction-time ExchangeConfig threads the complete symbol
 	# set (D-13). Construction-order only — runtime stays queue-mediated.
-	execution_handler = ExecutionHandler(ctx.bus, exchange_config=exchange_config)
+	# D-27/MPORT-07: the read-model is injected ONLY on the account-routing (live)
+	# arm — see the route_orders_by_account docstring above for why the backtest
+	# arm must stay on the unconditional default account.
+	execution_handler = ExecutionHandler(
+		ctx.bus, exchange_config=exchange_config,
+		portfolio_read_model=portfolio_handler if route_orders_by_account else None)
 
 	# Commission estimator for the admission cash-reservation gate (D-04/D-15):
 	# the typed FeeModelCommissionEstimator adapter holds the exchange ref and
 	# reads fee_model at call time (late binding). The golden run pins fees 0,
 	# so the reservation equals price x quantity exactly (value-preserving).
-	simulated_exchange = execution_handler.exchanges.get('simulated')
+	# D-27: pair-keyed registry; the simulated venue is single-account.
+	simulated_exchange = execution_handler.exchanges.get(
+		('simulated', DEFAULT_ACCOUNT_ID))
 	commission_estimator = FeeModelCommissionEstimator(simulated_exchange)
 
 	# Plan 02-03 (D-09/D-14): thread the portfolio's margin settings into the
