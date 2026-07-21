@@ -504,13 +504,13 @@ the wave that touches them.*
 
 **Wave 1** *(no dependencies — D-28 W1 schema, W5 attribution, and the identity plumbing W3 needs)*
 
-- [x] 11-01-PLAN.md — `venue_accounts` + `portfolios` definition tables and stores; composite natural PK, plain unique constraint, composite FK; B2 fold-in (Uuid + CASCADE FK) (MPORT-02)
+- [x] 11-01-PLAN.md — `venue_accounts` + `portfolios` definition tables and stores; composite natural PK, plain unique constraint, composite FK (MPORT-02) *(B2 fold-in moved to 11-03 pre-execution — D-29 binds it to Revision 2)*
 - [x] 11-02-PLAN.md — attribution: engine identifiers renamed off the venue's wire spelling, extraction consolidated behind one venue-vocabulary helper, strippable `assert` converted to a real raise (MPORT-04)
 - [x] 11-05-PLAN.md — one signature change: supplyable `portfolio_id` (F-1), `account_id`, `venue_name`-derived exchange; `account_for` on the read-model; `PortfolioSpec.account_id` (MPORT-05)
 
 **Wave 2** *(blocked on 11-01 / 11-05)*
 
-- [ ] 11-03-PLAN.md — two chained Alembic revisions off `p10_strategy_portfolio_subs`; refuse-if-non-empty guard, `batch_alter_table`, the D-09 config data move + a value-asserting migration test (MPORT-02)
+- [ ] 11-03-PLAN.md — two chained Alembic revisions off `p10_strategy_portfolio_subs`; refuse-if-non-empty guard, `batch_alter_table`, the D-09 config data move + a value-asserting migration test; **plus the B2 fold-in ORM half moved here from 11-01** (MPORT-02)
 - [ ] 11-04-PLAN.md — `CredentialResolver` Protocol + env resolver over a `secret_ref` pointer; `credential_model` on the plugin Protocol; trust-on-first-use venue-UID guard (MPORT-06)
 - [ ] 11-06-PLAN.md — **MPORT-07**: `ExecutionHandler.exchanges` keyed on `(venue, account_id)`; `on_order` resolves the account from the order's portfolio; 10 source + 25 test sites; fake-multi-account routing gate
 
