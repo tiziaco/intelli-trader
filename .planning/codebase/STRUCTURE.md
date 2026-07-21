@@ -1,178 +1,203 @@
 # Codebase Structure
 
-**Analysis Date:** 2026-07-07
+**Analysis Date:** 2026-07-21
 
 ## Directory Layout
 
 ```
 intelli-trader/
-├── itrader/                     # The framework package (all application code)
-│   ├── __init__.py              # Singleton bootstrap: config, logger, idgen (import side effects)
-│   ├── config/                  # Pydantic config models (SystemConfig, SqlSettings, OkxSettings, …)
-│   ├── connectors/              # Live venue session/transport (LiveConnector Protocol, OkxConnector)
-│   ├── core/                    # Cross-cutting primitives (depends on nothing in itrader)
-│   │   ├── enums/               # EventType, OrderStatus, Side, SystemStatus, …
-│   │   └── exceptions/          # ITraderError hierarchy by domain
-│   ├── events_handler/          # Dispatch (full_event_handler.py) + events/ frozen dataclasses
-│   │   └── events/              # base/market/signal/order/ack/fill/error/universe events
-│   ├── execution_handler/       # ExecutionHandler + exchanges/, fee_model/, slippage_model/
-│   │   └── exchanges/           # base, simulated, okx, matching_engine, venue_correlation
-│   ├── order_handler/           # OrderHandler + OrderManager coordinator + 4 collaborators
-│   │   ├── admission/           # AdmissionManager (signal→order pipeline)
-│   │   ├── brackets/            # BracketManager, BracketBook, levels
-│   │   ├── lifecycle/           # LifecycleManager (modify/cancel)
-│   │   ├── reconcile/           # ReconcileManager (on_fill mirror reconcile)
-│   │   └── storage/             # in_memory / cached_sql / sql order-mirror backends + factory
-│   ├── portfolio_handler/       # PortfolioHandler + Portfolio + managers
-│   │   ├── account/             # Account ABC; Simulated* (compute) + VenueAccount (cache) leaves
-│   │   ├── cash/ position/ transaction/ metrics/   # per-portfolio sub-managers
-│   │   ├── reconcile/           # VenueReconciler + drift epsilon (two-sided restart)
-│   │   └── storage/             # in_memory / cached_sql / sql portfolio-state backends + factory
-│   ├── price_handler/           # Data engine
-│   │   ├── store/               # CsvPriceStore, SqlHandler (read-only on run path)
-│   │   ├── feed/                # BacktestBarFeed, LiveBarFeed, cache_registration
-│   │   ├── providers/           # OKX / CCXT / OANDA / Binance stream / Replay providers
-│   │   ├── exchange/            # exchange-facing price helpers
-│   │   └── ingestion.py         # bulk price ingestion
-│   ├── reporting/               # Pure run-artifact builders (frames, metrics, plots, summary)
-│   ├── results/                 # Run-record models + ResultsStore ABC + SqlResultsStore
-│   ├── screeners_handler/       # Dynamic market screening (deferred subsystem)
-│   ├── storage/                 # Shared SQL spine (SqlBackend) + types + Alembic migrations/
-│   │   └── migrations/versions/ # Alembic revision files
-│   ├── strategy_handler/        # StrategiesHandler + strategies/, my_strategies/, indicators/, storage/
-│   ├── trading_system/          # Composition roots + run drivers
-│   │   └── simulation/          # TimeGenerator (backtest driver)
-│   ├── universe/                # Membership derivation + live UniverseHandler
-│   └── outils/                  # id_generator, time_parser and small utilities
-├── tests/                       # Test root (unit/ integration/ e2e/ golden/ support/)
-├── scripts/                     # Runnable entrypoints (run_backtest, run_live_paper, cross_validate*)
-├── settings/                    # YAML config (domains/*.default.yaml tracked; prod gitignored)
-├── data/                        # Golden OHLCV CSV datasets
-├── docs/                        # Design docs (order_handler/, portfolio_handler/, superpowers/, tests/)
-├── notebooks/ · output/ · perf/ # Notebooks, run outputs, perf profiling artifacts
-├── pyproject.toml               # Deps + pytest + mypy config (single source of truth)
-├── alembic.ini                  # Alembic config (points at itrader/storage/migrations)
-├── Makefile                     # All developer commands
-└── CLAUDE.md                    # Project guidance
+├── itrader/                       # Application package
+│   ├── config/                    # Pydantic config models (ITraderConfig root + domain sub-models)
+│   ├── connectors/                # Live venue connectors (LiveConnector Protocol, OkxConnector)
+│   ├── core/                      # Dependency-free primitives: enums/, exceptions/, ids, money, clock, sizing
+│   ├── events_handler/            # Event bus, event definitions, dispatcher, error policy/handler
+│   │   └── events/                # Frozen event structs, split by domain
+│   ├── execution_handler/         # Order execution: exchanges/, fee_model/, slippage_model/, matching engine
+│   ├── order_handler/             # Order lifecycle: admission/, brackets/, lifecycle/, reconcile/, storage/
+│   ├── outils/                    # Small shared utility functions (dict_merge, time_parser, id_generator)
+│   ├── portfolio_handler/         # Portfolio state: cash/, position/, transaction/, metrics/, account/, reconcile/, storage/
+│   ├── price_handler/             # Data engine: store/, feed/, providers/
+│   ├── reporting/                 # Pure report builders (frames.py, metrics.py, plots.py)
+│   ├── results/                   # Run-results persistence and serialization
+│   ├── screeners_handler/         # Dynamic market screening (deferred subsystem)
+│   ├── storage/                   # Shared SQL spine (SqlEngine, halt/venue/system stores; Alembic chain at repo-root migrations/)
+│   ├── strategy_handler/          # Strategies: registry/, lifecycle/, indicators/, storage/, strategies/, my_strategies/
+│   ├── trading_system/            # Composition roots + run loops: compose.py, backtest_*.py, live_*.py, safety/, simulation/
+│   ├── universe/                  # Dynamic universe membership (live-only)
+│   ├── venues/                    # Live venue assembly/registry/lifecycle
+│   └── __init__.py                # Process-wide singletons: config, logger, idgen
+├── tests/                         # pytest root (NOT `test/`)
+│   ├── unit/<domain>/              # Unit tests, mirrors itrader/<domain>/ structure
+│   ├── integration/                # Integration tests (incl. test_okx_inertness.py, test_backtest_oracle.py)
+│   ├── e2e/                        # End-to-end tests
+│   ├── golden/                     # Golden-master artifacts (not a test dir — 0 tests collected)
+│   └── support/                    # Shared test fixtures/helpers
+├── migrations/                    # Alembic migration chain (versions/)
+├── scripts/                       # Dev/ops scripts (run_backtest.py, crossval/)
+├── settings/                      # YAML domain config; domains/*.default.yaml tracked, backups/ gitignored
+├── data/                          # Golden OHLCV CSVs (raw/)
+├── perf/                          # Performance benchmark harness (runners/, workloads/, strategies/, tools/, results/)
+├── notebooks/                     # Jupyter notebooks
+├── docs/                          # Hand-maintained docs (order_handler/, portfolio_handler/, superpowers/, tests/)
+├── .planning/                     # GSD planning artifacts (codebase/, phases/, milestones/, ...)
+├── output/                        # Generated run output (gitignored)
+├── pyproject.toml                 # Dependencies, pytest config, mypy config
+└── Makefile                       # All developer commands
 ```
 
 ## Directory Purposes
 
 **`itrader/trading_system/`:**
-- Purpose: Composition roots and run drivers — where the component graph is wired around one queue.
-- Key files: `compose.py` (shared `compose_engine`), `backtest_trading_system.py` (holder + `build_backtest_system` factory), `backtest_runner.py` (fail-fast for-loop), `live_trading_system.py` (live/paper daemon), `system_spec.py`, `simulation/time_generator.py`, `alert_sink.py`.
+- Purpose: Composition roots and run loops for both backtest and live modes.
+- Contains: `compose.py` (shared mode-agnostic wiring seam), `engine_context.py` (post-compose context object), `backtest_trading_system.py`/`backtest_runner.py` (backtest composition root + fail-fast loop), `live_trading_system.py` (live facade + `build_live_system` factory), `live_runner.py` (owns the live drain loop), `session_initializer.py` (builds live collaborators), `route_registrar.py` (`LiveRouteRegistrar` — the single live route table), `worker_supervisor.py`, `config_router.py` (`ConfigRouter`, runtime config actuation), `alert_sink.py`, `system_spec.py`/`venue_spec.py` (typed spec objects), `universe_wiring.py`, `simulation/time_generator.py`, `safety/` (`safety_controller.py`, `stream_recovery_handler.py`, `pre_trade_throttle.py`).
+- Key files: `itrader/trading_system/compose.py`, `itrader/trading_system/live_trading_system.py`, `itrader/trading_system/route_registrar.py`.
+
+**`itrader/events_handler/`:**
+- Purpose: The event bus, event type definitions, dispatcher, and error handling for the queue.
+- Contains: `bus.py` (`EventBus`/`PriorityEventBus`), `full_event_handler.py` (`EventHandler`, the single dispatch-order literal), `error_handler.py` (`ErrorHandler`, the ERROR-route consumer), `error_policy.py` (`FailFastPolicy`/`ErrorPolicy`), `events/` (per-domain event definitions).
+- Key files: `itrader/events_handler/full_event_handler.py`, `itrader/events_handler/events/base.py`.
+
+**`itrader/strategy_handler/`:**
+- Purpose: Strategy execution, lifecycle, and registry.
+- Contains: `strategies_handler.py` (`StrategiesHandler`), `base.py`/`pair_base.py` (Strategy ABCs), `lifecycle/manager.py` (`StrategyLifecycleManager` — owns the STRATEGY_COMMAND control plane), `registry/` (`catalog.py` — the injected strategy-type allowlist, `config_codec.py`, `rehydrate.py`), `managed_strategies.py` (instance roster), `signal_record.py`, `indicators/`, `storage/` (signal + registry storage backends), `strategies/` (built-in strategies incl. `SMA_MACD_strategy.py`), `my_strategies/` (user-supplied strategies + custom indicators/filters).
+- Key files: `itrader/strategy_handler/strategies_handler.py`, `itrader/strategy_handler/lifecycle/manager.py`, `itrader/strategy_handler/registry/catalog.py`, `itrader/strategy_handler/strategies/SMA_MACD_strategy.py`.
 
 **`itrader/order_handler/`:**
-- Purpose: Order domain — thin `OrderHandler` interface + `OrderManager` coordinator over four injected collaborators.
-- Key files: `order_handler.py`, `order_manager.py`, `order.py`, `order_validator.py`, `sizing_resolver.py`, and the `admission/` `brackets/` `lifecycle/` `reconcile/` collaborator packages plus `storage/`.
+- Purpose: Order lifecycle management (not matching — see `execution_handler/`).
+- Contains: `order_handler.py` (thin interface), `order_manager.py` (business logic), `admission/`, `brackets/`, `lifecycle/`, `reconcile/`, `storage/` (`OrderStorageFactory`, `in_memory_storage.py`, `sql_storage.py`, `cached_sql_storage.py`), `order_validator.py`, `sizing_resolver.py`.
+- Key files: `itrader/order_handler/order_handler.py`, `itrader/order_handler/order_manager.py`.
+
+**`itrader/execution_handler/`:**
+- Purpose: Route orders to exchanges and drive resting-order matching.
+- Contains: `execution_handler.py`, `matching_engine.py` (pure resting-order book), `exchanges/` (`base.py`, `simulated.py`, `okx.py`), `fee_model/` (`zero`/`percent`/`maker_taker`), `slippage_model/` (`zero`/`fixed`/`linear`), `result_objects.py`.
+- Key files: `itrader/execution_handler/execution_handler.py`, `itrader/execution_handler/matching_engine.py`, `itrader/execution_handler/exchanges/simulated.py`.
 
 **`itrader/portfolio_handler/`:**
-- Purpose: Portfolio lifecycle + per-portfolio state via a pluggable `Account`.
-- Key files: `portfolio_handler.py`, `portfolio.py`, `account/` (ABC + `simulated.py` + `venue.py` + `conformance.py`), `reconcile/venue_reconciler.py`, `reconcile/drift.py`, the `cash/`/`position/`/`transaction/`/`metrics/` managers, and `storage/`.
-
-**`itrader/connectors/`:**
-- Purpose: Live venue session/transport (async bottled here).
-- Key files: `base.py` (`LiveConnector` Protocol), `okx.py` (`OkxConnector`).
-
-**`itrader/storage/`:**
-- Purpose: Shared SQL spine composed by every SQL storage concern + schema migrations.
-- Key files: `backend.py` (`SqlBackend`, `NAMING_CONVENTION`), `types.py`, `halt_record_store.py`, `migrations/env.py`, `migrations/versions/*.py`.
+- Purpose: Portfolio lifecycle and state.
+- Contains: `portfolio_handler.py`, `portfolio.py`, `cash/`, `position/`, `transaction/`, `metrics/`, `account/` (`SimulatedCashAccount`/`SimulatedMarginAccount`/`VenueAccount`), `reconcile/` (`venue_reconciler.py`, `drift.py`), `storage/`, `validators.py`.
+- Key files: `itrader/portfolio_handler/portfolio_handler.py`, `itrader/portfolio_handler/portfolio.py`.
 
 **`itrader/price_handler/`:**
-- Purpose: Look-ahead-safe data engine (store → feed → BarEvent) plus live providers.
-- Key files: `store/csv_store.py`, `store/sql_store.py`, `feed/bar_feed.py` (bar-timing contract), `feed/live_bar_feed.py`, `providers/okx_provider.py`, `providers/replay_provider.py`.
+- Purpose: Look-ahead-safe price storage and bar feeds.
+- Contains: `store/` (`csv_store.py`, `sql_store.py`), `feed/` (`bar_feed.py` — bar-timing contract, `live_bar_feed.py`), `providers/` (`ccxt_provider.py`, `oanda_provider.py`, `binance_stream.py`, `okx_provider.py`, `replay_provider.py`).
+- Key files: `itrader/price_handler/feed/bar_feed.py`.
 
 **`itrader/core/`:**
-- Purpose: Cross-cutting primitives; depends on nothing else in `itrader`.
-- Key files: `money.py`, `ids.py`, `clock.py`, `bar.py`, `instrument.py`, `sizing.py`, `commission_estimator.py`, `portfolio_read_model.py`, `enums/`, `exceptions/`.
+- Purpose: Cross-cutting primitives with zero internal dependencies.
+- Contains: `enums/`, `exceptions/`, `ids.py`, `money.py`, `clock.py`, `bar.py`, `sizing.py`, `instrument.py`, `commission_estimator.py`, `portfolio_read_model.py`, `constants.py`, `policy_codec.py`.
+- Key files: `itrader/core/money.py`, `itrader/core/enums/__init__.py`.
+
+**`itrader/config/`:**
+- Purpose: Pydantic-modelled configuration.
+- Contains: `itrader_config.py` (`ITraderConfig` frozen root), `system.py`, `universe.py`, `stream.py`, `safety.py`, `order.py`, `portfolio.py`, `exchange.py`, `log.py`, `sql.py` (lazy, `SqlSettings`), `okx_settings.py`.
+- Key files: `itrader/config/itrader_config.py`.
+
+**`itrader/storage/`:**
+- Purpose: Shared SQL spine used across live subsystems.
+- Contains: `engine.py` (`SqlEngine`), `types.py`, `halt_record_store.py`, `venue_store.py`, `system_store.py`, `system_stats_store.py`, `strategy_registry_store.py`.
+
+**`itrader/universe/`, `itrader/connectors/`, `itrader/venues/`:**
+- Purpose: Live-only subsystems — dynamic universe polling/membership, venue connector protocol + OKX implementation, venue assembly/registry/lifecycle.
+- Contains: `universe/universe_handler.py`, `universe/membership.py`; `connectors/base.py`, `connectors/okx.py`; `venues/assemble.py`, `venues/lifecycle.py`, `venues/registry.py`, `venues/okx_plugin.py`, `venues/paper_plugin.py`.
+
+**`itrader/reporting/`, `itrader/results/`:**
+- Purpose: Pure report-building (`reporting/frames.py`, `metrics.py`, `plots.py`) and run-results persistence (`results/models.py`, `sql_storage.py`, `serializers.py`).
+
+**`tests/`:**
+- Purpose: All test code, type-grouped.
+- Contains: `unit/<domain>/` (mirrors `itrader/<domain>/`), `integration/`, `e2e/`, `golden/` (artifacts only, not tests), `support/` (fixtures/helpers).
+- Note: `tests/unit/<domain>/` directories must stay package-less (no `__init__.py`) — a stray `__init__.py` colliding with `tests/integration/<domain>/` breaks full-suite collection while isolated runs still pass.
 
 ## Key File Locations
 
 **Entry Points:**
-- `scripts/run_backtest.py`: reproducible SMA_MACD oracle generator (`make backtest`).
-- `scripts/run_live_paper.py`: paper replay (offline CI-safe) / OKX manual smoke.
-- `itrader/trading_system/backtest_trading_system.py`: `build_backtest_system` factory.
-- `itrader/trading_system/live_trading_system.py`: `LiveTradingSystem.start()` + `run_paper_replay()`.
+- `itrader/trading_system/backtest_trading_system.py`: Backtest composition root (`TradingSystem.run()`)
+- `itrader/trading_system/live_trading_system.py`: Live composition root (`LiveTradingSystem`, `build_live_system`)
+- `scripts/run_backtest.py`: CLI entry point (`make backtest`)
 
 **Configuration:**
-- `itrader/config/system.py`: `SystemConfig.default()`.
-- `pyproject.toml`: deps, pytest (`filterwarnings=["error"]`, strict markers/config), mypy `--strict`.
-- `settings/domains/*.default.yaml`: tracked config defaults.
-- `alembic.ini` + `itrader/storage/migrations/`: schema migration chain.
+- `itrader/config/itrader_config.py`: `ITraderConfig` frozen root
+- `settings/domains/*.default.yaml`: Tracked default overrides
+- `pyproject.toml`: Dependencies, pytest, mypy config
+- `Makefile`: Developer commands
 
 **Core Logic:**
-- `itrader/events_handler/full_event_handler.py`: the single routing literal (`EventHandler.routes`).
-- `itrader/trading_system/compose.py`: shared graph wiring.
-- `itrader/execution_handler/matching_engine.py`: resting-order book / OCO.
+- `itrader/events_handler/full_event_handler.py`: The single dispatch-order literal (`EventHandler.routes`)
+- `itrader/trading_system/compose.py`: Shared component-graph wiring seam
+- `itrader/execution_handler/matching_engine.py`: Order matching
 
 **Testing:**
-- `tests/unit/<domain>/`, `tests/integration/`, `tests/e2e/`, `tests/golden/` (artifacts, 0 collected), `tests/support/`, `tests/conftest.py` (auto-applies type marker).
-- Oracle: `tests/integration/test_backtest_oracle.py`; inertness gate: `tests/integration/test_okx_inertness.py`; parity: `tests/integration/test_paper_parity.py`.
+- `tests/integration/test_backtest_oracle.py`: SMA_MACD byte-exact golden-master oracle test
+- `tests/integration/test_okx_inertness.py`: Proves the backtest import path is async/ccxt/SQL-free
+- `tests/support/`: Shared fixtures
 
 ## Naming Conventions
 
 **Files:**
 - `snake_case.py` throughout, no exceptions.
-- Handlers: `<domain>_handler.py`. Managers: `<domain>_manager.py`. Abstract bases: `base.py` per package.
-- Storage backends: `<backend>_storage.py` (`in_memory_storage.py`, `cached_sql_storage.py`, `sql_storage.py`).
-- Tests mirror source: `test_<module>.py`.
-- Alembic revisions: `<revid>_<slug>.py` under `storage/migrations/versions/`.
+- Handler modules: `<domain>_handler.py` (e.g. `order_handler.py`).
+- Manager modules: `<domain>_manager.py` (e.g. `order_manager.py`, `cash_manager.py`).
+- Abstract base modules: `base.py` inside each domain package.
+- Test files: `test_<module>.py`, mirroring the source module name.
 
 **Directories:**
-- `<domain>_handler/` for each domain; collaborator sub-packages are bare domain nouns (`admission/`, `brackets/`, `lifecycle/`, `reconcile/`, `account/`, `cash/`, `position/`).
-- `snake_case` always.
-
-**Classes:** `PascalCase`; `<Domain>Handler` (thin) + `<Domain>Manager` (logic); `Abstract<Name>` / ABC bases; `<Domain>Config`; `<Specific><Category>Error`.
+- Domain package: `<domain>_handler/` (e.g. `order_handler/`, `portfolio_handler/`).
+- Since v1.7/v1.8, large handlers are decomposed into collaborator subdirs named by RESPONSIBILITY, not by class: `admission/`, `brackets/`, `lifecycle/`, `reconcile/`, `storage/`, `cash/`, `position/`, `transaction/`, `metrics/`, `account/`, `registry/`, `indicators/`.
 
 ## Where to Add New Code
 
 **New event type:**
-- Enum member: `itrader/core/enums/event.py::EventType`.
-- Dataclass: `itrader/events_handler/events/<domain>.py` (frozen, `slots`, `kw_only`).
-- Route: `itrader/events_handler/full_event_handler.py::EventHandler.routes` (even an explicit empty list).
+- Define the frozen struct in `itrader/events_handler/events/<domain>.py` (subclass `Event`, `msgspec.Struct`), add the `EventType` member in `itrader/core/enums/` (event enum module), and add an explicit key to `EventHandler.routes` in `itrader/events_handler/full_event_handler.py` (use `[]` if there is genuinely no consumer yet — never omit the key).
 
-**New strategy:**
-- Reference/library strategies: `itrader/strategy_handler/strategies/`.
-- User strategies: `itrader/strategy_handler/my_strategies/` (subdivided by style: `momentum/`, `mean_reversion/`, `trend_following/`, `scalping/`, plus `filters/`, `custom_indicators/`).
+**New backtest strategy:**
+- Reference implementation lives in `itrader/strategy_handler/strategies/`; user/experimental strategies go in `itrader/strategy_handler/my_strategies/<category>/`. Register the strategy TYPE in the injected `StrategyCatalog` allowlist (`itrader/strategy_handler/registry/catalog.py`) rather than importing it ad hoc — `itrader` never resolves a strategy class by an untrusted string outside that allowlist.
+- Tests: `tests/unit/strategy/`.
 
-**New exchange / venue:**
-- Exchange arm: `itrader/execution_handler/exchanges/` (subclass `AbstractExchange`).
-- Connector: `itrader/connectors/` (satisfy the `LiveConnector` Protocol); wire lazily in `LiveTradingSystem.__init__`.
+**New exchange / execution backend:**
+- Implement the `AbstractExchange` interface under `itrader/execution_handler/exchanges/`.
+- Fee/slippage variants go in `itrader/execution_handler/fee_model/` / `itrader/execution_handler/slippage_model/`.
+- Tests: `tests/unit/execution/`.
 
-**New data provider:** `itrader/price_handler/providers/` (subclass the provider base).
+**New order-storage backend:**
+- Implement alongside `itrader/order_handler/storage/in_memory_storage.py`, register in `OrderStorageFactory`.
 
-**New order-domain behavior:**
-- Signal→order gates/sizing: `order_handler/admission/`.
-- Bracket assembly: `order_handler/brackets/`.
-- modify/cancel verbs: `order_handler/lifecycle/`.
-- fill reconciliation: `order_handler/reconcile/`.
+**New live route / control-plane consumer:**
+- Add the route entry inside `LiveRouteRegistrar.install()` (`itrader/trading_system/route_registrar.py`) — this is the ONLY place live routes are set/appended; do not mutate `EventHandler.routes` elsewhere.
 
-**New SQL storage concern:** compose `itrader/storage/SqlBackend` (has-a, never inherit a shared base); add an Alembic revision under `storage/migrations/versions/`. Keep SQL-heavy imports out of package barrels (inertness gate).
-
-**New account behavior:** extend the `Account` ABC in `portfolio_handler/account/`; `Simulated*` leaves compute, `VenueAccount` caches.
-
-**Shared primitives / enums / exceptions:** `itrader/core/` (must not import anything else in `itrader`).
-
-**Utilities:** `itrader/outils/` for cross-cutting helpers; `itrader/reporting/` for pure post-run artifact builders.
-
-**Tests:** mirror the source path under `tests/unit/<domain>/`; keep `tests/unit/` dirs package-less (no `__init__.py`) to avoid top-level package collisions during full-suite collection.
+**Utilities:**
+- Small shared helpers go in `itrader/outils/` (e.g. `dict_merge.py`, `time_parser.py`).
+- Cross-domain, dependency-free primitives go in `itrader/core/` — never add a dependency on any other `itrader` subpackage there.
 
 ## Special Directories
 
+**`itrader/__pycache__/`, `**/__pycache__/`:**
+- Purpose: Compiled bytecode cache.
+- Generated: Yes. Committed: No.
+
+**`.mypy_cache/`, `.pytest_cache/`:**
+- Purpose: Tool caches.
+- Generated: Yes. Committed: No.
+
+**`output/`:**
+- Purpose: Generated backtest run output (equity curves, trade logs).
+- Generated: Yes. Committed: No.
+
+**`htmlcov/`:**
+- Purpose: `make test-cov` HTML coverage report.
+- Generated: Yes. Committed: No.
+
+**`settings/backups/`:**
+- Purpose: Runtime config backups.
+- Generated: Yes. Committed: No (gitignored in prod).
+
 **`tests/golden/`:**
-- Purpose: frozen oracle artifacts (trade log / equity / summary references), NOT test cases.
-- Generated: Yes (re-frozen only at named D-11 re-freeze points). Committed: Yes.
+- Purpose: Golden-master reference artifacts (CROSS-VALIDATION.md etc.) — not a test suite; 0 tests collected here. The actual oracle test lives in `tests/integration/test_backtest_oracle.py`.
+- Generated: Partially. Committed: Yes.
 
-**`itrader/storage/migrations/`:**
-- Purpose: Alembic schema migration chain (framework-owned).
-- Generated: partly (autogenerate). Committed: Yes.
-
-**`settings/`:**
-- Purpose: YAML config. `*.default.yaml` under `domains/` tracked; production overrides gitignored.
-
-**`output/`, `perf/`, `htmlcov/`, `.venv/`, `notebooks/`:**
-- Purpose: run outputs, perf profiling, coverage HTML, in-project virtualenv, exploratory notebooks. Generated; not the source of truth.
+**`migrations/versions/`:**
+- Purpose: Alembic migration chain for the SQL spine.
+- Generated: Semi (via `alembic revision`). Committed: Yes.
 
 ---
 
-*Structure analysis: 2026-07-07*
+*Structure analysis: 2026-07-21*

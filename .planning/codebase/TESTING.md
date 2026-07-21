@@ -1,226 +1,166 @@
 # Testing Patterns
 
-**Analysis Date:** 2026-07-07
+**Analysis Date:** 2026-07-21 (refresh of 2026-07-07 doc; verified post v1.8 Phases 8-10.1)
 
 ## Test Framework
 
 **Runner:**
-- pytest ^8.4.2 (`minversion = "8.0"`)
-- Config: `pyproject.toml [tool.pytest.ini_options]`
-- Discovery: `testpaths = ["tests"]`, `python_files = ["test_*.py", "*_test.py"]`, `python_classes = ["Test*"]`, `python_functions = ["test_*"]`
-- The test root is `tests/` (NOT `test/`).
+- pytest ^8.4.2 (`minversion = "8.0"`), config in `pyproject.toml::[tool.pytest.ini_options]`
+- `testpaths = ["tests"]` (NOT `test/`)
+- pytest-asyncio 1.4.0 — `asyncio_mode = "auto"` (every `async def test_*` runs without a per-test `@pytest.mark.asyncio`), `asyncio_default_fixture_loop_scope = "function"` (both keys REQUIRED under `--strict-config`; an unset loop scope emits a config warning that escalates to an error under `filterwarnings=["error"]`). The plugin's own `asyncio` marker is exempt from `--strict-markers`.
 
 **Assertion Library:**
-- Plain `assert` (pytest rewriting). Frame comparisons use `pandas.testing.assert_frame_equal` (aliased `pdt`) with `check_exact=True`, NO float tolerance.
+- Plain `assert` (pytest-native). `pandas.testing.assert_frame_equal` / `pdt` used for the oracle diff (`tests/integration/test_backtest_oracle.py`).
 
-**Strictness (test gotcha):**
-- `addopts` includes `--strict-markers` and `--strict-config`; `filterwarnings = ["error", "ignore::UserWarning", "ignore::DeprecationWarning"]`. Any unexpected warning fails the suite. Every marker used must be declared in `pyproject.toml`.
-- Async config is REQUIRED under `--strict-config`: `asyncio_mode = "auto"`, `asyncio_default_fixture_loop_scope = "function"` (pytest-asyncio). The plugin registers its own `asyncio` marker (exempt from `--strict-markers`).
-- Resource discipline: under `filterwarnings=["error"]`, an unclosed transport session (`ResourceWarning`) or a never-awaited/never-cancelled task (`RuntimeWarning`) escalates to a FAILURE. Every stream task must be cancellable and every client closed in teardown (Pitfall 4).
+**Coverage:**
+- pytest-cov ^7.1.0 — `make test-cov` runs `--cov=itrader --cov-report=html --cov-report=term-missing`, opens `htmlcov/index.html`. No coverage minimum/threshold enforced in `pyproject.toml`.
+- pytest-html ^4.2.0 is a dependency but the `test-report` Makefile target is commented out (`Makefile:108-110`) — not currently wired up.
 
 **Run Commands:**
 ```bash
-make test              # full suite, -m "not live"
-make test-unit         # -m "unit"
-make test-integration  # -m "integration and not live"
-make test-e2e          # -m "e2e"
-make test-smoke        # -m "smoke"  (PURPOSE axis, hand-tagged)
-make test-live         # -m live  (real network round-trips to a venue)
-make test-e2e-live     # tests/e2e/test_okx_sandbox_recon.py -m slow  (slow OKX-demo recon)
-make test-cov          # --cov=itrader --cov-report=html --cov-report=term-missing
-# domain shortcuts (path selectors, NOT marker selectors):
-make test-portfolio    # tests/unit/portfolio/
-make test-orders       # tests/unit/order/
-make test-execution    # tests/unit/execution/
-make test-events       # tests/unit/events/
-make test-strategy     # tests/unit/strategy/
+make test              # poetry run pytest tests/ -v -m "not live"   (excludes live-venue tests)
+make test-unit         # poetry run pytest tests/ -v -m "unit"
+make test-integration  # poetry run pytest tests/ -v -m "integration and not live"
+make test-e2e          # poetry run pytest tests/ -v -m "e2e"
+make test-smoke        # poetry run pytest tests/ -v -m "smoke"
+make test-live         # poetry run pytest tests/ -v -m live   (fast opt-in live-venue connectivity checks, e.g. tests/integration/test_okx_connectivity.py)
+make test-e2e-live     # slow OKX-demo reconciliation e2e suite only (tests/e2e/test_okx_sandbox_recon.py -m slow); requires OKX_API_KEY in .env, unsets DB env vars to force in-memory fallback
+make test-portfolio    # poetry run pytest tests/unit/portfolio/ -v
+make test-orders       # poetry run pytest tests/unit/order/ -v
+make test-execution    # poetry run pytest tests/unit/execution/ -v
+make test-events       # poetry run pytest tests/unit/events/ -v      (path shortcut only, NOT a marker selector)
+make test-strategy     # poetry run pytest tests/unit/strategy/ -v
+make test-cov          # poetry run pytest tests/ --cov=itrader --cov-report=html --cov-report=term-missing -v
+```
 
-# single file / case
+Single test / single case (not a Makefile target, run directly):
+```bash
 poetry run pytest tests/unit/order/test_order.py -v
 poetry run pytest tests/unit/order/test_order.py -k "test_name" -v
 ```
 
-**`make test` gotcha:** `make test` exports `ITRADER_DISABLE_LOGS=true`, which fails `caplog`-based warn-assertion tests (e.g. `test_warn_on_mid_life_gap`). Use `poetry run pytest tests` as the gate for those. In git worktrees, `make test` aborts on a missing `.env` — run `poetry run pytest tests` there instead (and prepend `PYTHONPATH="$PWD"` to defeat editable-install shadowing).
-
-## Marker Axes (two orthogonal axes)
-
-**TYPE axis (folder-derived, auto-applied):** `tests/conftest.py::pytest_collection_modifyitems` stamps the marker from the FOLDER, never the domain:
-- `tests/unit/` → `unit`
-- `tests/integration/` → `integration` + `slow`
-- `tests/e2e/` → `e2e` (NOT `slow` — D-15: e2e scenarios are tiny ~10-bar full-engine runs, kept in the default `make test` suite)
-
-**PURPOSE axis (hand-applied, NEVER folder-derived):**
-- `smoke` — fast run-path liveness check. Applied with `@pytest.mark.smoke` or module-level `pytestmark = pytest.mark.smoke`. Stacks on top of the TYPE marker. Files: `tests/integration/test_backtest_smoke.py`, `tests/integration/test_okx_smoke.py`, `tests/unit/reporting/test_plots_smoke.py`.
-- `live` — makes a REAL network round-trip to a live venue (OKX). Applied with `@pytest.mark.live`. Excluded from default `make test` (`-m "not live"`). Files: `tests/integration/test_okx_connectivity.py`, `tests/e2e/test_okx_sandbox_recon.py`, `tests/e2e/test_okx_dynamic_universe.py`.
-
-**Registration:** the SINGLE `--strict-markers` source of truth is the `markers` list in `pyproject.toml` (`unit`, `integration`, `slow`, `e2e`, `smoke`, `live`). `conftest.py` only APPLIES; it never registers. Never register in both places.
-
-**Durable rules:**
-- Do not hand-apply a TYPE marker — the folder confers it.
-- Any new smoke test MUST carry `@pytest.mark.smoke` (or a module `pytestmark`) to join `make test-smoke`.
-- `live` is the network property; `skipif` on a credential gate (e.g. `_HAS_OKX_CREDS`) is the creds property — the two are deliberately NOT conflated.
-
 ## Test File Organization
 
-**Location:** SEPARATE tree under `tests/`, mirroring the `itrader/` package inside `tests/unit/`. Tests are NOT co-located with source.
-
+**Location — real tree (verified 2026-07-21):**
 ```
 tests/
-├── conftest.py            # root: TYPE auto-marking + global_queue + shared Bar/BarEvent factories + dev-DB env guard + fake_venue_connector
-├── README.md              # the authoritative test-layout doc
-├── golden/                # frozen-oracle assets (trades.csv, equity.csv, summary.json) + golden/pair/
-├── support/               # tree-agnostic doubles: fake_venue_connector.py + support/fixtures/*.json
-├── unit/                  # 175 files — ONE collaborating component each
-│   ├── conftest.py        # unit-layer anchor
-│   ├── config/ core/ outils/ events/ order/ execution/{exchanges/}
-│   ├── portfolio/{positions/,reconcile/,transaction/} price/ price_handler/
-│   ├── connectors/{conftest.py, fixtures/*.json}   # live-venue connector doubles
-│   ├── reporting/ results/ storage/ strategy/ trading_system/ universe/
-├── integration/           # 46 files — cross-component cascade, run-path smoke, golden oracle, Postgres
-│   ├── conftest.py        # golden-path fixtures + backtest_engine + session Postgres container + remove_policy_harness
-│   ├── test_backtest_oracle.py   # full 2018→2026 SMA_MACD run vs frozen oracle
-│   ├── storage/{conftest.py}     # PG-backed order storage
-│   └── pair_exit_safety/
-└── e2e/                   # 62 files — per-scenario leaf folders (build→run→read→assemble→diff)
-    ├── conftest.py        # the shared run_scenario harness + --freeze flag
-    └── <category>/<scenario>/{scenario.py, test_scenario.py, golden/}
+├── conftest.py                    # root: folder-derived TYPE marker auto-apply, global_queue fixture, DB-env guard, bar helpers
+├── unit/                          # 220 test_*.py files, 2606 total tests collected repo-wide
+│   ├── conftest.py                #   unit-layer documentation/marker anchor
+│   ├── config/                    #   ~56 tests
+│   ├── connectors/                #   ~44 tests (+ fixtures/)
+│   ├── core/                      #   ~170 tests
+│   ├── events/                    #   ~132 tests
+│   ├── execution/                 #   ~259 tests (+ exchanges/)
+│   ├── order/                     #   ~278 tests
+│   ├── outils/                    #   ~28 tests
+│   ├── portfolio/                 #   ~360 tests (+ positions/, reconcile/, transaction/) — has __init__.py
+│   ├── price/, price_handler/     #   ~108 + 24 tests
+│   ├── reporting/                 #   ~65 tests
+│   ├── results/                   #   ~33 tests
+│   ├── storage/                   #   ~58 tests
+│   ├── strategy/                  #   ~321 tests
+│   ├── trading_system/            #   ~66 tests
+│   ├── universe/                  #   ~92 tests
+│   └── venues/                    #   ~32 tests
+├── integration/                   # 54 test_*.py files
+│   ├── conftest.py                #   integration-layer fixtures: golden-file paths + backtest_engine factory
+│   ├── test_backtest_oracle.py    #   the byte-exact SMA_MACD oracle test (see below)
+│   ├── _oracle_harness.py         #   shared repo-root/output-dir constants + importlib loader for the oracle generator
+│   ├── pair_exit_safety/, storage/
+│   └── (cross-component cascade, reconciliation, OKX connectivity/store-drive tests)
+├── e2e/                           # 62 test_*.py files across ~35 scenario subdirs (admission/, cash/, cost/, matching/, multi/, sltp/, sizing/, robust/, smoke/, strategies/, levered_long*/, short_*/, trailing_*/, forced_liq_*/, partial_cover/), each with its own __init__.py
+├── golden/                        # 0 test_*.py files — frozen ARTIFACTS only (trades.csv, equity.csv, summary.json, pair/, + REFREEZE-*.md / CROSS-VALIDATION*.md decision notes)
+└── support/                       # shared test doubles (e.g. tests/support/fake_venue_connector.py) + fixtures/
 ```
+2606 tests collected via `pytest --collect-only -q` on 2026-07-21.
 
-**Naming:** `test_<module>.py`; test functions `test_*`; optional test classes `Test*`.
+**Naming:** `test_<module>.py` mirroring `itrader/` source module names; test functions `test_*`; test classes `Test*` (all per `pyproject.toml::python_files/python_classes/python_functions`).
 
-**Test style:** predominantly **module-level `def test_*` functions** (~278 files) with fixtures. A minority (6 files) use `class Test*` with `setup_method`/helper methods (e.g. `tests/unit/order/test_order.py`). Prefer the function+fixture style for new tests.
+**`__init__.py` collision — currently NOT reproducible.** Only `tests/unit/portfolio/__init__.py` exists as a package marker outside the `tests/e2e/` tree (which uses `__init__.py` throughout its scenario subdirs by design). `tests/integration/` currently has **zero** `__init__.py` files, so there is no `tests/unit/<x>` + `tests/integration/<x>` same-name package collision today. This was a real historical gotcha (see prior project memory) but the conflicting `tests/integration/portfolio/__init__.py` is gone — do not add a new `__init__.py` to any `tests/unit/<x>` or `tests/integration/<x>` directory that shares a name with a directory on the other side, or the collision can reappear.
 
-## The unit / integration / e2e boundary (D-15)
+## Markers
 
-- **unit** — drives ONE collaborating component. May import several classes from its own domain and use a real `global_queue`, but does NOT assert cross-component cascades.
-- **integration** — asserts interaction ACROSS components: cross-domain, cross-manager, the full cascade, the run-path smoke, or the golden oracle.
-- **e2e** — a full engine run on a `(strategy, data)` pair (or a tiny hand-crafted scenario) diffed against committed frozen goldens.
-
-## Test Structure
-
-**Function + fixture (dominant):**
-```python
-def test_single_market_buy(run_scenario):
-    run_scenario(HERE)          # e2e leaf: delegate to the shared harness, no local asserts
+**Declared marker list (`pyproject.toml::[tool.pytest.ini_options] markers`) — the SINGLE `--strict-markers` registration home:**
+```toml
+markers = [
+    "unit: Unit test — drives ONE collaborating component (tests/unit/)",
+    "integration: Integration test — asserts cross-component interaction (tests/integration/)",
+    "slow: Slow running test (the full-engine integration runs)",
+    "e2e: End-to-end scenario — full engine on a (strategy, data) pair vs frozen goldens (tests/e2e/)",
+    "smoke: Smoke test — fast run-path liveness check; PURPOSE axis, applied by hand",
+    "live: Live-venue test — makes a real network round-trip to a live venue; PURPOSE axis, applied by hand",
+]
 ```
+`tests/conftest.py` only *applies* markers at collection time; it never registers them (per its own module docstring).
 
-**Class-based (legacy minority):**
-```python
-class TestOrderLifecycle:
-    def setup_method(self):
-        self.base_time = datetime.now()
-    def create_test_order(self, **kwargs) -> Order: ...
-    def test_order_properties(self):
-        order = self.create_test_order(quantity=100.0, price=150.0)
-        assert order.remaining_quantity == 100.0
-```
+**TYPE axis (folder-derived, `tests/conftest.py::pytest_collection_modifyitems`):**
+- file under `tests/unit/` → `unit`
+- file under `tests/integration/` → `integration` **+** `slow`
+- file under `tests/e2e/` → `e2e` (deliberately NOT `slow` — e2e scenarios are tiny ~10-bar full-engine runs, so they stay in the default `make test` selection)
 
-**Patterns:**
-- Setup via fixtures (`@pytest.fixture`, 84 files) or `setup_method` in classes.
-- Teardown via fixture `yield` + `finally` (mandatory for anything holding a socket/thread — Pitfall 4).
-- Assertions are plain `assert`; error paths use `pytest.raises` (76 files).
+**PURPOSE axis (hand-applied, orthogonal to TYPE):** `smoke` (`@pytest.mark.smoke` or module-level `pytestmark`), `live` (real network round-trip to a live venue). Never folder-derived, never auto-applied.
 
-## Fixtures and Factories
+Pytest-asyncio's own `asyncio` marker is separately registered by the plugin and is exempt from `--strict-markers`.
 
-**Shared root fixtures (`tests/conftest.py`):**
-- `global_queue` — a fresh `queue.Queue` per test (the constructor convention).
-- `make_bar` / `make_bar_event` / `make_bar_struct` — factory fixtures returning helpers that build a `Bar` / one-ticker `BarEvent` with every field entered via `Decimal(str(x))` (money correctness).
-- `fake_venue_connector` — a connected, teardown-safe `FakeLiveConnector` (the single credential-free reconciliation double, from `tests/support/fake_venue_connector.py`).
-- `_block_dev_database_env` (session, autouse) — pops the six `ITRADER_DATABASE_*` dev-DB env vars so no test can reach the developer's operational Postgres; a function-scoped `monkeypatch.setenv` naturally overrides it.
+## Strictness Gotchas
 
-**Integration fixtures (`tests/integration/conftest.py`):**
-- `golden_dir` / `golden_trades_path` / `golden_equity_path` / `golden_summary_path` — frozen-oracle asset paths.
-- `backtest_engine` — factory returning a `_make(...)` callable that builds a CSV-fed `BacktestTradingSystem` (import DEFERRED so `--collect-only` stays clean).
-- `pg_container_url` (session) — ONE `testcontainers` Postgres for the whole integration tree; import deferred, ANY startup failure → `pytest.skip` (D-11, never hard-fails a Dockerless run).
-- `pg_database_env` — points the `ITRADER_DATABASE_URL` gate at the shared container within test scope.
-- `remove_policy_harness` — factory building a two-symbol paper/replay `LiveTradingSystem` for universe remove-policy tests, driving the REAL provider→feed→exchange→portfolio path offline.
+- `filterwarnings = ["error", "ignore::UserWarning", "ignore::DeprecationWarning"]` — every OTHER unexpected warning (e.g. `RuntimeWarning`, unclosed-resource `ResourceWarning`) fails the test.
+- `--strict-markers` — any `@pytest.mark.x` not in the declared list above (or the asyncio plugin's own marker) is a collection error.
+- `--strict-config` — unrecognized/invalid ini options are errors, not warnings. This is why both `asyncio_mode` and `asyncio_default_fixture_loop_scope` must be set together (an unset fixture-loop-scope emits a config warning that then escalates to a hard error via `filterwarnings=["error"]`).
+- `-ra` shows short summary for everything except passed; `--disable-warnings` suppresses the pytest warnings summary section in output (does not affect `filterwarnings` enforcement, which runs regardless).
 
-**Fixture idiom — DEFER heavy imports:** factory fixtures return an inner `_make(...)`/`_run(...)` callable and import heavy engine/connector/testcontainers code INSIDE the body so `--collect-only` and offline collection never trigger the import.
+## Fixtures
 
-**Static fixture data:** JSON canned payloads under `tests/support/fixtures/okx_recon_payloads.json` and `tests/unit/connectors/fixtures/*.json` (`okx_business_candles.json`, `okx_order_lifecycle.json`).
+**Root (`tests/conftest.py`):**
+- `pytest_collection_modifyitems` — folder-derived TYPE marker application (see Markers above).
+- `_block_dev_database_env` (session-scoped, `autouse=True`) — pops the six `ITRADER_DATABASE_*` dev-DB env vars (`PASSWORD`, `URL`, `HOST`, `PORT`, `USER`, `NAME` — NOT `ITRADER_DATABASE_DATABASE`, the sqlite path) from `os.environ` at session start, restores in `finally`. Guarantees no test can reach the operational dev Postgres unless it explicitly opts in via function-scoped `monkeypatch.setenv` (which wins over the session-scope pop and is undone at teardown).
+- `global_queue` — fresh `queue.Queue()` per test (matches the constructor convention `global_queue`).
+- `make_bar_struct` / `make_bar` / `make_bar_event` — factory fixtures building a bare `Bar` (`_bar_struct`) or a one-ticker `BarEvent` with `dict[str, Bar]` payload (`_bar_event`); money fields entered via `Decimal(str(x))` per the money-boundary rule.
+- `fake_venue_connector` — connected, teardown-safe `FakeLiveConnector` for the reconciliation cluster (Phase 5, D-09/RECON-06); wraps a fake `ccxt.pro` client driven by canned `watch_*`/`fetch_*` payloads from `tests/support/fixtures/okx_recon_payloads.json`. The import of `tests.support.fake_venue_connector` is deferred into the fixture body so root conftest collection never depends on `tests.support` being importable early.
+
+**Layer-specific:**
+- `tests/unit/conftest.py` — documentation/marker anchor only (no unit-only fixtures of note beyond what root provides).
+- `tests/integration/conftest.py` — golden-file path fixtures + the `backtest_engine` factory used by the cross-component cascade and the oracle test.
 
 ## Mocking
 
-**Framework:** `unittest.mock` (`Mock`, `MagicMock`, `AsyncMock`, `patch`) — used in ~40 files. `monkeypatch` (pytest) used in ~28 files, primarily for env vars and attribute patching.
+- No `unittest.mock`/`pytest-mock` pattern dominates; the established convention is hand-written fake/double objects (e.g. `FakeLiveConnector` in `tests/support/fake_venue_connector.py`) driving canned JSON payloads (`tests/support/fixtures/okx_recon_payloads.json`) rather than `Mock()`/`MagicMock()` patching. Prefer hand-written fakes over `unittest.mock.patch` for connector/exchange doubles, consistent with `fake_venue_connector`.
+- `ReplayDataProvider` (`itrader/price_handler/providers/replay_provider.py`) replays the golden CSV through `LiveBarFeed` for the offline, CI-safe paper-replay parity gate — used as a data double rather than a mock.
 
-**Patterns:**
-```python
-from unittest.mock import AsyncMock, MagicMock, patch
-import ccxt.pro as ccxtpro
+## Golden / Oracle Tests
 
-# Construct a REAL client offline (no socket opens); mock only the network edge (load_markets),
-# so the test proves genuine ccxt routing rather than a fake's echo.
-```
+**The byte-exact SMA_MACD oracle:** `tests/integration/test_backtest_oracle.py`, sharing repo-root/output-dir constants and an importlib loader with `tests/integration/_oracle_harness.py` (also used by `test_reservation_inertness.py` so the two copies cannot drift).
 
-**What to Mock:**
-- The network edge only (e.g. ccxt `load_markets`/`fetch_*`), while exercising the real transport/routing object.
-- Live-venue connectors are replaced by `FakeLiveConnector` (a full daemon-thread loop + canned `watch_*`/`fetch_*` streams), NOT ad-hoc mocks, for reconciliation tests.
+- Runs the FULL 2018→2026 `SMA_MACD` backtest by invoking `scripts/run_backtest.py::main()` in-process (writes fresh `output/{trades,equity}.csv` + `output/summary.json`), then diffs against the committed `tests/golden/` equivalents.
+- Diff mechanic: loads both CSVs to pandas DataFrames, `pandas.testing.assert_frame_equal` on deterministic columns — NOT a byte-compare. Trades keyed by `(entry_date, exit_date, side)` + `pair` (behavioral identity, asserted exact); equity keyed by `timestamp`; summary keyed by `trade_count` (identity) plus `final_cash`/`final_equity`/`total_realised_pnl` (numeric, asserted EXACT — no float tolerance, per the D-16 M2b re-freeze and the later M5b re-freeze).
+- Carries `integration` + `slow` markers automatically via its `tests/integration/` path (folder-derived, not hand-added).
+- **Current frozen golden values** (`tests/golden/summary.json`, verified 2026-07-21):
+  - `final_cash` = `final_equity` = **`46189.87730727451`**
+  - `total_realised_pnl` = `36189.87730727451`
+  - `trade_count` = **134**
+  - `starting_cash` = `10000.0`, window `2018-01-01` → `2026-06-03`, ticker `BTCUSD` / `1d`
+  - `metrics`: `cagr` 0.19910032815485068, `max_drawdown` -0.538256823181407, `profit_factor` 1.291149869385797, `sharpe` 0.6583614133806527, `sortino` 1.038504038796619, `win_rate` 0.3656716417910448
+  - Also asserted: presence of `slippage_entry`/`slippage_exit` columns in `trades.csv` (D-17 auto-lock).
+- This matches the CLAUDE.md-cited oracle value `46189.87730727451` — confirmed current, not stale.
+- Other frozen-golden decision notes live alongside the artifacts: `tests/golden/FINAL-ORACLE.md`, `REFREEZE-M5A.md`, `REFREEZE-M5B-DIRECTION.md`, `REFREEZE-M5B-INCREASE.md`, `REFREEZE-M5C-DECIMAL.md`, `REFREEZE-06-04.md`, and the cross-validation notes `CROSS-VALIDATION.md` / `CROSS-VALIDATION-ACCOUNTING.md` / `CROSS-VALIDATION-LIMIT.md` / `CROSS-VALIDATION-SCALE-IN.md` / `CROSS-VALIDATION-TRAILING.md` (gating oracles: `backtesting.py` 0.6.5, `backtrader` 1.9.78.123; non-gating: `nautilus-trader` 1.227.0).
+- `tests/golden/pair/` holds a second frozen `trades.csv`/`equity.csv` pair (pairs-trading scenario).
 
-**What NOT to Mock:**
-- Do NOT mock the engine internals in e2e/integration — the harness builds a REAL `BacktestTradingSystem`/`LiveTradingSystem` via the same `build_backtest_system` factory the run path uses (no parallel/reinvented config).
-- Fakes intentionally return FLOATS everywhere (ccxt behavior); do NOT pre-Decimalize in the double — downstream code must route through `to_money(str(...))` (Pitfall 2).
-
-## Golden-Master / Oracle & Cross-Validation Patterns
-
-**Backtest oracle** (`tests/integration/test_backtest_oracle.py`, `integration`+`slow`):
-- Runs the FULL SMA_MACD backtest 2018→2026 by invoking the committed generator `scripts/run_backtest.py::main` in-process, then diffs fresh `output/{trades,equity}.csv`+`summary.json` against committed `tests/golden/` with `assert_frame_equal(check_exact=True)` — NO float tolerance.
-- Behavioral identity columns are the LAW: trades keyed on `(entry_date, exit_date, side)` + `pair`; equity on `timestamp`; summary on `trade_count` + numeric keys. Numerics are asserted EXACT as of the M2b/M5b re-freeze.
-- Re-freeze discipline is documented in `tests/golden/REFREEZE-*.md`; the numerical oracle re-baselines at exactly two program points.
-
-**E2E scenario harness** (`tests/e2e/conftest.py::run_scenario`) — the shared build→run→read→assemble→diff contract:
-- A scenario is a leaf folder with `scenario.py` (a module-level `SCENARIO` `ScenarioSpec`), a one-line `test_scenario.py` that calls `run_scenario(HERE)`, and a `golden/` subdir. Authors edit ONLY their leaf — never the conftest, no central registry (parallel-safe by construction).
-- The harness builds a real system via `build_backtest_system(spec)`, runs it (`print_summary=False`), reads portfolio state AFTER the run (queue-only, no mid-run cross-domain reads), assembles `trades`/`equity`/`summary`/`orders`/`cash_ops`/`portfolios` via the SHARED `itrader.reporting.*` path, and diffs ONLY the golden files present (presence = assertion) with the oracle's exact no-tolerance mechanic.
-- `--freeze` flag (OFF by default) WRITES goldens; goldens NEVER auto-heal. It is mechanically refused when >1 test is selected — freeze ONE hand-verified scenario at a time, commit WITH a VERIFY note.
-- Non-deterministic UUIDv7 ids must NOT be golden keys; snapshots key on stable business names (`PortfolioSpec.name`).
-
-**External cross-validation oracles:** `backtesting.py` (0.6.5) and `backtrader` (1.9.78.123) are the GATING cross-validation oracles (`tests/golden/CROSS-VALIDATION.md`); `nautilus-trader` (1.227.0) is a non-gating reconciliation oracle. M5 is the only milestone allowed to change results, validated against these.
-
-## Live-Trading Test Conventions (v1.7)
-
-- Live-venue tests carry `@pytest.mark.live`; default CI (`-m "not live"`) never touches the network.
-- ALL connector imports (`ccxt`, `ccxt.pro`, connector code) are LAZY (inside test bodies) so `not live` / offline collection stays fast and import-free.
-- Credential gate: `_HAS_OKX_CREDS = all(os.environ.get(v) for v in ("OKX_API_KEY", "OKX_API_SECRET", "OKX_API_PASSPHRASE"))`, applied as `skipif` — SEPARATE from the `live` network flag.
-- Offline reconciliation uses the shared credential-free `FakeLiveConnector` double (daemon-thread loop, `run_coroutine_threadsafe` RPC, cancellable stream tasks, client closed in teardown).
-- The `paper` venue (offline `SimulatedExchange`) drives real synchronous provider→feed→exchange→portfolio paths for universe/remove-policy tests without any socket (`remove_policy_harness`).
-- Sandbox safety: OKX demo creds are a demo sub-account; always verify `sandbox=True` routing before any order (the `sandbox` misroute test is the highest-severity gating assertion, `test_okx_connector.py`).
-
-## Test Types
-
-**Unit (`tests/unit/`, 175 files):** ONE component in isolation, real `global_queue`, no cross-component cascade.
-
-**Integration (`tests/integration/`, 46 files):** cross-component cascade, run-path smoke, the golden oracle, Postgres-backed storage (session container, skips when Docker absent).
-
-**E2E (`tests/e2e/`, 62 files):** per-scenario leaf folders diffed against frozen goldens; plus opt-in `live`/`slow` OKX-sandbox recon and dynamic-universe suites.
-
-## Coverage
-
-**Requirements:** None enforced (no coverage threshold in config).
-
-**View Coverage:**
-```bash
-make test-cov          # opens htmlcov/index.html
-```
+**E2E scenario goldens:** each `tests/e2e/<scenario>/` subdir is a small (~10-bar) full-engine run compared against a scenario-local frozen golden, tagged `e2e` (not `slow`) so they stay in the default `make test` run.
 
 ## Common Patterns
 
-**Error Testing:**
-```python
-with pytest.raises(InsufficientFundsError):
-    ...
-```
+**Async testing:** `asyncio_mode = "auto"` means any `async def test_*` in `tests/unit/connectors/` (OKX stream/reconnect-supervisor tests) runs without `@pytest.mark.asyncio`.
 
-**Parametrization** (~19 files):
-```python
-@pytest.mark.parametrize("domain_base", [PortfolioError, OrderError, DataError])
-def test_domain_bases(domain_base): ...
-```
+**Env-var isolation for DB tests:** container tests that need a real DB (e.g. `test_store_live_drive` / `test_two_sided_restart`) explicitly `monkeypatch.setenv` the `ITRADER_DATABASE_*` vars, overriding the session-wide `_block_dev_database_env` pop for the duration of that test only.
 
-**Log-assertion testing** (`caplog`, ~8 files): assert on emitted structlog records — run via `poetry run pytest` (NOT `make test`, which disables logs).
+## Known Operational Gotchas
 
-**Temp files** (`tmp_path`, ~8 files): any disk debugging uses pytest `tmp_path` only, NEVER the committed `golden/`.
-
-**Async:** `asyncio_mode = "auto"` means `async def test_*` runs without a per-test marker; live-connector loops run on daemon threads via `run_coroutine_threadsafe` rather than in-test event loops.
+- **`make test` disables logs, breaking `caplog` assertions — CONFIRMED by code, not by Makefile itself.** `itrader/logger.py` reads `ITRADER_DISABLE_LOGS` (default `"false"`) as a full-off kill-switch (D-08). `Makefile` does `include .env` + `.EXPORT_ALL_VARIABLES` (`Makefile:1-3`), so if `.env` sets `ITRADER_DISABLE_LOGS=true` it is exported into every `make test*` target's pytest process. The var is NOT set directly in `Makefile` (`grep` for `DISABLE_LOGS` in `Makefile` returns nothing) — the `.env` file contents could not be read here (forbidden-file policy) to confirm the literal value, but this exact failure mode is independently corroborated by module docstrings in `tests/unit/strategy/test_reconfigure_atomic.py`, `tests/unit/strategy/test_strategy_command_verbs.py`, `tests/unit/strategy/test_rehydrate.py`, `tests/unit/connectors/test_stream_supervisor.py`, and `tests/integration/test_store_live_drive.py:297`, all of which instruct running under `poetry run pytest` (NOT `make test`) for exactly this reason. Treat as confirmed operational behavior; run `poetry run pytest ...` directly (bypassing `make test`) for any test asserting on `caplog` warning/error records.
+- **`make test` aborts in git worktrees on missing `.env`.** `Makefile:2` does `include .env` unconditionally; a worktree checkout that lacks its own `.env` file fails Make immediately. Could not independently reproduce in this pass (no worktree spun up) — carried forward from prior verified project experience; use `poetry run pytest tests` directly inside a worktree, or `PYTHONPATH="$PWD" poetry run pytest tests` when an editable-install `.venv` is shadowing worktree edits.
+- **`tests/unit/<x>` + `tests/integration/<x>` `__init__.py` package collision — NOT currently reproducible.** As of 2026-07-21 only `tests/unit/portfolio/__init__.py` exists outside the `tests/e2e/` tree; `tests/integration/` has zero `__init__.py` files, so there is no live collision today. This was a real historical defect (full-suite collection breaks when both `tests/unit/<x>/__init__.py` and `tests/integration/<x>/__init__.py` exist for the same `<x>`, creating two top-level `<x>` packages) — do not reintroduce it by adding `__init__.py` to a `tests/unit/`/`tests/integration/` directory whose name is mirrored on the other side.
+- **Dev-DB env leak is systemically blocked, not just documented.** `tests/conftest.py::_block_dev_database_env` (session-scoped `autouse=True`) pops all six `ITRADER_DATABASE_*` vars for the whole session, so `make test`'s `include .env` exporting real dev-Postgres credentials cannot silently leak into a `LiveTradingSystem`/`SqlSettings` construction inside a test — a test must explicitly `monkeypatch.setenv` to opt back in.
 
 ---
 
-*Testing analysis: 2026-07-07*
+*Testing analysis: 2026-07-21*

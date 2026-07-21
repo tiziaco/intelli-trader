@@ -14,7 +14,7 @@
 - Handler modules: `<domain>_handler.py` — `order_handler.py`, `execution_handler.py`, `portfolio_handler.py`.
 - Manager modules: `<domain>_manager.py` — `order_manager.py`, `cash_manager.py`, `position_manager.py`.
 - Abstract base modules: `base.py` inside each domain package (e.g. `itrader/execution_handler/exchanges/base.py`).
-- Storage backends: `<backend>_storage.py` — `in_memory_storage.py`, `postgresql_storage.py`.
+- Storage backends: `<backend>_storage.py` — `in_memory_storage.py`, `sql_storage.py`, `cached_sql_storage.py`.
 - Connectors: `<venue>_connector.py` (live-trading, v1.7) — e.g. `okx_connector.py`.
 - Tests mirror source: `test_<module>.py` (e.g. `test_order_manager.py`).
 
@@ -119,7 +119,7 @@
 - `<Domain>Handler` is a thin interface: receives events from the queue, delegates to its `<Domain>Manager`, emits events back to the queue. It has no business logic.
 - `<Domain>Manager` owns the business logic and has NO queue access and NO back-reference to its handler (layering is one-directional: facade → manager → storage).
 - Components take `global_queue` as a constructor argument and never call other handlers directly across domains — they emit an event instead. Read-only cross-domain access goes through an injected read-model (`PortfolioReadModel` Protocol, `BacktestBarFeed`).
-- Events and value objects are `@dataclass`, events `frozen=True, slots=True, kw_only=True`, subclassing `Event`; `type` is pinned via `field(default=EventType.X, init=False)`; factory class methods for safe construction.
+- Events are `msgspec.Struct`s, NOT dataclasses — `class Event(msgspec.Struct, frozen=True, kw_only=True, gc=False)` (`itrader/events_handler/events/base.py:21`); concrete events subclass `Event` and pin `type` via `type: ClassVar[EventType] = EventType.X`; factory class methods for safe construction. Do not describe events with dataclass-only parameters (the older docs claimed a `slots` argument, which `msgspec.Struct` does not take). Value objects are still `@dataclass`, often `frozen=True`.
 - `__init__.py` files act as barrels that re-export the domain's public surface (e.g. `core/enums/__init__.py` re-exports all enums grouped by domain with comment headers).
 
 ## Pinned Decisions (do not re-litigate)
