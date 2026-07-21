@@ -5,10 +5,10 @@ milestone_name: Live System Refactor & Live-Readiness Hardening
 current_phase: 11
 current_phase_name: Multi-Portfolio-Live
 status: planning
-stopped_at: Phase 10.1 complete
-last_updated: "2026-07-21T06:12:53.383Z"
+stopped_at: Phase 11 context gathered
+last_updated: "2026-07-21T07:57:33.844Z"
 last_activity: 2026-07-21
-last_activity_desc: "Codebase map refreshed (506f20a9) + CLAUDE.md drift corrected (260721-b68, e10ee1ef) + residual drift fixed at source in .planning/codebase/ (f475d170). Next is Phase 11 ★."
+last_activity_desc: Codebase map refreshed for v1.8 Phases 8–10.1 (506f20a9); CLAUDE.md factual drift corrected (quick 260721-b68, e10ee1ef); residual drift fixed at its source in `.planning/codebase/{ARCHITECTURE,STRUCTURE,CONVENTIONS}.md` (fast 260721-cdx, f475d170) so the next `/gsd-map-codebase` regenerates CLAUDE.md's managed blocks correctly.
 progress:
   total_phases: 11
   completed_phases: 10
@@ -357,11 +357,11 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-17T11:09:39.781Z
-Stopped at: Phase 10 context gathered
+Last session: 2026-07-21T07:57:33.832Z
+Stopped at: Phase 11 context gathered
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
-Resume file: .planning/phases/10-strategies-registry/10-CONTEXT.md
+Resume file: .planning/phases/11-multi-portfolio-live/11-CONTEXT.md
 Carried todo: 14 pending todos in `todos/pending/` (10 fold into v1.8 as CF-1..CF-10; `v17-residual-carryforward.md`
 is the index; the substantive open item is `margin-equity-double-counts-notional-wr01`, owner-gated).
 
