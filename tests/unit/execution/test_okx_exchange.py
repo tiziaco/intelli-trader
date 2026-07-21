@@ -610,7 +610,7 @@ def test_client_order_id_round_trip_correlation_resolves(
 
     clordid = OkxExchange._client_order_id(order)
     assert fake_client.create_order.call_args.kwargs["params"]["clOrdId"] == clordid
-    assert exchange._index._orders_by_clOrdId[clordid] is order
+    assert exchange._index._orders_by_client_order_id[clordid] is order
 
     # An echoed fill carrying that clOrdId (venue-id lookup misses) resolves it.
     exchange._handle_trade({

@@ -1,7 +1,7 @@
 """VenueCorrelationIndex — the OKX arm's venue-correlation state, encapsulated (WR-05).
 
 WR-05 flagged the four insert-only correlation structures on ``OkxExchange`` — the three
-venue-id / order-id / clOrdId maps plus the ``_seen_trade_ids`` dedup set — as *insert-only*:
+venue-id / order-id / client-order-id maps plus the ``_seen_trade_ids`` dedup set — as *insert-only*:
 nothing is ever removed, so over a long live session every order and trade id is retained
 (unbounded memory). This class lifts that state (plus the ``_pending_fills_by_venue_id``
 late-fill buffer and the ``_correlation_lock``) out of the exchange into ONE cohesive,
@@ -9,8 +9,9 @@ socket-free, unit-testable unit so the growth can be bounded and exercised witho
 
 - **R1 — encapsulation.** All correlation state + its lock live here; ``OkxExchange``
   delegates. ``register`` / ``register_pending`` / ``adopt`` write; ``resolve`` reads (the
-  fill-correlation path, atomic under the lock — dedup + venue-id/clOrdId resolve + buffer +
-  mark-seen in one hold, preserving the WR-03 cross-thread guarantee); ``mark_seen`` dedups.
+  fill-correlation path, atomic under the lock — dedup + venue-id/client-order-id resolve +
+  buffer + mark-seen in one hold, preserving the WR-03 cross-thread guarantee); ``mark_seen``
+  dedups.
 - **R2 — release-on-terminal (fill-driven).** A per-``venue_id`` cumulative-filled ``Decimal``
   counter (``record_fill``) reports terminal when cumulative reaches ``order.quantity``
   (WR05-D1 — the index self-releases entirely inside the execution domain, NOT coupled to
@@ -79,11 +80,27 @@ class ResolveResult:
 
 
 def _extract_client_order_id(trade: Any) -> Optional[str]:
-	"""Pull the echoed client order id (clOrdId) off a ccxt-unified trade.
+	"""THE VENUE-VOCABULARY BOUNDARY on the fill read path (D-16 / LR-19 / MPORT-04).
 
-	ccxt surfaces it as ``clientOrderId`` at the top level, or the raw OKX
-	``clOrdId``/``clientOrderId`` under ``info``. Returns None when neither is present so the
-	caller falls through to the buffer path.
+	This function is the SOLE place in the engine that knows how a venue spells the client
+	order id on the wire. Everything above it speaks the ENGINE's vocabulary — ``client order
+	id``, the ``_orders_by_client_order_id`` map — and never the venue's field name. Adding a
+	second venue whose fill payload spells the field differently is therefore a ONE-SITE
+	change: extend the lookups here, and no caller, map, or test changes.
+
+	The venue spellings below are OKX's / ccxt's API contract and are deliberately preserved
+	VERBATIM — ``clOrdId`` is what OKX echoes back, and renaming it here would silently break
+	fill correlation against a live account. It is wire vocabulary, not engine vocabulary.
+
+	Read order: ccxt's normalized top-level ``clientOrderId`` first, then the raw venue
+	payload under ``info`` — OKX's own ``clOrdId``, then the nested ccxt alias
+	``clientOrderId``.
+
+	T-11-07 (untrusted input): venue trade dicts are attacker/venue-controlled from the
+	engine's perspective, so EVERY degenerate shape returns ``None`` rather than raising or
+	yielding an empty string — a non-dict ``trade``, a dict carrying neither field, a dict
+	whose ``info`` is not a dict, and a field that is present but falsy. The caller then falls
+	through to the buffer path instead of correlating a fill to the wrong order.
 	"""
 	if not isinstance(trade, dict):
 		return None
@@ -138,7 +155,7 @@ class VenueCorrelationIndex:
 		# The three correlation maps (formerly inline on OkxExchange).
 		self._orders_by_venue_id: Dict[str, OrderEvent] = {}
 		self._venue_id_by_order_id: Dict[OrderId, str] = {}
-		self._orders_by_clOrdId: Dict[str, OrderEvent] = {}
+		self._orders_by_client_order_id: Dict[str, OrderEvent] = {}
 		# Buffered fills awaiting correlation (fast-fill race / pre-adoption). D-16: an
 		# OrderedDict so a bounded FIFO eviction can drop the OLDEST bucket on overflow.
 		self._pending_fills_by_venue_id: "OrderedDict[str, List[Any]]" = OrderedDict()
@@ -147,8 +164,8 @@ class VenueCorrelationIndex:
 		self._pending_fill_count = 0
 		# WR05-D1: per-venue_id cumulative-filled counter driving fill-driven self-release.
 		self._cumulative_filled_by_venue_id: Dict[str, Decimal] = {}
-		# venue_id -> clOrdId, so ``release`` can drop the clOrdId map entry too (R2 bound).
-		self._clordid_by_venue_id: Dict[str, str] = {}
+		# venue_id -> client order id, so ``release`` can drop that map entry too (R2 bound).
+		self._client_order_id_by_venue_id: Dict[str, str] = {}
 
 		# R3 (WR05-D2): bounded dedup ring — deque(maxlen) FIFO eviction + companion set for
 		# O(1) membership. ``_seen_trade_ids`` stays the membership set (test-observable name).
@@ -159,26 +176,29 @@ class VenueCorrelationIndex:
 	# --- registration (write path — engine thread) ----------------------------
 
 	def register_pending(self, clordid: str, order: OrderEvent) -> None:
-		"""Pre-correlation keyed by clOrdId, registered BEFORE the create_order RPC (Pitfall 11).
+		"""Pre-correlation keyed by client order id, registered BEFORE the create_order RPC
+		(Pitfall 11).
 
-		OKX echoes clOrdId back on the fill, so a fill that streams in before the RPC returns
-		the venue id still resolves its OrderEvent via the clOrdId fallback in ``resolve``.
+		The VENUE echoes that identifier back on the fill under its own field name (OKX spells
+		it ``clOrdId``), so a fill that streams in before the RPC returns the venue id still
+		resolves its OrderEvent via the client-order-id fallback in ``resolve``. Only
+		``_extract_client_order_id`` knows the venue's spelling (D-16).
 		"""
 		with self._correlation_lock:
-			self._orders_by_clOrdId[clordid] = order
+			self._orders_by_client_order_id[clordid] = order
 
 	def release_pending(self, clordid: str) -> None:
-		"""Paired inverse of ``register_pending`` (WR-01): drop the pre-correlation clOrdId
-		entry when the submit that registered it DEFINITIVELY failed, so a failed submit does
-		not leak a pending correlation entry.
+		"""Paired inverse of ``register_pending`` (WR-01): drop the pre-correlation
+		client-order-id entry when the submit that registered it DEFINITIVELY failed, so a
+		failed submit does not leak a pending correlation entry.
 
 		Called ONLY on a definitive venue rejection — NOT on an ambiguous transport timeout
 		(D-13), where the order may still be resting/filling and MUST keep its pending
-		correlation so a streamed fill still resolves via the clOrdId fallback. Idempotent: an
-		unknown / already-released clOrdId is a clean no-op.
+		correlation so a streamed fill still resolves via the client-order-id fallback.
+		Idempotent: an unknown / already-released client order id is a clean no-op.
 		"""
 		with self._correlation_lock:
-			self._orders_by_clOrdId.pop(clordid, None)
+			self._orders_by_client_order_id.pop(clordid, None)
 
 	def register(self, venue_id: str, order: OrderEvent, clordid: str) -> List[Any]:
 		"""Write the venue-id correlation after the RPC returns the venue id; return any
@@ -190,7 +210,7 @@ class VenueCorrelationIndex:
 		with self._correlation_lock:
 			self._orders_by_venue_id[venue_id] = order
 			self._venue_id_by_order_id[order.order_id] = venue_id
-			self._clordid_by_venue_id[venue_id] = clordid
+			self._client_order_id_by_venue_id[venue_id] = clordid
 			return self._pop_pending_locked(venue_id)
 
 	def adopt(self, venue_id: str, order: OrderEvent, clordid: str) -> List[Any]:
@@ -200,8 +220,8 @@ class VenueCorrelationIndex:
 		with self._correlation_lock:
 			self._orders_by_venue_id[venue_id] = order
 			self._venue_id_by_order_id[order.order_id] = venue_id
-			self._orders_by_clOrdId[clordid] = order
-			self._clordid_by_venue_id[venue_id] = clordid
+			self._orders_by_client_order_id[clordid] = order
+			self._client_order_id_by_venue_id[venue_id] = clordid
 			return self._pop_pending_locked(venue_id)
 
 	def venue_id_for(self, order_id: OrderId) -> Optional[str]:
@@ -226,7 +246,7 @@ class VenueCorrelationIndex:
 		"""Correlate one streamed venue fill to its OrderEvent — atomic under the lock.
 
 		Preserves the exact ``_handle_trade`` semantics in one lock hold (WR-03): resolve
-		``trade['order']`` -> OrderEvent with the clOrdId fallback, BUFFER an uncorrelated fill
+		``trade['order']`` -> OrderEvent with the client-order-id fallback, BUFFER an uncorrelated fill
 		that carries a ``venue_id`` (``buffered``) else report ``uncorrelated``, dedup on the
 		SYMBOL-scoped key ``f"{order.ticker}:{trade['id']}"`` (a re-send is a ``duplicate``
 		no-op), and mark a resolved key seen INSIDE the lock so a concurrent re-send dedupes
@@ -252,7 +272,7 @@ class VenueCorrelationIndex:
 			if order is None:
 				clordid = _extract_client_order_id(trade)
 				if clordid is not None:
-					order = self._orders_by_clOrdId.get(clordid)
+					order = self._orders_by_client_order_id.get(clordid)
 			if order is None:
 				if venue_id is not None:
 					self._buffer_pending_locked(venue_id, trade)
@@ -327,7 +347,7 @@ class VenueCorrelationIndex:
 
 		Bounds the TOTAL buffered fills at ``_pending_buffer_max``; on overflow evicts the
 		OLDEST venue_id bucket (FIFO ``popitem(last=False)``) with a WARNING naming the dropped
-		count, so a flood of external (unknown venue id / ``clOrdId==""``) fills cannot grow the
+		count, so a flood of external (unknown venue id / empty client order id) fills cannot grow the
 		buffer without limit (mirrors the ``deque(maxlen)`` dedup-ring bound). The just-touched
 		bucket is moved to the end so eviction always targets the least-recently-buffered venue.
 		"""
@@ -360,8 +380,8 @@ class VenueCorrelationIndex:
 		Under the lock: pop + RETURN any ``_pending_fills_by_venue_id`` for ``venue_id`` FIRST
 		(so the caller can emit those buffered late fills OUTSIDE the lock BEFORE the
 		correlation is considered gone — no WR-02 regression), THEN drop the three correlation
-		entries (``_orders_by_venue_id`` / ``_venue_id_by_order_id`` / ``_orders_by_clOrdId``),
-		the per-``venue_id`` cumulative counter, and the clOrdId link — bounding the maps.
+		entries (``_orders_by_venue_id`` / ``_venue_id_by_order_id`` / ``_orders_by_client_order_id``),
+		the per-``venue_id`` cumulative counter, and the client-order-id link — bounding the maps.
 		Returns the released order + the drained buffered trades. Idempotent: an unknown /
 		already-released ``venue_id`` returns ``(None, [])`` with no raise (empty drain).
 		"""
@@ -371,9 +391,9 @@ class VenueCorrelationIndex:
 			order = self._orders_by_venue_id.pop(venue_id, None)
 			if order is not None:
 				self._venue_id_by_order_id.pop(order.order_id, None)
-			clordid = self._clordid_by_venue_id.pop(venue_id, None)
+			clordid = self._client_order_id_by_venue_id.pop(venue_id, None)
 			if clordid is not None:
-				self._orders_by_clOrdId.pop(clordid, None)
+				self._orders_by_client_order_id.pop(clordid, None)
 			self._cumulative_filled_by_venue_id.pop(venue_id, None)
 			return order, drained
 

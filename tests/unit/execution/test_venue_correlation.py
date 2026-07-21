@@ -330,10 +330,18 @@ def test_registration_lands_in_the_renamed_client_order_id_map() -> None:
 
 def test_release_drops_the_renamed_client_order_id_map_entry() -> None:
     """R2 bound under the renamed identifiers: ``release`` still drops the client-order-id
-    map entry (and its venue-id link), so a terminalized order leaves no residue."""
+    map entry (and its venue-id link), so a terminalized order leaves no residue.
+
+    Mirrors the REAL submit sequence in ``OkxExchange._submit_order``: ``register_pending``
+    writes ``_orders_by_client_order_id`` BEFORE the create_order RPC, then ``register``
+    writes the venue-id maps + the ``_client_order_id_by_venue_id`` link once the RPC returns.
+    ``register`` alone does NOT populate the client-order-id map — only ``register_pending``
+    and ``adopt`` do — so both calls are required to set up the release bound.
+    """
     idx = VenueCorrelationIndex()
     order = _make_order(order_id=12)
 
+    idx.register_pending("it12", order)
     idx.register("OID-12", order, "it12")
     assert idx._orders_by_client_order_id["it12"] is order
     assert idx._client_order_id_by_venue_id["OID-12"] == "it12"

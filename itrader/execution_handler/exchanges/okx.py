@@ -47,8 +47,9 @@ from .base import AbstractExchange
 from .venue_correlation import VenueCorrelationIndex
 
 
-# WR-04: OKX clOrdId charset. The client order id is the fast-fill-race
-# correlation key (``_orders_by_clOrdId``) and MUST be unique per order.
+# WR-04: OKX clOrdId charset (the venue's own field name for the client order
+# id). The client order id is the fast-fill-race correlation key
+# (``_orders_by_client_order_id``) and MUST be unique per order.
 # Base62 of the order id's 128 bits is LOSSLESS (a bijection on the 16 raw
 # UUID bytes) and renders to <=22 chars, so ``"it"`` + token stays under
 # OKX's 32-char alphanumeric clOrdId limit with the full 128-bit entropy
@@ -421,7 +422,7 @@ class OkxExchange(AbstractExchange):
 		# register the pending correlation keyed by it BEFORE the create_order RPC.
 		# OKX echoes clOrdId back on the fill, so a fill that streams in before the
 		# RPC returns the venue id still resolves its OrderEvent in _handle_trade
-		# (which consults _orders_by_clOrdId when the venue-id lookup misses).
+		# (which consults _orders_by_client_order_id when the venue-id lookup misses).
 		client_order_id = self._client_order_id(event)
 		params["clOrdId"] = client_order_id
 		# WR-05 R1: the index owns the pending-correlation write (guarded internally).
@@ -466,7 +467,7 @@ class OkxExchange(AbstractExchange):
 
 		A pre-restart Order never went through ``_submit_order`` — the ONLY writer
 		of the three in-memory correlation maps (``_orders_by_venue_id`` /
-		``_venue_id_by_order_id`` / ``_orders_by_clOrdId``). Consequence once the
+		``_venue_id_by_order_id`` / ``_orders_by_client_order_id``). Consequence once the
 		live fill stream is spawned (CR-01): a post-restart fill for a rehydrated
 		resting order resolves to no OrderEvent and is BUFFERED under
 		``_pending_fills_by_venue_id`` forever (silently lost), and a cancel of a
