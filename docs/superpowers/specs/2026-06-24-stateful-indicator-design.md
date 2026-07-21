@@ -110,7 +110,7 @@ MACD bars", indicator-vs-price divergence over N) declares the depth it reads. D
 bounded, never unbounded — "retain more" for raw history lives in (i), not (iii).
 
 ### 4.3 Cut the per-tick window
-Rework `strategies_handler.calculate_signals` → `Strategy.evaluate` so a **handle-only**
+Rework `strategies_handler.on_bar` → `Strategy.evaluate` so a **handle-only**
 strategy is pushed the latest bar, not a sliced window — no DataFrame materialized.
 `self.bars` as a fresh per-tick master-frame slice is removed; where a strategy still needs
 frame access it is a **shared-cache read**, not a new slice.
@@ -238,7 +238,7 @@ Per-tick consumers on the TIME→BAR route (`full_event_handler.py` `_routes`):
 
 | Consumer | Reads a window? | Data shape | Cost/tick | Cite |
 |---|---|---|---|---|
-| `strategies_handler.calculate_signals` (single) | **YES** `feed.window()` | trailing `max_window` DataFrame | O(tickers × log n) | `strategies_handler.py:125` |
+| `strategies_handler.on_bar` (single) | **YES** `feed.window()` | trailing `max_window` DataFrame | O(tickers × log n) | `strategies_handler.py` (`on_bar`) |
 | `strategies_handler._dispatch_pair` | **YES** ×2 | two trailing DataFrames | O(log n) | `strategies_handler.py:294-295` |
 | `execution_handler.on_market_data` | **NO** | reads `BarEvent.bars` payload only (resting-order matching) | O(exchanges) | `execution_handler.on_market_data` |
 | `portfolio_handler.update_portfolios_market_value` | **NO** | scalar `bar.close` from `BarEvent.bars` (prebuilt Decimal) | O(portfolios × positions) | `portfolio_handler.py:737-746,774` |

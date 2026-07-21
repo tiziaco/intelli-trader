@@ -27,8 +27,10 @@ from decimal import Decimal
 from typing import Any
 
 import pytest
+from uuid_utils.compat import uuid7
 
 from itrader.config.sql import SqlDriver, SqlSettings
+from itrader.core.ids import PortfolioId
 from itrader.core.sizing import FractionOfCash
 from itrader.storage import SqlEngine
 from itrader.storage.strategy_registry_store import StrategyRegistryStore
@@ -40,6 +42,9 @@ from tests.support.schema import provision_schema
 from tests.support.strategy_catalog import seeded_registry_rows, test_catalog
 
 _AT = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+
+# Portfolio handles are ALWAYS UUIDv7-backed ``PortfolioId`` values (FL-02).
+_PID = PortfolioId(uuid7())
 
 
 def _seed_store() -> StrategyRegistryStore:
@@ -132,7 +137,7 @@ def test_seeded_rows_rehydrate_and_survive_a_rebuild(pg_database_env) -> None:
     store = _seed_store()
     try:
         sma = _sma("sma_macd", sizing_policy=FractionOfCash(Decimal("0.75")))
-        sma.subscribe_portfolio(4242)
+        sma.subscribe_portfolio(_PID)
         _seed(store, [sma])
 
         # --- first boot -------------------------------------------------------------
@@ -146,7 +151,7 @@ def test_seeded_rows_rehydrate_and_survive_a_rebuild(pg_database_env) -> None:
             # A NON-default param: a defaults-only assertion would pass against a codec
             # that dropped the field entirely.
             assert rebuilt.sizing_policy == FractionOfCash(Decimal("0.75"))
-            assert [str(p) for p in rebuilt.subscribed_portfolios] == ["4242"]
+            assert [str(p) for p in rebuilt.subscribed_portfolios] == [str(_PID)]
             first_id = rebuilt.strategy_id
         finally:
             system.stop(timeout=5.0)
@@ -157,7 +162,7 @@ def test_seeded_rows_rehydrate_and_survive_a_rebuild(pg_database_env) -> None:
             resumed = system2.strategies_handler.strategies
             assert [s.name for s in resumed] == ["sma_macd"]
             assert resumed[0].sizing_policy == FractionOfCash(Decimal("0.75"))
-            assert [str(p) for p in resumed[0].subscribed_portfolios] == ["4242"]
+            assert [str(p) for p in resumed[0].subscribed_portfolios] == [str(_PID)]
             # D-02: the durable identity is the NAME; strategy_id is ephemeral and is
             # freshly minted per construction, so it must NOT survive the restart.
             assert resumed[0].strategy_id != first_id

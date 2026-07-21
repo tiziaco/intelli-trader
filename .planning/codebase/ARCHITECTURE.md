@@ -60,7 +60,9 @@ publish-and-continue live/paper daemon.
 | `LiveTradingSystem` | Live/paper composition root; daemon processing thread; start/stop/status + halt/pause lifecycle; venue wiring | `itrader/trading_system/live_trading_system.py` |
 | `TimeGenerator` | Yield `TimeEvent`s across a pinned bar-date grid (backtest driver) | `itrader/trading_system/simulation/time_generator.py` |
 | `SystemSpec` | Declarative backtest run spec (strategies, portfolios, window) | `itrader/trading_system/system_spec.py` |
-| `StrategiesHandler` | Run strategies per BAR; emit `SignalEvent`s | `itrader/strategy_handler/strategies_handler.py` |
+| `StrategiesHandler` | Thin data plane: `on_bar` runs strategies per BAR and emits `SignalEvent`s; delegates registry state to `ManagedStrategies` and add/remove/enable verbs to `StrategyLifecycleManager` | `itrader/strategy_handler/strategies_handler.py` |
+| `ManagedStrategies` | Owner-class for the strategy-registry state the data plane iterates | `itrader/strategy_handler/managed_strategies.py` |
+| `StrategyLifecycleManager` | Control plane: add/remove/enable/disable verbs and warmup/rehydrate orchestration | `itrader/strategy_handler/lifecycle/manager.py` |
 | `ScreenersHandler` | Dynamic market screening on TIME (deferred subsystem) | `itrader/screeners_handler/screeners_handler.py` |
 | `OrderHandler` | Thin event interface: `on_signal`/`on_fill`/`on_order_ack`; delegates to `OrderManager` | `itrader/order_handler/order_handler.py` |
 | `OrderManager` | Coordinator over 5 collaborators: admission, brackets, lifecycle, reconcile, sizing | `itrader/order_handler/order_manager.py` |
@@ -166,7 +168,7 @@ publish-and-continue live/paper daemon.
 1. `BacktestRunner.run()` per-tick: `clock.set_time` → `global_queue.put(TimeEvent)` (`trading_system/backtest_runner.py`).
 2. `EventHandler.process_events()` drains and dispatches (`events_handler/full_event_handler.py:117`).
 3. **TIME** route → `screeners_handler.screen_markets` then `feed.generate_bar_event` (emits `BarEvent`s).
-4. **BAR** route → `portfolio_handler.update_portfolios_market_value` (mark-to-market) → `execution_handler.on_market_data` (resting-order match → `FillEvent`) → `strategies_handler.calculate_signals` (→ `SignalEvent`).
+4. **BAR** route → `portfolio_handler.update_portfolios_market_value` (mark-to-market) → `execution_handler.on_market_data` (resting-order match → `FillEvent`) → `strategies_handler.on_bar` (→ `SignalEvent`).
 5. **SIGNAL** route → `order_handler.on_signal` → `OrderManager`/`AdmissionManager` (validate + size + reserve → `OrderEvent`).
 6. **ORDER** route → `execution_handler.on_order` → `SimulatedExchange` (fills/rests → `FillEvent`).
 7. **FILL** route → `portfolio_handler.on_fill` (positions/cash) then `order_handler.on_fill` (mirror reconcile).
@@ -216,7 +218,7 @@ publish-and-continue live/paper daemon.
 **Strategy base:**
 - Purpose: Base for all trading strategies.
 - Examples: `itrader/strategy_handler/base.py`; reference `strategies/SMA_MACD_strategy.py`; user strategies in `my_strategies/`.
-- Pattern: subclass implements `calculate_signal(...)`; emits a `SignalEvent`.
+- Pattern: subclass implements the `generate_signal(ticker)` abstractmethod returning a `SignalIntent`; the handler pushes bars via `update(ticker, bar)` and gates on `is_ready(ticker)`.
 
 **AbstractExchange:**
 - Purpose: Pluggable exchange interface.
@@ -250,7 +252,7 @@ publish-and-continue live/paper daemon.
 - Location: `LiveTradingSystem.add_event` — FAIL-CLOSED external/web ingress (D-10). Only `SIGNAL` and `STRATEGY_COMMAND` event types are admissible; every internal-fact type is rejected by default.
 
 **Strategy signal source:**
-- Location: `itrader/strategy_handler/base.py` — `calculate_signal` → `SignalEvent`, invoked by `StrategiesHandler.calculate_signals` per BAR.
+- Location: `itrader/strategy_handler/base.py` — `generate_signal(ticker)` → `SignalIntent`, invoked by `StrategiesHandler.on_bar` per BAR.
 
 ## Architectural Constraints
 

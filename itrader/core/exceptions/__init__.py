@@ -38,8 +38,10 @@ from .order import (
 
 # Strategy exceptions
 from .strategy import (
+    StrategyAdmissionError,
     UnknownParamError,
-    MissingParamError
+    MissingParamError,
+    StrategyValidationError
 )
 
 # Data exceptions
@@ -81,8 +83,10 @@ __all__ = [
     'UnsizedSignalError',
 
     # Strategy exceptions
+    'StrategyAdmissionError',
     'UnknownParamError',
     'MissingParamError',
+    'StrategyValidationError',
 
     # Data exceptions
     'DataError',

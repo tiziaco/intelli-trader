@@ -5,7 +5,7 @@ Behavioral proofs for four in-scope Phase-7-review findings landed on
 
 - CR-01: a ``STRATEGY_COMMAND`` add/remove_ticker addressed to a ``PairStrategy``
   is REFUSED (loud no-op) — no ticker mutation, no follow-on ``UniversePollEvent``,
-  and the next BAR's ``calculate_signals`` does NOT raise (the unbounded
+  and the next BAR's ``on_bar`` does NOT raise (the unbounded
   ErrorEvent crash-storm is gone).
 - IN-02: ``on_strategy_command`` emits a ``UniversePollEvent`` ONLY when the
   tickers actually mutated; an idempotent no-op (add already-present / remove
@@ -26,9 +26,11 @@ from typing import Any
 
 import pandas as pd
 import pytest
+from uuid_utils.compat import uuid7
 
 from itrader.core.bar import Bar
 from itrader.core.enums import Side
+from itrader.core.ids import PortfolioId
 from itrader.core.sizing import FixedQuantity, FractionOfCash, SignalIntent, TradingDirection
 from itrader.events_handler.events import (
     BarEvent,
@@ -40,6 +42,9 @@ from itrader.strategy_handler.storage import InMemorySignalStore
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
 
 pytestmark = pytest.mark.unit
+
+# Portfolio handles are ALWAYS UUIDv7-backed ``PortfolioId`` values (FL-02).
+_PID = PortfolioId(uuid7())
 
 _T0 = datetime(2020, 1, 1, tzinfo=timezone.utc)  # midnight UTC -> 1d aligned
 
@@ -175,7 +180,7 @@ def test_cr01_pair_strategy_command_refused(factory: str) -> None:
     handler = _pair_handler()
     pair = _SpyPair(timeframe="1d", tickers=[_TICKER_A, _TICKER_B])
     handler.add_strategy(pair)
-    pair.subscribe_portfolio(1)
+    pair.subscribe_portfolio(_PID)
 
     make = getattr(StrategyCommandEvent, factory)
     handler.on_strategy_command(make("spy_pair", "XRPUSD", time=_T0))
@@ -186,11 +191,11 @@ def test_cr01_pair_strategy_command_refused(factory: str) -> None:
 
 
 def test_cr01_next_bar_does_not_raise_after_refusal() -> None:
-    """CR-01: after a refused pair command the next calculate_signals does NOT raise."""
+    """CR-01: after a refused pair command the next on_bar does NOT raise."""
     handler = _pair_handler()
     pair = _SpyPair(timeframe="1d", tickers=[_TICKER_A, _TICKER_B])
     handler.add_strategy(pair)
-    pair.subscribe_portfolio(1)
+    pair.subscribe_portfolio(_PID)
 
     handler.on_strategy_command(
         StrategyCommandEvent.add_ticker("spy_pair", "XRPUSD", time=_T0)
@@ -199,7 +204,7 @@ def test_cr01_next_bar_does_not_raise_after_refusal() -> None:
     # The crash-storm scenario: a mutated pair (3 tickers) would make
     # _dispatch_pair's tuple-unpack raise every BAR. The guard kept it at 2, so
     # this drives cleanly (no exception).
-    handler.calculate_signals(_bar_event(both_legs=True, day=1))  # must not raise
+    handler.on_bar(_bar_event(both_legs=True, day=1))  # must not raise
 
 
 # --------------------------------------------------------------------------- #
@@ -267,10 +272,10 @@ def test_wr01_pending_leg_skips_pair_dispatch() -> None:
     handler = _pair_handler()
     pair = _SpyPair(timeframe="1d", tickers=[_TICKER_A, _TICKER_B])
     handler.add_strategy(pair)
-    pair.subscribe_portfolio(1)
+    pair.subscribe_portfolio(_PID)
     handler.set_universe(_FakeUniverse({_TICKER_A: True, _TICKER_B: False}))
 
-    handler.calculate_signals(_bar_event(both_legs=True, day=1))
+    handler.on_bar(_bar_event(both_legs=True, day=1))
 
     assert pair.update_pair_calls == 0  # gate short-circuits BEFORE update_pair
     assert pair.evaluate_pair_calls == 0
@@ -282,15 +287,15 @@ def test_wr01_both_ready_pair_evaluates() -> None:
     handler = _pair_handler()
     pair = _SpyPair(timeframe="1d", tickers=[_TICKER_A, _TICKER_B])
     handler.add_strategy(pair)
-    pair.subscribe_portfolio(1)
+    pair.subscribe_portfolio(_PID)
     handler.set_universe(_FakeUniverse(True))
 
     # Prime the pair buffers to one-below-ready, draining each tick.
     for d in range(1, _MAX_WINDOW):
-        handler.calculate_signals(_bar_event(both_legs=True, day=d))
+        handler.on_bar(_bar_event(both_legs=True, day=d))
     _drain(handler.global_queue)
 
-    handler.calculate_signals(_bar_event(both_legs=True, day=_MAX_WINDOW))
+    handler.on_bar(_bar_event(both_legs=True, day=_MAX_WINDOW))
 
     assert pair.evaluate_pair_calls >= 1
     signals = _drain(handler.global_queue)

@@ -1,4 +1,4 @@
-"""D-07 — the ``is_active`` gate on ``StrategiesHandler.calculate_signals``.
+"""D-07 — the ``is_active`` gate on ``StrategiesHandler.on_bar``.
 
 ``Strategy.is_active`` (base.py:193, defaults True) was an INERT flag before P10:
 ``activate_strategy``/``deactivate_strategy`` flipped it and nothing read it. P10
@@ -27,9 +27,11 @@ from queue import Queue
 
 import pandas as pd
 import pytest
+from uuid_utils.compat import uuid7
 
 from itrader.core.bar import Bar
 from itrader.core.enums import Side
+from itrader.core.ids import PortfolioId
 from itrader.core.sizing import FixedQuantity, FractionOfCash, SignalIntent, TradingDirection
 from itrader.events_handler.events import BarEvent, SignalEvent
 from itrader.strategy_handler.base import Strategy
@@ -39,6 +41,9 @@ from itrader.strategy_handler.storage import InMemorySignalStore
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
 
 pytestmark = pytest.mark.unit
+
+# Portfolio handles are ALWAYS UUIDv7-backed ``PortfolioId`` values (FL-02).
+_PID = PortfolioId(uuid7())
 
 _TICKER = "BTCUSD"
 _TICKER_B = "ETHUSD"
@@ -161,7 +166,7 @@ def _make_handler(**kwargs: object) -> StrategiesHandler:
 
 def _add(handler: StrategiesHandler, strategy: Strategy) -> Strategy:
     handler.add_strategy(strategy)
-    strategy.subscribe_portfolio(1)
+    strategy.subscribe_portfolio(_PID)
     return strategy
 
 
@@ -174,7 +179,7 @@ def test_inactive_strategy_emits_no_signal() -> None:
     strategy = _add(handler, _AlwaysBuyStrategy(timeframe="1d", tickers=[_TICKER]))
     strategy.deactivate_strategy()
 
-    handler.calculate_signals(_bar_event(day=8))
+    handler.on_bar(_bar_event(day=8))
 
     assert _drain(handler.global_queue) == [], (
         "an inactive strategy must emit no signals on an on-grid bar")
@@ -197,7 +202,7 @@ def test_active_sibling_unaffected_by_inactive_peer() -> None:
     active = _add(handler, active)
     inactive.deactivate_strategy()
 
-    handler.calculate_signals(_bar_event(day=8))
+    handler.on_bar(_bar_event(day=8))
 
     signals = _drain(handler.global_queue)
     assert len(signals) == 1, "exactly the active sibling emits"
@@ -222,14 +227,14 @@ def test_disabled_strategy_stays_warm_and_trades_on_re_enable() -> None:
 
     # Warm the SMA handle while ACTIVE.
     for day in range(1, _SMA_WINDOW + 1):
-        handler.calculate_signals(_bar_event(day=day))
+        handler.on_bar(_bar_event(day=day))
     _drain(handler.global_queue)
     assert strategy.is_ready(_TICKER), "precondition: the SMA warmed while active"
 
     # Disable and drive several bars — nothing emits.
     strategy.deactivate_strategy()
     for day in range(_SMA_WINDOW + 1, _SMA_WINDOW + 6):
-        handler.calculate_signals(_bar_event(day=day))
+        handler.on_bar(_bar_event(day=day))
     assert _drain(handler.global_queue) == [], "a disabled strategy emits nothing"
 
     # The object was never removed from the registry.
@@ -239,7 +244,7 @@ def test_disabled_strategy_stays_warm_and_trades_on_re_enable() -> None:
 
     # Re-enable and drive ONE bar — it trades immediately, no re-warmup.
     strategy.activate_strategy()
-    handler.calculate_signals(_bar_event(day=_SMA_WINDOW + 6))
+    handler.on_bar(_bar_event(day=_SMA_WINDOW + 6))
 
     signals = _drain(handler.global_queue)
     assert len(signals) == 1, (
@@ -258,7 +263,7 @@ def test_is_active_defaults_true() -> None:
 
     handler = _make_handler()
     _add(handler, strategy)
-    handler.calculate_signals(_bar_event(day=8))
+    handler.on_bar(_bar_event(day=8))
 
     assert len(_drain(handler.global_queue)) == 1, (
         "a default-constructed strategy trades — the guard is inert")
@@ -276,11 +281,11 @@ def test_inactive_pair_strategy_is_skipped() -> None:
 
     # Prime the pair's buffers to ready while ACTIVE, draining as we go.
     for day in range(1, pair.max_window + 2):
-        handler.calculate_signals(_bar_event(day=day, tickers=(_TICKER, _TICKER_B)))
+        handler.on_bar(_bar_event(day=day, tickers=(_TICKER, _TICKER_B)))
     assert _drain(handler.global_queue), "precondition: the active pair emits"
 
     pair.deactivate_strategy()
-    handler.calculate_signals(
+    handler.on_bar(
         _bar_event(day=pair.max_window + 2, tickers=(_TICKER, _TICKER_B)))
 
     assert _drain(handler.global_queue) == [], (

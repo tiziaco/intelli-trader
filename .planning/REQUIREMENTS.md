@@ -280,18 +280,36 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 
 ### Strategies Handler Decomposition (P10.1)
 
-- [ ] **DECOMP-01**: `strategies_handler.py` (1648 LOC) is split into a thin data-plane `StrategiesHandler`
+- [x] **DECOMP-01**: `strategies_handler.py` (1648 LOC) is split into a thin data-plane `StrategiesHandler`
   (queue seam), a shared `ManagedStrategies` holder (owns `strategies`/`min_timeframe`/`_pending_removals`
-  + registration/membership rules), and a live-only `StrategyLifecycleManager` (the ~700-LOC control plane
+
+  + registration/membership rules), and a `StrategyLifecycleManager` (the ~700-LOC control plane
   + the D-11 fill-driven removal completion); no behaviour change to any verb, the signal path, or
   pending-removal semantics (follow-up to P10; spec 2026-07-18).
 
-- [ ] **DECOMP-02**: The five load-bearing GATE-01 lazy imports (plus the accidental `ErrorEvent`/
-  `ErrorSeverity` one) are removed — `StrategyLifecycleManager` is live-only (never barrelled, constructed
-  only in the live wiring arm), so its `registry`/`config_codec`/`catalog`/`cache_registration` imports sit
-  at module top; `test_okx_inertness.py` stays green.
+- [x] **DECOMP-01a**: The three live deps stop being `None`-then-assigned. `registry_store` becomes
+  handler-owned, derived in `__init__` from `(environment, sql_engine)` through a new
+  `StrategyRegistryStorageFactory` (mirroring `SignalStorageFactory`/`OrderStorageFactory`, with the
+  `has_table("strategy_registry")` probe inside the live arm so the D-21 first-start state still yields
+  `None` + a WARNING); `portfolio_read_model` is passed from `compose.py` (where `portfolio_handler` is
+  already a local); `strategy_catalog` rides into `compose_engine` as an `Optional[Any]` kwarg (the
+  `alert_sink`/`system_store`/`error_policy` precedent) because D-01 forbids `itrader` importing a concrete
+  strategy class. The three post-construction assignments at `live_trading_system.py:1630/1641/1642` are
+  deleted. `ManagedStrategies` and `StrategyLifecycleManager` are then both constructed unconditionally in
+  `StrategiesHandler.__init__` from module-top imports — no `Optional`, no guard, no late-init helper.
 
-- [ ] **DECOMP-03**: `calculate_signals` is renamed `on_bar` (matches the `on_<event>()` callback
+- [x] **DECOMP-02**: The backtest import graph pulls **no SQL stack** — no `sqlalchemy`, `psycopg2`, or
+  `alembic` — and `test_okx_inertness.py` asserts that positively, not merely by the hardcoded `_FORBIDDEN`
+  module-name list it checks today (a named list cannot catch a regression through an unlisted module).
+  Every function-local import in `strategies_handler.py` is gone: the six blocks at 566 / 723-730 / 1010 /
+  1041-1042 / 1101-1108 move to module top on their owning unit. *(Restated 2026-07-20: the original
+  wording called these five imports "load-bearing" for GATE-01 and required the lifecycle manager to be
+  "live-only, constructed only in the live wiring arm". A clean-interpreter probe disproved the first —
+  importing all five targets leaks zero forbidden modules and zero SQLAlchemy — and the owner's
+  `__init__`-time construction decision deliberately supersedes the second. The invariant GATE-01 actually
+  protects is SQL-absence, so the requirement now names that directly.)*
+
+- [x] **DECOMP-03**: `calculate_signals` is renamed `on_bar` (matches the `on_<event>()` callback
   convention) across the `_routes` literal (`full_event_handler.py`), the 59 test call-sites, and the docs
   (incl. the CLAUDE.md flow diagram); no compat shim; `test_dispatch_registry` passes.
 
@@ -435,9 +453,10 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | STRAT-01 | P10 | Complete |
 | STRAT-02 | P10 | Complete |
 | STRAT-03 | P10 | Complete |
-| DECOMP-01 | P10.1 | Pending |
-| DECOMP-02 | P10.1 | Pending |
-| DECOMP-03 | P10.1 | Pending |
+| DECOMP-01 | P10.1 | Complete |
+| DECOMP-01a | P10.1 | Complete |
+| DECOMP-02 | P10.1 | Complete |
+| DECOMP-03 | P10.1 | Complete |
 | MPORT-01 | P11 | Pending |
 | MPORT-02 | P11 | Pending |
 | MPORT-03 | P11 | Pending |

@@ -70,7 +70,7 @@ import uuid
 from typing import Any, Mapping, Optional, Protocol
 
 from itrader.core.enums import ErrorSeverity
-from itrader.core.exceptions import MissingParamError, UnknownParamError
+from itrader.core.exceptions import StrategyAdmissionError
 from itrader.core.ids import PortfolioId
 from itrader.core.policy_codec import PolicyRegistry, default_policy_registry
 from itrader.logger import get_itrader_logger
@@ -79,10 +79,7 @@ from itrader.price_handler.feed.cache_registration import (
 	required_base_depth,
 )
 from itrader.strategy_handler.base import Strategy
-from itrader.strategy_handler.registry.catalog import (
-	StrategyCatalog,
-	UnknownStrategyTypeError,
-)
+from itrader.strategy_handler.registry.catalog import StrategyCatalog
 from itrader.strategy_handler.registry.config_codec import (
 	StrategyConfigError,
 	decode_strategy_config,
@@ -98,17 +95,45 @@ __all__ = [
 # "this one instance cannot be reconstructed" and nothing about the health of its siblings,
 # so each is quarantined rather than raised.
 #
-# Enumerated EXPLICITLY rather than caught as a bare ``except`` on the base class: a broad
-# catch here would also swallow a genuine infrastructure fault (a store/driver error raised
-# mid-loop) and silently quarantine every strategy in turn — reporting a data problem while
-# hiding an outage. The narrow tuple keeps the two D-19 arms actually separable.
+# The property that matters is that this catch stays NARROW. A broad catch here would also
+# swallow a genuine infrastructure fault (a store/driver error raised mid-loop) and silently
+# quarantine every strategy in turn — reporting a data problem while hiding an outage. The
+# two D-19 arms must stay actually separable.
+#
+# ``StrategyAdmissionError`` PRESERVES that property: it is the shared ancestor of the
+# strategy-payload REFUSALS only, and ``RehydrateInfrastructureError`` roots at
+# ``RuntimeError`` and is NOT a subclass of it — so an infrastructure fault raised inside the
+# per-row try still propagates out instead of quarantining the row. That non-subclass
+# relationship is now LOAD-BEARING rather than incidental, and it is pinned by an explicit
+# regression test (``tests/unit/strategy/test_rehydrate.py``).
+#
+# WR2-02 — why this tuple needs NO widening despite covering ``validate()`` refusals. A
+# strategy class that GAINS a cross-field ``validate()`` rule refuses a row written under
+# the old build. That refusal used to arrive as a BARE ``ValueError`` (from ``validate()``,
+# a subclass override, the ``_apply_params`` malformed-``tickers`` guard, or ``_COERCE``
+# enum coercion), which this tuple did NOT claim — so it escaped the per-row try and turned
+# ONE stale row into a whole-engine boot outage, precisely the failure the D-19 split
+# exists to prevent. It is now TYPED as ``StrategyValidationError`` under
+# ``StrategyAdmissionError`` by the wrap in ``Strategy.__init__`` / ``Strategy.reconfigure``,
+# so the FIRST member below already claims it — including refusals from a third-party
+# ``validate()`` override, because the wrap converts at the raise boundary rather than
+# requiring the class to opt into our hierarchy.
+#
+# The fix was made AT THE SOURCE deliberately. Adding bare ``ValueError`` to this tuple was
+# the obvious alternative and was REJECTED: a programming-bug ``ValueError`` from unrelated
+# code inside the per-row try would then silently quarantine a row instead of failing boot,
+# collapsing exactly the arm separability the paragraphs above defend.
+#
+# Do NOT widen this tuple toward a bare ``except``.
 _QUARANTINABLE: tuple[type[Exception], ...] = (
-	UnknownStrategyTypeError,  # the class was retired from the catalog
-	StrategyConfigError,       # the blob will not deserialize (version/type/coercion)
-	UnknownParamError,         # param drift: the blob names a param the class dropped
-	MissingParamError,         # param drift: the class gained a required param
-	UnwarmableTimeframeError,  # finer-than-base / non-whole-multiple tf: can never warm from
-	                           # the base-bar ring (F-1) — a bad ROW, quarantined not raised (WR-01)
+	StrategyAdmissionError,    # the payload was refused at admission: unknown strategy_type,
+	                           # undeserializable blob, or param drift in either direction
+	UnwarmableTimeframeError,  # a SEPARATE explicit member, deliberately NOT folded into the
+	                           # base: it is a FEED exception and a payload-x-environment
+	                           # interaction (the same config is valid on the backtest feed,
+	                           # which has no base_timeframe). Finer-than-base /
+	                           # non-whole-multiple tf can never warm from the base-bar ring
+	                           # (F-1) — a bad ROW, quarantined not raised (WR-01)
 )
 
 
@@ -167,33 +192,29 @@ def _codec_rec(rec: Mapping[str, Any]) -> Mapping[str, Any]:
 	return {**rec, "config_json": rec.get("config")}
 
 
-def _resolve_portfolio_id(raw: str) -> PortfolioId | int:
+def _resolve_portfolio_id(raw: str) -> PortfolioId:
 	"""Rebuild a stored portfolio-subscription id into the handle the fan-out expects.
 
-	The ``strategy_portfolio_subscriptions.portfolio_id`` column is a ``String`` (Plan 02:
-	``subscribed_portfolios`` is typed ``list[PortfolioId | int]``, and a ``Uuid`` column
-	would reject the legal ``int`` arm), and ``to_dict`` writes it out via ``str(pid)``. The
-	inverse therefore has to PARSE — handing the raw string on would be a silent
-	correctness bug rather than a typing nit: ``calculate_signals`` fans an intent out over
-	``subscribed_portfolios`` and casts each id straight onto ``SignalEvent.portfolio_id``
+	The ``strategy_portfolio_subscriptions.portfolio_id`` column is a ``String`` because
+	``to_dict`` serializes each handle via ``str(pid)`` — the stored form is a string by the
+	round trip's own construction, and this function is that round trip's parsing inverse.
+	(Whether the column should instead become a ``Uuid`` column is a separate open question,
+	filed as B2, and is NOT settled here.) The inverse therefore has to PARSE — handing the
+	raw string on would be a silent
+	correctness bug rather than a typing nit: ``on_bar`` fans an intent out over
+	``subscribed_portfolios`` and puts each id straight onto ``SignalEvent.portfolio_id``
 	(``strategies_handler.py``, FL-02: "the runtime value is always a UUIDv7-backed
-	PortfolioId"). A bare ``str`` would sail through that cast and reach the portfolio
-	lookup as an id that matches NOTHING — the strategy would rehydrate looking healthy and
-	then trade into the void.
+	PortfolioId"). A bare ``str`` would reach the portfolio lookup as an id that matches
+	NOTHING — the strategy would rehydrate looking healthy and then trade into the void.
 
 	A malformed id raises ``StrategyConfigError`` so the D-19 quarantine claims it: an
 	instance whose fan-out cannot be reconstructed must not register half-wired.
 	"""
 	try:
 		return PortfolioId(uuid.UUID(raw))
-	except (ValueError, AttributeError, TypeError):
-		pass
-	# The legacy int arm the union still permits.
-	try:
-		return int(raw)
-	except (ValueError, TypeError) as exc:
+	except (ValueError, AttributeError, TypeError) as exc:
 		raise StrategyConfigError(
-			f"portfolio subscription id {raw!r} is neither a UUID nor an int — the stored "
+			f"portfolio subscription id {raw!r} is not a UUID — the stored "
 			f"fan-out cannot be reconstructed"
 		) from exc
 
@@ -265,8 +286,7 @@ def rehydrate_strategies(
 	The store is the source of truth for the roster. Rows are reconstructed via
 	``read_all()`` — the deterministic ``strategy_name`` ASC roster with each record's
 	``portfolio_ids`` in ``portfolio_id`` ASC order (IN-01), so registration order — and
-	therefore ``min_timeframe`` derivation and universe membership — is reproducible across
-	runs and dialects.
+	therefore universe membership — is reproducible across runs and dialects.
 
 	CR-01 — ``read_all()`` loads EVERY row, not just the enabled ones. A row's ``enabled``
 	column becomes the reconstructed instance's ``is_active``: a disabled (``enabled=False``)
@@ -333,7 +353,10 @@ def rehydrate_strategies(
 			# timeframe can never warm from the base-bar ring. Keyed on base_timeframe so
 			# ONLY the LIVE feed runs the check — the backtest/in-memory feed has no
 			# base_timeframe -> None -> skip cleanly (the SAME degrade the add/reconfigure
-			# gates use, strategies_handler.py:770/:1005). Called for its RAISE only (the
+			# gates use — ``StrategyLifecycleManager._add_strategy_verb`` and
+			# ``._reconfigure_warmability_check``; WR-05: cited by SYMBOL, not by line
+			# number, because the former positional citation had already rotted onto a
+			# module that no longer holds either gate). Called for its RAISE only (the
 			# ring sizing stays owned by register_strategy_warmup — discard the return). It
 			# runs BEFORE add_strategy, so a raise leaves the instance unregistered and the
 			# row unmutated: UnwarmableTimeframeError is now in _QUARANTINABLE, turning a

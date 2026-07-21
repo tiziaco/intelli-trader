@@ -22,9 +22,11 @@ from uuid import UUID
 
 import pandas as pd
 import pytest
+from uuid_utils.compat import uuid7
 
 from itrader.core.bar import Bar
 from itrader.core.enums import OrderType, Side, TradingDirection
+from itrader.core.ids import PortfolioId
 from itrader.core.sizing import FixedQuantity, SignalIntent
 from itrader.events_handler.events import (
     BarEvent,
@@ -36,6 +38,9 @@ from itrader.strategy_handler.storage import InMemorySignalStore
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
 
 pytestmark = pytest.mark.unit
+
+# Portfolio handles are ALWAYS UUIDv7-backed ``PortfolioId`` values (FL-02).
+_PID = PortfolioId(uuid7())
 
 # Pair legs: leg A (tickers[0]) is the RICH leg (SELL), leg B (tickers[1]) is the
 # CHEAP leg (BUY). The stub returns a fixed β-weighted entry: SELL N of A, BUY
@@ -135,7 +140,7 @@ def _make_handler() -> StrategiesHandler:
 def _make_subscribed_pair(handler: StrategiesHandler) -> _StubPair:
     strategy = _StubPair(timeframe="1d", tickers=[_TICKER_A, _TICKER_B])
     handler.add_strategy(strategy)
-    strategy.subscribe_portfolio(1)
+    strategy.subscribe_portfolio(_PID)
     return strategy
 
 
@@ -164,7 +169,7 @@ def _warm_to_ready(handler: StrategiesHandler) -> None:
     primed to one-below-ready first.
     """
     for d in range(1, _MAX_WINDOW):  # _MAX_WINDOW-1 priming ticks (day 1.._MAX_WINDOW-1)
-        handler.calculate_signals(_bar_event(both_legs=True, day=d))
+        handler.on_bar(_bar_event(both_legs=True, day=d))
     _drain(handler.global_queue)
 
 
@@ -174,7 +179,7 @@ def test_both_legs_emit_once_per_tick() -> None:
     _make_subscribed_pair(handler)
     _warm_to_ready(handler)
 
-    handler.calculate_signals(_bar_event(both_legs=True))
+    handler.on_bar(_bar_event(both_legs=True))
 
     signals = _drain(handler.global_queue)
     assert len(signals) == 2, "both legs present -> exactly 2 SignalEvents"
@@ -188,7 +193,7 @@ def test_both_present_guard_skips_when_one_absent() -> None:
     _make_subscribed_pair(handler)
     _warm_to_ready(handler)
 
-    handler.calculate_signals(_bar_event(both_legs=False))
+    handler.on_bar(_bar_event(both_legs=False))
 
     signals = _drain(handler.global_queue)
     assert signals == [], "a missing leg -> no spread -> 0 SignalEvents (D-02)"
@@ -201,7 +206,7 @@ def test_beta_weighted_leg_quantities() -> None:
     _make_subscribed_pair(handler)
     _warm_to_ready(handler)
 
-    handler.calculate_signals(_bar_event(both_legs=True))
+    handler.on_bar(_bar_event(both_legs=True))
 
     signals = _drain(handler.global_queue)
     assert len(signals) == 2
@@ -325,7 +330,7 @@ def test_pair_enable_re_warms_the_spread_not_just_the_handles() -> None:
     handler = _make_handler()
     strategy = _make_subscribed_pair(handler)
     _warm_to_ready(handler)
-    handler.calculate_signals(_bar_event(both_legs=True, day=_MAX_WINDOW))
+    handler.on_bar(_bar_event(both_legs=True, day=_MAX_WINDOW))
     _drain(handler.global_queue)
     assert strategy.is_pair_ready() is True
 
@@ -338,7 +343,7 @@ def test_pair_enable_re_warms_the_spread_not_just_the_handles() -> None:
     _drain(handler.global_queue)
 
     # It stays dark on the next tick rather than firing from the stale spread.
-    handler.calculate_signals(_bar_event(both_legs=True, day=_MAX_WINDOW + 1))
+    handler.on_bar(_bar_event(both_legs=True, day=_MAX_WINDOW + 1))
 
     assert [s for s in _drain(handler.global_queue)
             if isinstance(s, SignalEvent)] == []

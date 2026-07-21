@@ -103,7 +103,9 @@ def upgrade() -> None:
 
     # 3. The portfolio fan-out edge. Column types match build_strategy_registry_tables
     # exactly (the registrar is the single source of truth). portfolio_id is String, NOT
-    # Uuid: Strategy.subscribed_portfolios is typed list[PortfolioId | int].
+    # Uuid, because Strategy.to_dict serializes each handle via str(pid) and
+    # rehydrate._resolve_portfolio_id parses it back — the stored form is a string by the
+    # round trip's own construction. A Uuid column is a separate open question (B2).
     op.create_table(
         "strategy_portfolio_subscriptions",
         sa.Column("strategy_name", sa.String(), nullable=False),

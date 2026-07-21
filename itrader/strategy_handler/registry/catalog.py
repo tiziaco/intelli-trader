@@ -26,6 +26,8 @@ the application; P10 only resolves against it. Runtime lifecycle verbs (``add`` 
 
 from typing import TYPE_CHECKING
 
+from itrader.core.exceptions import StrategyAdmissionError
+
 if TYPE_CHECKING:
 	from itrader.strategy_handler.base import Strategy
 
@@ -41,7 +43,7 @@ __all__ = [
 StrategyCatalog = dict[str, type["Strategy"]]
 
 
-class UnknownStrategyTypeError(ValueError):
+class UnknownStrategyTypeError(StrategyAdmissionError):
 	"""A ``strategy_type`` is absent from the injected catalog (D-01 loud reject).
 
 	Never a silent skip at this layer: an unresolvable type means the row/command cannot
@@ -49,6 +51,9 @@ class UnknownStrategyTypeError(ValueError):
 	rehydrate. The caller decides the consequence (Plan 05 quarantines a single bad row
 	per D-19 rather than failing the whole rehydrate); this layer's job is to report
 	loudly enough that the decision is informed.
+
+	Still a ``ValueError`` through ``StrategyAdmissionError``, so every pre-existing
+	catch site is unaffected by the reparent.
 	"""
 
 

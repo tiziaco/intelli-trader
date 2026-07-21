@@ -12,7 +12,7 @@ LOUD no-op — ``logger.warning`` + return, never a raise into the queue.
 
 **D-07 + WD-1** — ``enable`` sets ``is_active=True`` and persists ``enabled=True``, then
 FORCES A RE-WARM. It does NOT trade the next bar. The D-07 guard is FIRST in the
-``calculate_signals`` loop, so a disabled strategy's indicator state FREEZES; re-enabling
+``on_bar`` loop, so a disabled strategy's indicator state FREEZES; re-enabling
 without a re-warm would fire from a window with an N-bar hole. ``disable`` sets
 ``is_active=False``, persists ``enabled=False``, and leaves the object in the roster with
 its open positions and resting brackets running to natural exit — it stops NEW entries only.
@@ -58,9 +58,9 @@ _OTHER = "ETHUSD"
 _NAME = "verb_probe"
 _WARMUP = 3
 # Portfolio ids arrive as STRINGS in the untrusted payload (and are stored as String),
-# but `subscribed_portfolios` is typed `list[PortfolioId | int]` and calculate_signals
-# casts each entry straight onto SignalEvent.portfolio_id. So the dispatch must PARSE
-# them; a bare str would fan signals at a portfolio matching nothing.
+# but `subscribed_portfolios` is typed `list[PortfolioId]` and on_bar puts each entry
+# straight onto SignalEvent.portfolio_id. So the dispatch must PARSE them; a bare str
+# would fan signals at a portfolio matching nothing.
 _P1 = "550e8400-e29b-41d4-a716-446655440000"
 _P2 = "550e8400-e29b-41d4-a716-446655440001"
 
@@ -189,7 +189,7 @@ def test_enable_forces_a_re_warm_before_the_strategy_may_signal(
 ) -> None:
     """WD-1 — the load-bearing one. A re-enabled strategy must NOT fire from a holed window.
 
-    The D-07 guard is first in ``calculate_signals``, so a disabled strategy's indicator
+    The D-07 guard is first in ``on_bar``, so a disabled strategy's indicator
     state FREEZES. Trading the next bar after enable would compute SMA/MACD across an
     N-bar discontinuity — silently wrong values, invisible because warmth is monotone.
     """
@@ -279,7 +279,7 @@ def test_subscribed_portfolio_id_is_a_portfolio_id_not_a_str(
 ) -> None:
     """The payload id must be PARSED, not passed through (the 10-05 trap, one arm over).
 
-    ``calculate_signals`` casts each entry of ``subscribed_portfolios`` straight onto
+    ``on_bar`` casts each entry of ``subscribed_portfolios`` straight onto
     ``SignalEvent.portfolio_id`` (FL-02: "the runtime value is always a UUIDv7-backed
     PortfolioId"). A bare ``str`` sails through that cast and reaches the portfolio
     lookup matching NOTHING — the subscription looks healthy and fans into the void.
@@ -308,17 +308,24 @@ def test_a_malformed_portfolio_id_is_a_loud_no_op(
     assert store.portfolio_subscriptions(_NAME) == []
 
 
-def test_the_legacy_int_portfolio_id_arm_still_works(
+def test_a_bare_numeric_portfolio_id_is_a_loud_no_op(
     store: StrategyRegistryStore,
 ) -> None:
-    """``PortfolioId | int`` — the union's int arm is legal and must not be rejected."""
+    """WR-04 — a bare numeric id is NOT a valid portfolio handle and must be refused.
+
+    The handle carries exactly one shape, the UUIDv7-backed ``PortfolioId`` (FL-02).
+    A numeric id used to be accepted through a vestigial second parse arm; it now
+    reaches the same loud no-op path as any other unparseable id — nothing is written
+    to live state or SQL, and nothing raises (T-10-35). Accepting it would seat a
+    subscription whose id matches no portfolio, fanning signals into the void.
+    """
     handler, strategy = _handler(store)
 
     handler.on_strategy_command(StrategyCommandEvent.subscribe_portfolio(
         strategy_name=_NAME, portfolio_id="7", time=_T))
 
-    assert strategy.subscribed_portfolios == [7]
-    assert store.portfolio_subscriptions(_NAME) == ["7"]
+    assert strategy.subscribed_portfolios == []
+    assert store.portfolio_subscriptions(_NAME) == []
 
 
 def test_subscribe_portfolio_twice_is_idempotent(
@@ -605,6 +612,48 @@ class _CapFeed:
         )
 
 
+class _LogSpy:
+    """Records ``warning``/``error`` calls so the TIER is assertable without ``caplog``.
+
+    The module docstring bans log-capture assertions because ``make test`` exports
+    ``ITRADER_DISABLE_LOGS=true``, which would false-green a ``caplog`` assertion. A
+    COLLABORATOR SPY honours that intent: replacing the lifecycle manager's ``logger``
+    object records calls deterministically under BOTH runners, independent of any logging
+    configuration, while still proving WARNING (bad operator payload) is distinct from
+    ERROR (a defect in our construction path).
+    """
+
+    def __init__(self) -> None:
+        self.warnings: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+        self.errors: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    def warning(self, *args: Any, **kwargs: Any) -> None:
+        self.warnings.append((args, kwargs))
+
+    def error(self, *args: Any, **kwargs: Any) -> None:
+        self.errors.append((args, kwargs))
+
+
+class _BoomStrategy(Strategy):
+    """A catalog strategy whose ``init()`` raises an arbitrary, non-validation type.
+
+    WHY this exists: ``build_strategy`` -> ``cls(**params)`` -> ``_apply_params`` ->
+    ``validate()`` -> ``_run_init()`` -> ``self.init()``, and ``init()`` is ARBITRARY
+    USER-AUTHORED strategy code (``my_strategies/``). The set of exceptions escaping
+    construction is therefore unbounded BY CONSTRUCTION — no finite catch tuple can be
+    complete. This stands in for a buggy ``my_strategies/`` entry and proves the zone-1
+    guard covers the whole class of failures, not just the enumerated validation kinds.
+    """
+
+    sizing_policy = FractionOfCash(Decimal("0.5"))
+
+    def init(self) -> None:
+        raise ZeroDivisionError("arbitrary failure inside user-authored init()")
+
+    def generate_signal(self, ticker: str) -> Any:
+        return None
+
+
 def _add_handler(
     registry: StrategyRegistryStore | None,
     *,
@@ -739,6 +788,164 @@ def test_add_with_an_unknown_param_registers_nothing(
     assert store.get("smuggle") is None
 
 
+def test_add_with_empty_tickers_is_a_loud_no_op(
+    store: StrategyRegistryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CR-01 — a bare ``ValueError`` from ``validate()`` must NOT escape into the queue.
+
+    ``STRATEGY_COMMAND`` is externally admitted (D-10). An escape here reaches
+    ``ErrorPolicy.record_failure`` -> the failure-rate tripwire -> ``halt()``, and
+    ``HALTED`` has no legal exit except operator ``reset_halt()``. So a payload as routine
+    as ``tickers: []`` could latch live trading into HALT.
+    """
+    handler = _add_handler(store)
+    spy = _LogSpy()
+    monkeypatch.setattr(handler._lifecycle, "logger", spy)
+    config = _sma_add_config(["ETHUSD"])
+    config["tickers"] = []
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="empty_tickers", strategy_type="SMAMACDStrategy",
+        config=config, time=_T))
+
+    assert [s.name for s in handler.strategies] == []
+    assert store.get("empty_tickers") is None
+    assert _drain(handler.global_queue) == []
+    assert spy.warnings, "a bad operator payload must be a LOUD no-op at the WARNING tier"
+    assert spy.errors == [], "operator junk is not a defect in our construction path"
+
+
+def test_add_with_an_invalid_window_pair_is_a_loud_no_op(
+    store: StrategyRegistryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CR-01 — the second bare-``ValueError`` site (``SMA_MACD_strategy.py`` ``validate()``).
+
+    Same halt-latch consequence: an externally-admitted ``add`` whose windows are
+    misordered must be a logged no-op, never a raise that feeds the failure-rate tripwire.
+    """
+    handler = _add_handler(store)
+    spy = _LogSpy()
+    monkeypatch.setattr(handler._lifecycle, "logger", spy)
+    config = _sma_add_config(["ETHUSD"])
+    config["short_window"] = 100
+    config["long_window"] = 50
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="bad_windows", strategy_type="SMAMACDStrategy",
+        config=config, time=_T))
+
+    assert [s.name for s in handler.strategies] == []
+    assert store.get("bad_windows") is None
+    assert _drain(handler.global_queue) == []
+    assert spy.warnings, "a bad operator payload must be a LOUD no-op at the WARNING tier"
+    assert spy.errors == []
+
+
+def test_add_whose_init_raises_an_arbitrary_type_is_a_loud_no_op_at_the_error_tier(
+    store: StrategyRegistryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CR-01 — an UNBOUNDED exception type from user-authored ``init()`` still cannot halt.
+
+    ``init()`` is arbitrary user code, so enumerating catch types fixes the instance and
+    not the class. This must still be a no-op — but at the ERROR tier with ``exc_info``,
+    because an unexpected type means a defect in OUR construction path and must stay
+    visibly distinct from "the operator sent junk".
+    """
+    handler = _add_handler(store, catalog={"_BoomStrategy": _BoomStrategy})
+    spy = _LogSpy()
+    monkeypatch.setattr(handler._lifecycle, "logger", spy)
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="boom", strategy_type="_BoomStrategy",
+        config={"config_version": 1, "timeframe": "1d", "tickers": ["BTCUSD"]},
+        time=_T))
+
+    assert [s.name for s in handler.strategies] == []
+    assert store.get("boom") is None
+    assert _drain(handler.global_queue) == []
+    assert spy.errors, "an unexpected construction failure belongs at the ERROR tier"
+    assert spy.warnings == [], "it must not be laundered into the operator-junk tier"
+    assert spy.errors[0][1].get("exc_info") is True, (
+        "the ERROR tier carries the traceback; the message itself names no payload values")
+
+
+class _BareValidateStrategy(Strategy):
+    """A catalog strategy whose ``validate()`` raises a BARE ``ValueError``.
+
+    Stands in for a third-party / ``my_strategies`` class that refuses a payload
+    WITHOUT using our exception hierarchy at all — the case the dropped bare
+    ``ValueError`` tuple member was nominally there to cover.
+    """
+
+    sizing_policy = FractionOfCash(Decimal("0.5"))
+
+    def validate(self) -> None:
+        raise ValueError("a cross-field rule outside our exception hierarchy")
+
+    def generate_signal(self, ticker: str) -> Any:
+        return None
+
+
+def test_add_with_a_bare_value_error_validate_stays_a_loud_no_op_after_the_narrowing(
+    store: StrategyRegistryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """IN2-02 — dropping the ``ValueError`` tuple member must not open a HALT vector.
+
+    The tier-1 catch now names ``StrategyAdmissionError`` ALONE. That is only safe
+    because the wrap in ``Strategy.__init__`` types the bare-``ValueError`` residue as
+    ``StrategyValidationError`` under that ancestor. If the wrap ever regressed, this
+    payload would escape into the queue -> ``ErrorPolicy.record_failure`` -> the
+    failure-rate tripwire -> ``halt()``, which has no exit but operator ``reset_halt()``.
+    """
+    handler = _add_handler(store, catalog={"_BareValidateStrategy": _BareValidateStrategy})
+    spy = _LogSpy()
+    monkeypatch.setattr(handler._lifecycle, "logger", spy)
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="bare", strategy_type="_BareValidateStrategy",
+        config={"config_version": 1, "timeframe": "1d", "tickers": ["BTCUSD"]},
+        time=_T))
+
+    assert [s.name for s in handler.strategies] == []
+    assert store.get("bare") is None
+    assert _drain(handler.global_queue) == []
+    assert spy.warnings, "a validate() refusal is operator junk — the WARNING tier"
+    assert spy.errors == [], (
+        "it must NOT fall through to the tier-2 catch-all: that would mean the narrowed "
+        "tier-1 tuple no longer claims the typed residue")
+    assert "StrategyValidationError" in spy.warnings[0][0], (
+        "the warning names the error KIND, which is now the typed residue")
+
+
+def test_reconfigure_with_a_bare_value_error_validate_stays_a_loud_no_op(
+    store: StrategyRegistryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """IN2-02 — the same guarantee at the reconfigure TRIAL site.
+
+    ``short_window > long_window`` trips ``SMAMACDStrategy.validate``'s bare
+    ``ValueError`` during the throwaway construction, so the live instance must be
+    untouched and nothing persisted — with D-10 never-raise intact.
+    """
+    handler = _add_handler(store)
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="live1", strategy_type="SMAMACDStrategy",
+        config=_sma_add_config(["ETHUSD"]), time=_T))
+    _drain(handler.global_queue)
+    live = next(s for s in handler.strategies if s.name == "live1")
+    before = encode_strategy_config(live)
+
+    spy = _LogSpy()
+    monkeypatch.setattr(handler._lifecycle, "logger", spy)
+    handler.on_strategy_command(StrategyCommandEvent.reconfigure(
+        strategy_name="live1", config={"short_window": 200, "long_window": 50}, time=_T))
+
+    assert encode_strategy_config(live) == before, "the LIVE instance must be untouched"
+    assert store.get("live1")["config"] == before, "nothing may be persisted"
+    assert _drain(handler.global_queue) == []
+    assert spy.warnings, "a rejected reconfigure is a loud no-op at the WARNING tier"
+    assert spy.errors == []
+
+
 def test_add_beyond_ring_capacity_is_a_loud_reject(store: StrategyRegistryStore) -> None:
     """Test 6 (F-1) — required_base_depth > cache_capacity rejects loudly (ring can't resize)."""
     handler = _add_handler(store, feed=_CapFeed(timedelta(days=1), capacity=5))
@@ -794,6 +1001,158 @@ def test_add_of_a_pair_strategy_succeeds(store: StrategyRegistryStore) -> None:
     assert store.get("spread1") is not None
 
 
+@pytest.mark.parametrize("bad_id", ["7", "not-a-uuid", "", 7])
+def test_add_with_a_malformed_portfolio_id_rejects_the_whole_add(
+    store: StrategyRegistryStore, monkeypatch: pytest.MonkeyPatch, bad_id: Any
+) -> None:
+    """WR2-01 — a SUPPLIED-but-unparseable ``portfolio_id`` must reject the entire add.
+
+    ``_portfolio_id_from`` deliberately collapses config-not-a-dict / key-absent /
+    wrong-type / unparseable-UUID into ONE ``None``. ``_add_strategy_verb`` used to read
+    that ``None`` as the legal absent state and proceed silently, producing a registered,
+    persisted, warming strategy with ZERO subscriptions. ``on_bar`` fans each intent over
+    ``subscribed_portfolios``, so an empty list means literally zero ``SignalEvent``s —
+    a self-inflicted trading outage on an engine that looks perfectly healthy.
+
+    The identical payload sent as ``subscribe_portfolio`` ALREADY warns
+    (``test_a_bare_numeric_portfolio_id_is_a_loud_no_op``), so the diagnosis must not
+    depend on which verb the operator happened to use. ``"7"`` is the live blast radius:
+    ``owe`` removed the bare-int fallback, so a numeric id now lands here.
+
+    ``_portfolio_id_supplied`` is what makes SUPPLIED-and-malformed distinguishable from
+    ABSENT, and the gate sits ahead of every state mutation so the reject never has to
+    unwind a completed ``add_strategy`` roster insert.
+    """
+    handler = _add_handler(store)
+    spy = _LogSpy()
+    monkeypatch.setattr(handler._lifecycle, "logger", spy)
+    config = _sma_add_config(["ETHUSD"])
+    config["portfolio_id"] = bad_id
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="malformed_pid", strategy_type="SMAMACDStrategy",
+        config=config, time=_T))
+
+    assert [s.name for s in handler.strategies] == []
+    assert store.get("malformed_pid") is None
+    assert store.portfolio_subscriptions("malformed_pid") == []
+    assert _drain(handler.global_queue) == []
+    assert len(spy.warnings) == 1, "exactly one LOUD warning — operator payload junk"
+    assert spy.errors == [], "operator junk is not a defect in our construction path"
+
+
+def test_add_without_a_portfolio_id_is_registered_and_silent(
+    store: StrategyRegistryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WR2-01 — an ABSENT ``portfolio_id`` stays a clean, SILENT, legal no-subscription add.
+
+    D-09 makes "computes but fans out to nobody" a LEGAL state: the operator may add a
+    strategy unsubscribed and wire it later with ``subscribe_portfolio``. So the WR2-01
+    reject must key on SUPPLIED-and-malformed only — warning on absence would cry wolf on
+    the ordinary two-step add.
+    """
+    handler = _add_handler(store)
+    spy = _LogSpy()
+    monkeypatch.setattr(handler._lifecycle, "logger", spy)
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="unsubbed", strategy_type="SMAMACDStrategy",
+        config=_sma_add_config(["ETHUSD"]), time=_T))
+
+    added = next((s for s in handler.strategies if s.name == "unsubbed"), None)
+    assert added is not None
+    assert added.subscribed_portfolios == []
+    assert store.get("unsubbed") is not None
+    assert store.portfolio_subscriptions("unsubbed") == []
+    assert [type(e) for e in _drain(handler.global_queue)] == [UniversePollEvent]
+    assert spy.warnings == [], "absence is legal (D-09) and must stay SILENT"
+    assert spy.errors == []
+
+
+def test_add_with_an_explicitly_null_portfolio_id_is_registered_and_silent(
+    store: StrategyRegistryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WR2-01 — an explicit ``None`` VALUE is ABSENT, not malformed.
+
+    A FastAPI/Pydantic model declaring ``portfolio_id: str | None = None`` serializes the
+    unsubscribed case as a null on EVERY add, so a bare key-PRESENCE probe would reject the
+    most likely shape of the legal no-subscription payload. ``_portfolio_id_supplied``
+    therefore treats an explicit null as NOT supplied; every other value — non-``str``,
+    empty ``str``, non-UUID ``str`` — is supplied-and-malformed.
+    """
+    handler = _add_handler(store)
+    spy = _LogSpy()
+    monkeypatch.setattr(handler._lifecycle, "logger", spy)
+    config = _sma_add_config(["ETHUSD"])
+    config["portfolio_id"] = None
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="null_pid", strategy_type="SMAMACDStrategy",
+        config=config, time=_T))
+
+    added = next((s for s in handler.strategies if s.name == "null_pid"), None)
+    assert added is not None
+    assert added.subscribed_portfolios == []
+    assert store.get("null_pid") is not None
+    assert [type(e) for e in _drain(handler.global_queue)] == [UniversePollEvent]
+    assert spy.warnings == []
+    assert spy.errors == []
+
+
+def test_add_with_a_valid_portfolio_id_subscribes_and_is_silent(
+    store: StrategyRegistryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WR2-01 — the happy path is unmoved: one live subscription, one child row, no warning.
+
+    Pins that the new gate rejects ONLY the malformed shape. The parse itself is unchanged
+    (``_portfolio_id_from``); it simply happens earlier in ``_add_strategy_verb`` now and is
+    reused by the subscribe block rather than re-run.
+    """
+    handler = _add_handler(store)
+    spy = _LogSpy()
+    monkeypatch.setattr(handler._lifecycle, "logger", spy)
+    config = _sma_add_config(["ETHUSD"])
+    config["portfolio_id"] = _P1
+
+    handler.on_strategy_command(StrategyCommandEvent.add(
+        strategy_name="subbed", strategy_type="SMAMACDStrategy",
+        config=config, time=_T))
+
+    added = next((s for s in handler.strategies if s.name == "subbed"), None)
+    assert added is not None
+    assert added.subscribed_portfolios == [UUID(_P1)]
+    assert store.get("subbed") is not None
+    assert store.portfolio_subscriptions("subbed") == [_P1]
+    assert spy.warnings == []
+    assert spy.errors == []
+
+
+@pytest.mark.parametrize("verb", ["subscribe_portfolio", "unsubscribe_portfolio"])
+def test_the_light_portfolio_verbs_keep_warn_and_ignore_on_a_malformed_id(
+    store: StrategyRegistryStore, monkeypatch: pytest.MonkeyPatch, verb: str
+) -> None:
+    """WR2-01 drift pin — only ``add`` gained the reject; the two light verbs are unmoved.
+
+    ``subscribe_portfolio`` / ``unsubscribe_portfolio`` operate on an ALREADY-registered
+    strategy, so "reject the command" for them means warn-and-ignore — the strategy STAYS
+    in the roster and nothing is written. Tearing down a live strategy because one runtime
+    subscription command carried junk would be a far worse cure than the disease. This
+    pins that the WR2-01 fix cannot leak into them.
+    """
+    handler, strategy = _handler(store)
+    spy = _LogSpy()
+    monkeypatch.setattr(handler._lifecycle, "logger", spy)
+
+    handler.on_strategy_command(StrategyCommandEvent(
+        time=_T, strategy_name=_NAME, verb=verb, config={"portfolio_id": "7"}))
+
+    assert [s.name for s in handler.strategies] == [_NAME]
+    assert strategy.subscribed_portfolios == []
+    assert store.portfolio_subscriptions(_NAME) == []
+    assert len(spy.warnings) == 1
+    assert spy.errors == []
+
+
 def test_add_degrades_cleanly_with_no_store(store: StrategyRegistryStore) -> None:
     """Test 9 (degrade-clean) — with registry_store None, add registers live, persists nothing."""
     handler = _add_handler(None)
@@ -843,6 +1202,28 @@ class _FakeReadModel:
 def _fill(ticker: str = _TICKER) -> Any:
     """A minimal FILL trigger — `on_fill` re-scans pending removals, not the event."""
     return SimpleNamespace(ticker=ticker)
+
+
+class _FaultyDeleteStore:
+    """Registry-store wrapper whose ``delete`` raises while ``fail`` is set.
+
+    ``delete`` is defined explicitly so attribute lookup finds it BEFORE
+    ``__getattr__``; every other call the remove path makes (the
+    ``_persist_strategy`` upsert, ``get``, the subscription writers) delegates
+    to the real store unchanged.
+    """
+
+    def __init__(self, wrapped: StrategyRegistryStore) -> None:
+        self._wrapped = wrapped
+        self.fail = True
+
+    def delete(self, strategy_name: str) -> None:
+        if self.fail:
+            raise RuntimeError("registry store delete faulted")
+        self._wrapped.delete(strategy_name)
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._wrapped, item)
 
 
 def test_remove_with_an_open_position_does_not_drop_immediately(
@@ -990,12 +1371,36 @@ def test_remove_degrades_cleanly_with_no_store(store: StrategyRegistryStore) -> 
     assert handler.registry_store is None
 
 
-def test_min_timeframe_is_recomputed_after_a_remove(store: StrategyRegistryStore) -> None:
-    """Removing the only strategy at the minimum must not leave min_timeframe stale."""
-    handler, strategy = _handler(store)
-    handler.portfolio_read_model = _FakeReadModel(held=set())  # flat -> immediate drop
-    assert handler.min_timeframe == timedelta(days=1)
+def test_a_store_fault_during_removal_completion_mutates_nothing(
+    store: StrategyRegistryStore,
+) -> None:
+    """WR-01 — a store fault at ``delete()`` leaves the removal fully retryable.
 
-    handler.on_strategy_command(StrategyCommandEvent.remove(strategy_name=_NAME, time=_T))
+    The store delete is the ONLY call in the completion sequence that can raise, so
+    it runs BEFORE every in-memory mutation. A fault therefore leaves the strategy
+    fully intact — still in the roster AND still pending — rather than half-applied,
+    and the next FILL retries cleanly.
+    """
+    faulty = _FaultyDeleteStore(store)
+    handler, strategy = _handler(faulty)
+    # Flat -> completion is attempted synchronously on the verb.
+    handler.portfolio_read_model = _FakeReadModel(held=set())
 
-    assert handler.min_timeframe is None  # empty roster -> legal None seed (IN-06)
+    with pytest.raises(RuntimeError):
+        handler.on_strategy_command(
+            StrategyCommandEvent.remove(strategy_name=_NAME, time=_T))
+
+    # THE falsifying pair: before the raising call was ordered first, the roster drop
+    # had already run by the time delete() faulted, so both of these were FALSE.
+    assert strategy in handler.strategies
+    assert _NAME in handler._pending_removals
+
+    # Once the store recovers, the next FILL completes the removal cleanly.
+    faulty.fail = False
+    handler.on_fill(_fill())
+
+    assert strategy not in handler.strategies
+    assert _NAME not in handler._pending_removals
+    assert store.get(_NAME) is None
+
+

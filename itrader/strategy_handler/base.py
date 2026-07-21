@@ -10,7 +10,12 @@ from typing import Any, cast, get_type_hints
 import pandas as pd
 
 from itrader.core.enums import OrderType, Side, Timeframe
-from itrader.core.exceptions.strategy import UnknownParamError, MissingParamError
+from itrader.core.exceptions.strategy import (
+	StrategyAdmissionError,
+	StrategyValidationError,
+	UnknownParamError,
+	MissingParamError,
+)
 from itrader.core.ids import PortfolioId, StrategyId
 from itrader.core.money import to_money
 from itrader.core.sizing import SignalIntent, SizingPolicy, SLTPPolicy, TradingDirection
@@ -160,7 +165,7 @@ class Strategy(ABC):
 	# pinned by a subclass class-attr or passed as a kwarg, else MissingParamError.
 	# Pitfall 1: the kwarg arrives as a "1d" str / Timeframe enum (coerced by
 	# _COERCE), but the RESOLVED runtime value on self.timeframe is a timedelta
-	# (consumed by check_timeframe / min_timeframe and SMA's
+	# (consumed by check_timeframe and SMA's
 	# `last_time - self.timeframe * self.short_window`). The annotation reflects
 	# the resolved consumer type; the bare annotation (no value) still marks it
 	# REQUIRED for get_type_hints-driven detection (D-07).
@@ -186,12 +191,14 @@ class Strategy(ABC):
 	name: str = "strategy"        # D-03 discretion: default name (a subclass pins it)
 
 	def __init__(self, **kwargs: Any) -> None:
-		# WR-01: portfolio-id handle is opaque (PortfolioId | int) — the
-		# fan-out never resolves a portfolio object here, so both shapes are
-		# legal. Mint a fresh UUIDv7 strategy_id per construction (KEEP).
+		# WR-04: the portfolio-id handle carries exactly ONE shape, the
+		# UUIDv7-backed PortfolioId (the FL-02 invariant). The handle feeds
+		# PortfolioReadModel.get_position and the on_bar fan-out's
+		# SignalEvent.portfolio_id, both of which require a real PortfolioId.
+		# Mint a fresh UUIDv7 strategy_id per construction (KEEP).
 		self.strategy_id: StrategyId = StrategyId(idgen.generate_strategy_id())
 		self.is_active = True
-		self.subscribed_portfolios: list[PortfolioId | int] = []
+		self.subscribed_portfolios: list[PortfolioId] = []
 		# D-06 (PERF-04 / 08-03 Req 4): per-INSTANCE cache of the serialized STATIC
 		# portion of to_dict (the _declared_hints introspection + _json_safe walk +
 		# the bespoke set-once serializations). None until the first to_dict call
@@ -203,10 +210,46 @@ class Strategy(ABC):
 		# mutator). Never invalidated in backtest (no reconfigure on the run path).
 		# CACHE-CLASS: (c) explicitly-invalidated memo (via _invalidate_to_dict_cache) — see docs/CACHE-CLASSIFICATION.md
 		self._to_dict_static_cache: dict[str, Any] | None = None
-		# D-06/D-07/D-08: required/unknown detection + enum coercion + setattr.
-		self._apply_params(**kwargs)
-		# D-09: cross-field validation hook (no-op by default).
-		self.validate()
+		# WR2-02 / IN2-02 — TYPE the bare-``ValueError`` residue escaping this span.
+		#
+		# 1. WHY. Four collaborators inside this span raise a BARE ``ValueError``:
+		#    ``Strategy.validate``, any subclass override of it (``SMAMACDStrategy.validate``,
+		#    ``PairStrategy.validate``, and third-party overrides outside our hierarchy),
+		#    ``_apply_params``'s malformed-``tickers`` guard, and its ``_COERCE`` enum
+		#    coercion off a bogus enum string. Untyped, that residue sat OUTSIDE
+		#    ``StrategyAdmissionError`` and therefore outside
+		#    ``registry.rehydrate._QUARANTINABLE``, so ONE stale registry row whose class
+		#    had gained a cross-field rule aborted the whole live boot instead of being
+		#    quarantined — a bad ROW becoming a bad SYSTEM. Converting at the raise
+		#    boundary (rather than asking every strategy class to opt into our hierarchy)
+		#    is what lets ``_QUARANTINABLE`` stay narrow.
+		# 2. CLAUSE ORDER IS LOAD-BEARING — do not reorder, and do not collapse the two
+		#    clauses into one with an ``isinstance`` test. ``StrategyAdmissionError``
+		#    already subclasses ``ValueError``, so a lone ``ValueError`` clause would also
+		#    claim ``UnknownParamError`` / ``MissingParamError`` / ``StrategyConfigError`` /
+		#    ``UnknownStrategyTypeError``. Re-raising those as ``StrategyValidationError``
+		#    would DESTROY the ``ValidationError`` structured fields (``field`` /
+		#    ``message`` / ``.names``) that the ``ljn`` task deliberately preserved,
+		#    degrading every rejection diagnostic. The guard clause below claims them first
+		#    and re-raises them completely untouched.
+		# 3. ``_run_init`` / ``init()`` are deliberately OUTSIDE this span — ``init()`` is
+		#    arbitrary user-authored strategy code, and
+		#    ``StrategyLifecycleManager._add_strategy_verb``'s tier-2 guard already owns
+		#    that zone.
+		# 4. ACCEPTED TRADE, stated plainly: this reclassifies a genuine PROGRAMMING BUG
+		#    inside a strategy's ``validate()`` (say a typo'd comparison) as an admission
+		#    failure rather than a crash. That is the SAME trade
+		#    ``_add_strategy_verb``'s tier-2 catch-all already accepted at the add site,
+		#    so it is consistent with the established boundary rather than a new concession.
+		try:
+			# D-06/D-07/D-08: required/unknown detection + enum coercion + setattr.
+			self._apply_params(**kwargs)
+			# D-09: cross-field validation hook (no-op by default).
+			self.validate()
+		except StrategyAdmissionError:
+			raise
+		except ValueError as exc:
+			raise StrategyValidationError(str(exc)) from exc
 		# D-03/D-08: register declared indicators (init() calls self.indicator())
 		# then auto-derive warmup/max_window from the registered handles.
 		self._run_init()
@@ -298,7 +341,7 @@ class Strategy(ABC):
 		for nm, val in resolved.items():
 			setattr(self, nm, val)
 		# Pitfall 1 (the #1 oracle trap): self.timeframe is consumed as a
-		# TIMEDELTA by check_timeframe / min_timeframe and SMA's
+		# TIMEDELTA by check_timeframe and SMA's
 		# `last_time - self.timeframe * self.short_window`. The coerced
 		# Timeframe enum was just setattr'd onto self.timeframe by the loop —
 		# stash it on a stable instance attr, then resolve BOTH the timedelta
@@ -511,7 +554,7 @@ class Strategy(ABC):
 		# (duplicate) drops SILENTLY (expected/benign). Monotonic bars (bar.time > last, and
 		# the first bar) fall through and record the raw bar.time at the end of the method.
 		# BACKTEST INERTNESS: update() IS on the backtest per-tick path
-		# (strategies_handler.calculate_signals), BUT backtest bars for a ticker arrive
+		# (strategies_handler.on_bar), BUT backtest bars for a ticker arrive
 		# strictly monotonically increasing in bar.time, so `bar.time <= last` is NEVER
 		# true — the reject branch is never taken and the SMA_MACD oracle is byte-exact.
 		last_time = self._last_bar_time.get(ticker)
@@ -634,7 +677,7 @@ class Strategy(ABC):
 		warm path, not three).
 
 		WHY it exists (WD-1). The D-07 ``is_active`` guard sits FIRST in the
-		``calculate_signals`` loop, so ``update`` never runs while a strategy is disabled
+		``on_bar`` loop, so ``update`` never runs while a strategy is disabled
 		and its O(1) recurrence state FREEZES rather than advancing. Re-enabling without
 		this call would leave the strategy holding values computed across an N-bar HOLE
 		spanning the disabled period, and it would fire IMMEDIATELY from that state —
@@ -666,7 +709,7 @@ class Strategy(ABC):
 		Plan C removed the per-tick ``feed.window()`` slice: the handler now drives
 		value production via ``update(ticker, bar)`` per tick and gates on
 		``is_ready(ticker)`` (P5-D14), so ``evaluate`` is NO LONGER called from
-		``StrategiesHandler.calculate_signals``. It survives ONLY as a direct
+		``StrategiesHandler.on_bar``. It survives ONLY as a direct
 		window-driven test/back-compat seam (e.g. ``test_strategy`` feeds a
 		synthetic frame): it RESETS ``ticker``'s state, replays the window's bars
 		through the SAME ``update`` push (Model B — value-identical to the old
@@ -742,8 +785,18 @@ class Strategy(ABC):
 		restores ``None``); a caller who expects "omitted == default" will be
 		surprised. Only an explicitly-supplied kwarg overrides the prior value.
 		"""
-		self._apply_params(**kwargs)
-		self.validate()
+		# WR2-02 / IN2-02 — the SAME wrap as ``Strategy.__init__``; see the full rationale
+		# there (clause order is the no-double-wrap enforcement, and ``_run_init`` stays
+		# outside on purpose). Both construction paths must type the residue identically,
+		# otherwise a reconfigure refusal would still escape
+		# ``StrategyLifecycleManager._reconfigure_strategy_verb``'s narrowed catch.
+		try:
+			self._apply_params(**kwargs)
+			self.validate()
+		except StrategyAdmissionError:
+			raise
+		except ValueError as exc:
+			raise StrategyValidationError(str(exc)) from exc
 		# D-08/D-10: re-register handles + re-derive warmup (idempotent).
 		self._run_init()
 		# D-06 (08-03 Req 4): _apply_params re-commits DECLARED params, so the
@@ -845,8 +898,9 @@ class Strategy(ABC):
 			# returns a UUID). A raw UUID makes json.dumps(strategy.to_dict())
 			# raise "Object of type UUID is not JSON serializable" — the same
 			# defect class IN-03 closed for strategy_id. Stringify at the
-			# serialization edge; str() is safe for both int and UUID handles
-			# (str(1) == "1", str(uuid) == "019e...").
+			# serialization edge (str(uuid) == "019e..."); this str() IS the
+			# reason the durable portfolio_id column is a String — rehydrate's
+			# _resolve_portfolio_id is its parsing inverse.
 			"subscribed_portfolios" : [str(pid) for pid in self.subscribed_portfolios],
 			# D-01: the per-instance order_type attr is retired — order type is now
 			# per-intent on SignalIntent, so to_dict no longer emits an "order_type".
@@ -1006,14 +1060,14 @@ class Strategy(ABC):
 		return self._intent(ticker, Side.SELL, OrderType.STOP,
 			price, sl, tp, exit_fraction)
 
-	def subscribe_portfolio(self, portfolio_id: PortfolioId | int) -> None:
+	def subscribe_portfolio(self, portfolio_id: PortfolioId) -> None:
 		# WR-01: idempotent subscribe — a duplicate subscription would fan the
-		# same intent out to one portfolio TWICE in calculate_signals (two
+		# same intent out to one portfolio TWICE in on_bar (two
 		# SignalEvents, two orders for one decision). Guard the append.
 		if portfolio_id not in self.subscribed_portfolios:
 			self.subscribed_portfolios.append(portfolio_id)
 
-	def unsubscribe_portfolio(self, portfolio_id: PortfolioId | int) -> None:
+	def unsubscribe_portfolio(self, portfolio_id: PortfolioId) -> None:
 		# WR-01: idempotent unsubscribe — list.remove raises ValueError on a
 		# double-unsubscribe / never-subscribed id (a noisy ErrorEvent in live
 		# mode). Guard so a defensive caller can unsubscribe safely.

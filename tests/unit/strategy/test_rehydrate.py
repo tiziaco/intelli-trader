@@ -42,11 +42,16 @@ from uuid_utils.compat import uuid7
 
 from itrader.config.sql import SqlSettings
 from itrader.core.enums import ErrorSeverity
-from itrader.core.exceptions import UnknownParamError
+from itrader.core.exceptions import (
+    MissingParamError,
+    StrategyAdmissionError,
+    UnknownParamError,
+)
 from itrader.core.ids import PortfolioId
 from itrader.core.sizing import FractionOfCash
 from itrader.price_handler.feed.cache_registration import UnwarmableTimeframeError
 from itrader.storage import SqlEngine
+from itrader.strategy_handler.base import Strategy
 from itrader.storage.strategy_registry_store import StrategyRegistryStore
 from itrader.strategy_handler.registry import StrategyConfigError, UnknownStrategyTypeError
 from itrader.strategy_handler.registry.rehydrate import (
@@ -65,6 +70,13 @@ from tests.support.strategy_catalog import seeded_registry_rows, test_catalog
 pytestmark = pytest.mark.unit
 
 _AT = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+
+# Portfolio handles are ALWAYS UUIDv7-backed ``PortfolioId`` values (FL-02). Module-level
+# constants so the seed side and the round-trip assertion name the same value.
+_PID_A = PortfolioId(uuid7())
+_PID_B = PortfolioId(uuid7())
+_PID_C = PortfolioId(uuid7())
+_PID_PAIR = PortfolioId(uuid7())
 
 
 class _StubFeed:
@@ -203,10 +215,10 @@ def test_rehydrate_registers_seeded_instances_with_params_and_subscriptions() ->
     store = _make_store()
     try:
         sma = _sma(sizing_policy=FractionOfCash(Decimal("0.75")))
-        sma.subscribe_portfolio(11)
-        sma.subscribe_portfolio(22)
+        sma.subscribe_portfolio(_PID_A)
+        sma.subscribe_portfolio(_PID_B)
         empty = _empty()
-        empty.subscribe_portfolio(33)
+        empty.subscribe_portfolio(_PID_C)
         _seed(store, [sma, empty])
 
         handler = _make_handler()
@@ -230,12 +242,14 @@ def test_rehydrate_registers_seeded_instances_with_params_and_subscriptions() ->
         # A NON-default sizing policy: a defaults-only assertion would pass even against a
         # codec that dropped the field entirely.
         assert rebuilt_sma.sizing_policy == FractionOfCash(Decimal("0.75"))
-        assert sorted(str(p) for p in rebuilt_sma.subscribed_portfolios) == ["11", "22"]
+        assert sorted(str(p) for p in rebuilt_sma.subscribed_portfolios) == sorted(
+            [str(_PID_A), str(_PID_B)]
+        )
 
         rebuilt_empty = by_name["empty"]
         assert type(rebuilt_empty) is EmptyStrategy
         assert rebuilt_empty.timeframe_alias == "1h"
-        assert [str(p) for p in rebuilt_empty.subscribed_portfolios] == ["33"]
+        assert [str(p) for p in rebuilt_empty.subscribed_portfolios] == [str(_PID_C)]
     finally:
         store.dispose()
 
@@ -547,7 +561,7 @@ def test_pair_row_rehydrates_with_no_special_case() -> None:
             timeframe="1d", entry_units=Decimal("2"), use_log_prices=False
         )
         pair.name = "eth_btc"
-        pair.subscribe_portfolio(9)
+        pair.subscribe_portfolio(_PID_PAIR)
         _seed(store, [pair])
 
         handler = _make_pair_handler()
@@ -564,7 +578,7 @@ def test_pair_row_rehydrates_with_no_special_case() -> None:
         assert type(rebuilt.entry_units) is Decimal
         assert rebuilt.entry_units == Decimal("2")
         assert rebuilt.use_log_prices is False
-        assert [str(p) for p in rebuilt.subscribed_portfolios] == ["9"]
+        assert [str(p) for p in rebuilt.subscribed_portfolios] == [str(_PID_PAIR)]
     finally:
         store.dispose()
 
@@ -667,6 +681,184 @@ def test_unreadable_store_propagates_and_is_not_degrade_cleaned() -> None:
 
 
 # --------------------------------------------------------------------------------------
+# D-19 — the two arms stay SEPARABLE under the StrategyAdmissionError collapse
+# --------------------------------------------------------------------------------------
+
+
+class _InfraBoomStrategy(Strategy):
+    """A catalog strategy whose ``init()`` raises the INFRASTRUCTURE error.
+
+    The injection point for a mid-loop infrastructure fault: ``build_strategy`` ->
+    ``cls(**params)`` -> ... -> ``self.init()`` runs INSIDE rehydrate's per-row try
+    block, which is exactly where the two D-19 arms have to be told apart. Mirrors
+    the ``_BoomStrategy`` pattern in ``test_strategy_command_verbs.py``.
+    """
+
+    sizing_policy = FractionOfCash(Decimal("0.5"))
+
+    def init(self) -> None:
+        raise RehydrateInfrastructureError("store/driver fault raised mid-loop")
+
+    def generate_signal(self, ticker: str) -> Any:
+        return None
+
+
+def test_infrastructure_error_is_not_a_strategy_admission_error() -> None:
+    """STRUCTURAL — the narrow base is what keeps the two D-19 arms separable.
+
+    ``_QUARANTINABLE`` now names ``StrategyAdmissionError`` instead of hand-listing
+    four types. That collapse is only safe because the base covers strategy-payload
+    REFUSALS and nothing else: ``RehydrateInfrastructureError`` roots at
+    ``RuntimeError``, so a genuine store/driver fault is NOT swallowed into a
+    per-row quarantine. This non-subclass relationship is LOAD-BEARING — widening
+    the base to cover it would silently quarantine every strategy in turn,
+    reporting a data problem while hiding an outage.
+    """
+    assert not issubclass(RehydrateInfrastructureError, StrategyAdmissionError)
+
+
+def test_mid_loop_infrastructure_fault_propagates_instead_of_quarantining() -> None:
+    """BEHAVIORAL arm 1 — an infrastructure fault raised INSIDE the per-row try escapes.
+
+    Deliberately NOT combined with the admission-refusal run below: the whole point
+    is that the two arms behave DIFFERENTLY through the same try block.
+    """
+    store = _make_store()
+    try:
+        rows, _ = seeded_registry_rows([_empty(name="boom")])
+        blob = dict(rows[0]["config_json"])
+        blob["strategy_type"] = "_InfraBoomStrategy"
+        store.upsert("boom", "_InfraBoomStrategy", blob, True, _AT)
+
+        catalog = {**test_catalog(), "_InfraBoomStrategy": _InfraBoomStrategy}
+
+        with pytest.raises(RehydrateInfrastructureError, match="mid-loop"):
+            rehydrate_strategies(
+                store=store,
+                catalog=catalog,
+                strategies_handler=_make_handler(),
+                alert_sink=_RecordingAlertSink(),
+            )
+    finally:
+        store.dispose()
+
+
+def test_admission_refusal_row_is_quarantined_through_the_shared_base() -> None:
+    """BEHAVIORAL arm 2 — a payload REFUSAL through the same try block IS quarantined.
+
+    Same code path, opposite outcome: the row is skipped, named in the return, and
+    alerted CRITICAL rather than propagating.
+    """
+    store = _make_store()
+    try:
+        rows, _ = seeded_registry_rows([_empty(name="drifted")])
+        blob = dict(rows[0]["config_json"])
+        blob["removed_knob"] = 7
+        store.upsert("drifted", "EmptyStrategy", blob, True, _AT)
+
+        sink = _RecordingAlertSink()
+        quarantined = rehydrate_strategies(
+            store=store,
+            catalog=test_catalog(),
+            strategies_handler=_make_handler(),
+            alert_sink=sink,
+        )
+
+        assert quarantined == ["drifted"]
+        assert len(sink.events) == 1
+        assert sink.events[0].severity is ErrorSeverity.CRITICAL
+    finally:
+        store.dispose()
+
+
+class _BareValueErrorStrategy(Strategy):
+    """A catalog strategy whose ``validate()`` raises a BARE ``ValueError``.
+
+    Models the realistic WR2-02 trigger: a strategy class GAINS a cross-field
+    ``validate()`` rule (exactly what ``SMAMACDStrategy.validate`` and
+    ``PairStrategy.validate`` already do) after its row was written, so a stored row
+    that was valid under the old build is refused under the new one.
+    """
+
+    sizing_policy = FractionOfCash(Decimal("0.5"))
+
+    def validate(self) -> None:
+        raise ValueError("cross-field rule added after this row was written")
+
+    def generate_signal(self, ticker: str) -> Any:
+        return None
+
+
+def test_unknown_param_error_passes_through_the_wrap_unwrapped() -> None:
+    """WR2-02 no-double-wrap — the guard clause must claim admission errors FIRST.
+
+    The wrap's ``ValueError`` clause would otherwise also catch ``UnknownParamError``
+    (``StrategyAdmissionError`` subclasses ``ValueError``) and re-raise it as a
+    ``StrategyValidationError``, DESTROYING the ``ValidationError`` structured fields
+    the ``ljn`` task deliberately preserved. Clause ORDER is what prevents that.
+    """
+    with pytest.raises(UnknownParamError) as excinfo:
+        SMAMACDStrategy(timeframe="1d", tickers=["BTCUSD"], no_such_knob=7)
+
+    exc = excinfo.value
+    assert type(exc) is UnknownParamError, "re-wrapped — the guard clause lost the race"
+    assert exc.names == ["no_such_knob"]
+    assert exc.field == "strategy_params"
+    assert "no_such_knob" in str(exc)
+    assert exc.__cause__ is None, "the wrap must not attach a __cause__ to a pass-through"
+
+
+def test_missing_param_error_passes_through_the_wrap_unwrapped() -> None:
+    """WR2-02 no-double-wrap — same guarantee for the D-07 required-param refusal."""
+    # ``EmptyStrategy`` does not pin ``sizing_policy`` as a class attr, so omitting it
+    # leaves the bare base annotation with no value and no prior (D-07).
+    with pytest.raises(MissingParamError) as excinfo:
+        EmptyStrategy(timeframe="1d", tickers=["BTCUSD"])
+
+    exc = excinfo.value
+    assert type(exc) is MissingParamError
+    assert exc.field == exc.name == "sizing_policy"
+    assert exc.__cause__ is None
+
+
+def test_bare_value_error_from_validate_quarantines_the_row_not_the_boot() -> None:
+    """WR2-02 — a ``validate()`` refusal is a bad ROW, never a bad SYSTEM.
+
+    A bare ``ValueError`` from ``validate()`` used to escape ``_QUARANTINABLE``
+    entirely and propagate out of ``rehydrate_strategies``, turning ONE stale
+    registry row into a whole-engine boot outage. Typed as
+    ``StrategyValidationError`` under ``StrategyAdmissionError``, the existing
+    tuple claims it: the row is quarantined, the healthy sibling still registers,
+    and the engine boots.
+    """
+    store = _make_store()
+    try:
+        rows, _ = seeded_registry_rows([_empty(name="stale")])
+        blob = dict(rows[0]["config_json"])
+        blob["strategy_type"] = "_BareValueErrorStrategy"
+        store.upsert("stale", "_BareValueErrorStrategy", blob, True, _AT)
+        _seed(store, [_sma()])  # the healthy sibling
+
+        catalog = {**test_catalog(), "_BareValueErrorStrategy": _BareValueErrorStrategy}
+        handler = _make_handler()
+        sink = _RecordingAlertSink()
+
+        quarantined = rehydrate_strategies(
+            store=store,
+            catalog=catalog,
+            strategies_handler=handler,
+            alert_sink=sink,
+        )
+
+        assert quarantined == ["stale"]
+        assert [s.name for s in handler.strategies] == ["sma_macd"]
+        assert len(sink.events) == 1
+        assert sink.events[0].severity is ErrorSeverity.CRITICAL
+    finally:
+        store.dispose()
+
+
+# --------------------------------------------------------------------------------------
 # D-02 — duplicate-name loud reject; ephemeral strategy_id
 # --------------------------------------------------------------------------------------
 
@@ -753,8 +945,8 @@ def test_rehydrated_instance_mints_a_fresh_ephemeral_strategy_id() -> None:
 def test_registration_order_follows_read_all_name_ordering() -> None:
     """IN-01 — ``read_all()`` is ``strategy_name`` ASC, so registration order is stable.
 
-    Registration order drives ``min_timeframe`` derivation and universe membership, so an
-    unordered SELECT would make both irreproducible across runs.
+    Registration order drives universe membership, so an unordered SELECT would
+    make it irreproducible across runs.
     """
     store = _make_store()
     try:

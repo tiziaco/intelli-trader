@@ -9,7 +9,7 @@ callables in their DECLARED order
 
     portfolio_handler.update_portfolios_market_value  (mark-to-market)
     -> execution_handler.on_market_data               (resting-order matching)
-    -> strategies_handler.calculate_signals           (new signals)
+    -> strategies_handler.on_bar           (new signals)
 
 exactly as the backtest TIME->BAR path does. LIST ORDER IS EXECUTION ORDER (D-14).
 
@@ -91,7 +91,7 @@ def test_direct_emission_preserves_bar_route_order() -> None:
         on_order=rec("execution.on_order"),
     )
     strategies = SimpleNamespace(
-        calculate_signals=rec("strategies.calculate_signals"),
+        on_bar=rec("strategies.on_bar"),
     )
     screeners = SimpleNamespace(screen_markets=rec("screeners.screen_markets"))
     order = SimpleNamespace(
@@ -121,5 +121,5 @@ def test_direct_emission_preserves_bar_route_order() -> None:
     assert calls == [
         "portfolio.update_portfolios_market_value",
         "execution.on_market_data",
-        "strategies.calculate_signals",
+        "strategies.on_bar",
     ]

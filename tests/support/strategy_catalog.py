@@ -95,8 +95,9 @@ def seeded_registry_rows(
       (the D-01 catalog key), ``enabled`` (D-06 runtime state in its OWN column, never
       inside ``config_json``), ``config_json`` (the D-04 authoring blob), ``updated_at``.
     * ``strategy_portfolio_subscriptions`` — ``(strategy_name, portfolio_id)``, the
-      portfolio fan-out edge; ``portfolio_id`` is String because
-      ``subscribed_portfolios`` is typed ``list[PortfolioId | int]``.
+      portfolio fan-out edge; ``portfolio_id`` is String because ``to_dict``
+      serializes each handle via ``str(pid)`` and rehydrate parses it back
+      (a ``Uuid`` column is open as B2, not decided).
 
     Trap 2 (D-02): ``strategy_name`` comes from ``strategy.name`` and the blob carries NO
     ``name`` key, so a row whose PK and blob disagree is unrepresentable by construction.

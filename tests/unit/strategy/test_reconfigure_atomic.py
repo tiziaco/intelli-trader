@@ -31,7 +31,8 @@ import pytest
 from itrader.config.sql import SqlSettings
 from itrader.core.bar import Bar
 from itrader.core.enums import TradingDirection
-from itrader.core.sizing import PercentFromDecision
+from itrader.core.exceptions import StrategyValidationError
+from itrader.core.sizing import FractionOfCash, PercentFromDecision
 from itrader.events_handler.events import (
     ErrorEvent,
     StrategyCommandEvent,
@@ -40,6 +41,7 @@ from itrader.events_handler.events import (
 from itrader.core.enums.severity import ErrorSeverity
 from itrader.storage import SqlEngine
 from itrader.storage.strategy_registry_store import StrategyRegistryStore
+from itrader.strategy_handler.base import Strategy
 from itrader.strategy_handler.registry import encode_strategy_config
 from itrader.strategy_handler.storage import InMemorySignalStore
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
@@ -82,6 +84,70 @@ class _RaisingStore:
         raise RuntimeError("simulated store failure")
 
     def get(self, strategy_name: str) -> None:
+        return None
+
+
+class _LogSpy:
+    """Records ``warning``/``error`` calls so the TIER is assertable without ``caplog``.
+
+    A DELIBERATE CLONE of the spy in ``test_strategy_command_verbs.py``, not a shared
+    import: these unit dirs are package-less BY DESIGN (two same-named top-level test
+    packages break full-suite collection), so a shared helper would have to move to
+    ``tests/support/``. Duplicating ~15 lines is the cheaper trade.
+
+    The module docstring bans log-capture assertions because ``make test`` exports
+    ``ITRADER_DISABLE_LOGS=true``, which would false-green a ``caplog`` assertion.
+    Replacing the lifecycle manager's ``logger`` object records calls deterministically
+    under BOTH runners, independent of any logging configuration, while still proving
+    WARNING (bad operator payload) is distinct from ERROR (a defect in our own path).
+    """
+
+    def __init__(self) -> None:
+        self.warnings: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+        self.errors: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    def warning(self, *args: Any, **kwargs: Any) -> None:
+        self.warnings.append((args, kwargs))
+
+    def error(self, *args: Any, **kwargs: Any) -> None:
+        self.errors.append((args, kwargs))
+
+
+_BOOM_NAME = "INIT_BOOM"
+_BOOM_KINDS: dict[str, type[Exception]] = {
+    "value_error": ValueError,
+    "type_error": TypeError,
+    "key_error": KeyError,
+}
+
+
+class _InitBoomStrategy(Strategy):
+    """A catalog strategy whose ``init()`` raises ONLY when its ``boom`` param is armed.
+
+    The conditional arming is what makes it usable at the reconfigure TRIAL site: the
+    INITIAL construction (``boom="none"``) succeeds, so the instance registers normally;
+    the reconfigure delta ``{"boom": "value_error"}`` then arms ``init()`` and the
+    THROWAWAY ``cls(**params)`` raises.
+
+    The raise stays a BARE ``ValueError``/``TypeError``/``KeyError``: ``init()`` runs
+    inside ``_run_init()``, deliberately OUTSIDE the ``StrategyValidationError`` wrap in
+    ``Strategy.__init__``/``Strategy.reconfigure``. That is precisely why a narrowed
+    ``except StrategyAdmissionError`` cannot see it — ``init()`` is arbitrary
+    user-authored ``my_strategies/`` code and the exception set escaping it is UNBOUNDED
+    BY CONSTRUCTION.
+    """
+
+    name = _BOOM_NAME
+    sizing_policy = FractionOfCash(Decimal("0.5"))
+    boom: str = "none"
+
+    def init(self) -> None:
+        kind = _BOOM_KINDS.get(self.boom)
+        if kind is None:
+            return
+        raise kind("arbitrary failure inside user-authored init()")
+
+    def generate_signal(self, ticker: str) -> Any:
         return None
 
 
@@ -132,9 +198,31 @@ def _handler(
     return handler, strategy
 
 
-def _reconfigure(handler: StrategiesHandler, config: dict[str, Any]) -> None:
+def _boom_handler(registry: Any) -> tuple[StrategiesHandler, "_InitBoomStrategy"]:
+    """A handler holding a live ``_InitBoomStrategy``, with the class in the catalog.
+
+    The catalog key must be ``type(strategy).__name__`` because that is what the
+    reconfigure verb stamps into the ``rec`` it hands ``decode_strategy_config``.
+    """
+    handler = StrategiesHandler(Queue(), _StubFeed(), InMemorySignalStore())
+    handler.registry_store = registry
+    catalog = test_catalog()
+    catalog[_InitBoomStrategy.__name__] = _InitBoomStrategy
+    handler.strategy_catalog = catalog
+    strategy = _InitBoomStrategy(timeframe="1d", tickers=[_TICKER])
+    handler.add_strategy(strategy)
+    return handler, strategy
+
+
+def _reconfigure_named(
+    handler: StrategiesHandler, name: str, config: dict[str, Any],
+) -> None:
     handler.on_strategy_command(
-        StrategyCommandEvent.reconfigure(strategy_name=_NAME, config=config, time=_T))
+        StrategyCommandEvent.reconfigure(strategy_name=name, config=config, time=_T))
+
+
+def _reconfigure(handler: StrategiesHandler, config: dict[str, Any]) -> None:
+    _reconfigure_named(handler, _NAME, config)
 
 
 def _drain(queue: "Queue[Any]") -> list[Any]:
@@ -207,7 +295,12 @@ def test_apply_failure_after_persist_alerts_critical_and_db_holds_new(
     _warm(strategy)
 
     def _boom(**kwargs: Any) -> None:
-        raise ValueError("simulated apply failure")
+        # IN2-02 — the double must raise what the REAL collaborator raises. A validation
+        # refusal escaping ``Strategy.reconfigure`` is now typed as
+        # ``StrategyValidationError`` by the wrap around its _apply_params + validate()
+        # span; a bare ``ValueError`` here would be a shape the production path can no
+        # longer produce, and would false-fail against the narrowed APPLY-site catch.
+        raise StrategyValidationError("simulated apply failure")
 
     monkeypatch.setattr(strategy, "reconfigure", _boom)
 
@@ -349,3 +442,160 @@ def test_reconfigure_does_not_force_flat_keeps_the_strategy_registered(
 
     assert strategy in handler.strategies
     assert _NAME not in handler._pending_removals
+
+
+# --- D-10 zone guards: an arbitrary init() raise never escapes the verb ------
+#
+# `init()` is arbitrary user-authored code reached via `_run_init()`, which sits OUTSIDE
+# the `StrategyValidationError` wrap — so the exception set escaping it is UNBOUNDED and
+# a narrowed `except StrategyAdmissionError` cannot see a bare ValueError/TypeError/
+# KeyError. An escape from `on_strategy_command` is not a mere failed command: it reaches
+# ErrorPolicy.record_failure -> the failure-rate tripwire -> halt(), which has NO legal
+# exit but an operator reset_halt(). The guard SHAPE follows the ZONE — zone 1 (pre-persist
+# trial) refuses as a loud no-op; zone 2 (post-persist apply) routes into the designed
+# CRITICAL path.
+
+def test_trial_init_bare_value_error_is_a_loud_no_op(
+    store: StrategyRegistryStore, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ZONE 1 — a bare ``ValueError`` from ``init()`` during the TRIAL is a loud no-op."""
+    handler, strategy = _boom_handler(store)
+    spy = _LogSpy()
+    monkeypatch.setattr(handler._lifecycle, "logger", spy)
+    before = encode_strategy_config(strategy)
+
+    _reconfigure_named(handler, _BOOM_NAME, {"boom": "value_error"})
+
+    assert strategy.boom == "none", "the live instance must NOT be mutated"
+    assert encode_strategy_config(strategy) == before
+    assert store.get(_BOOM_NAME) is None, "the trial precedes the upsert — nothing persists"
+    assert [e for e in _drain(handler.global_queue) if isinstance(e, ErrorEvent)] == []
+    assert spy.errors, "the zone-1 tier-2 arm logs at ERROR (an unexpected kind)"
+
+
+@pytest.mark.parametrize("kind", ["type_error", "key_error"])
+def test_trial_init_arbitrary_exception_is_a_loud_no_op(
+    store: StrategyRegistryStore, monkeypatch: pytest.MonkeyPatch, kind: str,
+) -> None:
+    """ZONE 1 — coverage that never existed: NON-``ValueError`` kinds are caught too.
+
+    The pre-``ra5`` ``(StrategyAdmissionError, ValueError)`` tuple caught exactly ONE
+    arbitrary member of an infinite set; ``TypeError``/``KeyError`` always escaped. This is
+    the case that proves a zone guard beats a type tuple.
+    """
+    handler, strategy = _boom_handler(store)
+    spy = _LogSpy()
+    monkeypatch.setattr(handler._lifecycle, "logger", spy)
+    before = encode_strategy_config(strategy)
+
+    _reconfigure_named(handler, _BOOM_NAME, {"boom": kind})
+
+    assert strategy.boom == "none"
+    assert encode_strategy_config(strategy) == before
+    assert store.get(_BOOM_NAME) is None
+    assert [e for e in _drain(handler.global_queue) if isinstance(e, ErrorEvent)] == []
+    assert spy.errors
+
+
+def test_apply_init_bare_value_error_routes_to_the_critical_path(
+    store: StrategyRegistryStore, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ZONE 2 — a bare ``ValueError`` from apply routes into the designed CRITICAL path.
+
+    Driven with the file's ESTABLISHED double idiom (monkeypatching ``reconfigure``) rather
+    than a payload: the trial runs the same params FIRST and would reject them, so the apply
+    arm is unreachable through the payload.
+    """
+    handler, strategy = _handler(store)
+    _warm(strategy)
+
+    def _boom(**kwargs: Any) -> None:
+        raise ValueError("bare ValueError out of _run_init -> init()")
+
+    monkeypatch.setattr(strategy, "reconfigure", _boom)
+
+    _reconfigure(handler, {"long_window": 120})
+
+    row = store.get(_NAME)
+    assert row is not None
+    assert row["config"]["long_window"] == 120, "D-13 — the DB HOLDS THE NEW config"
+    assert strategy.long_window == 100, "apply threw — the live instance is unmodified"
+    criticals = [
+        e for e in _drain(handler.global_queue)
+        if isinstance(e, ErrorEvent) and e.severity is ErrorSeverity.CRITICAL
+    ]
+    assert len(criticals) == 1
+    assert criticals[0].error_type == "ValueError"
+    assert criticals[0].details is not None
+    assert criticals[0].details.get("strategy_name") == _NAME
+
+
+@pytest.mark.parametrize("kind", [TypeError, KeyError])
+def test_apply_arbitrary_exception_routes_to_the_critical_path(
+    store: StrategyRegistryStore, monkeypatch: pytest.MonkeyPatch, kind: type[Exception],
+) -> None:
+    """ZONE 2 — arbitrary NON-``ValueError`` kinds route identically. Never an escape."""
+    handler, strategy = _handler(store)
+    _warm(strategy)
+
+    def _boom(**kwargs: Any) -> None:
+        raise kind("arbitrary failure out of _run_init -> init()")
+
+    monkeypatch.setattr(strategy, "reconfigure", _boom)
+
+    _reconfigure(handler, {"long_window": 120})
+
+    row = store.get(_NAME)
+    assert row is not None
+    assert row["config"]["long_window"] == 120
+    assert strategy.long_window == 100
+    criticals = [
+        e for e in _drain(handler.global_queue)
+        if isinstance(e, ErrorEvent) and e.severity is ErrorSeverity.CRITICAL
+    ]
+    assert len(criticals) == 1
+    assert criticals[0].error_type == kind.__name__
+
+
+def test_trial_admission_error_still_takes_the_warning_tier(
+    store: StrategyRegistryStore, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ZONE 1 — tier-2 is a genuine FALLBACK, not a shadow of the tier-1 arm.
+
+    ``short_window=200`` against ``long_window=100`` fails SMA_MACD's cross-field
+    ``validate()``, which the wrap in ``Strategy.__init__`` types as
+    ``StrategyValidationError`` — so it must keep taking the NARROW arm at WARNING and must
+    NOT be laundered into the new ERROR tier. Clause order is what enforces this; if the
+    two ever merged, operator junk would be reported as a defect in our own path.
+    """
+    handler, strategy = _handler(store)
+    _warm(strategy)
+    spy = _LogSpy()
+    monkeypatch.setattr(handler._lifecycle, "logger", spy)
+
+    _reconfigure(handler, {"short_window": 200})
+
+    assert strategy.short_window == 50, "the live instance must NOT be torn"
+    assert store.get(_NAME) is None
+    assert spy.warnings, "a StrategyAdmissionError takes the tier-1 WARNING arm"
+    assert spy.errors == [], "and must NOT reach the tier-2 ERROR arm"
+
+
+def test_apply_store_fault_still_propagates() -> None:
+    """D-19 — widening the APPLY catch does NOT swallow an infrastructure fault.
+
+    WHY this stays loud after the zone guards land: ``registry_store.upsert`` sits OUTSIDE
+    the widened ``try``, whose body is the SINGLE ``strategy.reconfigure(...)`` call and
+    contains no store call. A store fault therefore still propagates out of the verb
+    unchanged, exactly as the ``_add_strategy_verb`` / rehydrate fail-loud precedent
+    requires. Do not widen either arm past those boundaries.
+    """
+    raising = _RaisingStore()
+    handler, strategy = _handler(raising)
+    _warm(strategy)
+
+    with pytest.raises(RuntimeError):
+        _reconfigure(handler, {"long_window": 120})
+
+    assert raising.upsert_calls == 1
+    assert strategy.long_window == 100, "persist precedes apply — live is untouched"

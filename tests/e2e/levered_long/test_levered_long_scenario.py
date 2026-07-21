@@ -44,7 +44,7 @@ TWO HONEST INTEGRATION FINDINGS surfaced by the 02-06 run are now CLOSED by 02-0
 (LEV-03):
 
   FINDING A (CLOSED, 02-07 Task 1) — the strategy -> SignalEvent fan-out
-  (``StrategiesHandler.calculate_signals``) now carries ``SignalIntent.leverage`` onto
+  (``StrategiesHandler.on_bar``) now carries ``SignalIntent.leverage`` onto
   the ``SignalEvent``. This e2e drives leverage through the NORMAL production fan-out: a
   strategy returns a leverage-carrying ``SignalIntent`` at the decision bars and the BAR
   route fans it out as a ``SignalEvent`` — no hand-built ``SignalEvent`` is injected onto
@@ -163,7 +163,7 @@ class _LevLongStrategy(Strategy):
 
     It returns a leverage-carrying ``SignalIntent`` at the decision bars — BUY on
     2020-01-02 (leverage 20 requested, LeveredFraction f=2) and SELL on 2020-01-05 —
-    so ``StrategiesHandler.calculate_signals`` fans it out as a ``SignalEvent``
+    so ``StrategiesHandler.on_bar`` fans it out as a ``SignalEvent``
     carrying ``leverage`` through the production path. NO hand-built SignalEvent is
     injected onto the queue."""
 

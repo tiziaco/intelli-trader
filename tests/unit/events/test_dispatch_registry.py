@@ -82,7 +82,7 @@ def test_bar_route_order_is_data(wiring):
     assert wiring.handler.routes[EventType.BAR] == [
         wiring.portfolio.update_portfolios_market_value,
         wiring.execution.on_market_data,
-        wiring.strategies.calculate_signals,
+        wiring.strategies.on_bar,
     ]
 
 

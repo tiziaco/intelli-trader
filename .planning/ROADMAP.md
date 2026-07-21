@@ -110,7 +110,7 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 - [x] **Phase 8: Error Subsystem** - Injected `ErrorPolicy`, formalized `ErrorHandler`, two-guard terminal safety, CF-1 aggregate circuit breaker (ERR-01..04) (completed 2026-07-14)
 - [x] **Phase 9 ★: Runtime-Config Platform** - `RuntimeConfig` overlay, scoped `ConfigUpdateEvent` + allowlist, restart layering, stats/state UI read-model (RTCFG-01..06) (completed 2026-07-16)
 - [x] **Phase 10 ★: Strategies Registry** - Durable `StrategyRegistryStore` rehydrate, enable/disable via `STRATEGY_COMMAND`, atomic strategy-param reconfiguration (STRAT-01..03) (completed 2026-07-17)
-- [ ] **Phase 10.1: StrategiesHandler Decomposition** - Split `strategies_handler.py` into a thin handler + `ManagedStrategies` holder + live-only `StrategyLifecycleManager`; dissolve GATE-01 lazy imports; rename `calculate_signals`→`on_bar` (DECOMP-01..03) (INSERTED — follow-up to Phase 10)
+- [x] **Phase 10.1: StrategiesHandler Decomposition** - Split `strategies_handler.py` into a thin handler + `ManagedStrategies` holder + `StrategyLifecycleManager`; constructor-own the three live deps; dissolve every function-local import; rename `calculate_signals`→`on_bar` (DECOMP-01, 01a, 02, 03) (INSERTED — follow-up to Phase 10) (completed 2026-07-20)
 - [ ] **Phase 11 ★: Multi-Portfolio-Live** - Per-`account_id` account factory, distinct-`account_id` invariant (fail loud), per-portfolio reconcile, `clOrdId→client_order_id` (MPORT-01..06)
 - [ ] **Phase 12: Test Migration + Gates** - live-smoke / config-restart / multi-portfolio-attribution gates (TEST-02..04; TEST-01 replay relocation pulled forward into P6)
 
@@ -448,35 +448,42 @@ Plans:
 
 ### Phase 10.1: StrategiesHandler Decomposition (INSERTED — follow-up to Phase 10)
 
-**Goal**: Split the 1648-line `strategies_handler.py` along its three natural seams — a thin data-plane `StrategiesHandler` (queue seam), a shared `ManagedStrategies` holder (the live instance set + membership rules), and a live-only `StrategyLifecycleManager` (all `STRATEGY_COMMAND` verb logic + fill-driven removal completion). Behaviour-preserving; dissolves the GATE-01 lazy imports and renames `calculate_signals` → `on_bar`. Spec: `docs/superpowers/specs/2026-07-18-strategies-handler-decomposition-design.md`. (Non-starred structural cleanup; inserted after Phase 10, does not renumber Phase 11/12.)
+**Goal**: Split the 1648-line `strategies_handler.py` along its three natural seams — a thin data-plane `StrategiesHandler` (queue seam), a shared `ManagedStrategies` holder (the live instance set + membership rules), and a `StrategyLifecycleManager` (all `STRATEGY_COMMAND` verb logic + fill-driven removal completion). Behaviour-preserving; ends the `None`-then-assign dep pattern, dissolves every function-local import, and renames `calculate_signals` → `on_bar`. Spec: `docs/superpowers/specs/2026-07-18-strategies-handler-decomposition-design.md` (amended 2026-07-20 — see Phase 10.1 RESEARCH.md for the two blocking spec errors it corrects). (Non-starred structural cleanup; inserted after Phase 10, does not renumber Phase 11/12.)
 **Depends on**: Phase 10
-**Requirements**: DECOMP-01, DECOMP-02, DECOMP-03 *(NEW ids — register in the requirements doc before plan-phase, per the decision-coverage gate)*
+**Requirements**: DECOMP-01, DECOMP-01a, DECOMP-02, DECOMP-03
 **Success Criteria** (what must be TRUE):
 
-  1. `strategies_handler.py` is split into a thin `StrategiesHandler` (data plane + queue seam), a `ManagedStrategies` holder (owns `strategies`/`min_timeframe`/`_pending_removals` + the registration/membership rules), and a live-only `StrategyLifecycleManager` (~700-line control plane + the D-11 fill-driven removal completion). No behaviour change to any verb, the signal path, or pending-removal semantics (DECOMP-01).
-  2. The five load-bearing GATE-01 lazy imports — plus the accidental `ErrorEvent`/`ErrorSeverity` one — are gone: `StrategyLifecycleManager` is live-only (never barrelled, constructed only in the live wiring arm), so its `registry`/`config_codec`/`catalog`/`cache_registration` imports sit at module top; `test_okx_inertness.py` stays green (DECOMP-02).
-  3. `calculate_signals` is renamed `on_bar` across the `_routes` literal (`full_event_handler.py`), the 59 test call-sites, and the docs (incl. the CLAUDE.md flow diagram); `test_dispatch_registry` passes (DECOMP-03).
-  4. The public handler surface is preserved by delegation — `on_strategy_command` / `on_fill` / `add_strategy` / `get_strategies_universe` and the `strategies` / `min_timeframe` / `_pending_removals` accessors still resolve, so the 312 test field-references and the route registrations are unbroken.
-  5. The backtest oracle stays byte-exact `134 / 46189.87730727451` and the full unit + integration suites stay green.
+  1. `strategies_handler.py` is split into a thin `StrategiesHandler` (data plane + queue seam), a `ManagedStrategies` holder (owns `strategies`/`min_timeframe`/`_pending_removals` + the registration/membership rules), and a `StrategyLifecycleManager` (~700-line control plane + the D-11 fill-driven removal completion). No behaviour change to any verb, the signal path, or pending-removal semantics (DECOMP-01).
+  2. The three live deps (`registry_store` / `strategy_catalog` / `portfolio_read_model`) are real at `__init__` — `registry_store` handler-owned via a new `StrategyRegistryStorageFactory` from `(environment, sql_engine)`, `portfolio_read_model` passed from `compose.py`, `strategy_catalog` an `Optional[Any]` `compose_engine` kwarg (D-01 forbids `itrader` importing a concrete strategy class). The three assignments at `live_trading_system.py:1630/1641/1642` are deleted, and both collaborators are constructed unconditionally in `__init__` from module-top imports — no `Optional`, no guard, no late-init helper (DECOMP-01a).
+  3. The backtest import graph pulls no `sqlalchemy` / `psycopg2` / `alembic`, asserted **positively** in `test_okx_inertness.py` rather than via its hardcoded `_FORBIDDEN` name list; every function-local import in `strategies_handler.py` (566 / 723-730 / 1010 / 1041-1042 / 1101-1108) is gone (DECOMP-02).
+  4. `calculate_signals` is renamed `on_bar` across the `routes` literal (`full_event_handler.py:95` — the sole route site), the test call-site lines across 14 files, and the docs (incl. the CLAUDE.md flow diagram); `test_dispatch_registry` passes (DECOMP-03). **Amended 2026-07-20 during 10.1-04 execution: `my_strategies/` is excluded from the rename scope** — it is gitignored (`.gitignore:67`, `git ls-files` returns 0 tracked files there, so edits produce no committable diff), imported by nothing in `itrader/` or `tests/`, and its `calculate_signals(self, event)` methods are a distinct legacy per-strategy API on the removed `AbstractStrategy` base, not the handler method. The completion gate is correspondingly scoped to tracked files: `! git ls-files -z 'itrader/*' 'tests/*' CLAUDE.md '.planning/codebase/*' 'docs/*' | xargs -0 grep -nE 'calculate_signals([^A-Za-z0-9_]|$)'`.
+  5. The public handler surface is preserved by delegation — `on_strategy_command` / `on_fill` / `add_strategy` / `get_strategies_universe` and the `strategies` / `min_timeframe` / `_pending_removals` accessors still resolve, so the 185 test field-references (113 handler-scoped) and the route registrations are unbroken.
+  6. The backtest oracle stays byte-exact `134 / 46189.87730727451` and the full unit + integration suites stay green (2533 passed / 6 skipped at phase start).
 
 *Cross-cutting constraints (apply to every plan): backtest oracle byte-exact `134 / 46189.87730727451` —
 the `strategies` property returns the same list object so `on_bar`'s body is never edited (hot path untouched);
-`test_okx_inertness.py` green (the lifecycle module must never reach the backtest import graph); no compat
-shim for `calculate_signals` (call-sites updated directly); indentation is tabs, measured per file.*
+`test_okx_inertness.py` green, including the new SQL-absence assertion; no compat shim for `calculate_signals`
+(call-sites updated directly); indentation is tabs in the source but 4-space in `route_registrar.py` and all 14
+rename-target test files — measure per file, never generalize; stale decision-tagged docstrings are corrected in
+the wave that touches them.*
 
-**Plans**: 3 plans in 3 sequential waves
+**Plans**: 4 plans in 4 sequential waves
 
-**Wave 1** *(no deps — pure extraction, hot path untouched)*
+**Wave 1** *(no deps — wiring only, no code moved)*
 
-- [ ] 10.1-01-PLAN.md — Extract `ManagedStrategies` (roster state + membership rules) + delegating handler accessors; hot path reads unchanged (DECOMP-01)
+- [x] 10.1-01-PLAN.md — Constructor-own the three live deps: add `StrategyRegistryStorageFactory`, pass `portfolio_read_model` from compose, thread `strategy_catalog` as a `compose_engine` kwarg, delete the three post-construction assignments; correct the stale `set_universe` docstring (DECOMP-01a)
 
 **Wave 2** *(blocked on 10.1-01)*
 
-- [ ] 10.1-02-PLAN.md — Extract `StrategyLifecycleManager` into `strategy_handler/lifecycle/`; move the 13 verb helpers + `on_strategy_command`/`on_fill`; hoist imports to module top; delete the dead lazy imports (DECOMP-02)
+- [x] 10.1-02-PLAN.md — Extract `ManagedStrategies` (roster state + membership rules) + delegating handler accessors; hot path reads unchanged (DECOMP-01)
 
 **Wave 3** *(blocked on 10.1-02)*
 
-- [ ] 10.1-03-PLAN.md — Rename `calculate_signals` → `on_bar` across source, route literal, 59 test call-sites, and docs (DECOMP-03)
+- [x] 10.1-03-PLAN.md — Extract `StrategyLifecycleManager` into `strategy_handler/lifecycle/`; move the 13 verb helpers + `on_strategy_command`/`on_fill` + the 4 module-level verb constants; all imports at module top; add the SQL-absence assertion to `test_okx_inertness.py` (DECOMP-02)
+
+**Wave 4** *(blocked on 10.1-03)*
+
+- [x] 10.1-04-PLAN.md — Rename `calculate_signals` → `on_bar` across source, route literal, 59 test call-sites, and docs; amend the committed spec doc (DECOMP-03)
 
 ### Phase 11 ★: Multi-Portfolio-Live
 

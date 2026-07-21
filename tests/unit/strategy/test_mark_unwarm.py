@@ -1,6 +1,6 @@
 """WD-1/WD-2 — the ``mark_unwarm()`` re-warm seam on ``Strategy`` / ``PairStrategy``.
 
-**WD-1.** 10-03 placed the D-07 ``is_active`` guard FIRST in the ``calculate_signals``
+**WD-1.** 10-03 placed the D-07 ``is_active`` guard FIRST in the ``on_bar``
 loop, so ``strategy.update`` never runs while a strategy is disabled and its indicator
 state FREEZES. A strategy re-enabled after N disabled bars would therefore compute its
 first signal from a window containing an N-bar HOLE — SMA/MACD spanning that

@@ -185,7 +185,7 @@ class _AddHarness:
 
     def calculate_signals_for(self, day: int):
         bar = _bar(200, day=day)
-        self.sh.calculate_signals(BarEvent(time=bar.time, bars={_COLD: bar}))
+        self.sh.on_bar(BarEvent(time=bar.time, bars={_COLD: bar}))
         return [e for e in self._drain() if isinstance(e, SignalEvent)]
 
 

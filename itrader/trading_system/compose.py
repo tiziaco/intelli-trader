@@ -122,7 +122,8 @@ def compose_engine(
 	results_store: Optional["ResultsStore"] = None,
 	alert_sink: Optional[Any] = None,
 	system_store: Optional[Any] = None,
-	error_policy: Optional[Any] = None) -> Engine:
+	error_policy: Optional[Any] = None,
+	strategy_catalog: Optional[Any] = None) -> Engine:
 	"""Wire the shared component graph from a SPEC-FREE infra ``ctx`` (D-01/D-04).
 
 	Spec-free seam (D-04, the Phase-06.1 centerpiece): ``compose_engine`` no longer
@@ -174,6 +175,14 @@ def compose_engine(
 		(the shared tripwire surface for the off-thread okx FILL_TRANSLATION count). ``None``
 		→ a ``FailFastPolicy`` is built instead (byte-exact oracle re-raise) and the
 		``ErrorHandler`` gets no tripwire (backtest logs only).
+	strategy_catalog : Optional[Any]
+		The injected strategy-TYPE allowlist threaded into the ``StrategiesHandler``
+		(D-01/D-10). Typed ``Optional[Any]`` for the SAME reason ``system_store`` is:
+		D-01 forbids ``itrader`` importing a concrete strategy class — proprietary
+		strategies live in a private submodule — so the catalog can only ride in from
+		the caller and no concrete type may land on this module's import graph.
+		``None`` (the backtest default) leaves the D-10 LOUD-reject on a catalog-less
+		``add`` reachable, so no external payload can be instantiated.
 	"""
 	# D-01/D-04: store + feed are INJECTED on ctx by the mode factory — compose reads
 	# them uniformly (backtest: real CsvPriceStore + BacktestBarFeed; live: store=None
@@ -224,12 +233,29 @@ def compose_engine(
 	# the registration gate. Constructed AFTER the trading_rules binding so the
 	# flags are available; both default off → SMA_MACD (LONG_ONLY) stays admitted
 	# and the oracle stays byte-exact.
+	#
+	# DECOMP-01a: the two heavy-lifecycle-verb seams are passed HERE, at construction,
+	# on BOTH composition roots — replacing the post-construction attribute assignment
+	# build_live_system used to perform after the handler was already built:
+	#   - portfolio_read_model: `portfolio_handler` structurally satisfies the
+	#     `PortfolioReadModel` Protocol, so it IS the D-11 flat-detect the `remove` verb
+	#     consults on FILL — a READ through an injected read-model, never a cross-domain
+	#     handler call, so the queue-only contract holds. It is non-None on BOTH paths
+	#     (this line is shared); backtest is unaffected because `strategies_handler.on_fill`
+	#     is not on the backtest FILL route and STRATEGY_COMMAND routes to an empty list,
+	#     so the `remove`/pending-removal machinery is never driven there.
+	#   - strategy_catalog: the D-01/D-10 access-control ALLOWLIST the `add` verb resolves
+	#     an untrusted external `strategy_type` through. `None` in backtest (nothing passes
+	#     it), which keeps `add`'s LOUD-reject reachable.
+	# Neither changes the oracle: no signal-path code reads either.
 	strategies_handler = StrategiesHandler(
 		ctx.bus, feed,
 		allow_short_selling=trading_rules.allow_short_selling,
 		enable_margin=trading_rules.enable_margin,
 		environment=ctx.environment,
-		sql_engine=ctx.sql_engine)
+		sql_engine=ctx.sql_engine,
+		strategy_catalog=strategy_catalog,
+		portfolio_read_model=portfolio_handler)
 
 	# order_config stays handler-owned (D-04 lean, P1 D-03) — never a spec field.
 	resolved_order_config = OrderConfig.default()

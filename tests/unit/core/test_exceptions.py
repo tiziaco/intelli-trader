@@ -16,6 +16,11 @@ import pytest
 
 from itrader.core.exceptions import (
     ITraderError,
+    ValidationError,
+    StrategyAdmissionError,
+    UnknownParamError,
+    MissingParamError,
+    StrategyValidationError,
     ConfigurationError,
     PortfolioError,
     PortfolioNotFoundError,
@@ -25,6 +30,10 @@ from itrader.core.exceptions import (
     DataError,
     MalformedDataError,
     MissingPriceDataError,
+)
+from itrader.strategy_handler.registry import (
+    StrategyConfigError,
+    UnknownStrategyTypeError,
 )
 from itrader import idgen
 
@@ -105,3 +114,101 @@ def test_missing_price_data_error_stores_source_and_reason():
     assert err.reason == "empty frame after window slice"
     assert "golden.csv" in str(err)
     assert isinstance(err, DataError)
+
+
+# --- StrategyAdmissionError: the shared strategy-payload refusal ancestor -------
+#
+# Motivating defect CR-01: before this base existed, "catch a bad strategy payload"
+# meant hand-listing unrelated names across four sites. Those sets drifted, and one
+# drifted tuple let a bare ValueError escape a never-raise boundary into a live HALT
+# vector. These tests pin the hierarchy so the four sites can be written as one name.
+
+
+_REPARENTED = [
+    lambda: UnknownParamError(["a", "b"]),
+    lambda: MissingParamError("x"),
+    lambda: StrategyConfigError("bad blob"),
+    lambda: UnknownStrategyTypeError("unknown type"),
+    lambda: StrategyValidationError("short_window must be < long_window"),
+]
+
+
+@pytest.mark.parametrize("make", _REPARENTED)
+def test_strategy_refusals_share_the_admission_ancestor(make):
+    """All four rejection types are catchable through ONE ancestor.
+
+    ``ValueError`` is asserted too: it is what preserves every pre-existing catch
+    site across the reparent, and it is why the whole family could not simply be
+    rooted at the house ``ValidationError``.
+    """
+    exc = make()
+    assert isinstance(exc, StrategyAdmissionError)
+    assert isinstance(exc, ITraderError)
+    assert isinstance(exc, ValueError)
+
+
+def test_unknown_param_error_keeps_its_structured_fields():
+    err = UnknownParamError(["a", "b"])
+    assert err.names == ["a", "b"]
+    assert err.field == "strategy_params"
+    assert isinstance(err, ValidationError)
+
+
+def test_missing_param_error_keeps_its_structured_fields():
+    err = MissingParamError("x")
+    assert err.name == "x"
+    assert err.field == "x"
+    assert isinstance(err, ValidationError)
+
+
+@pytest.mark.parametrize("cls", [StrategyConfigError, UnknownStrategyTypeError])
+def test_registry_refusals_construct_from_a_plain_message(cls):
+    """Plain-message construction is what makes the ~25 existing raise sites safe.
+
+    ``StrategyConfigError`` is raised throughout the codec with a bare message
+    string, so the shared base MUST NOT impose ``ValidationError``'s
+    ``(field, value, message)`` signature.
+    """
+    assert str(cls("plain msg")) == "plain msg"
+
+
+def test_strategy_validation_error_joins_the_admission_ancestor():
+    """WR2-02 / IN2-02 — the typed home for the bare-``ValueError`` residue.
+
+    Catchability through ``StrategyAdmissionError`` is the whole point: it is what
+    puts a ``validate()`` refusal inside ``registry.rehydrate._QUARANTINABLE`` so a
+    stale row is quarantined instead of aborting the boot. ``ValueError`` keeps
+    every pre-existing catch site (and the ``pytest.raises(ValueError, ...)``
+    assertions in ``tests/unit/strategy/test_strategy.py``) working unchanged.
+    """
+    exc = StrategyValidationError("short_window must be < long_window")
+    assert isinstance(exc, StrategyAdmissionError)
+    assert isinstance(exc, ITraderError)
+    assert isinstance(exc, ValueError)
+
+
+def test_strategy_validation_error_round_trips_the_plain_message():
+    """The wrap carries only ``str(exc)``, so plain-message construction is required.
+
+    It is NOT parented on the house ``ValidationError`` — that signature is
+    ``(field, value, message)`` and there are no structured fields to supply here.
+    """
+    assert str(StrategyValidationError("plain msg")) == "plain msg"
+    assert not issubclass(StrategyValidationError, ValidationError)
+
+
+def test_unknown_param_error_mro_order_is_pinned():
+    """``ValidationError`` must precede ``StrategyAdmissionError`` in the MRO.
+
+    The order is load-bearing, not cosmetic: ``ValidationError.__init__`` has to win
+    the attribute lookup, otherwise the structured-field constructor
+    (``field=``/``message=``) breaks and ``.names``/``.field`` stop being populated.
+    """
+    mro = [cls.__name__ for cls in UnknownParamError.__mro__]
+    assert mro[:5] == [
+        "UnknownParamError",
+        "ValidationError",
+        "StrategyAdmissionError",
+        "ITraderError",
+        "ValueError",
+    ]

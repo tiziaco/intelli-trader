@@ -21,11 +21,18 @@ invariant + dedicated drift test"):
 from decimal import Decimal
 
 import pytest
+from uuid_utils.compat import uuid7
 
+from itrader.core.ids import PortfolioId
 from itrader.core.sizing import FractionOfCash, TradingDirection
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
 
 pytestmark = pytest.mark.unit
+
+# Portfolio handles are ALWAYS UUIDv7-backed ``PortfolioId`` values (FL-02).
+_PID_A = PortfolioId(uuid7())
+_PID_B = PortfolioId(uuid7())
+_PID_KEY_ORDER = PortfolioId(uuid7())
 
 
 def _make(short_window: int = 50, long_window: int = 100) -> SMAMACDStrategy:
@@ -61,7 +68,7 @@ def test_key_order_preserved() -> None:
     strat = _make()
     keys_before = list(strat.to_dict().keys())
     strat.activate_strategy()
-    strat.subscribe_portfolio(7)
+    strat.subscribe_portfolio(_PID_KEY_ORDER)
     keys_after = list(strat.to_dict().keys())
     assert keys_before == keys_after
 
@@ -74,13 +81,13 @@ def test_runtime_fields_refresh() -> None:
     assert snap0["is_active"] is True
     assert snap0["subscribed_portfolios"] == []
 
-    strat.subscribe_portfolio(3)
-    strat.subscribe_portfolio(9)
+    strat.subscribe_portfolio(_PID_A)
+    strat.subscribe_portfolio(_PID_B)
     strat.deactivate_strategy()
     snap1 = strat.to_dict()
 
     assert snap1["is_active"] is False
-    assert snap1["subscribed_portfolios"] == ["3", "9"]
+    assert snap1["subscribed_portfolios"] == [str(_PID_A), str(_PID_B)]
     # Static fields untouched by the runtime mutation.
     for key in snap0:
         if key in ("is_active", "subscribed_portfolios"):

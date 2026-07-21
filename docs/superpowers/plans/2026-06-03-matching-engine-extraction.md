@@ -1828,11 +1828,18 @@ Expected: FAIL — BAR still calls `order.process_orders_on_market_data`; FILL d
 
 In `full_event_handler.py`, change the BAR and FILL branches (tabs):
 
+> **Historical note (amended in Phase 10.1):** as executed in June 2026 this block
+> called the handler's then-current per-bar entry point, which Phase 10.1 later renamed
+> to `on_bar` (DECOMP-03). The snippet below carries the *current* name so the document
+> stays navigable; it is not a byte-exact reproduction of the code at that commit. The
+> surrounding `elif` chain has also since been replaced by the data-driven `self.routes`
+> dict literal.
+
 ```python
 				elif event.type == EventType.BAR:
 					self.portfolio_handler.update_portfolios_market_value(event)
 					self.execution_handler.on_market_data(event)
-					self.strategies_handler.calculate_signals(event)
+					self.strategies_handler.on_bar(event)
 				elif event.type == EventType.SIGNAL:
 					self.order_handler.on_signal(event)
 				elif event.type == EventType.ORDER:
