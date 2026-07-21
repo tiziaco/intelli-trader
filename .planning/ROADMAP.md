@@ -500,7 +500,7 @@ the wave that touches them.*
   5. *(MPORT-07 — discovered 2026-07-21)* The **execution exchange** is keyed `(venue, account_id)` too: `ExecutionHandler.exchanges` keys on the pair and `on_order` resolves the account from `event.portfolio_id`, so one account's orders can never be submitted through another account's authenticated session. Without this, per-account credentials and accounts are all correct and orders still route to the wrong venue account.
   6. The backtest oracle stays byte-exact and `test_okx_inertness.py` stays green.
 
-**Plans**: 11 plans in 7 waves *(wave list written by hand — the starred header makes `roadmap.annotate-dependencies` no-op)*
+**Plans**: 12 plans in 8 waves *(wave list written by hand — the starred header makes `roadmap.annotate-dependencies` no-op. 11-07b was split out of 11-07 on 2026-07-21 after a pre-execution audit — see below.)*
 
 **Wave 1** *(no dependencies — D-28 W1 schema, W5 attribution, and the identity plumbing W3 needs)*
 
@@ -516,7 +516,7 @@ the wave that touches them.*
 
 **Wave 3** *(blocked on 11-04, 11-06 — D-28 W3 accounts)*
 
-- [ ] 11-07-PLAN.md — `new_account()` Protocol method, required `account_id` on `VenueAccount`, per-account connector + exchange; delete the link function, its guard and the facade singleton; D-26 naming guard + deferral todos (MPORT-01, MPORT-06)
+- [ ] 11-07-PLAN.md — **RESCOPED 2026-07-21**: `new_account()` Protocol method, required `account_id` on `VenueAccount`, per-account connector + exchange, **plus the multi-account composition-root loop and `venue_accounts` minting that make them live** (MPORT-01, MPORT-06). *Deletes nothing — a pre-execution audit found the original would have created `new_account` with zero production callers while deleting `account_factory()`, its only caller, leaving fewer working accounts than before behind a green suite. The D-26 spec-field rename was dropped: its premise was stale post-11-04 and the `getattr` read would have survived it silently, disarming both 11-04 mitigations.*
 
 **Wave 4** *(blocked on 11-03, 11-07 — D-28 W4 bootstrap)*
 
@@ -526,11 +526,15 @@ the wave that touches them.*
 
 - [ ] 11-09-PLAN.md — coordinator drops its scalar account/connector and reads each portfolio's own; all-symbols baseline guard with per-instrument precision in the loop; evaluate-all (F-2) (MPORT-05)
 
-**Wave 6** *(blocked on 11-09 — D-28 W6 reconcile, second half)*
+**Wave 6** *(blocked on 11-07, 11-09 — the deletions, sequenced last)*
+
+- [ ] 11-07b-PLAN.md — split out of 11-07: delete `_link_venue_account_to_portfolios`, its `RuntimeError(>1)` guard and the facade `_venue_account` singleton, **after** rehoming the reconnect re-snapshot and the startup venue reconcile onto per-account accounts. *Sequenced after 11-08's invariant and 11-09's coordinator rehome because both deletions destroy live-safety wiring whose existing tests stay green (they assign the fields directly rather than driving the real path).* (MPORT-01)
+
+**Wave 7** *(blocked on 11-09 — D-28 W6 reconcile, second half)*
 
 - [ ] 11-10-PLAN.md — per-portfolio quarantine replacing the global halt; one-clause admission gate; operator-only CONTROL release; quarantined-portfolios read-model surface (MPORT-02, MPORT-05)
 
-**Wave 7** *(blocked on all — D-28 W7 tests)*
+**Wave 8** *(blocked on all — D-28 W7 tests)*
 
 - [ ] 11-11-PLAN.md — two-paper-account lifecycle: independent sizing, fill attribution with the negative asserted, restart with stable ids and config proven equal by value (MPORT-03, MPORT-04)
 
