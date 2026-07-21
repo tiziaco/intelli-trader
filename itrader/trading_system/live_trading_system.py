@@ -1316,6 +1316,124 @@ def _read_account_secret_ref(
     return str(secret_ref) if secret_ref else None
 
 
+def _account_ids_for_spec(spec: Any) -> list[Optional[str]]:
+    """Every distinct venue account this run must assemble a bundle for (11-07).
+
+    The account set is derived from the PORTFOLIOS, not from a single spec-level
+    ``account_id``. Before 11-07 the composition root built ONE venue spec and
+    performed ONE registration write, so "one exchange per account" read as
+    satisfied only because there was never more than one account.
+
+    Ordering rules, all of them load-bearing:
+
+    * the spec-level ``account_id`` (when present) comes FIRST and is the PRIMARY.
+      The facade holds ONE ``VenueLifecycle`` and ONE data provider is wired to the
+      feed, so which account is primary must be deterministic rather than
+      dict-ordering dependent.
+    * portfolio account ids follow in spec order, de-duplicated. Two portfolios on
+      one account share that account's bundle — one connector per
+      ``(venue, account_id)`` pair, not one per portfolio (D-12).
+    * when NOTHING names an account the result is ``[None]``, which is EXACTLY the
+      pre-11-07 single-account call shape. N=1 is the same code path, not a separate
+      branch — a second branch is how the two drift apart.
+
+    A ``VenueSpec`` (the ``for_exchange`` shape) carries no ``portfolios`` at all and
+    therefore always yields the single-account list.
+    """
+    ordered: list[Optional[str]] = []
+    primary = getattr(spec, 'account_id', None)
+    if primary is not None:
+        ordered.append(primary)
+    for portfolio_spec in getattr(spec, 'portfolios', None) or ():
+        account_id = getattr(portfolio_spec, 'account_id', None)
+        if account_id is not None and account_id not in ordered:
+            ordered.append(account_id)
+    if not ordered:
+        ordered.append(None)
+    return ordered
+
+
+def _mint_account_rows(
+    venue_account_store: Optional[Any],
+    venue_name: str,
+    account_ids: list[Optional[str]],
+) -> None:
+    """Ensure a ``venue_accounts`` row EXISTS for each account (11-07, MPORT-01).
+
+    Minting is gated on ABSENCE and writes ``secret_ref=None``. That gate is not a
+    micro-optimisation: ``VenueAccountStore.upsert`` is a delete-then-insert over the
+    composite key, so an unconditional write would CLOBBER the operator's own
+    ``secret_ref`` and ``venue_uid`` on every boot — silently reverting a configured
+    per-account credential pointer to the ambient single-account path.
+
+    Why mint at all when the minted row carries no credentials: the D-04
+    trust-on-first-use guard records the observed venue UID through
+    ``record_venue_uid``, which is a TARGETED UPDATE and a silent no-op when no row
+    matches. Without a row the identity guard has nowhere to write and stays inert.
+
+    Degrades clean with a WARNING rather than aborting the boot, matching
+    ``_read_account_secret_ref``: the row is routing/observability state, and a
+    storage outage should not take down a deployment that never needed it.
+    """
+    if venue_account_store is None:
+        return
+    # NOTE: ``logger`` is FUNCTION-LOCAL throughout this module — there is no
+    # module-level binding, and this module is under a mypy ``ignore_errors``
+    # override, so a missing binding ships as a NameError invisible to mypy AND to
+    # the suite (exactly what happened in 11-04).
+    logger = get_itrader_logger().bind(component="build_live_system")
+    for account_id in account_ids:
+        key = account_id or DEFAULT_ACCOUNT_ID
+        try:
+            if venue_account_store.get(venue_name, key) is not None:
+                continue
+            venue_account_store.upsert(
+                venue_name,
+                key,
+                secret_ref=None,
+                venue_uid=None,
+                enabled=True,
+                config={},
+                at=datetime.now(UTC),
+            )
+        except Exception as exc:
+            logger.warning(
+                "Could not mint the venue account row for (%s, %s): %s — the "
+                "venue-UID guard has no row to record into for this account",
+                venue_name, key, exc)
+
+
+def _build_account_specs(
+    spec: Any,
+    venue_account_store: Optional[Any],
+    exchange: str,
+) -> list[Any]:
+    """One ``VenueSpec`` per account, each carrying ITS OWN credential pointer.
+
+    This is what moves MPORT-06 from dormant to live. Plan 11-04 shipped the
+    ``CredentialResolver`` wired and tested, but ``OkxConnectorPlugin.build``
+    short-circuits to the ambient ``OkxSettings()`` whenever ``secret_ref is None``,
+    and the pointer was read exactly ONCE for the spec-level account. Reading it PER
+    ACCOUNT is what makes two accounts authenticate with two different credential
+    sets instead of both silently using the one global ``OKX_API_*`` triple.
+
+    ``build_venue_spec`` stays the single home of the default-provider map (D-11).
+    """
+    account_ids = _account_ids_for_spec(spec)
+    _mint_account_rows(venue_account_store, exchange, account_ids)
+    data_provider = getattr(spec, 'data_provider', None)
+    return [
+        build_venue_spec(
+            exchange,
+            data_provider=data_provider,
+            account_id=account_id,
+            secret_ref=_read_account_secret_ref(
+                venue_account_store, exchange, account_id),
+        )
+        for account_id in account_ids
+    ]
+
+
 def build_live_system(
     spec: Any,
     *,
@@ -1562,61 +1680,76 @@ def build_live_system(
     # feed left production for tests/). A TEST fixture injects a 'replay' plugin via
     # data_plugins and passes data_provider='replay' explicitly; production never does.
     # build_venue_spec owns the {okx,paper}->okx default-provider map (D-11 — one home).
-    # 11-04 (D-02): read this ACCOUNT's credential POINTER off its durable row so the
-    # connector plugin can resolve per-account material. A missing store or a missing
-    # row yields None, which is the legacy single-account path — NOT the T-11-18
-    # fail-open case (a well-formed pointer that resolves to nothing RAISES inside the
-    # resolver). Account MINTING is plan 11-07; this only reads what is already there.
-    requested_account_id = getattr(spec, 'account_id', None)
-    account_secret_ref = _read_account_secret_ref(
-        venue_account_store, exchange, requested_account_id)
-
-    venue_spec = build_venue_spec(
-        exchange,
-        data_provider=getattr(spec, 'data_provider', None),
-        account_id=requested_account_id,
-        secret_ref=account_secret_ref,
-    )
+    # 11-07 (MPORT-01/MPORT-06): ONE VenueSpec PER ACCOUNT, each carrying its OWN
+    # credential pointer read off its own durable row. Before this plan the pointer
+    # was read once for a single spec-level account_id, which is why MPORT-06's
+    # resolver was shipped-but-dormant: with one account there was never a second
+    # pointer to resolve. `_build_account_specs` also mints an absent account row so
+    # the D-04 venue-UID guard has somewhere to record into.
+    #
+    # 11-04 (D-02): a missing store or a missing row yields secret_ref=None, which is
+    # the legacy single-account path — NOT the T-11-18 fail-open case (a well-formed
+    # pointer that resolves to nothing RAISES inside the resolver).
+    account_specs = _build_account_specs(spec, venue_account_store, exchange)
+    # The PRIMARY account's spec. The facade holds ONE VenueLifecycle and ONE data
+    # provider is wired to the feed, so the primary must be deterministic.
+    venue_spec = account_specs[0]
 
     # (3) Delegate venue assembly (registry membership replaces the venue-string branch).
     provider: Optional[Any] = None
+    # 11-07: the non-primary bundles. Held so their exchanges get the same halt-signal
+    # wiring the primary gets below — an unwired secondary exchange would keep
+    # accepting orders after a connector-fatal halt, which is worse than not having it.
+    secondary_bundles: list[Any] = []
     if exchange in exec_registry:
-        # 11-04 (D-04): account_store + alert_sink are what make the trust-on-first-use
-        # UID guard RUN. assemble_venue accepts them as optional kwargs so existing
-        # call sites keep working — which means omitting them here would ship the only
-        # high-severity spoofing mitigation in this phase as dead code behind a fully
-        # green suite. tests/unit/venues/test_venue_uid_guard.py asserts this call
-        # passes both.
-        bundle, venue_lifecycle = assemble_venue(
-            ctx, venue_spec, connectors, exec_registry, data_registry,
-            account_store=venue_account_store, alert_sink=alert_sink)
-        provider = venue_lifecycle.provider
+        for index, account_spec in enumerate(account_specs):
+            # 11-04 (D-04): account_store + alert_sink are what make the
+            # trust-on-first-use UID guard RUN. assemble_venue accepts them as
+            # optional kwargs so existing call sites keep working — which means
+            # omitting them here would ship the only high-severity spoofing
+            # mitigation in this phase as dead code behind a fully green suite.
+            # tests/unit/venues/test_venue_uid_guard.py asserts this call passes both.
+            bundle, lifecycle = assemble_venue(
+                ctx, account_spec, connectors, exec_registry, data_registry,
+                account_store=venue_account_store, alert_sink=alert_sink)
 
-        # bundle.connector is the STREAMING-venue discriminator (okx present, paper None).
-        # A paper (connector=None) bundle has no streaming okx exchange; its data provider
-        # is still wired to the feed below (the injected TEST 'replay' provider in tests, or
-        # the OKX data provider in production paper — D-21). The facade __init__ sources
-        # _venue_bundle/_venue_account/_okx_data_provider off the lifecycle (D-08); only the
-        # streaming-venue execution_handler registration + the halt-signal handles stay here.
-        okx_connector = bundle.connector
-        if bundle.connector is not None:
-            okx_exchange = bundle.exchange
-            # D-27/MPORT-07: register under the (venue, account_id) PAIR, using
-            # the account this bundle was actually built for. Registering under
-            # DEFAULT_ACCOUNT_ID here would blackhole every live order for a
-            # NAMED account: on_order resolves the portfolio's real account, so
-            # the lookup would miss and fail closed — silently, with no test
-            # covering it. The `or DEFAULT_ACCOUNT_ID` fallback is the same
-            # `spec.account_id or "default"` idiom the shipped venue plugins
-            # already use to memoize connectors, so venue and exchange agree on
-            # one key. (This is a REGISTRATION-side default for an unnamed
-            # account, NOT a resolution-side fallback — on_order must never
-            # coerce a None account into the default.)
-            execution_handler.exchanges[
-                (exchange, venue_spec.account_id or DEFAULT_ACCOUNT_ID)
-            ] = bundle.exchange
+            # bundle.connector is the STREAMING-venue discriminator (okx present,
+            # paper None). A paper (connector=None) bundle has no streaming okx
+            # exchange; its data provider is still wired to the feed below (the
+            # injected TEST 'replay' provider in tests, or the OKX data provider in
+            # production paper — D-21).
+            if bundle.connector is not None:
+                # D-27/MPORT-07: register under the (venue, account_id) PAIR, using
+                # the account this bundle was actually built for. Registering under
+                # DEFAULT_ACCOUNT_ID here would blackhole every live order for a
+                # NAMED account: on_order resolves the portfolio's real account, so
+                # the lookup would miss and fail closed — silently, with no test
+                # covering it. The `or DEFAULT_ACCOUNT_ID` fallback is the same
+                # `spec.account_id or "default"` idiom the shipped venue plugins
+                # already use to memoize connectors, so venue and exchange agree on
+                # one key. (This is a REGISTRATION-side default for an unnamed
+                # account, NOT a resolution-side fallback — on_order must never
+                # coerce a None account into the default.)
+                execution_handler.exchanges[
+                    (exchange, account_spec.account_id or DEFAULT_ACCOUNT_ID)
+                ] = bundle.exchange
+
+            if index == 0:
+                # The PRIMARY account owns the facade's single VenueLifecycle holder
+                # (D-07) and the one data provider wired to the feed. The facade
+                # __init__ sources _venue_bundle/_venue_account/_okx_data_provider
+                # off this lifecycle (D-08).
+                venue_lifecycle = lifecycle
+                provider = lifecycle.provider
+                okx_connector = bundle.connector
+                if bundle.connector is not None:
+                    okx_exchange = bundle.exchange
+            else:
+                secondary_bundles.append(bundle)
 
         # (4) UNIFORM provider->feed wiring (D-10) that needs NO facade method.
+        # ONE feed, so ONE provider: the primary account's. A second account's data
+        # provider would push the same venue's bars into the same feed a second time.
         feed.set_provider(provider)
         provider.set_bar_sink(feed.update)
         provider.set_global_queue(global_queue)
@@ -1818,6 +1951,20 @@ def build_live_system(
             okx_exchange.set_stream_state_listener(
                 facade._on_venue_stream_down, facade._on_venue_stream_up)
             okx_connector.set_halt_signal(facade._request_connector_halt)
+
+    # 11-07: the SAME halt/stream wiring for every NON-primary account's exchange and
+    # connector. Registering a second account's exchange without this would leave it
+    # accepting orders after a connector-fatal halt latched the primary — a
+    # partially-halted engine is worse than a single-account one, because the
+    # surviving arm looks healthy. Only the exchange/connector signals are wired: the
+    # data provider is deliberately single (one feed, the primary's provider).
+    for secondary in secondary_bundles:
+        if secondary.connector is None:
+            continue
+        secondary.exchange.set_halt_signal(facade._request_connector_halt)
+        secondary.exchange.set_stream_state_listener(
+            facade._on_venue_stream_down, facade._on_venue_stream_up)
+        secondary.connector.set_halt_signal(facade._request_connector_halt)
 
     # 08-03 (D-03/D-04): the CRITICAL/halt alert sink now rides into the ErrorHandler via
     # compose_engine (built above as ``alert_sink``, injected at construction) — the old

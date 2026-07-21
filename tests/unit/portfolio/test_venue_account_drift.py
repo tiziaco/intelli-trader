@@ -47,7 +47,7 @@ def _venue_account(positions: dict[str, Decimal]) -> VenueAccount:
     same private fields) and lets a drift test drive controlled venue truth without
     a live connector loop.
     """
-    account = VenueAccount(MagicMock(name="connector"))
+    account = VenueAccount(MagicMock(name="connector"), account_id="acct-test")
     account._venue_positions = dict(positions)
     account._venue_balance = Decimal("78999.79")
     return account
@@ -238,7 +238,8 @@ def test_spot_positions_derived_from_base_balance(venue_connectors):
     """
     connector = venue_connectors(_spot_payloads_with_btc("0.5"))
     account = VenueAccount(
-        connector, quote_currency="USDC", market_type="spot", symbol="BTC/USDC"
+        connector, quote_currency="USDC", market_type="spot", symbol="BTC/USDC",
+        account_id="acct-test"
     )
     account.snapshot()
 
@@ -251,7 +252,8 @@ def test_spot_flat_base_balance_is_no_position(venue_connectors):
     """A zero base balance is FLAT — an empty positions map (no row), not a phantom 0."""
     connector = venue_connectors(_spot_payloads_with_btc("0"))
     account = VenueAccount(
-        connector, quote_currency="USDC", market_type="spot", symbol="BTC/USDC"
+        connector, quote_currency="USDC", market_type="spot", symbol="BTC/USDC",
+        account_id="acct-test"
     )
     account.snapshot()
 
@@ -262,7 +264,8 @@ def test_spot_position_is_exact_decimal(venue_connectors):
     """The derived spot qty crosses the Decimal edge exactly (no ``Decimal(float)``)."""
     connector = venue_connectors(_spot_payloads_with_btc("0.5"))
     account = VenueAccount(
-        connector, quote_currency="USDC", market_type="spot", symbol="BTC/USDC"
+        connector, quote_currency="USDC", market_type="spot", symbol="BTC/USDC",
+        account_id="acct-test"
     )
     account.snapshot()
 
@@ -283,7 +286,8 @@ def test_derivative_positions_use_fetch_positions_channel_unchanged(venue_connec
     swap_payloads = json.loads(_SWAP_FIXTURE.read_text())
     connector = venue_connectors(swap_payloads)
     account = VenueAccount(
-        connector, quote_currency="USDT", market_type="derivative"
+        connector, quote_currency="USDT", market_type="derivative",
+        account_id="acct-test"
     )
     account.snapshot()
 

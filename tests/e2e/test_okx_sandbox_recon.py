@@ -818,7 +818,7 @@ def test_restart_rehydrate_then_venue_reconcile_no_spurious_halt() -> None:
 
         gq: "queue.Queue" = queue.Queue()
         okx_exchange = OkxExchange(gq, connector)
-        venue_account = VenueAccount(connector)
+        venue_account = VenueAccount(connector, account_id="acct-test")
         halt = _HaltRecorder()
         reconciler = VenueReconciler(
             store=store,

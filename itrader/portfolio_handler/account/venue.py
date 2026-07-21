@@ -41,6 +41,7 @@ from itrader.core.exceptions import (
     InsufficientFundsError,
     InvalidTransactionError,
     StateError,
+    ValidationError,
 )
 from itrader.core.ids import OrderId
 from itrader.core.money import to_money
@@ -77,6 +78,7 @@ class VenueAccount(Account):
         connector: "LiveConnector",
         quote_currency: str = "USDT",
         *,
+        account_id: str,
         market_type: Literal["spot", "derivative"] = "derivative",
         symbol: str | None = None,
     ) -> None:
@@ -97,6 +99,19 @@ class VenueAccount(Account):
         ----------
         connector : LiveConnector
             The injected session/transport Protocol (never the concretion, D-04).
+        account_id : str
+            REQUIRED keyword with NO default (D-11, 11-07) — the venue account this
+            leaf caches truth for. This is THE structural guard that makes an
+            unscoped venue account inexpressible: before 11-07 every parameter
+            after ``connector`` defaulted, so a plugin arm could absorb a portfolio
+            argument and hand back one SHARED account, conflating two real venue
+            accounts' buying power and positions behind a green suite (T-11-32).
+            With no default, forgetting it is a construction-time ``TypeError``.
+
+            A required keyword-only parameter does NOT reject an EXPLICIT ``None``,
+            so the empty/None case is additionally rejected below with a typed
+            ``ValidationError`` — a bare ``account_id=None`` would otherwise mint
+            exactly the unattributed account this guard exists to prevent.
         quote_currency : str
             The quote-currency key read out of the ccxt-unified balance payloads
             (``total``/``free`` maps). The default ``"USDT"`` is a fallback only —
@@ -111,10 +126,26 @@ class VenueAccount(Account):
             the derived base holding is keyed under this symbol and the base currency
             is taken from its left leg (``BTC``). Unused for derivative market types.
         """
+        # D-11 (11-07): reject an EXPLICIT None/empty account id. The required
+        # keyword-only parameter above stops the caller who FORGETS; this stops the
+        # caller who passes ``account_id=None`` through from an Optional field. Both
+        # failures must be loud at construction — an unscoped venue account that
+        # reaches the engine silently shares one venue's balances across portfolios.
+        if not account_id:
+            raise ValidationError(
+                "account_id",
+                str(account_id),
+                "A VenueAccount must name the venue account it caches truth for; "
+                "there is no legitimate unscoped/default venue account (D-11)",
+            )
+
         self.logger = get_itrader_logger().bind(component="VenueAccount")
         # D-04: the injected session Protocol, NOT the concretion.
         self._connector = connector
         self._quote = quote_currency
+        # D-11: the venue account this leaf is scoped to (the account half of the
+        # ``(venue_name, account_id)`` reference the rest of the phase keys on).
+        self.account_id = account_id
 
         # D-03: per-market-type venue-truth channel. ``_base`` is the base-currency
         # key read out of ``total`` for spot position truth (left leg of the pair).

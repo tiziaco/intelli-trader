@@ -45,7 +45,7 @@ def test_ack_drops_pending_overlay(
     control arm for D-24 — it proves ``drop_pending`` is GATED per market type, not
     blanket-disabled: the derivative drop must still fire.
     """
-    account = VenueAccount(fake_venue_connector)  # market_type defaults to 'derivative'
+    account = VenueAccount(fake_venue_connector, account_id="acct-test")  # market_type defaults to 'derivative'
     account.snapshot()  # available == 78999.79
 
     order_id = OrderId(uuid.uuid4())
@@ -67,7 +67,7 @@ def test_drop_pending_is_idempotent(
     fake_venue_connector: FakeLiveConnector,
 ) -> None:
     """Dropping an unknown / already-dropped order id is a silent no-op (mirrors release)."""
-    account = VenueAccount(fake_venue_connector)
+    account = VenueAccount(fake_venue_connector, account_id="acct-test")
     account.snapshot()
 
     order_id = OrderId(uuid.uuid4())
@@ -174,7 +174,7 @@ def test_drop_pending_uses_string_key_edge(
     fake_venue_connector: FakeLiveConnector,
 ) -> None:
     """``drop_pending`` pops with ``str(order_id)`` — matching the ``reserve`` write key."""
-    account = VenueAccount(fake_venue_connector)
+    account = VenueAccount(fake_venue_connector, account_id="acct-test")
     account.snapshot()
 
     order_id = OrderId(uuid.uuid4())
@@ -194,7 +194,8 @@ def _spot_account(connector: FakeLiveConnector) -> VenueAccount:
     balance) and ``total[BTC] == 0.5`` (the spot holding derived from the base leg).
     """
     account = VenueAccount(
-        connector, quote_currency="USDT", market_type="spot", symbol="BTC/USDT"
+        connector, quote_currency="USDT", market_type="spot", symbol="BTC/USDT",
+        account_id="acct-test"
     )
     account.snapshot()  # settled available == 78999.79
     return account
@@ -258,7 +259,7 @@ def test_derivative_terminal_release_still_pops_overlay(
     Even though the derivative ack already dropped the overlay, a terminal ``release``
     on a still-held reservation (e.g. cancel before ack) remains an unconditional pop.
     """
-    account = VenueAccount(fake_venue_connector)  # derivative
+    account = VenueAccount(fake_venue_connector, account_id="acct-test")  # derivative
     account.snapshot()
 
     order_id = OrderId(uuid.uuid4())

@@ -39,7 +39,7 @@ def test_snapshot_populates_cache_from_rest(
     fake_venue_connector: FakeLiveConnector,
 ) -> None:
     """``snapshot()`` fills balance/available/positions from the canned REST snapshot."""
-    account = VenueAccount(fake_venue_connector)
+    account = VenueAccount(fake_venue_connector, account_id="acct-test")
     account.snapshot()
 
     # fetch_balance canned: total/free USDT == 78999.79; fetch_positions: long 0.5 BTC.
@@ -62,7 +62,7 @@ def test_push_stream_mutates_positions_cache(
     read before any ``snapshot()`` therefore still surfaces ``StateError`` (never a silent
     stream-populated 0).
     """
-    account = VenueAccount(fake_venue_connector)
+    account = VenueAccount(fake_venue_connector, account_id="acct-test")
     account.start_streaming()
 
     # watch_positions yields long 0.2 -> long 0.5. Drain to the final value.
@@ -80,7 +80,7 @@ def test_read_before_snapshot_raises_state_error(
     fake_venue_connector: FakeLiveConnector,
 ) -> None:
     """An unsnapshotted read surfaces a typed ``StateError`` — never a silent 0 (T-05-07)."""
-    account = VenueAccount(fake_venue_connector)
+    account = VenueAccount(fake_venue_connector, account_id="acct-test")
 
     with pytest.raises(StateError):
         _ = account.balance
@@ -92,7 +92,7 @@ def test_reserve_beyond_available_raises(
     fake_venue_connector: FakeLiveConnector,
 ) -> None:
     """``reserve`` beyond cached available raises ``InsufficientFundsError`` (overlay gate)."""
-    account = VenueAccount(fake_venue_connector)
+    account = VenueAccount(fake_venue_connector, account_id="acct-test")
     account.snapshot()  # available == 78999.79
 
     order_id = OrderId(uuid.uuid4())
@@ -107,7 +107,7 @@ def test_reserve_then_release_restores_available(
     fake_venue_connector: FakeLiveConnector,
 ) -> None:
     """The local pending overlay lowers available on reserve, restores it on release."""
-    account = VenueAccount(fake_venue_connector)
+    account = VenueAccount(fake_venue_connector, account_id="acct-test")
     account.snapshot()
 
     order_id = OrderId(uuid.uuid4())
@@ -126,7 +126,7 @@ def test_reserve_before_snapshot_raises_state_error(
     fake_venue_connector: FakeLiveConnector,
 ) -> None:
     """Reserving before any snapshot surfaces ``StateError`` (no cached available yet)."""
-    account = VenueAccount(fake_venue_connector)
+    account = VenueAccount(fake_venue_connector, account_id="acct-test")
     order_id = OrderId(uuid.uuid4())
     with pytest.raises(StateError):
         account.reserve(order_id, Decimal("1"))
@@ -136,7 +136,7 @@ def test_cached_values_are_exact_decimals(
     fake_venue_connector: FakeLiveConnector,
 ) -> None:
     """Cached values are EXACT Decimals — proving the ``to_money(str(x))`` edge (no float)."""
-    account = VenueAccount(fake_venue_connector)
+    account = VenueAccount(fake_venue_connector, account_id="acct-test")
     account.snapshot()
 
     balance = account.balance

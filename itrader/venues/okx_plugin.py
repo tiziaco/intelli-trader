@@ -165,12 +165,68 @@ class OkxVenuePlugin:
             return None
         return str(uid)
 
+    def _account_id_for(self, portfolio_ref: Any, config: Any) -> str:
+        """The account id ``new_account`` must mint under, or RAISE (D-11, 11-07).
+
+        Two callers, two rules, NO cross-fallback between them:
+
+        * a PORTFOLIO was supplied — the id comes from that portfolio and from
+          nowhere else. Falling back to the bundle's ``config.account_id`` here
+          would silently attach an unnamed portfolio to whichever account this
+          bundle happens to be for, which is the exact conflation D-11 closes.
+        * no portfolio was supplied (the facade's ``account_factory()`` call site,
+          which mints the bundle's OWN account) — the id is the bundle's.
+
+        Either way an absent id RAISES: there is no legitimate "default" venue
+        account to mint under (the MPORT-01 edge probe).
+        """
+        from itrader.core.exceptions import ValidationError
+
+        if portfolio_ref is not None:
+            account_id = getattr(portfolio_ref, "account_id", None)
+            source = "portfolio"
+        else:
+            account_id = getattr(config, "account_id", None)
+            source = "venue spec"
+        if not account_id:
+            raise ValidationError(
+                "account_id",
+                str(account_id),
+                f"Cannot mint an OKX venue account: the {source} names no venue "
+                "account, and there is no legitimate default one (D-11)",
+            )
+        return str(account_id)
+
+    def new_account(self, portfolio_ref: Any, config: Any) -> Account:
+        """Mint the ``VenueAccount`` for one portfolio, over ITS account's connector.
+
+        D-12: the connector comes from the shared ``ConnectorProvider`` memo keyed on
+        ``(venue, account_id)``, so this account and the bundle's exchange share ONE
+        authenticated session per account — and two different accounts get two
+        different sessions built from two different resolved credential sets (the
+        11-04 resolver reads each account's own ``secret_ref``).
+
+        D-11: ``account_id`` is passed EXPLICITLY as a required keyword. There is no
+        arm here that can absorb its arguments and return a shared account.
+        """
+        # D-04: OKX/account concretions lazy-imported inside the body (never module top).
+        from itrader.portfolio_handler.account import VenueAccount
+
+        account_id = self._account_id_for(portfolio_ref, config)
+        connector = config.connectors.get("okx", account_id, config.spec)
+        return VenueAccount(
+            connector,
+            config.quote_currency,
+            account_id=account_id,
+            market_type=config.market_type,
+            symbol=config.symbol,
+        )
+
     def build_bundle(self, ctx: Any, spec: Any, connectors: Any) -> VenueBundle:
         """Build the OKX execution ``VenueBundle`` over the shared connector."""
         # D-04: OKX concretions lazy-imported inside the body (never module top).
         from itrader.execution_handler.exchanges.okx import OkxExchange
-        from itrader.portfolio_handler.account import VenueAccount
-        from itrader.venues.bundle import VenueBundle
+        from itrader.venues.bundle import VenueAccountConfig, VenueBundle
 
         # IN-01: read the live stream target from the injected ITraderConfig
         # (EngineContext.config is the process-wide singleton wired at the composition
@@ -189,16 +245,30 @@ class OkxVenuePlugin:
 
         exchange = OkxExchange(ctx.bus, connector)
 
-        def account_factory(*args: Any, **kwargs: Any) -> Account:
-            # D-07: a single default VenueAccount bound to the shared connector (the
-            # per-portfolio account_id fan-out is P11). Args are absorbed so the
-            # 05-06 assemble_venue can call this uniformly with the paper factory.
-            return VenueAccount(
-                connector,
-                quote_currency=quote,
-                market_type="spot",
-                symbol=symbol,
-            )
+        # 11-07 (D-10): the per-account knobs `new_account` mints from. The bundle's
+        # own `account_id` is carried so the facade's no-portfolio `account_factory()`
+        # call site mints THIS bundle's account rather than an unscoped one.
+        account_config = VenueAccountConfig(
+            account_id=account_id,
+            connectors=connectors,
+            spec=spec,
+            quote_currency=quote,
+            market_type="spot",
+            symbol=symbol,
+        )
+
+        def account_factory(
+            portfolio: Any = None, initial_cash: Any = 0.0
+        ) -> Account:
+            # 11-07: the former `(*args, **kwargs)` catch-all — which absorbed a
+            # portfolio argument and returned ONE shared unscoped account with no
+            # error — is GONE. This is a thin, explicitly-signed adapter that
+            # DELEGATES to the typed `new_account`, so the bundle field and the
+            # Protocol method can never mint different accounts. `initial_cash` is
+            # accepted (the compute arm needs it and 05-06's `assemble_venue` calls
+            # both factories uniformly) and is not meaningful for venue-cached truth,
+            # where the balance comes from the venue rather than from wiring.
+            return self.new_account(portfolio, account_config)
 
         # lifecycle stays None — assemble_venue (05-06) builds the VenueLifecycle.
         return VenueBundle(

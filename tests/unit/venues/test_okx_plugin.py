@@ -364,3 +364,135 @@ def test_okx_plugins_satisfy_venue_and_data_protocols() -> None:
 
     assert isinstance(OkxVenuePlugin(), VenuePlugin)
     assert isinstance(OkxDataPlugin(), DataProviderPlugin)
+
+
+# --------------------------------------------------------------------------- #
+# new_account — per-portfolio minting (11-07, D-10/D-11/D-12)
+# --------------------------------------------------------------------------- #
+def _fake_portfolio(account_id: str | None) -> SimpleNamespace:
+    """A portfolio stand-in exposing only the ``account_id`` the arm reads."""
+    return SimpleNamespace(account_id=account_id)
+
+
+def _account_config(connectors: Any, spec: Any, account_id: str | None = None) -> Any:
+    """The ``VenueAccountConfig`` the OKX arm is handed by its own ``build_bundle``."""
+    from itrader.venues.bundle import VenueAccountConfig
+
+    return VenueAccountConfig(
+        account_id=account_id,
+        connectors=connectors,
+        spec=spec,
+        quote_currency="USDC",
+        market_type="spot",
+        symbol="BTC/USDC",
+    )
+
+
+def test_new_account_scopes_the_account_to_the_portfolios_account_id() -> None:
+    """new_account mints a VenueAccount carrying the PORTFOLIO's account id (D-11)."""
+    from itrader.portfolio_handler.account import VenueAccount
+    from itrader.venues.okx_plugin import OkxVenuePlugin
+
+    connectors = _FakeConnectorProvider()
+    spec = _fake_spec(account_id="acct-a")
+
+    account = OkxVenuePlugin().new_account(
+        _fake_portfolio("acct-a"), _account_config(connectors, spec, "acct-a"))
+
+    assert isinstance(account, VenueAccount)
+    assert account.account_id == "acct-a"
+    assert account._connector is connectors.get("okx", "acct-a", spec)
+
+
+def test_two_portfolios_get_two_accounts_over_two_connectors() -> None:
+    """D-12: two account ids -> two DISTINCT accounts over two DISTINCT connectors.
+
+    This is the isolation premise of the whole phase. A shared connector would mean
+    account B's venue truth (and its orders) traverse account A's authenticated
+    session, which is a real-money wrong answer that no downstream assertion catches.
+    """
+    from itrader.venues.okx_plugin import OkxVenuePlugin
+
+    connectors = _FakeConnectorProvider()
+    spec = _fake_spec(account_id="acct-a")
+    plugin = OkxVenuePlugin()
+
+    account_a = plugin.new_account(
+        _fake_portfolio("acct-a"), _account_config(connectors, spec, "acct-a"))
+    account_b = plugin.new_account(
+        _fake_portfolio("acct-b"), _account_config(connectors, spec, "acct-a"))
+
+    assert account_a is not account_b
+    assert account_a.account_id == "acct-a"
+    assert account_b.account_id == "acct-b"
+    assert account_a._connector is not account_b._connector
+
+
+def test_new_account_for_a_portfolio_naming_no_account_raises() -> None:
+    """The MPORT-01 edge probe: an unnamed portfolio mints NOTHING.
+
+    Note the config DOES carry a bundle account id here. Falling back to it would
+    look harmless and would silently attach an unnamed portfolio to whichever
+    account this bundle happens to be for — the exact conflation D-11 closes — so
+    the arm must raise rather than borrow it.
+    """
+    from itrader.core.exceptions import ValidationError
+    from itrader.venues.okx_plugin import OkxVenuePlugin
+
+    connectors = _FakeConnectorProvider()
+    spec = _fake_spec(account_id="acct-a")
+
+    with pytest.raises(ValidationError):
+        OkxVenuePlugin().new_account(
+            _fake_portfolio(None), _account_config(connectors, spec, "acct-a"))
+
+
+def test_new_account_with_no_portfolio_mints_the_bundles_own_account() -> None:
+    """The no-portfolio call site (the facade's ``account_factory()``) is scoped too.
+
+    ``live_trading_system.py`` mints the facade's venue account with no portfolio.
+    Before 11-07 that call returned an UNSCOPED account; it now resolves to the
+    account the bundle was built for.
+    """
+    from itrader.venues.okx_plugin import OkxVenuePlugin
+
+    connectors = _FakeConnectorProvider()
+    spec = _fake_spec(account_id="acct-a")
+
+    account = OkxVenuePlugin().new_account(
+        None, _account_config(connectors, spec, "acct-a"))
+
+    assert account.account_id == "acct-a"
+
+
+def test_new_account_with_no_portfolio_and_no_bundle_account_raises() -> None:
+    """Neither source names an account -> refuse, never mint an unscoped account."""
+    from itrader.core.exceptions import ValidationError
+    from itrader.venues.okx_plugin import OkxVenuePlugin
+
+    connectors = _FakeConnectorProvider()
+    spec = _fake_spec(account_id=None)
+
+    with pytest.raises(ValidationError):
+        OkxVenuePlugin().new_account(
+            None, _account_config(connectors, spec, None))
+
+
+def test_bundle_account_factory_delegates_to_new_account() -> None:
+    """The bundle field and the Protocol method can never mint different accounts.
+
+    ``account_factory`` is retained (the facade and ``assemble_venue`` call it) but
+    is now a thin adapter over ``new_account``, so there is exactly ONE minting
+    implementation rather than two that can drift apart.
+    """
+    from itrader.venues.okx_plugin import OkxVenuePlugin
+
+    connectors = _FakeConnectorProvider()
+    ctx = _fake_ctx()
+    spec = _fake_spec(account_id="acct-a")
+
+    bundle = OkxVenuePlugin().build_bundle(ctx, spec, connectors)
+
+    from_factory = bundle.account_factory(_fake_portfolio("acct-b"))
+    assert from_factory.account_id == "acct-b"
+    assert from_factory._connector is connectors.get("okx", "acct-b", spec)
