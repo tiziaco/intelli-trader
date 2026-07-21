@@ -47,8 +47,15 @@ _T2 = datetime(2021, 6, 9, tzinfo=timezone.utc)
 
 
 # --------------------------------------------------------------------------- fixtures
-# The seven portfolio tables the ``wrapper`` fixture builds via ``create_all`` on the shared
+# The portfolio tables the ``wrapper`` fixture builds via ``create_all`` on the shared
 # session container (child tables irrelevant — CASCADE handles any FK).
+#
+# EXTEND THIS LIST whenever ``SqlPortfolioStateStorage.__init__`` registers another table.
+# It is a hardcoded list with no dynamic enumeration behind it, and anything registered but
+# missing here LEAKS onto the shared container and reddens ``test_migrations.py``'s Postgres
+# arm with a ``DuplicateTable`` — which is exactly what happened when Phase 11 (11-03) added
+# the two below: the D-09 config rehome made the store register ``portfolios``, whose
+# registrar also pulls its ``venue_accounts`` FK parent onto the same MetaData.
 _PORTFOLIO_TABLES = (
     "cash_operations",
     "cash_reservations",
@@ -57,6 +64,10 @@ _PORTFOLIO_TABLES = (
     "positions",
     "transactions",
     "portfolio_account_state",
+    # Phase 11 (11-03, D-09) — the definition row the config blob now lives on, and its
+    # FK parent. Child first; CASCADE makes the order moot but keeps the intent readable.
+    "portfolios",
+    "venue_accounts",
 )
 
 

@@ -56,6 +56,7 @@ from itrader.storage.strategy_registry_store import StrategyRegistryStore
 from itrader.strategy_handler.registry import StrategyConfigError, UnknownStrategyTypeError
 from itrader.strategy_handler.registry.rehydrate import (
     RehydrateInfrastructureError,
+    _resolve_portfolio_id,
     build_strategy,
     rehydrate_strategies,
 )
@@ -64,7 +65,7 @@ from itrader.strategy_handler.strategies.empty_strategy import EmptyStrategy
 from itrader.strategy_handler.strategies.eth_btc_pair_strategy import EthBtcPairStrategy
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
-from tests.support.schema import provision_schema
+from tests.support.schema import provision_schema, seed_portfolio_definitions
 from tests.support.strategy_catalog import seeded_registry_rows, test_catalog
 
 pytestmark = pytest.mark.unit
@@ -181,6 +182,11 @@ def _seed(store: StrategyRegistryStore, strategies: Any, *, enabled: bool = True
             row["enabled"],
             _AT,
         )
+    # B2 (11-03): the subscription child FKs onto ``portfolios`` with ON DELETE CASCADE, so
+    # every id being subscribed needs a real definition row first.
+    seed_portfolio_definitions(
+        store.backend, [row["portfolio_id"] for row in subscription_rows]
+    )
     for row in subscription_rows:
         store.add_portfolio_subscription(row["strategy_name"], row["portfolio_id"])
 
@@ -324,13 +330,14 @@ def test_rehydrate_reconstructs_disabled_rows_present_but_dark() -> None:
 
 
 def test_uuid_portfolio_subscription_rehydrates_as_a_portfolio_id_not_a_str() -> None:
-    """The fan-out id round-trips through the String column back to a UUID PortfolioId.
+    """The fan-out id round-trips out of the durable column as a UUID ``PortfolioId``.
 
-    Asserted on TYPE. The runtime portfolio handle is always a UUIDv7-backed
-    ``PortfolioId`` (``strategies_handler`` FL-02), but the durable column is a ``String``.
-    Handing the raw string back would sail through the fan-out's ``cast`` and reach the
-    portfolio lookup as an id matching NOTHING — the strategy would look healthy and trade
-    into the void. A string-vs-UUID assertion is the only thing that catches it.
+    Asserted on TYPE. The runtime portfolio handle is always a UUIDv7-backed ``PortfolioId``
+    (``strategies_handler`` FL-02). Handing a raw string back would sail through the
+    fan-out's ``cast`` and reach the portfolio lookup as an id matching NOTHING — the
+    strategy would look healthy and trade into the void. B2 (11-03) made the column a
+    ``Uuid``, which closes that hole at the DB layer, but the type assertion stays: it pins
+    the CONTRACT rehydrate's consumers rely on, independently of how the column is declared.
     """
     store = _make_store()
     try:
@@ -355,16 +362,51 @@ def test_uuid_portfolio_subscription_rehydrates_as_a_portfolio_id_not_a_str() ->
         store.dispose()
 
 
+def test_malformed_portfolio_id_raises_a_strategy_config_error() -> None:
+    """A fan-out id that is not a UUID is REFUSED by the parse-back inverse.
+
+    Rewritten in 11-03 (option (a) of the B2 fold-in). This previously drove the case
+    through the store — ``add_portfolio_subscription("sma_macd", "not-an-id")`` — which B2
+    made IMPOSSIBLE: the column is a ``Uuid`` now, so the DB itself rejects a malformed id
+    and the insert never lands. The test is NOT deleted, because the branch it covers is
+    still REACHABLE: ``_resolve_portfolio_id`` also parses LEGACY rows written before the
+    ``p11_b2_uuid_fk_config_move`` migration, and any caller handing over a serialized id
+    (``Strategy.to_dict`` still projects handles via ``str(pid)``). So the branch is
+    exercised DIRECTLY instead — which is also a sharper test, since it names the exact
+    function whose contract is at stake rather than reaching it through two other layers.
+    """
+    with pytest.raises(StrategyConfigError) as excinfo:
+        _resolve_portfolio_id("not-an-id")
+    assert "not-an-id" in str(excinfo.value)
+
+
+def test_a_well_formed_uuid_string_still_resolves_to_a_portfolio_id() -> None:
+    """The legacy STRING arm of the parse-back inverse still works (B2 back-compat).
+
+    Guards the other half of the branch above: pre-migration rows and ``str(pid)``
+    projections must keep resolving, or a legacy DB would quarantine every instance on boot.
+    """
+    portfolio_id = PortfolioId(uuid7())
+    resolved = _resolve_portfolio_id(str(portfolio_id))
+    assert resolved == portfolio_id
+    assert isinstance(resolved, UUID)
+
+
 def test_malformed_portfolio_subscription_quarantines_the_instance() -> None:
-    """A fan-out id that parses as neither UUID nor int quarantines the whole instance.
+    """A malformed fan-out id quarantines the WHOLE instance, not just that subscription.
 
     Registering it half-wired would be worse than skipping it: it would trade with a
-    silently truncated portfolio set.
+    silently truncated portfolio set. Driven through a patched ``read_all`` because B2 makes
+    a malformed id unstorable — the scenario is a LEGACY row surfacing from a database
+    written before the migration.
     """
     store = _make_store()
     try:
         _seed(store, [_sma()])
-        store.add_portfolio_subscription("sma_macd", "not-an-id")
+        records = store.read_all()
+        for record in records:
+            record["portfolio_ids"] = ["not-an-id"]
+        store.read_all = lambda: records  # type: ignore[method-assign]
 
         handler = _make_handler()
         sink = _RecordingAlertSink()

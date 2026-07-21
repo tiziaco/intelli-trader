@@ -60,7 +60,7 @@ from itrader.universe.universe import Universe
 from itrader.universe.universe_handler import UniverseHandler, UniverseHandlerConfig
 from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
 from tests.support.replay_harness import TestDataPlugin
-from tests.support.schema import provision_schema
+from tests.support.schema import provision_schema, seed_portfolio_definitions
 
 _SYM = "LIFEUSD"
 _WARMUP = 3
@@ -232,6 +232,13 @@ class _LifecycleSystem:
 
         self.portfolio_id = system.portfolio_handler.add_portfolio(
             name="ext_pf", exchange="simulated", cash=1_000_000)
+        # B2 (11-03): the subscription child FKs onto ``portfolios`` with ON DELETE CASCADE.
+        # ``add_portfolio`` builds the in-memory runtime portfolio; the durable DEFINITION
+        # row is a separate concern nothing writes until 11-08 wires
+        # PortfolioDefinitionStore, so seed it on the store the factory wired at its gate.
+        registry_store = system.strategies_handler.registry_store
+        if registry_store is not None:
+            seed_portfolio_definitions(registry_store.backend, [self.portfolio_id])
 
         # Flip running so add_event admits; the drain thread is never spawned (synchronous).
         system._running = True

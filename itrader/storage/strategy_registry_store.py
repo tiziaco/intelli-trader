@@ -19,13 +19,23 @@ TWO tables on the shared ``SqlEngine`` spine (D-06 / D-18):
   3 portfolios" is 1 instance row + 3 portfolio rows. Per-portfolio "off" is ROW PRESENCE (not
   a per-row enabled flag); whole-instance "off" is the ``enabled`` column. Rehydrate JOINs both.
 
-``portfolio_id`` is a ``String`` because the stored form is a string by the round trip's own
-construction: ``Strategy.to_dict`` serializes each handle via ``str(pid)`` (``base.py``) and
-``registry/rehydrate.py::_resolve_portfolio_id`` parses it back. Unlike the portfolio-owned
-tables — whose key is a ``PortfolioId`` written directly, hence their ``Uuid`` column — this
-column stores the serialized projection of that handle, not the handle itself. Whether it
-should instead become a ``Uuid`` column (the handle is now homogeneously ``PortfolioId``, so
-nothing type-level forbids it) is a separate open question, filed as B2 and NOT settled here.
+``portfolio_id`` is a ``Uuid`` column carrying an ``ON DELETE CASCADE`` foreign key to
+``portfolios.portfolio_id`` — B2, SETTLED in Phase 11 (11-03, D-29). It was previously a
+``String`` on the reasoning that the stored form is a string by the round trip's own
+construction (``Strategy.to_dict`` serializes each handle via ``str(pid)`` and
+``registry/rehydrate.py::_resolve_portfolio_id`` parses it back). That reasoning described the
+SERIALIZATION path, not the column's identity: the value IS a portfolio handle, the same
+homogeneous ``PortfolioId`` the portfolio-owned tables store directly as ``Uuid``, and typing
+it as one lets the DB enforce well-formedness instead of trusting every writer to stringify
+consistently. CASCADE is right because a subscription to a nonexistent portfolio has no
+meaning — unlike ``orders.parent_order_id``, which uses ``SET NULL`` deliberately because an
+orphaned bracket child is still a real historical order.
+
+Because that FK resolves by table NAME at ``create_all`` time, every consumer of
+``build_strategy_registry_tables`` needs ``portfolios`` on the SAME ``MetaData``.
+``StrategyRegistryStore.__init__`` registers it (see there) rather than the registrar doing
+so, which keeps the registrar's RETURN DICT — and therefore the import-inertness contract in
+``tests/integration/test_okx_inertness.py`` — exactly as it was.
 
 **DROPPED (D-06): the P4 ``strategy_subscriptions`` (venue, symbol, timeframe) table.** It
 modelled the wrong edge and was redundant: its columns are derivable from (the live venue,
@@ -48,6 +58,7 @@ owns ``build_strategy_registry_tables`` (single source of truth for BOTH the tes
 4-space indentation (matches the ``itrader/storage`` spine layer).
 """
 
+import uuid
 from datetime import datetime
 from typing import Any, Mapping, Optional, Sequence
 
@@ -66,7 +77,10 @@ from sqlalchemy import (
 from sqlalchemy.engine import Engine
 
 from itrader.logger import get_itrader_logger
-from itrader.storage import SqlEngine, UtcIsoText, json_variant
+from itrader.storage import SqlEngine, Uuid, UtcIsoText, json_variant
+from itrader.storage.portfolio_definition_store import (
+    build_portfolio_definition_tables,
+)
 
 
 def build_strategy_registry_tables(metadata: MetaData) -> dict[str, Table]:
@@ -121,9 +135,18 @@ def build_strategy_registry_tables(metadata: MetaData) -> dict[str, Table]:
                 primary_key=True,
                 nullable=False,
             ),
-            # String (not Uuid): to_dict serializes each handle via str(pid) and
-            # rehydrate parses it back. A Uuid column is open as B2, not decided.
-            Column("portfolio_id", String, primary_key=True, nullable=False),
+            # B2 (SETTLED, 11-03/D-29) — Uuid, not String: the value IS a portfolio handle,
+            # so the DB enforces well-formedness rather than trusting each writer to
+            # stringify. CASCADE because a subscription to a nonexistent portfolio has no
+            # meaning. The parent must be registered on the SAME MetaData — the store's
+            # __init__ does that (never this registrar, which would change its return dict).
+            Column(
+                "portfolio_id",
+                Uuid(as_uuid=True),
+                ForeignKey("portfolios.portfolio_id", ondelete="CASCADE"),
+                primary_key=True,
+                nullable=False,
+            ),
         )
 
     return tables
@@ -144,6 +167,15 @@ class StrategyRegistryStore:
     def __init__(self, sql_engine: SqlEngine) -> None:
         self.backend = sql_engine
         self.engine: Engine = sql_engine.engine
+        # B2 (11-03) — the subscription child's CASCADE FK targets ``portfolios``, and a
+        # string-name ``ForeignKey`` resolves against the SAME ``MetaData`` at ``create_all``
+        # time (there is NO lazy-resolution escape hatch), so a consumer that registered only
+        # the registry tables would raise ``NoReferencedTableError``. Registering the parent
+        # HERE fixes that once for every consumer instead of at each of the ten
+        # ``create_all`` call sites — and doing it in ``__init__`` rather than inside
+        # ``build_strategy_registry_tables`` keeps the registrar's RETURN DICT unchanged,
+        # which is what ``tests/integration/test_okx_inertness.py`` pins.
+        build_portfolio_definition_tables(sql_engine.metadata)
         tables = build_strategy_registry_tables(sql_engine.metadata)
         self.strategy_registry: Table = tables["strategy_registry"]
         self.strategy_portfolio_subscriptions: Table = tables[
@@ -203,7 +235,7 @@ class StrategyRegistryStore:
     def set_portfolio_subscriptions(
         self,
         strategy_name: str,
-        portfolio_ids: Sequence[str],
+        portfolio_ids: Sequence[uuid.UUID],
         at: datetime,
     ) -> None:
         """Replace-all the portfolio fan-out for ``strategy_name`` and touch ``updated_at``.
@@ -236,7 +268,9 @@ class StrategyRegistryStore:
                 .values(updated_at=at)
             )
 
-    def add_portfolio_subscription(self, strategy_name: str, portfolio_id: str) -> None:
+    def add_portfolio_subscription(
+        self, strategy_name: str, portfolio_id: uuid.UUID
+    ) -> None:
         """Subscribe ``strategy_name`` to ``portfolio_id`` — idempotent (D-09).
 
         Probes for the row and inserts only when absent, so a double-subscribe is a silent
@@ -258,7 +292,9 @@ class StrategyRegistryStore:
                     [{"strategy_name": strategy_name, "portfolio_id": portfolio_id}],
                 )
 
-    def remove_portfolio_subscription(self, strategy_name: str, portfolio_id: str) -> None:
+    def remove_portfolio_subscription(
+        self, strategy_name: str, portfolio_id: uuid.UUID
+    ) -> None:
         """Unsubscribe ``strategy_name`` from ``portfolio_id`` — a no-op when absent (D-09).
 
         Per-portfolio "off" is ROW PRESENCE (D-06), so the unsubscribe verb is a plain DELETE;
@@ -274,7 +310,7 @@ class StrategyRegistryStore:
                 )
             )
 
-    def portfolio_subscriptions(self, strategy_name: str) -> list[str]:
+    def portfolio_subscriptions(self, strategy_name: str) -> list[uuid.UUID]:
         """The portfolio ids ``strategy_name`` fans out to, ``portfolio_id`` ASC (IN-01)."""
         table = self.strategy_portfolio_subscriptions
         statement = (

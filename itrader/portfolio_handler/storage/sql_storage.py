@@ -39,6 +39,9 @@ from itrader.core.enums import CashOperationType, PositionSide, TransactionType
 from itrader.core.ids import PositionId, TransactionId
 from itrader.logger import get_itrader_logger
 from itrader.storage import SqlEngine
+from itrader.storage.portfolio_definition_store import (
+    build_portfolio_definition_tables,
+)
 
 from ..base import PortfolioStateStorage
 from itrader.portfolio_handler.account import CashOperation
@@ -76,10 +79,18 @@ class SqlPortfolioStateStorage(PortfolioStateStorage):
         self.locked_margin = tables["locked_margin"]
         self.cash_operations = tables["cash_operations"]
         self.equity_snapshots = tables["equity_snapshots"]
-        # D-25 — the base SQL storage now OWNS the account-state carrier's config_json
-        # column (previously only the cached wrapper bound this table). The portfolio-scope
-        # runtime config rides the bound portfolio's single account-state row.
+        # D-25/D-09 — the account-state carrier. STILL BOUND after the D-09 config rehome:
+        # every other account-state method needs it, AND ``save_config``/``load_config``
+        # retain a legacy arm against its ``config_json`` column for the transitional window
+        # in which a portfolio has no ``portfolios`` definition row yet (see those methods).
         self._account_state = tables["portfolio_account_state"]
+        # D-09 — the config blob's real home is the DEFINITION row, not the state row. The
+        # registrar pulls ``venue_accounts`` too (the composite FK resolves by table NAME at
+        # DDL-emit time, so the parent must sit on the SAME MetaData); registering both is
+        # required for ``provision_schema``/``create_all`` consumers to build a valid schema.
+        self._portfolios = build_portfolio_definition_tables(
+            sql_engine.metadata
+        )["portfolios"]
 
         # WR-03/D-14 — schema-pure: register the tables, never create them (Alembic-owned
         # in production; tests provision via tests.support.schema.provision_schema).
@@ -523,20 +534,51 @@ class SqlPortfolioStateStorage(PortfolioStateStorage):
             row = connection.execute(statement).mappings().first()
         return None if row is None else self._row_to_snapshot(row)
 
-    # -- Runtime config (portfolio scope — config_json on the account-state row, D-25) --
+    # -- Runtime config (portfolio scope — config_json on the DEFINITION row, D-09) ------
+    #
+    # D-09 REHOME. The blob's home is now ``portfolios.config_json`` (the DEFINITION row),
+    # not ``portfolio_account_state.config_json`` (a STATE row). Config describes what a
+    # portfolio IS; it only ever lived on the state row because no definition row existed
+    # before Phase 11. The ``p11_b2_uuid_fk_config_move`` revision moves existing blobs over.
+    #
+    # The PUBLIC CONTRACT is deliberately unchanged — same method names, same signatures,
+    # same ``Optional[Dict[str, Any]]`` returned VERBATIM. The stored blob is a free-form
+    # PARTIAL override that ``Portfolio.update_config`` merges recursively at load time, so
+    # it must never be reshaped, key-filtered, validated or coerced into a typed model.
+    # Only the backing table changed.
+    #
+    # THE LEGACY ARM IS DELIBERATE AND TEMPORARY (owner decision, 2026-07-21 — deferred to
+    # plan 11-08). Both methods fall back to the account-state column when the portfolio has
+    # NO ``portfolios`` definition row. It is tempting to delete that arm and raise instead,
+    # on the reasoning that "a definition row is guaranteed to exist before a portfolio is
+    # constructed" — that premise is NOT TRUE YET: nothing constructs
+    # ``PortfolioDefinitionStore`` at this point in the phase and nothing writes a
+    # ``portfolios`` row, so raising would turn every ``save_config`` into a hard error.
+    # Plan 11-08 removes the fallback ONCE IT HAS CREATED the guarantee it depends on.
 
     def save_config(self, config: Dict[str, Any], at: datetime) -> None:
-        """Persist THIS portfolio's config on the bound account-state row's ``config_json``.
+        """Persist THIS portfolio's config on its ``portfolios.config_json`` definition row.
 
-        UPDATE-first, INSERT-with-zero-sentinel-accumulators-if-absent (NEVER a partial
-        INSERT). The restart-layering path only READS ``load_config``, so the FIRST write of
-        a portfolio's config is either construction-time or a runtime ``portfolio:{id}``
-        ConfigUpdateEvent — both can precede the portfolio's first fill, so an UPDATE-only
-        contract would silently drop it (RTCFG-03 fail). The zero-sentinel accumulators are
-        the exact no-trading-activity baseline the first real ``save_account_state``
-        overwrites, so no stale money can leak. Scoped to ``self._portfolio_id`` (V4).
+        Falls back to the legacy account-state arm (UPDATE-first, then
+        INSERT-with-zero-sentinel-accumulators, NEVER a partial INSERT) when no definition
+        row exists yet — see the section comment above for why that arm still stands. The
+        restart-layering path only READS ``load_config``, so the FIRST write of a portfolio's
+        config is either construction-time or a runtime ``portfolio:{id}`` ConfigUpdateEvent;
+        both can precede the portfolio's first fill, so an UPDATE-only contract against a
+        table with no row would silently drop it (RTCFG-03 fail). The zero-sentinel
+        accumulators are the exact no-trading-activity baseline the first real
+        ``save_account_state`` overwrites, so no stale money can leak. Scoped to
+        ``self._portfolio_id`` (V4 isolation); parameterized Core (SEC-01).
         """
         with self.engine.begin() as connection:
+            definition = connection.execute(
+                update(self._portfolios)
+                .where(self._portfolios.c.portfolio_id == self._portfolio_id)
+                .values(config_json=config, updated_at=at)
+            )
+            if definition.rowcount:
+                return
+            # -- legacy arm (removed by 11-08) --------------------------------------
             result = connection.execute(
                 update(self._account_state)
                 .where(self._account_state.c.portfolio_id == self._portfolio_id)
@@ -560,15 +602,33 @@ class SqlPortfolioStateStorage(PortfolioStateStorage):
                 )
 
     def load_config(self) -> Optional[Dict[str, Any]]:
-        """Return this portfolio's persisted config, or ``None`` when no row / NULL config.
+        """Return this portfolio's persisted config, or ``None`` when none is stored.
+
+        Reads the DEFINITION row first (D-09) and falls back to the legacy account-state
+        column when the definition row is absent OR its ``config_json`` is NULL. The
+        fallback is ordered that way ON PURPOSE: it cannot lose a blob written through the
+        legacy arm before a definition row existed, whereas returning the definition row's
+        NULL unconditionally would silently shadow one. Losing a config here is invisible —
+        the restart-layering caller guards on truthiness and swallows failures into a
+        warning, so a dropped blob boots clean and trades on defaults.
 
         Parameterized SELECT scoped to ``self._portfolio_id`` (V4 isolation).
         """
-        statement = select(self._account_state.c.config_json).where(
-            self._account_state.c.portfolio_id == self._portfolio_id
-        )
         with self.engine.connect() as connection:
-            row = connection.execute(statement).mappings().first()
+            definition = connection.execute(
+                select(self._portfolios.c.config_json).where(
+                    self._portfolios.c.portfolio_id == self._portfolio_id
+                )
+            ).mappings().first()
+            if definition is not None and definition["config_json"] is not None:
+                stored: Dict[str, Any] = definition["config_json"]
+                return stored
+            # -- legacy arm (removed by 11-08) --------------------------------------
+            row = connection.execute(
+                select(self._account_state.c.config_json).where(
+                    self._account_state.c.portfolio_id == self._portfolio_id
+                )
+            ).mappings().first()
         if row is None or row["config_json"] is None:
             return None
         config: Dict[str, Any] = row["config_json"]

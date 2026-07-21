@@ -33,9 +33,13 @@ from itrader.order_handler.storage.sql_storage import build_order_config_table
 from itrader.portfolio_handler.storage.models import build_portfolio_tables
 from itrader.storage.engine import NAMING_CONVENTION
 from itrader.storage.halt_record_store import build_halt_records_table
+from itrader.storage.portfolio_definition_store import (
+    build_portfolio_definition_tables,
+)
 from itrader.storage.strategy_registry_store import build_strategy_registry_tables
 from itrader.storage.system_stats_store import build_system_stats_table
 from itrader.storage.system_store import build_system_store_table
+from itrader.storage.venue_account_store import build_venue_accounts_table
 from itrader.storage.venue_store import build_venue_store_table
 from itrader.strategy_handler.storage.models import build_signal_tables
 
@@ -88,6 +92,24 @@ build_strategy_registry_tables(target_metadata)
 # on this bare ``MetaData`` — no Engine, no ``Settings()``, no store — import-inert.
 build_order_config_table(target_metadata)
 build_system_stats_table(target_metadata)
+# Phase 11 (11-03, D-28/D-29 migration-owner): the two NEW W1-schema-boundary registrars —
+# the SAME single sources of truth the stores' create_all uses — so autogenerate/parity sees
+# ``venue_accounts`` and ``portfolios`` and never emits a spurious drop for the tables the
+# ``p11_venue_accounts_portfolios`` revision creates.
+#
+# WITHOUT these two calls the create_all-vs-migration parity gate would pass VACUOUSLY: the
+# tables would exist on the migration side and be absent from ``target_metadata``, so they
+# would live in tests and never in production with NO test catching it (the handoff trap
+# plan 11-01's executor raised).
+#
+# ``build_portfolio_definition_tables`` DELEGATES to ``build_venue_accounts_table`` (its
+# composite FK resolves by table NAME at DDL-emit time, so the parent must sit on the SAME
+# MetaData). Both calls are idempotent, so naming the parent explicitly here documents the
+# dependency without double-registering.
+# Register-vs-build (Pitfall 8 / GATE-01): each registrar only constructs ``Table`` objects
+# on this bare ``MetaData`` — no Engine, no ``Settings()``, no store — import-inert.
+build_venue_accounts_table(target_metadata)
+build_portfolio_definition_tables(target_metadata)
 
 
 def _resolve_url() -> str:
