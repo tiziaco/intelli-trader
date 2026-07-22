@@ -557,9 +557,17 @@ live/connector machinery provably inert on the backtest hot path; full non-live 
      v1.6 (N+3b — Persistence Foundation) SHIPPED 2026-06-30 — 20 requirements.
      v1.7 (Live Trading Readiness) SHIPPED 2026-07-07 — 32 requirements. -->
 
-**No active milestone — v1.7 shipped 2026-07-07; next milestone not yet defined.** Start it with
-`/gsd:new-milestone`. The owner's stated next direction is a **`live_trading_system.py` full refactor +
-halt-reason storage/vocabulary review**, and (per the `fastapi-application-layer-plan` memory) wrapping
+**Active milestone: v1.8 — Live System Refactor & Live-Readiness Hardening** (scope + per-phase targets
+in the `## Current Milestone` section above; live status in `ROADMAP.md` / `STATE.md`). As of
+2026-07-22, Phase 11.1 is complete — 11 of 14 phases done. Requirement blocks `CFG-*`, `BUS-*`, `CTX-*`,
+`STORE-*`, `VENUE-*` (P5), `RUNNER-*`, `SAFE-*`, `ERR-*`, `RTCFG-*`, `STRAT-*`, `MPORT-*` and `VENUE-*`
+(P11.1) are validated in `REQUIREMENTS.md`; `ACCT-*` (P11.2), `COMP-*` (P12) and `TEST-*` (P13) remain.
+**Note:** `VENUE-01..07` is currently defined twice — once for P5 and once for P11.1 — see
+`todos/pending/venue-requirement-id-collision-v18.md`; renumber before milestone close.
+
+*Prior direction (recorded when v1.7 shipped 2026-07-07, now largely subsumed by v1.8):* the owner's
+stated next direction was a **`live_trading_system.py` full refactor + halt-reason storage/vocabulary
+review** — which became this milestone — and (per the `fastapi-application-layer-plan` memory) wrapping
 iTrader in a **FastAPI application layer / control-plane** — which is the consumer that makes the typed
 halt vocabulary (05.1-REVIEW WR-04) and the margin-equity adjudication (01-REVIEW WR-01) load-bearing.
 The single substantive carry-forward defect to adjudicate before any live margin/leverage consumer is
@@ -785,7 +793,36 @@ the oracle** (drops `ta` on the runtime path); its lock is cross-validation + a 
 v1.0/v1.1/v1.2/v1.3/v1.4 SHIPPED — archived under `milestones/`.*
 
 ---
-*Last updated: 2026-07-14 — **v1.8 Phase 7 (Safety + Reconciliation + Stream Recovery) COMPLETE.** 6 plans
+*Last updated: 2026-07-22 — **v1.8 Phase 11.1 (One Venue Path + Account Ownership) COMPLETE.** 10 plans
+across 7 waves; goal verified `passed` (8/8 must-haves, `11.1-VERIFICATION.md`). Delivered VENUE-01..08
+(the P11.1 block — see the ID-collision note below): construction moved from "objects mint their own
+collaborators" to "collaborators are built once and injected." `Account` leaves dropped the `Portfolio`
+back-reference and take a keyword-only `state_storage` (D-01); `Portfolio.__init__` receives a **built**
+`Account` with no default and `VenuePlugin.new_account` is the sole account-minting site tree-wide
+(D-02/D-03); the backtest venue collapsed to the single name **`paper`** with `simulated`/`csv` retired
+as routing keys and the exchange registry pair-keyed per `(venue, account_id)` (D-05/D-19); a memoized
+`VenueBundles` provider is the one path to a bundle, with `assemble.py` reading through it rather than
+the registry, giving exactly one data provider and one bundle per account per boot — proven by build
+count and `is`-identity, not existence (D-08/D-14); `rng` became a required `EngineContext` field
+(D-07); and commission estimation moved behind a narrow late-bound fee-model-provider seam (D-18).
+Milestone gate held every wave: SMA_MACD oracle **byte-exact** (134 / `46189.87730727451`), OKX
+import-inertness green, `mypy --strict` clean (282 files), full suite 2877 passed / 6 skipped (from a
+2823 baseline). Per D-16 this phase is the **structural half only** — ACCT-02 provisioning was split out
+to Phase 11.2.*
+
+*Phase 11.1 close notes (non-blocking, tracked as pending todos):* the code-review gate found one real
+phase-introduced blocker — `scripts/run_live_paper.py` never gained the `account_id` that the new
+per-account routing requires, so the documented CI-safe worker silently submitted nothing
+(`trades: 0`) while the full suite stayed green, because `test_paper_parity.py` passes `account_id` by
+hand. **Fixed** (`ccfdc3ef`); the worker now reproduces the oracle exactly (134 /
+`46189.87730727451`). Two review findings deferred: `enable-margin-runtime-flip-vs-fixed-account-kind`
+(needs a design decision) and `okx-missing-from-validator-allowlist` (**verified pre-existing** — `okx`
+was already absent from the allowlist before this phase; not a 11.1 regression). Separately,
+`venue-requirement-id-collision-v18` records that `VENUE-01..07` is defined **twice** in v1.8 (P5's
+Venue Registry block and this P11.1 block) — a requirements-ledger defect to renumber before milestone
+close, not a code defect.*
+
+*Earlier: 2026-07-14 — **v1.8 Phase 7 (Safety + Reconciliation + Stream Recovery) COMPLETE.** 6 plans
 (4 waves, executed sequentially on the feature branch — worktree isolation auto-degraded off a diverged HEAD,
 #683); goal verified `passed` (5/5 success criteria, `07-VERIFICATION.md`). Delivered SAFE-01..06 — the
 live-safety machinery extracted out of the `LiveTradingSystem` facade into three focused, independently-testable
