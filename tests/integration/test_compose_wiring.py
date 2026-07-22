@@ -86,7 +86,7 @@ def test_the_composed_exchange_holds_the_ctx_rng_instance(ctx: EngineContext) ->
     # It is currently the (venue, account_id) PAIR with the simulated venue on
     # DEFAULT_ACCOUNT_ID. Plan 11.1-06 re-keys that registry and plan 11.1-07 changes
     # WHO builds the exchange (the venue plugin) — both will need to update this line.
-    exchange = engine.execution_handler.exchanges[("simulated", DEFAULT_ACCOUNT_ID)]
+    exchange = engine.execution_handler.exchanges[("paper", DEFAULT_ACCOUNT_ID)]
     assert exchange._rng is ctx.rng
 
 

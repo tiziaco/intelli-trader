@@ -25,7 +25,7 @@ def env():
         action=Side.BUY,
         price=100.0,
         quantity=1.0,
-        exchange="simulated",
+        exchange="paper",
         strategy_id=1,
         portfolio_id=1,
         order_type=OrderType.MARKET,
@@ -86,7 +86,7 @@ def test_no_config_construction_admits_btcusd(env):
     can never silently wipe BTCUSD.
     """
     _queue, execution_handler, _order_event = env
-    exchange = execution_handler.exchanges[('simulated', DEFAULT_ACCOUNT_ID)]
+    exchange = execution_handler.exchanges[('paper', DEFAULT_ACCOUNT_ID)]
     assert 'BTCUSD' in exchange._supported_symbols
     # The default preset symbols must remain admitted (the union, not a replacement).
     assert {'BTCUSDT', 'ETHUSDT', 'ADAUSDT', 'DOTUSDT', 'SOLUSDT'} <= exchange._supported_symbols
@@ -132,7 +132,7 @@ class _StubReadModel:
         return self._mapping[portfolio_id]
 
 
-def _order_for(portfolio_id, exchange='simulated'):
+def _order_for(portfolio_id, exchange='paper'):
     return OrderEvent(
         time=datetime(2024, 1, 1),
         ticker="BTCUSDT",
@@ -147,26 +147,46 @@ def _order_for(portfolio_id, exchange='simulated'):
     )
 
 
-def test_registry_is_pair_keyed_and_aliases_share_one_object(env):
-    """D-27: every key is a ``(venue, account_id)`` tuple, and the 'simulated'
-    and 'csv' venues still resolve to the SAME object — that deliberate
-    aliasing plus the identity dedup is what keeps the oracle byte-exact."""
+def test_registry_is_pair_keyed_with_no_venue_aliases(env):
+    """D-05: venue ALIASING is retired — one venue name, one key, one object.
+
+    This test asserts the INVERSE of what it did before the rename. It used to
+    pin that ``'simulated'`` and ``'csv'`` resolved to the SAME object; D-05
+    deleted that aliasing in full (along with the dead ``'ccxt': None``
+    placeholder), so the registry ``init_exchanges`` returns is a SINGLE
+    ``('paper', DEFAULT_ACCOUNT_ID)`` entry and no two keys may share an
+    exchange object.
+
+    It goes RED if a future phase reintroduces a venue synonym — which is the
+    point: an alias is invisible in a single-account backtest (both keys reach
+    the same object, every number is identical) and only bites under
+    multi-account live.
+    """
     _queue, execution_handler, _order_event = env
     assert all(isinstance(key, tuple) and len(key) == 2
                for key in execution_handler.exchanges)
-    simulated = execution_handler.exchanges[('simulated', DEFAULT_ACCOUNT_ID)]
-    csv = execution_handler.exchanges[('csv', DEFAULT_ACCOUNT_ID)]
-    assert simulated is csv
-    assert execution_handler.exchanges[('ccxt', DEFAULT_ACCOUNT_ID)] is None
+    assert list(execution_handler.exchanges) == [('paper', DEFAULT_ACCOUNT_ID)]
+    assert execution_handler.exchanges[('paper', DEFAULT_ACCOUNT_ID)] is not None
+    # No two keys resolve to one object — stated structurally so it still holds
+    # if a later plan legitimately registers more venues.
+    resolved = [ex for ex in execution_handler.exchanges.values() if ex is not None]
+    assert len({id(ex) for ex in resolved}) == len(resolved)
 
 
-def test_alias_dedup_drives_the_shared_object_once_per_bar(env, make_bar):
-    """The identity dedup collapses ALIASES: two keys, one object, one drive."""
+def test_dedup_drives_an_object_shared_by_two_accounts_once_per_bar(env, make_bar):
+    """The identity dedup's REMAINING case: one object under two ACCOUNTS.
+
+    D-05 deleted the venue-alias case this test used to cover (two venue names
+    onto one object). What survives is the account case — a caller may register
+    the same exchange object under two accounts of one venue — and that object
+    must still be driven exactly ONCE per bar, or its resting-order book is
+    matched twice and every backtest number moves.
+    """
     _queue, execution_handler, _order_event = env
     shared = _RecordingExchange()
     execution_handler.exchanges = {
-        ('simulated', DEFAULT_ACCOUNT_ID): shared,
-        ('csv', DEFAULT_ACCOUNT_ID): shared,
+        ('paper', 'a'): shared,
+        ('paper', 'b'): shared,
     }
     execution_handler.on_market_data(
         make_bar(open_=1, high=2, low=1, close=2, time=datetime(2024, 1, 2)))
@@ -180,8 +200,8 @@ def test_distinct_per_account_exchanges_are_both_driven(env, make_bar):
     _queue, execution_handler, _order_event = env
     ex_a, ex_b = _RecordingExchange(), _RecordingExchange()
     execution_handler.exchanges = {
-        ('simulated', 'a'): ex_a,
-        ('simulated', 'b'): ex_b,
+        ('paper', 'a'): ex_a,
+        ('paper', 'b'): ex_b,
     }
     execution_handler.on_market_data(
         make_bar(open_=1, high=2, low=1, close=2, time=datetime(2024, 1, 2)))
@@ -195,8 +215,8 @@ def test_on_order_routes_to_the_resolved_accounts_exchange(env):
     _queue, execution_handler, _order_event = env
     ex_a, ex_b = _RecordingExchange(), _RecordingExchange()
     execution_handler.exchanges = {
-        ('simulated', 'a'): ex_a,
-        ('simulated', 'b'): ex_b,
+        ('paper', 'a'): ex_a,
+        ('paper', 'b'): ex_b,
     }
     execution_handler._portfolio_read_model = _StubReadModel({1: 'a', 2: 'b'})
 
@@ -211,8 +231,8 @@ def test_on_order_unknown_pair_touches_no_exchange(env):
     _queue, execution_handler, _order_event = env
     ex_a, ex_b = _RecordingExchange(), _RecordingExchange()
     execution_handler.exchanges = {
-        ('simulated', 'a'): ex_a,
-        ('simulated', 'b'): ex_b,
+        ('paper', 'a'): ex_a,
+        ('paper', 'b'): ex_b,
     }
     execution_handler._portfolio_read_model = _StubReadModel({1: 'c'})
 
@@ -227,7 +247,7 @@ def test_on_order_refuses_when_the_portfolio_names_no_account(env):
     _queue, execution_handler, _order_event = env
     ex_default = _RecordingExchange()
     execution_handler.exchanges = {
-        ('simulated', DEFAULT_ACCOUNT_ID): ex_default,
+        ('paper', DEFAULT_ACCOUNT_ID): ex_default,
     }
     execution_handler._portfolio_read_model = _StubReadModel({1: None})
 
@@ -241,7 +261,7 @@ def test_on_order_without_read_model_uses_the_default_account(env):
     _queue, execution_handler, _order_event = env
     ex_default = _RecordingExchange()
     execution_handler.exchanges = {
-        ('simulated', DEFAULT_ACCOUNT_ID): ex_default,
+        ('paper', DEFAULT_ACCOUNT_ID): ex_default,
     }
     assert execution_handler._portfolio_read_model is None
 
@@ -254,7 +274,7 @@ def test_on_order_unknown_portfolio_is_distinguishable_from_a_fault(env, caplog)
     branch — the broad handler would otherwise report it as an internal fault."""
     _queue, execution_handler, _order_event = env
     ex_a = _RecordingExchange()
-    execution_handler.exchanges = {('simulated', 'a'): ex_a}
+    execution_handler.exchanges = {('paper', 'a'): ex_a}
     execution_handler._portfolio_read_model = _StubReadModel({1: 'a'})
 
     execution_handler.on_order(_order_for(99))

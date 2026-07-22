@@ -50,7 +50,7 @@ def _fill_event(ticker, action, price, quantity, commission, portfolio_id, time=
 
 # Legacy-compatibility test data.
 _PORTFOLIO_NAME = "test_pf"
-_EXCHANGE = "simulated"
+_EXCHANGE = "paper"
 _CASH = 150000
 
 

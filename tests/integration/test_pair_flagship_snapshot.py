@@ -109,7 +109,7 @@ def _build_flagship_system() -> tuple[BacktestTradingSystem, int]:
     derived from the data by the runner during ``run()`` — no manual set_universe.
     """
     system = BacktestTradingSystem(
-        exchange="csv",
+        exchange="paper",
         csv_paths={"ETHUSD": _ETH_CSV, "BTCUSD": _BTC_CSV},
         start_date=_START_DATE,
         end_date=_END_DATE,
@@ -126,7 +126,7 @@ def _build_flagship_system() -> tuple[BacktestTradingSystem, int]:
     sh.add_strategy(strategy)
 
     portfolio_id = system.portfolio_handler.add_portfolio(
-        name="pair_flagship_pf", exchange="csv", cash=_CASH,
+        name="pair_flagship_pf", exchange="paper", cash=_CASH,
         portfolio_config=_margin_config(),
     )
     strategy.subscribe_portfolio(portfolio_id)

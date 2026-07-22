@@ -59,7 +59,7 @@ def test_backtest_smoke_produces_nonzero_trade(backtest_engine):
     # Add a single long-only portfolio with $10k starting cash.
     portfolio_id = system.portfolio_handler.add_portfolio(
         name="smoke_pf",
-        exchange="csv",
+        exchange="paper",
         cash=CASH,
     )
     strategy.subscribe_portfolio(portfolio_id)

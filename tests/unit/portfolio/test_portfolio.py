@@ -30,7 +30,7 @@ def _margin_config(max_leverage: str = "10") -> PortfolioConfig:
 @pytest.fixture
 def portfolio():
     """A fresh simulated portfolio funded with $150000."""
-    return Portfolio("test_pf", "simulated", 150000, datetime.now())
+    return Portfolio("test_pf", "paper", 150000, datetime.now())
 
 
 def test_long_position(portfolio):
@@ -302,7 +302,7 @@ def test_cash_property_is_read_only(portfolio):
 def margin_portfolio():
     """A $150000 portfolio with enable_margin=True (lock-and-settle on)."""
     return Portfolio(
-        "margin_pf", "simulated", 150000, datetime.now(), config=_margin_config()
+        "margin_pf", "paper", 150000, datetime.now(), config=_margin_config()
     )
 
 

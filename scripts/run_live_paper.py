@@ -2,7 +2,7 @@
 """Runnable paper-path worker for the live-paper engine (RUN-01, D-08).
 
 A standalone bootstrap that constructs ``LiveTradingSystem``, wires the golden
-SMA_MACD strategy + a single ``'simulated'``-exchange portfolio, and runs the
+SMA_MACD strategy + a single ``'paper'``-venue portfolio, and runs the
 live-paper engine. The composition root is cleanly separable at a process
 boundary (D-07 — option (b) architected as (c) with N=1); importing this module
 has no side effects beyond the ``itrader`` package singletons.
@@ -66,17 +66,20 @@ def _build_paper_strategy() -> SMAMACDStrategy:
 
 
 def _compose(system: LiveTradingSystem) -> int:
-    """Wire the golden strategy + a single 'simulated' portfolio onto the system.
+    """Wire the golden strategy + a single 'paper' portfolio onto the system.
 
     Shared by both modes so the composition is identical (the only divergence is
     the venue arm + the driver). Returns the portfolio id for post-run reads.
     """
     strategy = _build_paper_strategy()
     system.strategies_handler.add_strategy(strategy)
-    # 'simulated' routes to the reused SimulatedExchange (D-04) — the paper exchange.
+    # D-05/D-19: 'paper' is the ONE name for the simulated fill engine — the same
+    # name the backtest portfolios carry — and it routes to the reused
+    # SimulatedExchange (D-04). venue_name is passed explicitly.
     portfolio_id = system.portfolio_handler.add_portfolio(
         name="paper_pf",
-        exchange="simulated",
+        exchange="paper",
+        venue_name="paper",
         cash=CASH,
     )
     strategy.subscribe_portfolio(portfolio_id)

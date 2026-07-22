@@ -113,7 +113,7 @@ def test_execution_handler_delegates_to_exchange(handler):
     """ExecutionHandler.update_config routes to the simulated exchange."""
     result = handler.update_config({"limits": {"min_order_size": "7"}})
     assert result is None
-    simulated = handler.exchanges.get(("simulated", DEFAULT_ACCOUNT_ID))
+    simulated = handler.exchanges.get(("paper", DEFAULT_ACCOUNT_ID))
     assert simulated._min_order_size == Decimal("7")
 
 

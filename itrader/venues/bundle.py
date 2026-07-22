@@ -14,7 +14,7 @@ Symbols
 - ``VenueBundle`` — a ``@dataclass(frozen=True, slots=True)`` carrying ONLY the
   execution arm (D-02): mandatory ``exchange`` + ``account_factory``; Optional
   ``connector`` defaulting to ``None`` (``None`` for paper, which reuses the
-  compose-built ``'simulated'`` exchange and has no live connector). The dead
+  compose-built paper exchange and has no live connector). The dead
   ``lifecycle`` field was deleted in 11-09 — the lifecycle lives beside the bundle
   in the composition root's per-account lifecycle map, never inside it.
   The DATA provider is deliberately NOT carried here — it is built by

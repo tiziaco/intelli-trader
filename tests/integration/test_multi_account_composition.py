@@ -85,8 +85,9 @@ def _okx_entries(system):
     """The ``(venue, account_id) -> exchange`` entries for the OKX venue only.
 
     Filtered by VENUE rather than asserting on ``len(exchanges)``: the registry also
-    holds the compose-built ``('simulated', 'default')`` and ``('csv', 'default')``
-    entries, so a bare length assertion would be counting unrelated rows.
+    holds the compose-built ``('paper', 'default')`` entry (D-05 collapsed the former
+    ``'simulated'``/``'csv'`` alias pair plus the dead ``'ccxt'`` placeholder into
+    that one key), so a bare length assertion would be counting unrelated rows.
     """
     return {
         key: exchange

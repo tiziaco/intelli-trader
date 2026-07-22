@@ -170,7 +170,7 @@ def test_simulated_restore_cash_and_realised_pnl_on_paper_start(monkeypatch) -> 
     # A fresh durable paper portfolio at its construction-time initial cash, wired to a
     # durable store carrying the pre-restart cash + realised-PnL scalars.
     portfolio_id = system.portfolio_handler.add_portfolio(
-        name="paper_pf", exchange="simulated", cash=Decimal("100000.00")
+        name="paper_pf", exchange="paper", cash=Decimal("100000.00")
     )
     portfolio = system.portfolio_handler.get_portfolio(portfolio_id)
     store = _CashPnlDurableStoreDouble(

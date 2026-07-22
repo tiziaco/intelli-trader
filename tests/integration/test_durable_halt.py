@@ -108,7 +108,7 @@ def _build_paper_system(store: HaltRecordStore) -> LiveTradingSystem:
     system.strategies_handler.add_strategy(strategy)
     portfolio_id = system.portfolio_handler.add_portfolio(
         name="durable_halt_pf",
-        exchange="simulated",
+        exchange="paper",
         cash=10_000,
     )
     strategy.subscribe_portfolio(portfolio_id)

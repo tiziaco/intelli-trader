@@ -28,7 +28,7 @@ def fill_event():
         sizing_policy=FractionOfCash(Decimal("0.95")),
         direction=TradingDirection.LONG_ONLY,
     )
-    order = Order.new_order(signal_event, "simulated")
+    order = Order.new_order(signal_event, "paper")
     mkt_order_event = OrderEvent.new_order_event(order)
     return FillEvent.new_fill(
         "EXECUTED", mkt_order_event,

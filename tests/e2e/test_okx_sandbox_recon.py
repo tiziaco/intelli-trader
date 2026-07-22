@@ -104,7 +104,7 @@ def _build_live_okx_stack():
 
     Mirrors ``scripts/run_live_paper.py::_compose`` — the golden SMA_MACD strategy plus one
     portfolio — but the portfolio's exchange arm is ``"okx"`` (the demo order target) rather
-    than the paper ``"simulated"`` exchange. Returns the un-started system so the TEST owns the
+    than the ``"paper"`` exchange. Returns the un-started system so the TEST owns the
     start()/stop() lifecycle and teardown stays in the test (Pitfall 4 — no leaked authenticated
     session). ALL connector/system imports are LAZY here so a credential-free collection never
     touches connector code.

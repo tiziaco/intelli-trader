@@ -17,14 +17,14 @@ class _RoutingEnv:
     def __init__(self):
         self.queue = Queue()
         self.handler = ExecutionHandler(self.queue)
-        exchange = self.handler.exchanges[("simulated", DEFAULT_ACCOUNT_ID)]
+        exchange = self.handler.exchanges[("paper", DEFAULT_ACCOUNT_ID)]
         exchange.connect()
         exchange.update_config({"limits": {"supported_symbols": {"BTCUSDT"}}})
 
     def oe(self, order_type, action="BUY", price=40.0, order_id=1):
         return OrderEvent(
             time=datetime(2024, 1, 1), ticker="BTCUSDT", action=Side(action), price=price,
-            quantity=1.0, exchange="simulated", strategy_id=1, portfolio_id=1,
+            quantity=1.0, exchange="paper", strategy_id=1, portfolio_id=1,
             order_type=order_type, order_id=order_id, command=OrderCommand.NEW,
         )
 

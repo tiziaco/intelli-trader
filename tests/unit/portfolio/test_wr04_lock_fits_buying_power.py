@@ -73,7 +73,7 @@ def cm():
 def margin_portfolio():
     """A $100000 portfolio with enable_margin=True (lock-and-settle on)."""
     return Portfolio(
-        "wr04_pf", "simulated", 100000, datetime.now(), config=_margin_config()
+        "wr04_pf", "paper", 100000, datetime.now(), config=_margin_config()
     )
 
 

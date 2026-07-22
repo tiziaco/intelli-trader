@@ -329,7 +329,7 @@ class TestRunner:
                     "to PAPER_PARITY_TIMEFRAME, not the live stream config."))
 
         # Step 1 — session init (ORDER-SENSITIVE): delegates to SessionInitializer
-        # (wire_universe injects the Universe into the 'simulated' exchange +
+        # (wire_universe injects the Universe into the 'paper' exchange +
         # order/portfolio/strategies handlers and binds the feed; register_strategy_warmup
         # sizes cache_capacity() to the max strategy warmup — 100 for SMA_MACD; WITHOUT it
         # the ring collapses to 1 and the run yields zero trades, Pitfall 1). Session init

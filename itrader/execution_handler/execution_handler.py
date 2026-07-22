@@ -25,8 +25,9 @@ if TYPE_CHECKING:
 #:
 #: The exchange registry is keyed on the ``(venue, account_id)`` PAIR, because
 #: an order's real target is a specific AUTHENTICATED SESSION, not a venue.
-#: Venues that have only ever had one account — the simulated/backtest path,
-#: and any venue before per-account wiring — register under this constant.
+#: Venues that have only ever had one account — the ``'paper'`` venue that
+#: backs backtest and live-paper (D-05), and any venue before per-account
+#: wiring — register under this constant.
 #:
 #: It is deliberately a separate KEY HALF and never spliced into the venue
 #: name: ``Order.exchange`` is a persisted column, so a composed
@@ -175,14 +176,16 @@ class ExecutionHandler(AbstractExecutionHandler):
 		keeping the single web-catchable raise contract. Returns ``None``; raises
 		``ConfigurationError`` on failure (including when no exchange is wired).
 		"""
-		# D-27: the simulated venue is single-account, so it lives under the
-		# default-account half of the pair key. This preserves object identity
-		# and the alias structure exactly — the oracle is unaffected.
-		exchange = self.exchanges.get(('simulated', DEFAULT_ACCOUNT_ID))
+		# D-27/D-05: the paper venue is single-account, so it lives under the
+		# default-account half of the pair key. ``'paper'`` is the ONE name for
+		# the simulated fill engine across backtest and live-paper (D-05) — the
+		# retired ``'simulated'``/``'csv'`` synonyms no longer resolve anything,
+		# so this lookup must never be written against them again.
+		exchange = self.exchanges.get(('paper', DEFAULT_ACCOUNT_ID))
 		if not isinstance(exchange, SimulatedExchange):
 			raise ConfigurationError(
-				config_key='simulated',
-				reason='no simulated exchange wired to update')
+				config_key='paper',
+				reason='no paper exchange wired to update')
 		exchange.update_config(updates)
 
 	def validate_config(self, updates: Dict[str, Any]) -> None:
@@ -197,12 +200,12 @@ class ExecutionHandler(AbstractExecutionHandler):
 		Returns ``None``; RAISES ``ConfigurationError`` on failure (including when
 		no exchange is wired) — the SAME contract shape as ``update_config``.
 		"""
-		# D-27: single-account simulated venue -> default-account key half.
-		exchange = self.exchanges.get(('simulated', DEFAULT_ACCOUNT_ID))
+		# D-27/D-05: single-account paper venue -> default-account key half.
+		exchange = self.exchanges.get(('paper', DEFAULT_ACCOUNT_ID))
 		if not isinstance(exchange, SimulatedExchange):
 			raise ConfigurationError(
-				config_key='simulated',
-				reason='no simulated exchange wired to update')
+				config_key='paper',
+				reason='no paper exchange wired to update')
 		exchange.validate_config(updates)
 
 
@@ -274,19 +277,22 @@ class ExecutionHandler(AbstractExecutionHandler):
 
 	def on_market_data(self, bar: BarEvent) -> None:
 		"""Drive resting-order matching on each exchange with a new bar."""
-		# Dedup by instance identity: multiple venue aliases (e.g. 'simulated' and 'csv')
-		# may point to the same exchange object; driving it once per bar avoids
-		# double-matching the resting-order book (DEF-01-B alias, Plan 01-04).
+		# Dedup by instance identity: two registry keys may resolve to ONE
+		# exchange object; driving it once per bar avoids double-matching the
+		# resting-order book.
 		#
-		# D-27: this dedup stays IDENTITY-based and is correct by construction
-		# under the pair key — do NOT "clean it up" into a key- or name-based
-		# dedup. It exists to collapse ALIASES (two keys deliberately pointing
-		# at ONE object). Two ACCOUNTS on one venue are two DISTINCT objects
-		# with distinct identity, so they are correctly driven separately: each
-		# account owns its own resting-order book and correlation index and
-		# must see every bar. A key-based rewrite would drive the shared
-		# simulated exchange twice per bar and silently change every backtest
-		# number.
+		# D-05: VENUE ALIASES no longer exist — one venue name, one key, one
+		# object. What remains is the ACCOUNT case: a caller may register the
+		# same exchange object under two ACCOUNTS of one venue, and that object
+		# must still be driven exactly once per bar. That is the only case this
+		# dedup now collapses.
+		#
+		# D-27: it stays IDENTITY-based — do NOT "clean it up" into a key- or
+		# name-based dedup. Two accounts holding DISTINCT exchange objects are
+		# correctly driven separately: each owns its own resting-order book and
+		# correlation index and must see every bar. A key-based rewrite would
+		# drive a shared exchange twice per bar and silently change every
+		# backtest number.
 		seen: set[int] = set()
 		for key, exchange in self.exchanges.items():
 			if exchange is None or id(exchange) in seen:
@@ -321,27 +327,29 @@ class ExecutionHandler(AbstractExecutionHandler):
 		# Inject the single seeded Random (D-11) so the exchange + its slippage
 		# model share one deterministic RNG instance for the whole backtest run.
 		simulated = SimulatedExchange(self.global_queue, config=exchange_config, rng=self._rng)
-		# D-27: keyed on the (venue, account_id) PAIR. All three built-in venues
-		# are single-account, so each pairs with DEFAULT_ACCOUNT_ID — which is
-		# precisely what preserves the alias structure (and therefore the
-		# byte-exact oracle) across the keying change.
+		# D-05: ONE venue name for the simulated fill engine — ``'paper'``.
+		# Backtest and live-paper are the SAME behaviour (a simulated fill
+		# engine over computed accounts), so they carry one name, not a
+		# synonym. The former ``('simulated', ...)``/``('csv', ...)`` alias pair
+		# (two keys, one object) and the dead ``('ccxt', ...): None`` placeholder
+		# are both RETIRED IN FULL — no transitional alias. A portfolio's
+		# ``exchange``/``venue_name`` is ``'paper'`` (D-19), so its orders land
+		# on this single key.
+		#
+		# D-27: keyed on the (venue, account_id) PAIR. The paper venue is
+		# single-account, so it pairs with DEFAULT_ACCOUNT_ID. Only the venue
+		# half changed here; the key SHAPE is untouched.
 		exchanges: dict[tuple[str, str], Optional[AbstractExchange]] = {
-			('simulated', DEFAULT_ACCOUNT_ID): simulated,
-			# Backtest portfolios use exchange="csv" (offline golden feed). Orders carry the
-			# portfolio's exchange string, so the 'csv' venue must resolve to the simulated
-			# matching engine for the backtest fill path to work (DEF-01-B, Plan 01-04).
-			# SAME OBJECT as 'simulated' above — the deliberate aliasing the
-			# identity dedup below and in on_market_data exists to collapse.
-			('csv', DEFAULT_ACCOUNT_ID): simulated,
-			('ccxt', DEFAULT_ACCOUNT_ID): None  # Placeholder for live exchange implementation
+			('paper', DEFAULT_ACCOUNT_ID): simulated,
 		}
 
-		# Connect to exchanges that support it. Dedup by instance identity:
-		# venue aliases (e.g. 'simulated' and 'csv') may point to the same
-		# exchange object; connecting it once avoids a misleading second
-		# "Successfully connected" log for the idempotent no-op call (IN-03).
+		# Connect to exchanges that support it. Dedup by instance identity: two
+		# keys may resolve to one exchange object (post-D-05 that means two
+		# ACCOUNTS on one venue, never two venue names), and connecting it once
+		# avoids a misleading second "Successfully connected" log for the
+		# idempotent no-op call (IN-03).
 		# D-27: identity-based for the same reason as the on_market_data dedup —
-		# it collapses aliases, never distinct per-account exchanges.
+		# it collapses shared objects, never distinct per-account exchanges.
 		seen_connect: set[int] = set()
 		for exchange_key, exchange in exchanges.items():
 			if exchange is None or id(exchange) in seen_connect:

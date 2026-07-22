@@ -54,7 +54,7 @@ def test_run_end_sweep_then_drain_does_not_cascade():
     """Sweep + final drain emits FillEvent(EXPIRED) but NO SignalEvent and NO
     new OrderEvent(NEW) — the drain is provably non-cascading (T-06-06)."""
     system = build_backtest_system(_btcusd_spec())
-    exchange = system.execution_handler.exchanges[("simulated", DEFAULT_ACCOUNT_ID)]
+    exchange = system.execution_handler.exchanges[("paper", DEFAULT_ACCOUNT_ID)]
     exchange.connect()
 
     portfolio = system.portfolio_handler.get_active_portfolios()[0]
@@ -64,7 +64,7 @@ def test_run_end_sweep_then_drain_does_not_cascade():
     # submit it into the matching engine so it is genuinely resting.
     order = Order.new_limit_order(
         time=_dt.datetime(2018, 1, 2), ticker="BTCUSD", action=Side.BUY,
-        price=Decimal("1.0"), quantity=Decimal("1.0"), exchange="simulated",
+        price=Decimal("1.0"), quantity=Decimal("1.0"), exchange="paper",
         strategy_id=1, portfolio_id=portfolio_id,
     )
     system.order_handler.order_manager.order_storage.add_order(order)

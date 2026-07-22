@@ -241,9 +241,10 @@ def compose_engine(
 	# the typed FeeModelCommissionEstimator adapter holds the exchange ref and
 	# reads fee_model at call time (late binding). The golden run pins fees 0,
 	# so the reservation equals price x quantity exactly (value-preserving).
-	# D-27: pair-keyed registry; the simulated venue is single-account.
+	# D-27/D-05: pair-keyed registry; the paper venue is single-account and is
+	# now the ONLY key ``init_exchanges`` returns.
 	simulated_exchange = execution_handler.exchanges.get(
-		('simulated', DEFAULT_ACCOUNT_ID))
+		('paper', DEFAULT_ACCOUNT_ID))
 	commission_estimator = FeeModelCommissionEstimator(simulated_exchange)
 
 	# Plan 02-03 (D-09/D-14): thread the portfolio's margin settings into the

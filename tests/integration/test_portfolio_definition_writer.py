@@ -170,7 +170,7 @@ def test_a_backtest_handler_owns_no_definition_store(wiring) -> None:
     handler = PortfolioHandler(queue.Queue(), environment="backtest", sql_engine=None)
 
     assert handler.definition_store is None
-    handler.add_portfolio(name="pf-bt", exchange="csv", cash=100_000)
+    handler.add_portfolio(name="pf-bt", exchange="paper", cash=100_000)
     assert definitions.read_all() == []
 
 
@@ -184,7 +184,7 @@ def test_a_portfolio_naming_no_account_writes_no_row(wiring) -> None:
     engine, definitions = wiring
     handler = _live_handler(engine)
 
-    handler.add_portfolio(name="pf-unnamed", exchange="simulated", cash=Decimal("500"))
+    handler.add_portfolio(name="pf-unnamed", exchange="paper", cash=Decimal("500"))
 
     assert definitions.read_all() == []
 

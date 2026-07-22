@@ -26,10 +26,10 @@ class _StopLimitHarness:
         self.storage = OrderStorageFactory.create("test")
         self.order_handler = OrderHandler(self.queue, self.ptf, self.storage)
         self.execution = ExecutionHandler(self.queue)
-        exchange = self.execution.exchanges[("simulated", DEFAULT_ACCOUNT_ID)]
+        exchange = self.execution.exchanges[("paper", DEFAULT_ACCOUNT_ID)]
         exchange.connect()
         exchange.update_config({"limits": {"supported_symbols": {"BTCUSDT"}}})
-        self.pid = self.ptf.add_portfolio("p", "simulated", 100000)
+        self.pid = self.ptf.add_portfolio("p", "paper", 100000)
 
     def signal(self, action, order_type="MARKET", price=40.0, stop_loss=0.0, take_profit=0.0):
         return SignalEvent(

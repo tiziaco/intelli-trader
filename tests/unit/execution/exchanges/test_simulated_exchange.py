@@ -207,7 +207,7 @@ class TestSimulatedExchangeOrderExecution:
             'action': Side.BUY,
             'quantity': 100.0,
             'price': 150.0,
-            'exchange': 'simulated',
+            'exchange': 'paper',
             'strategy_id': 1,
             'portfolio_id': 1,
             'order_type': OrderType.MARKET,
@@ -403,7 +403,7 @@ class TestSimulatedExchangeConnectionManagement:
 
         order = OrderEvent(
             time=datetime.now(), ticker='BTCUSDT', action=Side.BUY,
-            price=150.0, quantity=100.0, exchange='simulated',
+            price=150.0, quantity=100.0, exchange='paper',
             strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1,
         )
         self.exchange.on_order(order)
@@ -428,7 +428,7 @@ class TestSimulatedExchangeOrderValidation:
         """Test validation of valid order."""
         order = OrderEvent(
             time=datetime.now(), ticker='BTCUSDT', action=Side.BUY,
-            price=150.0, quantity=100.0, exchange='simulated',
+            price=150.0, quantity=100.0, exchange='paper',
             strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1,
         )
         result = self.exchange.validate_order(order)
@@ -445,7 +445,7 @@ class TestSimulatedExchangeOrderValidation:
         import dataclasses
         order = OrderEvent(
             time=datetime.now(), ticker='BTCUSDT', action=Side.BUY,
-            price=150.0, quantity=100.0, exchange='simulated',
+            price=150.0, quantity=100.0, exchange='paper',
             strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1,
         )
         result = self.exchange.validate_order(order)
@@ -464,7 +464,7 @@ class TestSimulatedExchangeOrderValidation:
         """Test validation of order with invalid symbol."""
         order = OrderEvent(
             time=datetime.now(), ticker='INVALID', action=Side.BUY,
-            price=150.0, quantity=100.0, exchange='simulated',
+            price=150.0, quantity=100.0, exchange='paper',
             strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1,
         )
         result = self.exchange.validate_order(order)
@@ -482,7 +482,7 @@ class TestSimulatedExchangeOrderValidation:
             action=Side.BUY,
             price=150.0,
             quantity=-100.0,  # This is the negative quantity
-            exchange='simulated',
+            exchange='paper',
             strategy_id=1,
             portfolio_id=1,
             order_type=OrderType.MARKET,
@@ -508,7 +508,7 @@ class TestSimulatedExchangeOrderValidation:
         for bad_qty in (0.0, -100.0):
             order = OrderEvent(
                 time=datetime.now(), ticker='BTCUSDT', action=Side.BUY,
-                price=150.0, quantity=bad_qty, exchange='simulated',
+                price=150.0, quantity=bad_qty, exchange='paper',
                 strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1,
             )
             result = self.exchange.validate_order(order)
@@ -527,7 +527,7 @@ class TestSimulatedExchangeOrderValidation:
         # Test below minimum (use 0.0001 which is below 50.0)
         order_small = OrderEvent(
             time=datetime.now(), ticker='BTCUSDT', action=Side.BUY,
-            price=150.0, quantity=0.0001, exchange='simulated',
+            price=150.0, quantity=0.0001, exchange='paper',
             strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1,
         )
         result = self.exchange.validate_order(order_small)
@@ -537,7 +537,7 @@ class TestSimulatedExchangeOrderValidation:
         # Test above maximum
         order_large = OrderEvent(
             time=datetime.now(), ticker='BTCUSDT', action=Side.BUY,
-            price=150.0, quantity=1000.0, exchange='simulated',
+            price=150.0, quantity=1000.0, exchange='paper',
             strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1,
         )
         result = self.exchange.validate_order(order_large)
@@ -571,7 +571,7 @@ class TestSimulatedExchangeOrderValidation:
         # (Decimal-vs-Decimal) -> REFUSED.
         order = OrderEvent(
             time=datetime.now(), ticker='BTCUSDT', action=Side.BUY,
-            price=Decimal("150"), quantity=Decimal("0.0001"), exchange='simulated',
+            price=Decimal("150"), quantity=Decimal("0.0001"), exchange='paper',
             strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1,
         )
         result = self.exchange.validate_order(order)
@@ -587,7 +587,7 @@ class TestSimulatedExchangeOrderValidation:
             action=Side.BUY,
             price=-150.0,  # This is the negative price
             quantity=100.0,
-            exchange='simulated',
+            exchange='paper',
             strategy_id=1,
             portfolio_id=1,
             order_type=OrderType.MARKET,
@@ -604,7 +604,7 @@ class TestSimulatedExchangeOrderValidation:
         # Test high price warning (use smaller quantity within limits but very high price)
         order = OrderEvent(
             time=datetime.now(), ticker='BTCUSDT', action=Side.BUY,
-            price=1500000.0, quantity=0.1, exchange='simulated',
+            price=1500000.0, quantity=0.1, exchange='paper',
             strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1,
         )
         result = self.exchange.validate_order(order)
@@ -638,8 +638,8 @@ class TestSimulatedExchangeHealthMonitoring:
         # Connect, admit a market order (fills on the next bar) and reject one.
         self.exchange.connect()
 
-        order1 = OrderEvent(time=datetime(2024, 1, 1), ticker='BTCUSDT', action=Side.BUY, price=150.0, quantity=100.0, exchange='simulated', strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1)
-        order2 = OrderEvent(time=datetime(2024, 1, 1), ticker='INVALID', action=Side.BUY, price=150.0, quantity=100.0, exchange='simulated', strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=2)
+        order1 = OrderEvent(time=datetime(2024, 1, 1), ticker='BTCUSDT', action=Side.BUY, price=150.0, quantity=100.0, exchange='paper', strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1)
+        order2 = OrderEvent(time=datetime(2024, 1, 1), ticker='INVALID', action=Side.BUY, price=150.0, quantity=100.0, exchange='paper', strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=2)
 
         self.exchange.on_order(order1)   # rests, fills on the next bar
         self.exchange.on_market_data(make_bar(open_=150, high=152, low=149, close=151))
@@ -734,7 +734,7 @@ class TestSimulatedExchangeEdgeCases:
 
         # Test failure (random returns 0.3, which is < 0.5)
         with patch.object(self.exchange._rng, 'random', return_value=0.3):
-            order = OrderEvent(time=datetime(2024, 1, 1), ticker='BTCUSDT', action=Side.BUY, price=150.0, quantity=100.0, exchange='simulated', strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1)
+            order = OrderEvent(time=datetime(2024, 1, 1), ticker='BTCUSDT', action=Side.BUY, price=150.0, quantity=100.0, exchange='paper', strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1)
             self.exchange.on_order(order)
             fills = drain_fills(self.queue)
             assert len(fills) == 1
@@ -744,7 +744,7 @@ class TestSimulatedExchangeEdgeCases:
         # Test success (random returns 0.7, which is >= 0.5): the order is
         # admitted and RESTS — no fill until a bar arrives.
         with patch.object(self.exchange._rng, 'random', return_value=0.7):
-            order = OrderEvent(time=datetime(2024, 1, 1), ticker='BTCUSDT', action=Side.BUY, price=150.0, quantity=100.0, exchange='simulated', strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=2)
+            order = OrderEvent(time=datetime(2024, 1, 1), ticker='BTCUSDT', action=Side.BUY, price=150.0, quantity=100.0, exchange='paper', strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=2)
             self.exchange.on_order(order)
             assert drain_fills(self.queue) == []
             assert self.exchange.matching_engine.has_order(2)
@@ -763,7 +763,7 @@ class TestDecimalFillBoundary:
         defaults = {
             'time': datetime(2024, 1, 1), 'ticker': 'BTCUSDT', 'action': Side.BUY,
             'quantity': Decimal("100.0"), 'price': Decimal("150.0"),
-            'exchange': 'simulated', 'strategy_id': 1, 'portfolio_id': 1,
+            'exchange': 'paper', 'strategy_id': 1, 'portfolio_id': 1,
             'order_type': OrderType.MARKET, 'order_id': 1,
         }
         defaults.update(kwargs)

@@ -85,7 +85,7 @@ def _build() -> tuple[PortfolioHandler, InMemoryOrderStorage, ReconcileManager]:
 
 
 def _open_long(h: PortfolioHandler) -> tuple[Any, Position]:
-    pid = h.add_portfolio(name="liq", exchange="simulated", cash=1000000.0,
+    pid = h.add_portfolio(name="liq", exchange="paper", cash=1000000.0,
                           portfolio_config=_margin_config())
     portfolio: Portfolio = h.get_portfolio(pid)
     txn = Transaction(
@@ -203,7 +203,7 @@ def test_unregistered_order_no_ops_mirror():
         action=__import__("itrader.core.enums", fromlist=["Side"]).Side.SELL,
         price=_ENTRY,
         quantity=_SIZE,
-        exchange="simulated",
+        exchange="paper",
         strategy_id=StrategyId(uuid_compat.uuid7()),
         portfolio_id=portfolio.portfolio_id,
     )

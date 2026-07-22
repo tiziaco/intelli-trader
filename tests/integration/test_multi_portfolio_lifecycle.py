@@ -105,7 +105,7 @@ class _PaperPair:
     """Two paper portfolios on ONE offline ``build_paper_replay_system`` engine.
 
     Both portfolios name ``DEFAULT_ACCOUNT_ID`` and therefore resolve to the single
-    ``('simulated', 'default')`` exchange object — the F-3 reality this test is built
+    ``('paper', 'default')`` exchange object — the F-3 reality this test is built
     around, NOT a bug: the per-account routing gate lives elsewhere (see the module
     docstring). What differs between the two portfolios is their CASH, and each holds its
     OWN ``SimulatedCashAccount`` compute leaf.
@@ -115,14 +115,14 @@ class _PaperPair:
 
     def __init__(self, system) -> None:
         self.system = system
-        exchange = system.execution_handler.exchanges[("simulated", DEFAULT_ACCOUNT_ID)]
+        exchange = system.execution_handler.exchanges[("paper", DEFAULT_ACCOUNT_ID)]
         exchange.register_symbol(_SYMBOL)
         system.feed.bind(system.global_queue, [_SYMBOL])
         self._next_ts = _BASE_MS
 
     def add_portfolio(self, name: str, cash: Decimal) -> PortfolioId:
         return self.system.portfolio_handler.add_portfolio(
-            name=name, exchange="simulated", cash=cash, account_id=DEFAULT_ACCOUNT_ID)
+            name=name, exchange="paper", cash=cash, account_id=DEFAULT_ACCOUNT_ID)
 
     def portfolio(self, portfolio_id: PortfolioId):
         return self.system.portfolio_handler.get_portfolio(portfolio_id)

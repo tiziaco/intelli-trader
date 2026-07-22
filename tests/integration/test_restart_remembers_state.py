@@ -161,7 +161,7 @@ def test_restart_restores_position_and_cash_into_live_managers() -> None:
 
     # "Restart": a FRESH Portfolio constructed at its original initial cash, sharing the
     # durable backing store. Before rehydrate it remembers nothing.
-    fresh = Portfolio(name="restart_pf", exchange="simulated",
+    fresh = Portfolio(name="restart_pf", exchange="paper",
                       cash=Decimal("100000.00"), time=_BT)
     _rebind_storage(fresh, store)
 
@@ -183,7 +183,7 @@ def test_restart_restores_position_and_cash_into_live_managers() -> None:
 def _handler_with_portfolio_on(store: Any, cash: Decimal = Decimal("100000")):
     """Build a fresh PortfolioHandler + one portfolio wired to the shared durable store."""
     handler = PortfolioHandler(queue.Queue())
-    portfolio_id = handler.add_portfolio(name="restart_pf", exchange="simulated", cash=cash)
+    portfolio_id = handler.add_portfolio(name="restart_pf", exchange="paper", cash=cash)
     portfolio = handler.get_portfolio(portfolio_id)
     _rebind_storage(portfolio, store)
     return handler, portfolio_id, portfolio
@@ -434,7 +434,7 @@ def test_on_fill_position_and_cash_persist_atomically_single_txn() -> None:
         handler.on_fill(fill)
 
     # "Restart": a fresh Portfolio sharing the same durable store.
-    fresh = Portfolio(name="restart_pf", exchange="simulated",
+    fresh = Portfolio(name="restart_pf", exchange="paper",
                       cash=initial_cash, time=_BT)
     _rebind_storage(fresh, store)
     fresh.state_storage.rehydrate(fresh.account)

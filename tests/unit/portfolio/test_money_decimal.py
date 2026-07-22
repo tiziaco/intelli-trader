@@ -28,7 +28,7 @@ from itrader import idgen
 def portfolio():
     return Portfolio(
         name="decimal_pf",
-        exchange="simulated",
+        exchange="paper",
         cash=150000,
         time=datetime.now(),
     )

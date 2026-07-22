@@ -53,14 +53,14 @@ _FIXED_TIME = datetime(2024, 1, 1, tzinfo=timezone.utc)
 def portfolio():
     """A fresh simulated portfolio funded with $150000 (mirrors test_portfolio.py)."""
     # IN-02: Decimal cash (money is Decimal end-to-end); IN-01: fixed timestamp.
-    return Portfolio("test_pf", "simulated", Decimal("150000"), _FIXED_TIME)
+    return Portfolio("test_pf", "paper", Decimal("150000"), _FIXED_TIME)
 
 
 @pytest.fixture
 def margin_portfolio():
     """A $150000 portfolio with enable_margin=True (lock-and-settle on, WR-02)."""
     return Portfolio(
-        "margin_pf", "simulated", Decimal("150000"), _FIXED_TIME,
+        "margin_pf", "paper", Decimal("150000"), _FIXED_TIME,
         config=_margin_config(),
     )
 
