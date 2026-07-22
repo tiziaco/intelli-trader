@@ -532,7 +532,7 @@ the wave that touches them.*
 
 **Wave 7** *(blocked on 11-09 — D-28 W6 reconcile, second half)*
 
-- [ ] 11-10-PLAN.md — per-portfolio quarantine replacing the global halt; one-clause admission gate; operator-only CONTROL release; quarantined-portfolios read-model surface (MPORT-02, MPORT-05)
+- [ ] 11-10-PLAN.md — **RESCOPED 2026-07-22 to documentation-only** (stale conformance docstrings, the OCO global-uniqueness comment, the coordinator comment repoint). *The per-portfolio quarantine it originally carried was DEFERRED to `todos/pending/per-portfolio-quarantine-mechanism.md`: no requirement demands it (MPORT-02/05 are delivered by 11-08/11-05/11-09), the global halt keeps the system safe, a real operator-only release is blocked on an auth layer that does not exist yet, and its admission-gate wiring risked a silent safety downgrade. The global safety arm is retained untouched.*
 
 **Wave 8** *(blocked on all — D-28 W7 tests)*
 
