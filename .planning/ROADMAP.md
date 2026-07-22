@@ -572,10 +572,10 @@ the wave that touches them.*
 Plans:
 **Wave 1**
 
-- [ ] 11.1-01-PLAN.md — F-2 prerequisite: de-heavy the `connectors/` barrel so `ConnectorProvider` is import-inert, and fold it into the GATE-01 probe window (VENUE-03, D-04)
-- [ ] 11.1-02-PLAN.md — Wave-0 guards installed ahead of the change: the venue allowlist as default-deny (F-3) and a NON-ZERO-fee reservation test (Pitfall 2) (VENUE-04, VENUE-08)
-- [ ] 11.1-03-PLAN.md — D-01: the `Account` leaf drops its `Portfolio` back-reference; the three margin reads become method arguments (VENUE-01)
-- [ ] 11.1-05-PLAN.md — D-08: the memoized `VenueBundles` provider (`itrader/venues/bundles.py`) plus its memo-contract unit tests (VENUE-07)
+- [x] 11.1-01-PLAN.md — F-2 prerequisite: de-heavy the `connectors/` barrel so `ConnectorProvider` is import-inert, and fold it into the GATE-01 probe window (VENUE-03, D-04)
+- [x] 11.1-02-PLAN.md — Wave-0 guards installed ahead of the change: the venue allowlist as default-deny (F-3) and a NON-ZERO-fee reservation test (Pitfall 2) (VENUE-04, VENUE-08)
+- [x] 11.1-03-PLAN.md — D-01: the `Account` leaf drops its `Portfolio` back-reference; the three margin reads become method arguments (VENUE-01)
+- [x] 11.1-05-PLAN.md — D-08: the memoized `VenueBundles` provider (`itrader/venues/bundles.py`) plus its memo-contract unit tests (VENUE-07)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 

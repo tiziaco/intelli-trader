@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: Live System Refactor & Live-Readiness Hardening
 current_phase: 11.1
-current_phase_name: Account Provisioning + Mandatory Account Identity
-status: ready_to_execute
+current_phase_name: account-provisioning-mandatory-account-identity
+status: executing
 stopped_at: Phase 11.1 planned — 10 plans in 7 waves, all gates green; the one warning signed off and deferred to Phase 12 as COMP-07
-last_updated: "2026-07-22T18:55:00.000Z"
+last_updated: "2026-07-22T17:50:52.509Z"
 last_activity: 2026-07-22
-last_activity_desc: "Planned Phase 11.1: 10 plans / 7 waves; 8/8 VENUE reqs, 12/12 decisions, 17/17 probe edges; research corrected 11 CONTEXT facts"
+last_activity_desc: Phase 11.1 execution started
 progress:
   total_phases: 14
   completed_phases: 10
@@ -26,19 +26,19 @@ See: .planning/PROJECT.md (Current Milestone: v1.8 — Live System Refactor & Li
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct,
 deterministic, cross-validated numbers (oracle **134 / `46189.87730727451`**; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 shipped a live operating mode (paper-first on OKX) without disturbing that oracle.
-**Current focus:** Phase 11 — multi-portfolio-live
+**Current focus:** Phase 11.1 — account-provisioning-mandatory-account-identity
 thin ~200-line facade over focused, venue-parametrized, FastAPI-ready collaborators — **without
 disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI itself is out of scope
 (LR-01). Full scope: core refactor (P1–P8 + P12 + P13) + the three ★ feature-adds (P9–P11).
 
 ## Current Position
 
-Phase: 11.1 — Account Provisioning + Mandatory Account Identity (INSERTED; structural half only, per D-16)
-Plan: 10 plans in 7 waves — **Ready to execute**
-Status: **PLANNED.** The "discussion PARTIAL" blocker below is RESOLVED — the D-16 split moved ACCT-02
+Phase: 11.1 (account-provisioning-mandatory-account-identity) — EXECUTING
+Plan: 1 of 10
+Status: Executing Phase 11.1
 provisioning to Phase 11.2, and WR-06 / WR-07 were settled in-file as D-15 (11.2) / D-14 (here).
 Sizing and wave split are locked by the plans. Resume: `/gsd:execute-phase 11.1`.
-Last activity: 2026-07-22 — Planned Phase 11.1: 10 plans / 7 waves.
+Last activity: 2026-07-22 — Phase 11.1 execution started
 
 **Planning session (2026-07-22).** Research → pattern-map → plan → check, all gates green:
 8/8 VENUE requirements covered, **12/12** CONTEXT decisions (D-01..D-08, D-14, D-17..D-19) cited by
@@ -56,19 +56,23 @@ blockers, one warning (see below). Artifacts: `11.1-RESEARCH.md` (73d97b1e), `11
   `ConnectorProvider` on the backtest import path, so GATE-01 reddens unless the barrel is fixed
   FIRST. Zero consumers tree-wide; two-line deletion. CONTEXT's D-04 GATE-01 evidence was correct
   but about a different package (`itrader.venues`).
+
 - **F-5 (CRITICAL):** the byte-exact oracle runs the **legacy** construction arm
   (`scripts/run_backtest.py:68` → `BacktestTradingSystem(exchange="csv", …)`), NOT
   `build_backtest_system`. Editing only the factory arm would leave the oracle green while proving
   nothing. Plans 04/06/07 name both arms.
+
 - **F-1 (CRITICAL):** D-03's "`new_account` loses its `portfolio_ref` parameter" is false for
   `OkxVenuePlugin` — it uses `portfolio_ref` for D-11 account-identity resolution via
   `_account_id_for`, which D-01 does not touch. Decision stands; plan 09 passes `account_id` on the
   config from `add_portfolio` and preserves the raise-on-absent-id guard verbatim.
+
 - **F-3 / F-4 (CRITICAL):** the `'csv'`→`'paper'` blast radius is **27 files**, not "roughly six test
   sites". Two production sites CONTEXT never named: `order_validator.py:117`'s allowlist (would
   reject **every** order → 0 trades) and `universe_wiring.py:98`'s silent `.get` + `isinstance`
   guard (Universe never injected, money arithmetic moves under a green suite — the phase's top
   silent-corruption risk). Plan 06 asserts the lookup is non-None rather than trusting the oracle diff.
+
 - **F-10:** CONTEXT's "~360 lines deleted" spans 11.1 **and** 11.2; 11.1's real budget is **≈186**.
   It is nowhere a plan gate, and a ROADMAP correction note was added.
 
@@ -76,6 +80,7 @@ blockers, one warning (see below). Artifacts: `11.1-RESEARCH.md` (73d97b1e), `11
 
 1. The `('simulated', DEFAULT_ACCOUNT_ID)` registry key is **retired in full**, not kept as a
    transitional alias — so F-4 and F-11 land in the same commit as the re-key (plan 06).
+
 2. **D-06 and D-08 land in ONE wave** (plan 07). Landing D-06 alone makes `compose.py:239` return
    `None` and the estimate degrade to `Decimal("0")` — *also* the golden value, so the oracle would
    stay green while the reservation path is structurally broken.
