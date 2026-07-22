@@ -6,7 +6,7 @@ shared ``VenueBundles`` memo for the execution ``VenueBundle`` of one
 ``(bundle, lifecycle)``.
 
 **It builds NO data provider (11.1-08, D-14).** It used to resolve a data plugin and
-call ``build_provider`` for EVERY account, and every one of those providers except
+drive its provider build for EVERY account, and every one of those providers except
 the primary's was then discarded — ``VenueLifecycle`` only re-exposed it read-only.
 That is ``11-REVIEW.md``'s WR-07: each construction resolves that account's OWN
 credentials through the ``CredentialResolver``, so a discarded provider is a live
@@ -100,7 +100,7 @@ def assemble_venue(
     ----------
     spec :
         The run spec carrying ``execution_venue`` / ``account_id``. (``data_provider``
-        is read by the composition root's ONE ``build_provider`` call, not here — D-14.)
+        is read by the composition root's ONE data-provider build, not here — D-14.)
     connectors :
         The shared ``ConnectorProvider``. Not read here; handed to the lifecycle, whose
         ``stop()`` prefers ``close_all()`` over the bundle connector's own
