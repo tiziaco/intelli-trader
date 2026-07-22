@@ -36,6 +36,7 @@ import time
 from decimal import Decimal
 
 from itrader.core.sizing import FractionOfCash, TradingDirection
+from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
 from itrader.logger import get_itrader_logger
 from itrader.reporting.frames import build_equity_curve, build_trade_log
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
@@ -76,10 +77,19 @@ def _compose(system: LiveTradingSystem) -> int:
     # D-05/D-19: 'paper' is the ONE name for the simulated fill engine — the same
     # name the backtest portfolios carry — and it routes to the reused
     # SimulatedExchange (D-04). venue_name is passed explicitly.
+    #
+    # D-27: this is a LIVE system, so the portfolio must NAME the venue account its
+    # orders route through — ``ExecutionHandler.on_order`` resolves the account via
+    # the injected read-model and REFUSES a portfolio that names none (there is no
+    # default-account fallback; that would route through another account's session).
+    # The reused simulated exchange is registered under the default account, so
+    # naming it here is what makes this worker actually submit orders. Mirrors
+    # ``tests/integration/test_paper_parity.py`` — keep the two in step.
     portfolio_id = system.portfolio_handler.add_portfolio(
         name="paper_pf",
         exchange="paper",
         venue_name="paper",
+        account_id=DEFAULT_ACCOUNT_ID,
         cash=CASH,
     )
     strategy.subscribe_portfolio(portfolio_id)
