@@ -134,10 +134,30 @@ def test_non_zero_commission_reaches_the_reservation():
 def test_absent_estimator_degrades_to_zero():
     """With no provider injected the reservation degrades to exactly zero.
 
-    The guard-clause early exit: the reservation amount becomes plain
-    price x quantity, which is today's funds-check math.
+    The FIRST guard-clause early exit (``fee_model_provider is None``): the
+    reservation amount becomes plain price x quantity, which is today's
+    funds-check math.
+
+    D-18 gave this seam TWO distinct zero paths and they are asserted
+    SEPARATELY, here and in the test below — conflating them into one test would
+    let either path die undetected behind the other, and on this seam
+    ``Decimal("0")`` is also the correct golden value (RESEARCH Pitfall 2).
     """
     manager = _make_admission(None)
+
+    assert manager._estimate_commission(_make_order()) == Decimal("0")
+
+
+def test_provider_returning_none_degrades_to_zero():
+    """A venue that exposes NO fee model degrades to exactly zero (D-18).
+
+    The SECOND guard-clause early exit (``fee_model is None``): the explicit
+    "this venue exposes no fee model" contract that replaced the deleted
+    adapter's ``isinstance(exchange, SimulatedExchange)`` guard. This is the path
+    the LIVE OKX exchange takes today — a KNOWN, deliberately-deferred
+    under-reservation (T-11.1-48) that D-18 makes visible without fixing.
+    """
+    manager = _make_admission(lambda: None)
 
     assert manager._estimate_commission(_make_order()) == Decimal("0")
 
@@ -202,3 +222,32 @@ def test_fee_model_swap_is_observed_on_the_next_call():
     exchange.fee_model = second
 
     assert manager._estimate_commission(_make_order()) == Decimal("3.75")
+
+
+def test_provider_is_dereferenced_once_per_estimate():
+    """VENUE-08 idempotency: exactly ONE provider deref per estimate (D-18).
+
+    Proves the result is not memoized on ``self`` between orders. A cached fee
+    model would show a deref count that stops rising while estimates keep coming
+    — precisely the stale-rate failure the late-binding guard above exists to
+    prevent, seen from the other side (call COUNT rather than call VALUE).
+    """
+    fee_model = _FakeFeeModel(Decimal("2.5"))
+    calls = []
+
+    def counting_provider():
+        calls.append(1)
+        return fee_model
+
+    manager = _make_admission(counting_provider)
+
+    assert manager._estimate_commission(_make_order()) == Decimal("2.5")
+    assert len(calls) == 1
+
+    assert manager._estimate_commission(_make_order()) == Decimal("2.5")
+    assert len(calls) == 2
+
+    assert manager._estimate_commission(_make_order()) == Decimal("2.5")
+    assert len(calls) == 3
+    # And nothing was stashed on the manager between orders.
+    assert not hasattr(manager, "_fee_model")
