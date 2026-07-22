@@ -16,6 +16,14 @@ venue, credentials) lives in Settings › Accounts. Account *state* (balances,
 reconcile status, sandbox badge in use) surfaces on Portfolio detail and the
 Live Console, where the operator actually works.
 
+**Open — per-strategy P&L attribution:** a strategy's `subscribed_portfolios` is
+a list and `PositionManager` keys positions by ticker, so two strategies trading
+one symbol into one portfolio share a single position and their realized P&L
+cannot be split. Either constrain strategy↔portfolio to 1:1 (attribution becomes
+free — it is just that portfolio's P&L) or add lot-level `strategy_id` tagging.
+Until that is decided, Strategies shows behavioural metrics only, never
+attributed P&L.
+
 ---
 
 ```
@@ -73,6 +81,48 @@ reason string deep-links to Activity › Reconciliation & Halts for the full
 record. This encodes the single most important truth about a live engine — what
 state the safety latch is in — and it's visible on every page.
 
+The rail also carries a compact ENGINE-HEALTH indicator (market-data stream,
+venue connector, queue depth) sitting BESIDE the latch state and never
+recoloring it — the two are orthogonal. A dead feed is not PAUSED, and a RUNNING
+engine quietly receiving no bars is exactly the failure this indicator exists to
+catch; it must be legible without navigating anywhere. It links to Activity ›
+Status for the detail.
+
+── METRICS & CHARTS ──
+The engine computes far more than any one screen should show. Two rules decide
+what goes where.
+
+FAST vs SLOW. Fast numbers change every bar and answer "what is happening right
+now": equity, cash, positions value, unrealized P&L, open-position count,
+exposure, concentration. They belong on the Live Console and Portfolio detail.
+Slow numbers answer "is this any good": Sharpe, Sortino, Calmar, profit factor,
+win rate, max drawdown. Over hours they are statistically meaningless, so they
+live on Portfolio detail behind a period selector and NEVER on the home page.
+
+MINIMUM SAMPLE. Below a sample threshold a ratio metric renders as its sample
+count ("12 trades — too few to rate"), not as a number. A Sharpe of 41.2 over
+three days is noise wearing a decimal point, and this design's precision
+aesthetic would make it look authoritative. Cold start must degrade honestly.
+
+Chart forms — pick the form from the data's job, before any color:
+  • A single current value + trend → STAT TILE (value, delta, sparkline), never
+    a one-bar bar chart. The hero equity figure is this, scaled up.
+  • Equity over time → one LINE, direct-labeled, no legend box (a single series
+    needs none — the title names it).
+  • Equity + drawdown → TWO STACKED CHARTS sharing one x-axis. Never a dual-axis
+    plot: two y-scales in one frame is the most common charting error there is.
+  • Headline ratios (Sharpe / Sortino / Calmar / profit factor) → a KPI ROW of
+    stat tiles. They share no common scale, so a grouped bar chart would lie.
+  • Portfolio vs benchmark → two lines INDEXED TO A COMMON BASE (100) so one
+    axis serves both.
+  • Executed vs requested price → SCATTER, on the Fills tab only.
+CHART COLOR IS RESERVED. Series draw from the brand/neutral band only:
+--positive and --negative mean gain and loss and nothing else, --warning and
+--halt mean status and nothing else. A chart series never borrows a semantic
+color. Every chart ships a hover crosshair/tooltip and a reachable table view.
+Markets and Activity get NO charts — they are lookup surfaces, and a chart there
+would be decoration.
+
 ── PAGES & WHERE EACH UI ELEMENT LIVES ──
 Persistent chrome: left nav (sections) · top status-latch rail (signature) ·
 global ⌘K command palette (operator actions: start/stop/pause, jump to portfolio,
@@ -82,8 +132,9 @@ reachable from anywhere.
 Component-placement rules to apply consistently:
   • DEDICATED PAGE  → surfaces I scan or return to (monitoring, browsing lists).
   • TABS            → sibling views of ONE domain that share a mental model:
-                      Orders/Fills · Events/Logs/Reconciliation · Universe/
-                      Screeners. Tabs group; they never hide a different domain.
+                      Orders/Fills · Status/Events/Logs/Reconciliation ·
+                      Universe/Screeners. Tabs group; they never hide a
+                      different domain.
   • SECOND SIDEBAR  → a sectioned settings surface: many small config areas under
                       one roof, without inflating the primary nav.
   • RIGHT DRAWER    → create / edit / inspect ONE item of an N-item collection
@@ -94,15 +145,34 @@ Component-placement rules to apply consistently:
 
 Seven nav entries, no more. Each one is somewhere I go for a reason.
 
-1. Live Console (home) — PAGE. Hero: aggregate equity as a large mono number +
-   delta. Grids/cards: open positions, recent fills, recent signals (the
-   cross-strategy tail), bound-account balances + reconcile status, and a live
-   event-stream feed. The daily driver.
+1. Live Console (home) — PAGE. The daily driver, and the answer to the question
+   an unattended engine actually raises: "what happened while I was away?"
+     · Hero: aggregate equity as a large mono number + delta, with a sparkline.
+     · A RECENCY control in one row above the cards — 3d / 7d / 30d — governing
+       the delta cards AND the equity curve, so the whole page reads as one
+       window. It drives FACTUAL deltas only: P&L change, trades executed,
+       signals fired, fills, halts, error counts. It never drives ratio metrics
+       — that would smuggle the slow numbers onto the home page. This is a
+       recency filter, NOT the statistical-period selector on Portfolio detail;
+       the two must not look like the same control.
+     · The EQUITY CURVE over the selected window (one line, direct-labeled).
+     · Cards: open positions, recent fills, recent signals (the cross-strategy
+       tail), bound-account balances + reconcile status.
+     · A live event-stream feed.
 2. Portfolios — list PAGE → detail PAGE (multi-portfolio). Detail shows cash,
-   positions, transactions, metrics, and the bound account's LIVE state
-   (balances, reconcile status, sandbox badge). Create/edit a portfolio and its
-   per-instance config → right DRAWER — and the account↔portfolio BIND control
-   lives in that drawer and nowhere else.
+   positions, transactions, and the bound account's LIVE state (balances,
+   reconcile status, sandbox badge). Metrics obey the fast/slow rule:
+     · FAST tiles: total equity, cash, positions value, unrealized P&L, realized
+       P&L, total P&L, open-position count, and portfolio concentration.
+     · SLOW metrics behind a PERIOD selector (daily / weekly / monthly /
+       quarterly / yearly): total and annualized return, volatility, max
+       drawdown and its duration, Sharpe, Sortino, Calmar, win rate, profit
+       factor, average win/loss, and trade counts. All subject to the
+       minimum-sample rule.
+     · Charts: equity and drawdown as two stacked charts on a shared x-axis;
+       optionally portfolio vs benchmark, both indexed to 100.
+   Create/edit a portfolio and its per-instance config → right DRAWER — and the
+   account↔portfolio BIND control lives in that drawer and nowhere else.
 3. Orders — dense PAGE with two TABS. These are NOT one table filtered two ways:
    a live venue fills an order incrementally, so one order can produce several
    fills. The tabs differ in GRAIN, and a status filter cannot bridge them.
@@ -127,13 +197,23 @@ Seven nav entries, no more. Each one is somewhere I go for a reason.
        size, resulting order) — chart axis labels and table cells both in the
        mono tabular-figure treatment. Row → DRAWER showing the order(s) that
        signal produced.
+     · Strategy metrics here are BEHAVIOURAL, not P&L: signals fired,
+       signal→order→fill conversion rate, rejection reasons, and fill quality.
+       Attributed per-strategy P&L is deliberately ABSENT — see the open
+       attribution question above. Do not invent it.
    Per-strategy config + portfolio assignment → right DRAWER.
 5. Markets — PAGE with TABS, screener-ready. Tab "Universe": current tracked
    symbols (membership) + manual add/remove + poll-timer status. Tab "Screeners"
    (placeholder for a future subsystem: the rules that auto-populate the
    universe). Add/remove ticker → small MODAL.
-6. Activity — PAGE with three TABS: the engine's written record, where I go
-   after the fact to reconstruct what happened.
+6. Activity — PAGE with four TABS: the engine's diagnostic surface — its current
+   health, and the written record of how it got there.
+     · "Status" — live engine health, read from the append-only system-stats
+       series: market-data stream up, venue connector up, queue depth, uptime,
+       throttle breaches, and warning / error / critical counts. Because that
+       series is historical, each tile carries a SPARKLINE rather than a bare
+       boolean — "up right now" and "flapping all morning" must not look alike.
+       This is the DETAIL view; the rail indicator is the ambient one.
      · "Events" — full history and filtering of the typed event & error stream.
        The global slide-over is the live tail; this tab is the archive.
      · "Logs" — the structured application log (structlog output), filterable by
