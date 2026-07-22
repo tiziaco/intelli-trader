@@ -5,7 +5,7 @@ milestone_name: Live System Refactor & Live-Readiness Hardening
 current_phase: 11.1
 current_phase_name: Account Provisioning + Mandatory Account Identity
 status: ready_to_execute
-stopped_at: Phase 11.1 planned — 10 plans in 7 waves, all gates green (1 warning awaiting owner sign-off)
+stopped_at: Phase 11.1 planned — 10 plans in 7 waves, all gates green; the one warning signed off and deferred to Phase 12 as COMP-07
 last_updated: "2026-07-22T18:55:00.000Z"
 last_activity: 2026-07-22
 last_activity_desc: "Planned Phase 11.1: 10 plans / 7 waves; 8/8 VENUE reqs, 12/12 decisions, 17/17 probe edges; research corrected 11 CONTEXT facts"
@@ -85,14 +85,25 @@ blockers, one warning (see below). Artifacts: `11.1-RESEARCH.md` (73d97b1e), `11
 changes *who builds* the object behind it, so the green-and-wrong state never exists. Plan-checker
 scrutinised and confirmed this.
 
-**⚠ OPEN — owner sign-off needed before execution.** Plan 09 retains `_attach_venue_accounts` (116
-lines) rather than deleting it, for a boot-order fact neither CONTEXT nor RESEARCH states: live
-portfolios are rehydrated (`portfolio_rehydrate.py:130`) **before** `_build_account_specs` builds
-their `VenueSpec`, so a `VenueAccount` cannot be minted at portfolio-creation time. The
-construction-time account is therefore always the compute leaf. Consequence: the phase's headline
-"composition stops reaching in afterwards" holds for the **compute-account path** (backtest + paper,
-fully fixed by D-01/D-02/D-03) but the **live venue-truth swap** remains — reordering that boot is
-Phase 12 / COMP-01 territory. Confirm this narrowing is acceptable, or expand scope.
+**✓ RESOLVED — owner sign-off 2026-07-22. Deferred to Phase 12 as COMP-07.** Plan 09 retains
+`_attach_venue_accounts` (116 lines) rather than deleting it, for a boot-order fact neither CONTEXT
+nor RESEARCH states: live portfolios are rehydrated (`portfolio_rehydrate.py:130`) **before**
+`_build_account_specs` builds their `VenueSpec`, so a `VenueAccount` cannot be minted at
+portfolio-creation time. The construction-time account is therefore always the compute leaf.
+Accepted consequence: the phase's headline "composition stops reaching in afterwards" holds for the
+**compute-account path** (backtest + paper, fully fixed by D-01/D-02/D-03); the **live venue-truth
+swap** remains and its removal is now **COMP-07** (REQUIREMENTS.md + ROADMAP Phase 12 criterion 8).
+Plan 09's flagged block records the sign-off so no executor reopens it.
+
+**⚠ Carried to Phase 12's discuss step — COMP-07 conflicts with Phase 12's own scope fence.** COMP-07
+requires the live boot ORDER to change (venue/account assembly before portfolio rehydrate), but
+Phase 12 is declared *"pure code-motion — no semantic change to any live contract"* and its criterion
+7 pins the current order as *"a hard invariant, not an implementation detail,"* enforced by
+`test_distinct_account_invariant.py` passing **unmodified**. COMP-07 is therefore the one semantic
+change in an otherwise behaviour-preserving phase. Decide at discuss time: widen the fence for it
+(then that test must change, and the four load-bearing reasons at `live_trading_system.py:1896-1929`
+must be re-derived against the new order), or split COMP-07 into its own phase. A conflict note is
+recorded inline in both ROADMAP.md and REQUIREMENTS.md.
 
 ---
 

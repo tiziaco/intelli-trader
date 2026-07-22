@@ -607,6 +607,33 @@ the code does not yet trust it.*
   matching assignments elsewhere in `itrader/` are other classes assigning their OWN constructor
   arguments (`session_initializer`, `route_registrar`, `stream_recovery_handler`, `config_router`,
   `full_event_handler`, `error_handler`) and are out of scope.
+- [ ] **COMP-07** *(deferred here from Phase 11.1 by owner sign-off, 2026-07-22)*: **the live venue-truth
+  account swap stops being a reach-in.** `_attach_venue_accounts` (`live_trading_system.py:1608-1721`,
+  116 lines) re-assigns `portfolio.account` AFTER venue assembly, which is the exact
+  "composition reaches in afterwards to overwrite the result" pattern Phase 11.1's goal names. Phase 11.1
+  closes it for the **compute-account path** (backtest + paper) via VENUE-01/02 (D-01/D-02/D-03) but
+  **cannot** close it for the live venue-truth path, for a boot-order fact discovered during 11.1 planning
+  and stated in neither `11.1-CONTEXT.md` nor `11.1-RESEARCH.md`: live portfolios are rehydrated
+  (`portfolio_rehydrate.py:130`) **before** `_build_account_specs` builds their per-account `VenueSpec`, so
+  a `VenueAccount` — which needs that spec's `secret_ref` to resolve a connector — cannot exist at
+  portfolio-creation time. The construction-time account is therefore always the compute leaf, which is
+  what `_attach_venue_accounts:1640-1645` / `:1708-1711` already document that they expect.
+
+  Satisfied when `Portfolio` receives its final `Account` — venue-truth or compute — at construction on
+  the live path too, `_attach_venue_accounts` is deleted, and the `compute_venue` parameter injected into
+  `PortfolioHandler` by 11.1's plan 09 (the seam this requirement removes) is gone.
+
+  **⚠ Scope-fence conflict — decide this at Phase 12's discuss step, do not let an executor discover it.**
+  This requirement needs the live boot ORDER to change (venue/account assembly must precede portfolio
+  rehydrate). Phase 12's cross-cutting constraint says *"pure code-motion — no semantic change to any live
+  contract"*, and its success criterion 7 pins the current order — distinct-account invariant → portfolio
+  rehydrate → account/venue assembly → config layering → strategy rehydrate — as *"a hard invariant, not
+  an implementation detail,"* pinned by `tests/integration/test_distinct_account_invariant.py` and
+  documented as load-bearing in four independent ways at `live_trading_system.py:1896-1929`. COMP-07 is
+  therefore **the one semantic change inside an otherwise behaviour-preserving phase**. Either widen the
+  fence explicitly for this requirement (and re-derive what the four load-bearing reasons actually require,
+  since `test_distinct_account_invariant.py` must then change rather than pass unmodified), or split
+  COMP-07 into its own phase. Do not fold it in silently.
 
 ### Test Migration + Gates (P13 — except TEST-01, pulled forward into P6)
 
@@ -741,6 +768,7 @@ Each requirement maps to exactly one phase. The roadmap was created 2026-07-09 w
 | COMP-04 | P12 | Pending |
 | COMP-05 | P12 | Pending |
 | COMP-06 | P12 | Pending |
+| COMP-07 | P12 | Pending |
 | TEST-01 | P6 | Complete |
 | TEST-02 | P13 | Pending |
 | TEST-03 | P13 | Pending |
