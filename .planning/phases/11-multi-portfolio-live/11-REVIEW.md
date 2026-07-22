@@ -97,6 +97,19 @@ findings:
   info: 0
   total: 17
 status: issues_found
+resolution:
+  audited_at: 2026-07-22
+  closed: 3
+  deferred: 14
+  closed_by:
+    - "CR-01, CR-05 — quick task 260722-g6w (5fcf476e, 47a0e185)"
+    - "WR-08 — quick task 260722-hpz (59eb44e3)"
+  deferred_to: "Phase 11.1 (ACCT-01..11) + its discuss-phase"
+  do_not_autofix: >-
+    Do NOT run /gsd-code-review 11 --fix against this report. It has no finding-ID
+    filter and scopes by severity only, so it would autonomously implement CR-02,
+    CR-03 and CR-04 — the three findings whose fix is a deliberate product/architecture
+    decision already recorded in the Phase 11.1 spec.
 ---
 
 # Phase 11: Code Review Report
@@ -104,7 +117,50 @@ status: issues_found
 **Reviewed:** 2026-07-22
 **Depth:** standard
 **Files Reviewed:** 87 (42 source + 45 test)
-**Status:** issues_found
+**Status:** issues_found — **3 CLOSED / 14 DEFERRED as of 2026-07-22** (see Resolution Status below)
+
+> **⚠ Do not run `/gsd-code-review 11 --fix` against this report.** The fix workflow scopes by
+> SEVERITY only (`critical_and_warning`, or `--all` to add Info) — there is no finding-ID filter.
+> It would autonomously implement CR-02, CR-03 and CR-04, whose fixes are deliberate
+> product/architecture decisions already made and recorded in the Phase 11.1 spec. The 14 deferred
+> findings are scheduled work, not unaddressed ones.
+
+---
+
+## Resolution Status (audited 2026-07-22)
+
+The two findings needing no product decision were fixed ahead of Phase 11.1; the one finding
+independent of account identity was fixed as a standalone task; the remaining 14 are scheduled into
+**Phase 11.1 — Account Provisioning + Mandatory Account Identity** (`ACCT-01..11`), whose root
+decision — *`(venue_name, account_id)` is mandatory for a live portfolio, and the durable store, not
+the spec, is the source of truth* — is what most of them were blocked on.
+
+| ID | Verdict | Disposition |
+|----|---------|-------------|
+| **CR-01** — cross-venue account conflation | **CLOSED** | Quick task `260722-g6w` (`5fcf476e`). `_account_ids_for_spec` / `_attach_venue_accounts` take a required keyword-only `venue_name` and skip portfolios whose venue is not the booted one; venue resolved as `venue_name or exchange` so legacy portfolios are not stripped. RED reproduced pre-fix: derivation returned `['main']` for a binance portfolio on an okx boot, `[None]` after. The lifecycle map was deliberately NOT re-keyed to a pair — `assemble_venues` keys by `spec.account_id or 'default'` and every spec in one call shares `exchange`, so it is single-venue by construction. |
+| **CR-02** — account-less live portfolio loses every venue safety gate | **DEFERRED → ACCT-03** | Decision made 2026-07-22: **hard-raise**, not per-portfolio quarantine — unlike a dark strategy, an unattached portfolio still routes orders. |
+| **CR-03** — post-boot `add_portfolio` never attaches an account | **DEFERRED → ACCT-05** | Re-scoped upward: under DB-as-source-of-truth this is the PRIMARY creation path, not an edge case. On a fresh DB nothing rehydrates, so the first `add_portfolio` is how every portfolio is born. |
+| **CR-04** — D-09 config move is a guaranteed no-op | **DEFERRED → ACCT-11** | Confirmed greenfield 2026-07-22 (no deployment holds real persisted state), so this collapses from a data migration to a guard against a state that should never arise: count orphans and refuse. |
+| **CR-05** — partial per-account credentials mix with the ambient set | **CLOSED** | Quick task `260722-g6w` (`47a0e185`). `OkxConnectorPlugin.build` gates on `OkxSettings`' required field set (verified = exactly the auth triple) before construction and raises `CredentialResolutionError` naming missing FIELD NAMES only. The env source is deliberately NOT suppressed — init kwargs already outrank it, and suppression would strip `sandbox`/`region` and silently flip a configured EEA account to global+sandbox (OKX 50119). RED: `DID NOT RAISE`, with a probe showing the connector carrying the ambient secret. |
+| **WR-01** — `save_config` raises for portfolios `_persist_definition` skips | **DEFERRED → ACCT-07** | ACCT-03 makes the early-return unreachable, which resolves the disagreement at its root. |
+| **WR-02** — one bad portfolio config aborts layering for the rest | **DEFERRED → ACCT-08** | Folded there because WR-02 and ACCT-08 edit the SAME statement (`live_trading_system.py:1341`). |
+| **WR-03** — registration and resolution normalize the key differently | **DEFERRED → ACCT-04** | Sharpened during the 2026-07-22 discussion: it is not merely an asymmetry. Both readers construct `(venue, None)` raw, so for an unnamed account the registered `(venue,'default')` key is unreachable by every reader — a write-only entry. Dissolves when the 6 live-path coercions are deleted. |
+| **WR-04** — `enabled` is write-once-`True` | **DEFERRED → ACCT-10** | Decision made 2026-07-22: **persist deactivation** via `PortfolioDefinitionStore.set_enabled`, so a stopped portfolio does not resume trading on the next boot. |
+| **WR-05** — minting + secret-ref read compose into an ambient-credential fallback | **DEFERRED → ACCT-02** | Dies with `_mint_account_rows`, which writes `secret_ref=None` and is the root of the fail-open composite. |
+| **WR-06** — the D-04 spoofing guard has five paths to silent inertness | **DEFERRED → 11.1 discussion** | A genuine open choice, not a consequence. Recorded lean: fold only the `venue_uid_guard_active` status flag; defer the alert-sink rerouting so the phase does not double in size. |
+| **WR-07** — non-primary accounts build unwired data providers | **DEFERRED → 11.1 discussion** | Open choice: build providers for the primary only, or wire halt-signal / stream-state listeners on all. Depends on whether multi-account data streams are on the roadmap. |
+| **WR-08** — teardown drives only the first lifecycle | **CLOSED** | Quick task `260722-hpz` (`59eb44e3`). `stop()` snapshots `_venue_lifecycles.items()` before the `try` and loops in the `finally`, with per-iteration `try/except` at the call site (not inside `VenueLifecycle.stop()`, which must keep raising for its own callers). Safe because `close_all()` clears its memo in a `finally` — idempotency independently verified. RED: exactly 3 failed / 99 passed pre-fix. |
+| **WR-09** — three modules reach into `PortfolioHandler._portfolios` | **DEFERRED → ACCT-08** | ACCT-01 and ACCT-05 rewrite two of the four call sites anyway. |
+| **WR-10** — `on_order` failures are invisible outside the log | **DEFERRED → ACCT-09** | Scope shrinks under ACCT-03: the `account_id is None` branch becomes unreachable, so this covers two paths and deletes the third. |
+| **WR-11** — the flagship multi-portfolio test demonstrates the forbidden shape | **DEFERRED → ACCT-03 (mandatory)** | Not optional: ACCT-03 makes the half-null fixture illegal, so Phase 11.1 cannot go green until it is corrected. Recorded as a gate condition rather than a separate requirement. |
+| **WR-12** — the migration tests cannot detect the CR-04 failure mode | **DEFERRED → ACCT-11** | Travels with CR-04; the new test stages ONLY `portfolio_account_state` rows, the real pre-upgrade shape. |
+
+**Next review:** after Phase 11.1 lands, re-run as `11-REVIEW-2.md` and produce a *Prior Finding
+Closure Audit* verifying the 14 deferred findings against the then-current code — the
+`10.1-REVIEW-2.md` pattern. Verifying closure independently is the point; do not mark them closed
+from commit messages.
+
+---
 
 ## Summary
 
