@@ -10,13 +10,15 @@ from itrader.execution_handler.execution_handler import (
     DEFAULT_ACCOUNT_ID,
     ExecutionHandler,
 )
-from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.order_handler.storage import OrderStorageFactory
 from itrader.events_handler.events import SignalEvent, BarEvent
 from itrader.core.enums import EventType, FillStatus, OrderType, Side
 from itrader.core.sizing import FractionOfCash, TradingDirection
 
-from tests.support.venue_wiring import backtest_venue_bundles
+from tests.support.venue_wiring import (
+    backtest_portfolio_handler,
+    backtest_venue_bundles,
+)
 
 
 class _StopLimitHarness:
@@ -24,7 +26,7 @@ class _StopLimitHarness:
 
     def __init__(self):
         self.queue = Queue()
-        self.ptf = PortfolioHandler(self.queue)
+        self.ptf = backtest_portfolio_handler(self.queue)
         self.storage = OrderStorageFactory.create("test")
         self.order_handler = OrderHandler(self.queue, self.ptf, self.storage)
         self.execution = ExecutionHandler(

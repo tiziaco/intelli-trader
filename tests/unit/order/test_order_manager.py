@@ -28,6 +28,7 @@ from itrader.events_handler.events import SignalEvent, OrderEvent, FillEvent
 from itrader.core.enums import OrderType, OrderCommand, OrderStatus, Side, OrderTriggerSource, MarketExecution
 from itrader.core.exceptions import InsufficientFundsError
 from itrader.core.sizing import FractionOfCash, TradingDirection
+from tests.support.venue_wiring import backtest_portfolio_handler
 
 
 # --- OrderManager initialization -------------------------------------------
@@ -67,7 +68,7 @@ class _Harness:
 
     def __init__(self):
         self.queue = Queue()
-        self.ptf_handler = PortfolioHandler(self.queue)
+        self.ptf_handler = backtest_portfolio_handler(self.queue)
         self.storage = OrderStorageFactory.create("test")
         self.handler = OrderHandler(self.queue, self.ptf_handler, self.storage)
         self.portfolio_id = self.ptf_handler.add_portfolio("p", "default", 100000)

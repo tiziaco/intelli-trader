@@ -6,15 +6,15 @@ import pytest
 
 import uuid_utils.compat as uuid_compat
 
-from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.events_handler.events import FillEvent
 from itrader.core.enums import FillStatus, Side
+from tests.support.venue_wiring import backtest_portfolio_handler
 
 
 @pytest.fixture
 def env():
     queue = Queue()
-    ptf = PortfolioHandler(queue)
+    ptf = backtest_portfolio_handler(queue)
     pid = ptf.add_portfolio("p", "default", 100000)
 
     def fill(status):

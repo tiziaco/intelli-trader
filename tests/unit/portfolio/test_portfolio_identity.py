@@ -30,6 +30,10 @@ from itrader.core.ids import PortfolioId
 from itrader.core.portfolio_read_model import PortfolioReadModel
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
+from tests.support.venue_wiring import (
+    backtest_portfolio_handler,
+    compute_account,
+)
 
 
 _NAME = "identity_pf"
@@ -41,7 +45,7 @@ _CASH = 100000
 def env():
     """A PortfolioHandler (test environment) + its global queue."""
     global_queue = Queue()
-    handler = PortfolioHandler(
+    handler = backtest_portfolio_handler(
         global_queue=global_queue,
         config_dir="settings",
         environment="test",
@@ -60,6 +64,10 @@ def _portfolio(**kwargs) -> Portfolio:
         time=datetime.now(UTC),
     )
     defaults.update(kwargs)
+    # D-02 (11.1-09): the account is SUPPLIED, never minted by the portfolio. It is
+    # built from the SAME cash the portfolio is asked to open at — a mismatch is
+    # refused at construction (T-11.1-42), so the two cannot drift here either.
+    defaults.setdefault("account", compute_account(defaults["cash"]))
     return Portfolio(**defaults)
 
 

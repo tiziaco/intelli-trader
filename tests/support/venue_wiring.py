@@ -94,7 +94,7 @@ def compute_account(
     )
 
 
-def backtest_portfolio_handler(bus: Any, **kwargs: Any) -> Any:
+def backtest_portfolio_handler(bus: Optional[Any] = None, **kwargs: Any) -> Any:
     """A ``PortfolioHandler`` wired to a backtest-shaped ``VenueBundles`` (11.1-09).
 
     ``add_portfolio`` now builds each portfolio's account through the venue plugin
@@ -102,8 +102,11 @@ def backtest_portfolio_handler(bus: Any, **kwargs: Any) -> Any:
     rather than minting one inline. Every direct-construction test site that creates
     portfolios needs the same recipe; this is it.
 
-    The memo is built over ``bus`` so the exchange the paper plugin mints publishes
-    onto the same queue the handler does — the shape production wires.
+    The memo is built over the bus so the exchange the paper plugin mints publishes
+    onto the same queue the handler does — the shape production wires. The queue may
+    arrive positionally or as ``global_queue=``; both call shapes exist in the tree.
     """
+    if bus is None:
+        bus = kwargs.pop('global_queue')
     kwargs.setdefault('venue_bundles', backtest_venue_bundles(bus))
     return PortfolioHandler(bus, **kwargs)

@@ -28,6 +28,7 @@ import random
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
+from tests.support.venue_wiring import compute_account
 
 
 class _ExplodingConnectorProvider:

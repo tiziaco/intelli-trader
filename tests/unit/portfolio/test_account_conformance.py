@@ -45,6 +45,7 @@ from itrader.outils.dict_merge import recursive_merge
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
 from itrader.portfolio_handler.account.venue import VenueAccount
+from tests.support.venue_wiring import compute_account
 
 _TICKER = "BTC/USDC"
 _SPOT_FIXTURE = Path(__file__).parent / "okx_recon_payloads_spot.json"
@@ -105,20 +106,24 @@ def venue_connectors():
 
 
 def _build_cash_leaf(_venue_connectors):
-    portfolio = Portfolio("cash_pf", "paper", Decimal("150000"), datetime.now())
+    portfolio = Portfolio("cash_pf", "paper", Decimal("150000"), datetime.now(),
+                          account=compute_account(Decimal("150000")))
     return portfolio, portfolio.account
 
 
 def _build_margin_leaf(_venue_connectors):
     portfolio = Portfolio("margin_pf", "paper", Decimal("150000"),
-                          datetime.now(), config=_margin_config())
+                          datetime.now(), config=_margin_config(),
+                          account=compute_account(Decimal("150000"),
+                                                  enable_margin=True))
     return portfolio, portfolio.account
 
 
 def _build_venue_leaf(venue_connectors):
     # A real Portfolio whose account leaf is swapped for a VenueAccount snapshotted
     # from the SPOT fixture (quote from wiring == USDC, never the USDT default).
-    portfolio = Portfolio("venue_pf", "okx", Decimal("150000"), datetime.now())
+    portfolio = Portfolio("venue_pf", "okx", Decimal("150000"), datetime.now(),
+                          account=compute_account(Decimal("150000")))
     connector = venue_connectors(_spot_payloads())
     account = VenueAccount(connector, quote_currency="USDC", account_id="acct-test")
     account.snapshot()
@@ -268,7 +273,9 @@ def test_margin_op_on_venue_account_raises_before_mutation(venue_connectors):
     settlement did not partially apply (closes the V17-14 cast arm).
     """
     portfolio = Portfolio("venue_margin_pf", "okx", Decimal("150000"),
-                          datetime.now(), config=_margin_config())
+                          datetime.now(), config=_margin_config(),
+                          account=compute_account(Decimal("150000"),
+                                                  enable_margin=True))
     connector = venue_connectors(_spot_payloads())
     account = VenueAccount(connector, quote_currency="USDC", account_id="acct-test")
     account.snapshot()

@@ -28,6 +28,7 @@ from itrader.core.enums import TransactionType
 from itrader.core.exceptions import InsufficientFundsError
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.transaction import Transaction
+from tests.support.venue_wiring import compute_account
 
 
 def _margin_config(max_leverage: str = "10") -> PortfolioConfig:
@@ -44,7 +45,8 @@ def _margin_config(max_leverage: str = "10") -> PortfolioConfig:
 def margin_portfolio():
     """A $150000 portfolio with enable_margin=True (lock-and-settle on)."""
     return Portfolio(
-        "margin_pf", "paper", 150000, datetime.now(), config=_margin_config()
+        "margin_pf", "paper", 150000, datetime.now(), config=_margin_config(),
+        account=compute_account(150000, enable_margin=True),
     )
 
 

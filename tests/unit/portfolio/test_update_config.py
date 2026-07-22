@@ -18,6 +18,10 @@ from itrader.outils.dict_merge import recursive_merge
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.core.exceptions.base import ConfigurationError
+from tests.support.venue_wiring import (
+    backtest_portfolio_handler,
+    compute_account,
+)
 
 
 # --- shared recursive_merge helper (WR-04 sibling preservation) -------------------
@@ -45,7 +49,7 @@ def test_recursive_merge_replaces_non_dict_values():
 
 @pytest.fixture
 def handler():
-    return PortfolioHandler(global_queue=Queue(), config_dir="settings", environment="test")
+    return backtest_portfolio_handler(global_queue=Queue(), config_dir="settings", environment="test")
 
 
 def test_handler_valid_update_swaps_config_and_rederives_cache(handler):
@@ -83,6 +87,7 @@ def portfolio():
     return Portfolio(
         name="test_pf", exchange="paper",
         cash=Decimal("100000"), time=datetime.now(UTC),
+        account=compute_account(Decimal("100000")),
     )
 
 

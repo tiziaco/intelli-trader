@@ -23,12 +23,14 @@ from itrader.core.exceptions import InvalidTransactionError
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
 from itrader import idgen
+from tests.support.venue_wiring import compute_account
 
 
 @pytest.fixture
 def spot_portfolio():
     """A fresh SPOT simulated portfolio (enable_margin defaults False)."""
-    return Portfolio("spot_pf", "paper", 150000, datetime.now())
+    return Portfolio("spot_pf", "paper", 150000, datetime.now(),
+                     account=compute_account(150000))
 
 
 def _txn(txn_type, ticker, price, qty):

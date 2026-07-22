@@ -41,6 +41,7 @@ from itrader.core.exceptions import InsufficientFundsError
 from itrader.portfolio_handler.account import SimulatedMarginAccount
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.transaction import Transaction
+from tests.support.venue_wiring import compute_account
 
 
 def _margin_config(max_leverage: str = "10") -> PortfolioConfig:
@@ -73,7 +74,8 @@ def cm():
 def margin_portfolio():
     """A $100000 portfolio with enable_margin=True (lock-and-settle on)."""
     return Portfolio(
-        "wr04_pf", "paper", 100000, datetime.now(), config=_margin_config()
+        "wr04_pf", "paper", 100000, datetime.now(), config=_margin_config(),
+        account=compute_account(100000, enable_margin=True),
     )
 
 

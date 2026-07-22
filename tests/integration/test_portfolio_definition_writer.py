@@ -38,6 +38,7 @@ from itrader.portfolio_handler.storage.sql_storage import SqlPortfolioStateStora
 from itrader.storage import SqlEngine
 from itrader.storage.portfolio_definition_store import PortfolioDefinitionStore
 from tests.support.schema import provision_schema
+from tests.support.venue_wiring import backtest_portfolio_handler
 
 _AT = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 _VENUE = "paper"
@@ -71,7 +72,7 @@ def _seed_account(engine, account_id: str) -> None:
 
 def _live_handler(engine) -> PortfolioHandler:
     """A PortfolioHandler on the LIVE arm — the only arm that owns a definition store."""
-    return PortfolioHandler(queue.Queue(), environment="live", sql_engine=engine)
+    return backtest_portfolio_handler(queue.Queue(), environment="live", sql_engine=engine)
 
 
 # --------------------------------------------------------------------------- #
@@ -167,7 +168,7 @@ def test_re_adding_a_persisted_portfolio_never_clobbers_its_config(wiring) -> No
 def test_a_backtest_handler_owns_no_definition_store(wiring) -> None:
     """The byte-exact oracle path never touches the durable definition table."""
     engine, definitions = wiring
-    handler = PortfolioHandler(queue.Queue(), environment="backtest", sql_engine=None)
+    handler = backtest_portfolio_handler(queue.Queue(), environment="backtest", sql_engine=None)
 
     assert handler.definition_store is None
     handler.add_portfolio(name="pf-bt", exchange="paper", cash=100_000)

@@ -25,7 +25,6 @@ from queue import Queue
 
 import pytest
 
-from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.order_handler.storage import OrderStorageFactory
 from itrader.events_handler.events import FillEvent, OrderEvent, SignalEvent
@@ -36,6 +35,7 @@ from itrader.core.sizing import (
     PercentFromFill,
     TradingDirection,
 )
+from tests.support.venue_wiring import backtest_portfolio_handler
 
 
 _STRATEGY_ID = 1
@@ -46,7 +46,7 @@ class _SLTPHarness:
 
     def __init__(self):
         self.queue = Queue()
-        self.ptf_handler = PortfolioHandler(self.queue)
+        self.ptf_handler = backtest_portfolio_handler(self.queue)
         self.order_storage = OrderStorageFactory.create("test")
         self.order_handler = OrderHandler(self.queue, self.ptf_handler, self.order_storage)
         self.last_ptf_id = self.ptf_handler.add_portfolio("test_ptf", "default", 10000)

@@ -19,6 +19,10 @@ from itrader.portfolio_handler.account import SimulatedMarginAccount
 from itrader.core.enums import PortfolioState, PositionSide
 from itrader.config import PortfolioConfig, get_portfolio_preset
 from itrader.outils.dict_merge import recursive_merge
+from tests.support.venue_wiring import (
+    backtest_portfolio_handler,
+    compute_account,
+)
 
 
 def _margin_config(max_leverage: str = "10") -> PortfolioConfig:
@@ -58,7 +62,7 @@ _CASH = 150000
 def env():
     """A PortfolioHandler (test environment) + its global queue."""
     global_queue = Queue()
-    handler = PortfolioHandler(
+    handler = backtest_portfolio_handler(
         global_queue=global_queue,
         config_dir="settings",
         environment="test",
@@ -557,6 +561,7 @@ def portfolio():
     return Portfolio(
         name="Test Portfolio", exchange="NYSE",
         cash=10000.0, time=datetime.now(UTC),
+        account=compute_account(10000.0),
     )
 
 
