@@ -211,15 +211,19 @@ assert "sql" not in _cfg.__dict__, (
 # `from itrader.connectors.okx import OkxConnector` / `OkxSettings()` to module top,
 # importing the plugin module here pulls the OKX stack and this assertion fails loudly.
 #
-# NOTE — the ConnectorProvider (itrader.connectors.provider) is DELIBERATELY EXCLUDED
-# from this ccxt-absent window: importing anything under the `itrader.connectors`
-# package runs connectors/__init__.py, which eagerly re-exports `OkxConnector` (pulling
-# ccxt) — a PRE-EXISTING barrel decision left untouched by 05-04 (consumers import
-# `itrader.connectors.provider` DIRECTLY on the LIVE path only; the backtest root never
-# imports the connectors package, which is why it stays inert). That barrel pull is not
-# a plugin hoist, so folding the ConnectorProvider import into this window would mask
-# the real guard. The OkxConnectorPlugin recipe's own laziness is proven by the plugin
-# MODULE staying inert to import (asserted here) plus its build-body unit contract
+# NOTE — the ConnectorProvider (itrader.connectors.provider) is INSIDE this ccxt-absent
+# window as of Phase 11.1 (RESEARCH F-2). It used to be excluded, on the premise that
+# importing anything under the `itrader.connectors` package runs connectors/__init__.py,
+# which eagerly re-exported `OkxConnector` and therefore pulled ccxt. That barrel
+# re-export is GONE — the barrel now exports only the `LiveConnector` Protocol — so the
+# exclusion has no premise left. Folding the provider in is not cosmetic: Phase 11.1's
+# D-04 puts a REAL, EMPTY `ConnectorProvider({})` on the BACKTEST wiring path (absence is
+# modelled as an empty collection, never as `None`), and the assertion below is the only
+# mechanical proof that that wiring stays inert. If a future edit re-introduces a
+# concretion re-export in `connectors/__init__.py` (or hoists a ccxt import into
+# `connectors/provider.py`), importing the provider here pulls the OKX stack and the
+# assertion fails loudly. The OkxConnectorPlugin recipe's own laziness is proven by the
+# plugin MODULE staying inert to import (asserted here) plus its build-body unit contract
 # (tests/unit/venues/test_okx_plugin.py).
 from itrader.venues.okx_plugin import (
     OkxConnectorPlugin,
@@ -228,6 +232,7 @@ from itrader.venues.okx_plugin import (
 )
 from itrader.venues.paper_plugin import PaperVenuePlugin
 from itrader.venues.registry import DataProviderRegistry, ExecutionVenueRegistry
+from itrader.connectors.provider import ConnectorProvider
 
 _exec_registry = ExecutionVenueRegistry()
 _data_registry = DataProviderRegistry()
@@ -240,6 +245,9 @@ _exec_registry.register("okx", OkxVenuePlugin())
 _exec_registry.register("paper", PaperVenuePlugin(object()))
 _data_registry.register("okx", OkxDataPlugin())
 _okx_connector_plugin = OkxConnectorPlugin()
+# Phase 11.1 (D-04): the BACKTEST wiring passes a REAL, EMPTY ConnectorProvider — never
+# None. Constructing it is register-only (no plugin build*), so it must pull no ccxt.
+_connectors = ConnectorProvider({})
 
 _okx_leaked = [
     name
@@ -247,11 +255,13 @@ _okx_leaked = [
     if name in sys.modules
 ]
 assert not _okx_leaked, (
-    "P5 register-vs-build inertness violation (VENUE-02): importing + registering the "
-    "OKX/paper venue/data plugins pulled the OKX/ccxt stack: "
+    "P5/11.1 register-vs-build inertness violation (VENUE-02/VENUE-03): importing + "
+    "registering the OKX/paper venue/data plugins, and importing + constructing the "
+    "ConnectorProvider({}) the backtest wires (D-04), pulled the OKX/ccxt stack: "
     + repr(_okx_leaked)
     + " (the ccxt.pro import + OkxSettings() must stay inside a plugin's build*, never "
-    "at module or register time — D-04 triple-deferral)"
+    "at module or register time — D-04 triple-deferral; and itrader/connectors/__init__.py "
+    "must re-export no connector concretion — RESEARCH F-2)"
 )
 
 # Phase 6 (06-06, RUN-01/RUN-03 register-vs-build): the new live composition-root
