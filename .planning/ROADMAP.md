@@ -536,7 +536,7 @@ the wave that touches them.*
 
 **Wave 8** *(blocked on all — D-28 W7 tests)*
 
-- [ ] 11-11-PLAN.md — two-paper-account lifecycle: independent sizing, fill attribution with the negative asserted, restart with stable ids and config proven equal by value (MPORT-03, MPORT-04)
+- [x] 11-11-PLAN.md — two-paper-account lifecycle: independent sizing, fill attribution with the negative asserted, restart with stable ids and config proven equal by value (MPORT-03, MPORT-04)
 
 ### Phase 12: Test Migration + Gates
 
