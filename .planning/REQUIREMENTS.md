@@ -350,6 +350,47 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   makes an existing dimension explicit rather than adding one: every mutable field on `OkxExchange` is already
   account-scoped, and the markets/precision map lives on the connector (`okx.py:952-955`). (P11 CONTEXT D-27.)
 
+### Account Provisioning + Mandatory Account Identity (P11.1 — INSERTED follow-up to P11)
+
+*Source: the Phase 11 code review (`11-REVIEW.md` CR-02/CR-03/WR-03/WR-05) plus the 2026-07-22 design
+discussion. Root decision: `(venue_name, account_id)` is mandatory for a live portfolio, and the DURABLE
+STORE — not the spec — is the source of truth for both portfolios and accounts. The schema already encodes
+this (`portfolios.venue_name` / `.account_id` are `NOT NULL` under a composite FK onto `venue_accounts`);
+the code does not yet trust it.*
+
+- [ ] **ACCT-01**: The live account set is derived from `VenueAccountStore.read_enabled_for(venue_name)`,
+  not from the spec. The spec-derived halves of `_account_ids_for_spec` and the `spec.portfolios` field are
+  deleted; `assemble_venues` receives the account set as an argument, and `live_trading_system.py` computes
+  no account identity of its own. Decouples provisioning from portfolio creation — an account can be
+  provisioned before any portfolio references it, which is what makes the composite FK satisfiable at
+  `add_portfolio` time.
+- [ ] **ACCT-02**: `_mint_account_rows` is replaced by a deliberate provisioning path — a
+  `venue_account:{venue}/{id}` `config_router` scope mirroring the existing `venue:{name}` → `VenueStore`
+  scope and reusing its secret-scrub guard. A **handoff, not a deletion**: minting is currently the only
+  production writer of `venue_accounts`, so removing it unreplaced makes the FK reject the first
+  `add_portfolio` on a fresh DB. Minting also writes `secret_ref=None`, routing that account to the ambient
+  `OKX_API_*` credentials — the fail-open composite of `11-REVIEW.md` WR-05 — so it is a liability, not a
+  convenience.
+- [ ] **ACCT-03** *(closes 11-REVIEW CR-02)*: A live portfolio naming no venue account **raises** at
+  composition time. Today it is silently skipped and left on its `SimulatedCashAccount` leaf with
+  `is_venue_truth=False`, which disables snapshot, streaming, `VenueReconciler` and the D-04
+  unexplained-residual HALT behind a green suite. Hard-raise rather than per-portfolio quarantine (the
+  `260718-e36`/`evz` precedent): unlike a dark strategy, an unattached portfolio still routes orders.
+- [ ] **ACCT-04** *(closes 11-REVIEW WR-03)*: The six live-path `or DEFAULT_ACCOUNT_ID` coercions are
+  deleted. Registration writes `(venue, 'default')` while both readers construct `(venue, None)` raw, so for
+  an unnamed account the registered key is unreachable by every reader — a write-only entry, not merely an
+  asymmetry. The backtest/simulated uses are KEPT: `DEFAULT_ACCOUNT_ID` is the backtest single-account
+  identity and is load-bearing for the golden oracle.
+- [ ] **ACCT-05** *(closes 11-REVIEW CR-03)*: The venue account is attached on every portfolio creation
+  path, not only inside `build_live_system`. Under DB-as-source-of-truth this is the PRIMARY creation path:
+  on a fresh DB nothing rehydrates, so the first `add_portfolio` yields a portfolio submitting real orders
+  against a compute-leaf ledger with no reconcile. The attach seam must not use `None`-then-assign late
+  wiring or a post-construction setter.
+- [ ] **ACCT-06**: The two docstrings asserting the phantom *"plan 11-08 makes account_id mandatory at
+  composition time"* invariant (`execution_handler.py:209`, `core/portfolio_read_model.py:227`) are
+  corrected — ACCT-03 is what makes it true. The two citing 11-08's **distinct**-account invariant
+  (`live_trading_system.py:1627`, `reconciliation_coordinator.py:164`) are accurate and stay untouched.
+
 ### Test Migration + Gates (P12 — except TEST-01, pulled forward into P6)
 
 - [x] **TEST-01** *(delivered in **P6**, pulled forward from P12)*: the ENTIRE replay test-harness moves

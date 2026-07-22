@@ -6,15 +6,15 @@ current_phase: 12
 current_phase_name: Test Migration + Gates
 status: planning
 stopped_at: Phase 11 context gathered
-last_updated: "2026-07-22T08:55:15.032Z"
+last_updated: "2026-07-22T10:32:17.444Z"
 last_activity: 2026-07-22
-last_activity_desc: Phase 11 complete, transitioned to Phase 12
+last_activity_desc: "Completed quick task 260722-g6w: closed Phase 11 code-review blockers CR-01 + CR-05"
 progress:
-  total_phases: 11
+  total_phases: 12
   completed_phases: 10
   total_plans: 43
   completed_plans: 43
-  percent: 91
+  percent: 83
 ---
 
 # Project State
@@ -33,7 +33,7 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 
 ## Current Position
 
-Phase: 12 — Test Migration + Gates
+Phase: 11.1 — Account Provisioning + Mandatory Account Identity (INSERTED)
 Plan: Not started
 Status: Ready to plan
 Last activity: 2026-07-22 — Completed quick task 260722-g6w: closed Phase 11 code-review blockers CR-01 + CR-05
@@ -278,6 +278,7 @@ trim boundary P1–P8+P12 core vs P9–P11 ★ is noted, not taken). Research fl
   rename folded into P3 (only migrations *relocation* stays in the merged P4).
 
 - Phase 10.1 inserted after Phase 10: StrategiesHandler Decomposition (URGENT)
+- Phase 11.1 inserted after Phase 11: Account Provisioning + Mandatory Account Identity — DB becomes sole source of portfolio+account truth; closes code-review CR-02/CR-03/WR-03/WR-05 (URGENT)
 
 ### Decisions
 
