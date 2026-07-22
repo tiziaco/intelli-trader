@@ -20,7 +20,10 @@ vanish.
 
 The collaborator receives its dep subset by injection (D-09): `order_storage`,
 `logger`, `order_validator`, `sizing_resolver`, `portfolio_handler` (read-model),
-`commission_estimator`, the coordinator-owned `BracketBook` (`self._brackets`, the
+`fee_model_provider` (D-18: the wiring seam hands over the venue's CURRENT fee
+model; the admission CONVENTION for reading it lives here, in
+`_estimate_commission`, because it is admission policy — not wiring),
+the coordinator-owned `BracketBook` (`self._brackets`, the
 single owner of the pending-bracket map, D-05), and the coordinator-owned
 `BracketManager` (the bracket-assembly seam — admission reaches assembly through it,
 holding NO reconcile/lifecycle ref, D-08). NO queue access (D-06/D-18) — the
@@ -30,7 +33,7 @@ puts. Money is Decimal end-to-end via `to_money` (NEVER `Decimal(float)`).
 
 import logging
 from decimal import Decimal
-from typing import Any, Callable, List, Optional
+from typing import Any, List, Optional
 
 from ..order import Order
 from ..operation_result import OperationResult
@@ -38,6 +41,7 @@ from ..base import OrderStorage
 from ..order_validator import EnhancedOrderValidator
 from ..sizing_resolver import SizingResolver
 from ..brackets import BracketBook, BracketManager
+from ...core.commission_estimator import FeeModelProvider
 from ...core.enums import OrderStatus, OrderType, Side, OrderOperationType, OrderTriggerSource, PositionSide
 from ...core.exceptions import InsufficientFundsError, SizingPolicyViolation
 from ...core.money import to_money
@@ -63,7 +67,7 @@ class AdmissionManager:
 	             order_validator: Optional[EnhancedOrderValidator],
 	             sizing_resolver: Optional[SizingResolver],
 	             portfolio_handler: Optional[PortfolioReadModel],
-	             commission_estimator: Optional[Callable[[Decimal, Decimal], Decimal]],
+	             fee_model_provider: Optional[FeeModelProvider],
 	             brackets: BracketBook, bracket_manager: BracketManager,
 	             universe: Optional[Universe] = None,
 	             enable_margin: bool = False,
@@ -73,7 +77,11 @@ class AdmissionManager:
 		self.order_validator = order_validator
 		self.sizing_resolver = sizing_resolver
 		self.portfolio_handler = portfolio_handler
-		self.commission_estimator = commission_estimator
+		# D-18: the WIRING seam only — a `() -> FeeModel | None` provider. NEVER
+		# dereference it here at construction: the exchange REPLACES its fee model
+		# on update_config (simulated.py:775), so a captured model would price
+		# reservations at a rate the venue no longer charges.
+		self.fee_model_provider = fee_model_provider
 		# D-05: the coordinator-owned single bracket-map owner, injected.
 		self._brackets = brackets
 		# D-08: the coordinator-owned bracket-assembly seam, injected — admission
@@ -101,21 +109,47 @@ class AdmissionManager:
 		self._universe = universe
 
 	def _estimate_commission(self, order: Order) -> Decimal:
-		"""Estimate the commission for an order's admission reservation (D-04).
+		"""Estimate the commission for an order's admission reservation (D-04/D-18).
 
-		Delegates to the injected estimator (quantity, price) -> Decimal;
-		``None`` -> ``Decimal("0")`` so the reservation amount degrades to
-		exactly price x quantity — today's funds-check math.
+		D-18 split the old single-adapter seam in two. The WIRING half — resolving
+		the venue's CURRENT fee model — is the injected ``FeeModelProvider``
+		(``core/commission_estimator.py``). The ADMISSION CONVENTION — that the
+		estimate is taken at ``side='buy', order_type='market'`` (D-04) — is
+		admission policy, so it lives HERE and nowhere else. It was moved verbatim
+		out of the commission-estimate adapter class D-18 deleted from ``compose``.
+
+		Two DISTINCT zero paths, deliberately not conflated:
+
+		* no provider wired -> ``Decimal("0")``;
+		* the provider returns ``None``, i.e. this venue exposes NO fee model at
+		  all -> ``Decimal("0")``.
+
+		Either way the reservation degrades to exactly price x quantity — today's
+		funds-check math. NOTE (KNOWN, DELIBERATELY DEFERRED, T-11.1-48): the live
+		OKX exchange carries no ``fee_model`` attribute, so it takes the second
+		path and reserves NO fee headroom on a venue that charges real fees. D-18
+		makes that visible as an explicit contract in place of the old
+		``isinstance(exchange, SimulatedExchange)`` guard, but does NOT fix it:
+		fixing it changes reservation amounts on the golden path and would move the
+		byte-exact oracle, so it must arrive as its own decision, not as a refactor.
 		"""
-		if self.commission_estimator is None:
+		if self.fee_model_provider is None:
 			return Decimal("0")
-		# WR-04: normalize the estimator return through the money boundary. An
-		# injected estimator that returns a float (e.g. a percent-fee model) would
-		# otherwise import binary-float-repr error into the reservation amount or
-		# raise Decimal+float TypeError in the reserve path, violating the
-		# Decimal-end-to-end money policy at a correctness-critical site. For the
-		# current Decimal-returning estimator this is value-identity (byte-exact).
-		return to_money(self.commission_estimator(order.quantity, order.price))
+		# The CALL-TIME dereference (D-18, load-bearing). Bound to a LOCAL and
+		# never cached on self: ``update_config`` REPLACES the exchange's fee model
+		# (simulated.py:775, right after the atomic config swap at :770), so a
+		# memoized model would silently quote a retired rate forever.
+		fee_model = self.fee_model_provider()
+		if fee_model is None:
+			return Decimal("0")
+		# WR-04: normalize the fee-model return through the money boundary. A fee
+		# model that returns a float would otherwise import binary-float-repr error
+		# into the reservation amount or raise Decimal+float TypeError in the
+		# reserve path, violating the Decimal-end-to-end money policy at a
+		# correctness-critical site. For a Decimal-returning fee model this is
+		# value-identity (byte-exact) — to_money short-circuits on Decimal input.
+		return to_money(fee_model.calculate_fee(
+			order.quantity, order.price, side="buy", order_type="market"))
 
 	def process_signal(self, signal_event: SignalEvent) -> List[OperationResult]:
 		"""

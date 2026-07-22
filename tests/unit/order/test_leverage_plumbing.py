@@ -153,7 +153,7 @@ def _admission(enable_margin, pf_max_leverage):
         None,  # order_validator
         None,  # sizing_resolver
         None,  # portfolio_handler
-        None,  # commission_estimator
+        None,  # fee_model_provider
         brackets, bracket_manager,
         enable_margin=enable_margin,
         portfolio_max_leverage=pf_max_leverage,

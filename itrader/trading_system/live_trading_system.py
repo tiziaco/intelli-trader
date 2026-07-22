@@ -1843,8 +1843,9 @@ def build_live_system(
     # is GONE — compose no longer builds an exchange. Live now hands it a built
     # ``VenueBundles`` whose paper plugin holds ``default_exchange_config()``, which is
     # the SAME default-preset config the old ``None`` resolved to, so live behaviour is
-    # preserved. ``results_store`` stays None. compose_engine reuses the
-    # FeeModelCommissionEstimator admission adapter, retiring the re-inlined commission
+    # preserved. ``results_store`` stays None. compose_engine builds the admission
+    # fee-model provider (11.1-10 / D-18 — the former single-adapter class it replaced
+    # is gone), retiring the re-inlined commission
     # closure. compose_engine is a PURE import, taken lazily here to mirror the module's
     # lazy-import discipline (inertness gate). 06.1-04 (D-13): EngineContext is now
     # hoisted to module top (pure — off the backtest graph after the barrel drop).
@@ -1984,8 +1985,14 @@ def build_live_system(
         route_orders_by_account=True)
 
     # compose already wired portfolio_handler.set_order_storage(order_handler.storage) and
-    # the FeeModelCommissionEstimator admission gate (D-05), so the former inline commission
-    # closure + the duplicate set_order_storage call are gone. build_live_system only needs
+    # the admission fee-model provider (D-05; 11.1-10 / D-18 narrowed that seam to wiring
+    # only), so the former inline commission
+    # closure + the duplicate set_order_storage call are gone. NOTE (T-11.1-48, KNOWN and
+    # DELIBERATELY DEFERRED): the live OKX exchange exposes no ``fee_model`` attribute, so
+    # the provider yields None here and admission reserves NO fee headroom on a venue that
+    # charges real fees. D-18 made this VISIBLE (an explicit no-fee-model contract replacing
+    # an isinstance guard) without fixing it — a fix changes reservation amounts on the
+    # golden path and must arrive as its own decision, not as a refactor. build_live_system only needs
     # the three handles its remaining venue + post-facade wiring touches; the facade sources
     # the FULL graph (+ storages, store=None) off the engine in __init__ (D-10), so no
     # duplicate locals are threaded through here.

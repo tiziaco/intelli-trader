@@ -14,13 +14,10 @@ Design decisions locked for this boundary:
   concern). D-18 gives each job to its rightful owner. This module keeps only the
   wiring half — ``() -> FeeModel | None``. The convention now lives in
   ``AdmissionManager._estimate_commission``, which owns admission policy.
-  ``CommissionEstimator`` is RETIRED and is deleted in the very next commit of
-  this plan, once the three order-domain call sites are retyped: leaving two
-  Protocols side by side permanently would invite a caller to inject the wrong
-  one, and no consumer outside those three sites exists (checked tree-wide). It
-  survives this one commit ONLY so the tree stays type-clean between the two
-  halves of the change. This deliberately REOPENS the D-15 Protocol shape — a
-  considered amendment, not a drift.
+  ``CommissionEstimator`` is DELETED: leaving two Protocols side by side would
+  invite a caller to inject the wrong one, and no consumer remains (checked
+  tree-wide). This deliberately REOPENS the D-15 Protocol shape — a considered
+  amendment, not a drift.
 * **Zero ``itrader`` deps AT RUNTIME.** This module imports nothing from
   ``itrader`` at runtime. The ``FeeModel`` return annotation is
   ``TYPE_CHECKING``-guarded and written as a STRING forward-ref, so it is never
@@ -42,7 +39,6 @@ Design decisions locked for this boundary:
   an explicit capturing-provider counter-example).
 """
 
-from decimal import Decimal
 from typing import Optional, Protocol, TYPE_CHECKING, runtime_checkable
 
 if TYPE_CHECKING:
@@ -54,23 +50,7 @@ if TYPE_CHECKING:
     # narrowing the return type for ``mypy --strict``.
     from itrader.execution_handler.fee_model.base import FeeModel
 
-__all__ = ["FeeModelProvider", "CommissionEstimator"]
-
-
-@runtime_checkable
-class CommissionEstimator(Protocol):
-    """RETIRED by D-18 — deleted in the next commit of this plan.
-
-    The pre-D-18 read-model seam (``f(quantity, price) -> commission``). It
-    conflated wiring with admission policy; ``FeeModelProvider`` below keeps the
-    wiring half and ``AdmissionManager`` took the policy half. Do NOT inject this
-    into anything new — it exists for exactly one commit so the three order-domain
-    call sites can be retyped in their own change.
-    """
-
-    def __call__(self, quantity: Decimal, price: Decimal) -> Decimal:
-        """Estimate the commission for an order as ``f(quantity, price)``."""
-        ...
+__all__ = ["FeeModelProvider"]
 
 
 @runtime_checkable

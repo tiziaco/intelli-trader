@@ -34,6 +34,7 @@ from queue import Queue
 
 import pytest
 
+from itrader.execution_handler.fee_model.base import FeeModel
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.order_handler.storage import OrderStorageFactory
 from itrader.events_handler.events import FillEvent, OrderEvent, SignalEvent
@@ -437,10 +438,17 @@ def test_increase_with_insufficient_funds_yields_cash_reservation_rejection(harn
     # Inflate the estimated commission so reserve = price*qty + commission
     # exceeds available cash (FractionOfCash <= 1 alone always fits). The
     # signal→order pipeline (and its _estimate_commission consumer) lives on
-    # AdmissionManager since 06-03, so inject the fake estimator at its
-    # canonical post-construction home.
-    harness.order_handler.order_manager.admission_manager.commission_estimator = (
-        lambda quantity, price: Decimal("1000000")
+    # AdmissionManager since 06-03, so inject the fake seam at its canonical
+    # post-construction home. D-18: the seam is now a fee-model PROVIDER — the
+    # admission convention lives inside _estimate_commission, not in the seam.
+    class _HugeFeeModel(FeeModel):
+        def calculate_fee(self, quantity, price, side="buy",
+                          order_type="market", is_maker=None):
+            return Decimal("1000000")
+
+    huge_fee_model = _HugeFeeModel()
+    harness.order_handler.order_manager.admission_manager.fee_model_provider = (
+        lambda: huge_fee_model
     )
 
     signal = harness.create_mock_signal("BUY", allow_increase=True)
