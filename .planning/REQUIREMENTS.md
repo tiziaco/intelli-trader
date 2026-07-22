@@ -361,7 +361,7 @@ The discussion explicitly rejected extracting a `trading_system/venue_wiring.py`
 live then differ only in which plugins are registered. Every requirement here is oracle-gated: SMA_MACD
 byte-exact `134 / 46189.87730727451`.*
 
-- [ ] **VENUE-01** *(D-01)*: `Account` carries no reference to `Portfolio`. `SimulatedCashAccount(initial_cash)`
+- [x] **VENUE-01** *(D-01)*: `Account` carries no reference to `Portfolio`. `SimulatedCashAccount(initial_cash)`
   and `SimulatedMarginAccount(initial_cash)` drop the `portfolio` constructor parameter; `VenueAccount` already
   takes none. The two portfolio-dependent reads move into their method signatures — `maintenance_margin(positions, ...)`
   and `margin_ratio(equity)` — supplied by `PortfolioHandler`, already their only caller
@@ -369,37 +369,43 @@ byte-exact `134 / 46189.87730727451`.*
   `SimulatedCashAccount` stores `self.portfolio` and never reads it (that is the byte-exact oracle leaf), and only
   `SimulatedMarginAccount` reads it, at `simulated.py:831-833` and `:873`. **The `Account` ABC does NOT change** —
   neither method is abstract, and `account/conformance.py` references neither.
-- [ ] **VENUE-02** *(D-02, D-03)*: `Portfolio.__init__` receives a **built** `Account`; the duplicate account-leaf
+
+- [x] **VENUE-02** *(D-02, D-03)*: `Portfolio.__init__` receives a **built** `Account`; the duplicate account-leaf
   selection at `portfolio.py:176-179` is deleted, and `VenuePlugin.new_account` becomes the sole account factory,
   losing its `portfolio_ref` parameter. Passing a *factory* into `Portfolio` was considered and rejected — it would
   leave `Portfolio` participating in its own wiring, which is the defect rather than the fix. Today the same
   margin-vs-cash selection is implemented twice, and `PaperVenuePlugin.new_account`'s own docstring admits it is
   the pre-11-07 `account_factory` copied verbatim.
-- [ ] **VENUE-03** *(D-04)*: The backtest registers `PaperVenuePlugin` and goes through the same venue path as live,
+
+- [x] **VENUE-03** *(D-04)*: The backtest registers `PaperVenuePlugin` and goes through the same venue path as live,
   passing a real, empty `ConnectorProvider({})` — **no `Optional`/`None` wiring seam**, honouring the standing
   constraint against late-init. Safe because `ConnectorProvider.__init__` takes a plain plugin dict and
   `PaperVenuePlugin.build_bundle` deliberately ignores its `connectors` argument (paper has no venue session).
   GATE-01 inertness is preserved and independently evidenced: `venues/__init__.py` imports no concretion by P5
   acceptance gate, `venues/registry.py` has zero runtime imports, and `itrader.venues` is absent from
   `test_okx_inertness.py`'s `_FORBIDDEN` list.
-- [ ] **VENUE-04** *(D-05, D-19)*: The backtest venue is named `'paper'`, the `('csv', DEFAULT_ACCOUNT_ID)` alias in
+
+- [x] **VENUE-04** *(D-05, D-19)*: The backtest venue is named `'paper'`, the `('csv', DEFAULT_ACCOUNT_ID)` alias in
   `ExecutionHandler` is retired, and backtest portfolios pass `venue_name='paper'` explicitly so backtest and live
   portfolios are structurally identical at creation. **Highest oracle-risk item in the phase** — it warrants its own
   byte-exact-gated plan. Blast radius: `backtest_trading_system.py:520` (the string is `'csv'`, not `'simulated'`),
   the whole `exchanges` dict literal at `execution_handler.py:290-303` including the dead `('ccxt', …): None` slot,
   the direct reads at `backtest_trading_system.py:395` and `compose.py:239-240`, and ~6 test sites. All fail loudly.
-- [ ] **VENUE-05** *(D-06, D-17)*: `PaperVenuePlugin` builds its **own** `SimulatedExchange` inside `build_bundle`,
+
+- [x] **VENUE-05** *(D-06, D-17)*: `PaperVenuePlugin` builds its **own** `SimulatedExchange` inside `build_bundle`,
   symmetric with `OkxVenuePlugin` building its own `OkxExchange`, from an `ExchangeConfig` received at construction
   (`PaperVenuePlugin(exchange_config)` at registration). `ExecutionHandler` neither mints one (`:290`) nor is handed
   one. This dissolves the compose-versus-venue-assembly cycle at its source — `PaperVenuePlugin(execution_handler.exchanges[...])`
   at `live_trading_system.py:2028` has nothing left to reach for. The config must be passed, not imported: it is absent
   from the `ITraderConfig` singleton AND run-derived, since `_seed_supported_symbols` folds this run's complete ticker
   set into `limits.supported_symbols` (`backtest_trading_system.py:67-78`, `:463-466`).
-- [ ] **VENUE-06** *(D-07)*: `EngineContext` carries `rng`, so the one shared seeded `random.Random` reaches the plugin
+
+- [x] **VENUE-06** *(D-07)*: `EngineContext` carries `rng`, so the one shared seeded `random.Random` reaches the plugin
   that now builds a stochastic component. A consequence of VENUE-05: determinism requires ONE instance injected at the
   wiring seam rather than re-derived per plugin. `EngineContext` currently carries only
   `bus`/`config`/`environment`/`feed`/`store`/`sql_engine`.
-- [ ] **VENUE-07** *(D-08, D-14)*: A memoized `VenueBundles` provider over `(registry, connectors, ctx)` is held by BOTH
+
+- [x] **VENUE-07** *(D-08, D-14)*: A memoized `VenueBundles` provider over `(registry, connectors, ctx)` is held by BOTH
   `ExecutionHandler` and `PortfolioHandler`, each asking for the view it needs (the exchange, or the account). Nothing is
   passed in pre-built and nothing is mutated from outside. It REPLACES `assemble_venues`' eager map plus the registration
   loop at `live_trading_system.py:2101` — a swap, not an addition. Memoization is load-bearing: two independent
@@ -408,7 +414,8 @@ byte-exact `134 / 46189.87730727451`.*
   is built, for the feed, which closes `11-REVIEW.md` **WR-07** structurally — non-primary accounts build none, so there
   are no unwired credential-bearing providers to wire. The review's alternative fix (wire halt-signal on every provider)
   is rejected: it contradicts the documented single-feed decision at `live_trading_system.py:2347`.
-- [ ] **VENUE-08** *(D-18)*: The commission estimator is decomposed. `FeeModelCommissionEstimator` leaves `compose.py`
+
+- [x] **VENUE-08** *(D-18)*: The commission estimator is decomposed. `FeeModelCommissionEstimator` leaves `compose.py`
   (`:57-81`), the `core/commission_estimator.py` seam narrows to a fee-model provider, and the admission convention
   (`side="buy"`, `order_type="market"`) moves into `AdmissionManager`, which owns it — it is admission policy, not wiring.
   Late binding MUST be preserved: `simulated.py:775` **replaces** the fee model object on config update, so holding it
@@ -431,6 +438,7 @@ the code does not yet trust it.*
   no account identity of its own. Decouples provisioning from portfolio creation — an account can be
   provisioned before any portfolio references it, which is what makes the composite FK satisfiable at
   `add_portfolio` time.
+
 - [ ] **ACCT-02**: `_mint_account_rows` is replaced by a deliberate provisioning path — a
   `venue_account:{venue}/{id}` `config_router` scope mirroring the existing `venue:{name}` → `VenueStore`
   scope and reusing its secret-scrub guard. A **handoff, not a deletion**: minting is currently the only
@@ -438,6 +446,7 @@ the code does not yet trust it.*
   `add_portfolio` on a fresh DB. Minting also writes `secret_ref=None`, routing that account to the ambient
   `OKX_API_*` credentials — the fail-open composite of `11-REVIEW.md` WR-05 — so it is a liability, not a
   convenience.
+
 - [ ] **ACCT-03** *(closes 11-REVIEW CR-02)*: A live portfolio naming no venue account **raises** at
   composition time. Today it is silently skipped and left on its `SimulatedCashAccount` leaf with
   `is_venue_truth=False`, which disables snapshot, streaming, `VenueReconciler` and the D-04
@@ -450,20 +459,24 @@ the code does not yet trust it.*
   multi-portfolio test demonstrates the exact account sharing D-14/D-15 forbid. ACCT-03 makes the fixture
   illegal, so it must be given distinct `account_id`s and a real `venue_name` in this phase; the phase
   cannot go green otherwise. Close the half-null bypass explicitly rather than relying on it.
+
 - [ ] **ACCT-04** *(closes 11-REVIEW WR-03)*: The six live-path `or DEFAULT_ACCOUNT_ID` coercions are
   deleted. Registration writes `(venue, 'default')` while both readers construct `(venue, None)` raw, so for
   an unnamed account the registered key is unreachable by every reader — a write-only entry, not merely an
   asymmetry. The backtest/simulated uses are KEPT: `DEFAULT_ACCOUNT_ID` is the backtest single-account
   identity and is load-bearing for the golden oracle.
+
 - [ ] **ACCT-05** *(closes 11-REVIEW CR-03)*: The venue account is attached on every portfolio creation
   path, not only inside `build_live_system`. Under DB-as-source-of-truth this is the PRIMARY creation path:
   on a fresh DB nothing rehydrates, so the first `add_portfolio` yields a portfolio submitting real orders
   against a compute-leaf ledger with no reconcile. The attach seam must not use `None`-then-assign late
   wiring or a post-construction setter.
+
 - [ ] **ACCT-06**: The two docstrings asserting the phantom *"plan 11-08 makes account_id mandatory at
   composition time"* invariant (`execution_handler.py:209`, `core/portfolio_read_model.py:227`) are
   corrected — ACCT-03 is what makes it true. The two citing 11-08's **distinct**-account invariant
   (`live_trading_system.py:1627`, `reconciliation_coordinator.py:164`) are accurate and stay untouched.
+
 - [ ] **ACCT-07** *(closes 11-REVIEW WR-01)*: `PortfolioHandler._persist_definition` and
   `SqlPortfolioStorage.save_config` agree on when a definition row is required. `save_config`'s legacy
   account-state arm was deleted on the stated grounds that *"a live portfolio now always has a definition
@@ -472,6 +485,7 @@ the code does not yet trust it.*
   and its config never persists. ACCT-03 makes that early-return unreachable, which resolves the
   disagreement; the early-return itself is then removed or converted to the same typed raise so the two
   halves cannot drift apart again.
+
 - [ ] **ACCT-08** *(closes 11-REVIEW WR-09)*: `PortfolioHandler` exposes `all_portfolios()` and
   `has_portfolio(portfolio_id)`, and the production reach-ins to the private `_portfolios` dict are
   converted (`portfolio_rehydrate.py:124`, `live_trading_system.py:1341/1591/1964`). Folded here because
@@ -482,6 +496,7 @@ the code does not yet trust it.*
   poisoned `config_json` skips every portfolio after it in iteration order with one warning naming only the
   first failure — despite the docstring claiming per-scope isolation. The guard moves INSIDE the loop.
   Folded here because WR-02 and this requirement edit the SAME statement (`live_trading_system.py:1341`).
+
 - [ ] **ACCT-09** *(closes 11-REVIEW WR-10)*: `ExecutionHandler.on_order`'s fail-closed paths emit a
   `FillEvent(REFUSED)` — the established rejection-as-event convention, which also reconciles the order
   mirror instead of leaving it PENDING forever — rather than only calling `logger.error(...)` and
@@ -490,6 +505,7 @@ the code does not yet trust it.*
   (`if account_id is None`) unreachable, so this covers TWO paths (unknown portfolio, unregistered
   `(venue, account)` pair), and the dead branch is removed rather than instrumented — its comment is one of
   the two phantom-invariant citations ACCT-06 corrects.
+
 - [ ] **ACCT-10** *(closes 11-REVIEW WR-04)*: Runtime portfolio deactivation PERSISTS. `_persist_definition`
   hardcodes `enabled=True` and is gated on row absence, and nothing else ever writes `enabled=False`, so
   `Portfolio.set_state(INACTIVE)` never reaches the store and a portfolio an operator deliberately stopped
@@ -497,6 +513,7 @@ the code does not yet trust it.*
   `set_enabled(portfolio_id, enabled)` write on `PortfolioDefinitionStore`, called from whatever flips
   `PortfolioState`. This also makes `rehydrate_portfolios`' present-but-inactive branch
   (`portfolio_rehydrate.py:141-147`) reachable as designed instead of only via an out-of-band DB write.
+
 - [ ] **ACCT-11** *(closes 11-REVIEW CR-04 + WR-12)*: The D-09 config move REFUSES rather than silently
   skipping. `_move_config` copies `portfolio_account_state.config_json` onto a matching `portfolios` row and
   counts a non-match as a benign "orphan" — but `portfolios` is created empty by the immediately preceding
@@ -533,10 +550,12 @@ the code does not yet trust it.*
   `build_live_system` and `_layer_persisted_overrides` are the **complete** external surface across
   `itrader/`, `tests/` (37 files touch the module) and `scripts/`, so the move is cheap behind a
   re-export. Whether the entry point keeps the `build_live_system` name is a discussion decision.
+
 - [ ] **COMP-02**: Live storage bootstrap is a pure step. The `SqlSettings` credential probe that
   resolves `(environment, sql_engine, halt_record_store, system_store)` (`:1779–1826`) has no facade,
   venue or handler knowledge and is unit-testable on both arms — Postgres credential present, and the
   in-memory fallback that WR-10 requires to warn loudly rather than default a credential string.
+
 - [ ] **COMP-03**: Config-ingress validation leaves the facade. `_validate_config_ingress` +
   `_dry_validate_config_ingress` (`:1135–1238`, 105 lines) touch no facade state beyond
   `self._config_router is None` and the logger, and are the literal FastAPI-400 boundary this milestone
@@ -545,6 +564,7 @@ the code does not yet trust it.*
   hand-synced and deliberately divergent (a fresh default instance vs `model_copy`, because the ingress
   check runs on the EXTERNAL caller thread and must not read the sub-models the engine thread writes).
   Either unify them or pin the divergence as a decision with the thread-ownership rationale in-code.
+
 - [ ] **COMP-04**: The live stats + status read-model leaves the facade — `_stats` / `_stats_lock` /
   `_update_stats` / `_on_order_throttle_rejected` / `_increment_error_count` / `_snapshot_system_stats`
   (`:498`, 49 lines) / `get_status` (`:973`, 68 lines) — ~180 lines into one collaborator owning its own
@@ -552,6 +572,7 @@ the code does not yet trust it.*
   state, error-policy breaker snapshot) into a dict; that is what the FastAPI layer serves, so it belongs
   in a read-model, not on the lifecycle object. Together with COMP-05 this is what breaks the
   construction cycle COMP-06 measures.
+
 - [ ] **COMP-05**: The three connector-loop callbacks leave the facade —
   `_on_venue_stream_down` / `_on_venue_stream_up` / `_request_connector_halt` (`:423–462`, 41 lines) —
   onto an object constructed with the bus. They touch **only** `global_queue` and the logger; nothing
@@ -561,6 +582,7 @@ the code does not yet trust it.*
   connector asyncio loop, and `_request_connector_halt` keeps emitting the FIXED
   `HaltReason.CONNECTOR_FATAL.value` literal and never `str(exc)` (V7/T-07-01, no secret crosses the
   loop→engine boundary).
+
 - [ ] **COMP-06**: **The None-then-assign wiring pattern is GONE — zero survivors, not a reduced count.**
   `LiveTradingSystem.__init__` today declares **nine** `Optional[Any] = None` wiring fields (`_safety`,
   `_stream_recovery`, `_throttle`, `_config_router`, `_system_store`, `_system_stats_store`,
@@ -607,6 +629,7 @@ the code does not yet trust it.*
   matching assignments elsewhere in `itrader/` are other classes assigning their OWN constructor
   arguments (`session_initializer`, `route_registrar`, `stream_recovery_handler`, `config_router`,
   `full_event_handler`, `error_handler`) and are out of scope.
+
 - [ ] **COMP-07** *(deferred here from Phase 11.1 by owner sign-off, 2026-07-22)*: **the live venue-truth
   account swap stops being a reach-in.** `_attach_venue_accounts` (`live_trading_system.py:1608-1721`,
   116 lines) re-assigns `portfolio.account` AFTER venue assembly, which is the exact

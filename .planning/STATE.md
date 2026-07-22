@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: Live System Refactor & Live-Readiness Hardening
-current_phase: 11.1
-current_phase_name: account-provisioning-mandatory-account-identity
-status: executing
-stopped_at: Phase 11.1 planned — 10 plans in 7 waves, all gates green; the one warning signed off and deferred to Phase 12 as COMP-07
-last_updated: "2026-07-22T17:50:52.509Z"
+current_phase: 11.2
+current_phase_name: INSERTED — split out of Phase 11.1
+status: planning
+stopped_at: Phase 11.1 context gathered (structural scope; 11.2 split out)
+last_updated: "2026-07-22T20:43:53.640Z"
 last_activity: 2026-07-22
-last_activity_desc: Phase 11.1 execution started
+last_activity_desc: Phase 11.1 complete, transitioned to Phase 11.2
 progress:
   total_phases: 14
-  completed_phases: 10
+  completed_phases: 11
   total_plans: 53
-  completed_plans: 43
-  percent: 71
+  completed_plans: 53
+  percent: 79
 ---
 
 # Project State
@@ -33,12 +33,12 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 
 ## Current Position
 
-Phase: 11.1 (account-provisioning-mandatory-account-identity) — EXECUTING
-Plan: 1 of 10
-Status: Executing Phase 11.1
+Phase: 11.2 — Account Provisioning Bootstrap + Review Closures (INSERTED — split out of Phase 11.1)
+Plan: Not started
+Status: Ready to plan
 provisioning to Phase 11.2, and WR-06 / WR-07 were settled in-file as D-15 (11.2) / D-14 (here).
 Sizing and wave split are locked by the plans. Resume: `/gsd:execute-phase 11.1`.
-Last activity: 2026-07-22 — Phase 11.1 execution started
+Last activity: 2026-07-22 — Phase 11.1 complete, transitioned to Phase 11.2
 
 **Planning session (2026-07-22).** Research → pattern-map → plan → check, all gates green:
 8/8 VENUE requirements covered, **12/12** CONTEXT decisions (D-01..D-08, D-14, D-17..D-19) cited by
