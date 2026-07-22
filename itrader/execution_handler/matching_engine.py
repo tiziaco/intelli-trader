@@ -430,6 +430,16 @@ class MatchingEngine:
             # O(n) sibling scan per filled bracket; negligible at backtest
             # scale (< ~100 resting orders per symbol). Pre-index by
             # parent_order_id if the book ever grows to thousands.
+            #
+            # OCO CROSS-PORTFOLIO SAFETY: this scan is safe across portfolios ONLY
+            # because `parent_order_id` is a globally-unique `OrderId` (a UUIDv7 from
+            # the single id scheme, `core/ids.py`) — two portfolios can never share
+            # one, so a fill on portfolio A's bracket child can never cancel
+            # portfolio B's sibling. The engine has ZERO portfolio awareness (no
+            # `portfolio_id` reference anywhere in this module); the isolation is
+            # entirely a property of that id-uniqueness invariant. A future pre-index
+            # optimisation MUST key on `parent_order_id` (not a coarser bucket) or it
+            # would silently reintroduce cross-portfolio cancellation.
             for sibling in list(self._resting.values()):
                 if (sibling.parent_order_id == bracket
                         and sibling.order_id != order_id
