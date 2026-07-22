@@ -570,15 +570,35 @@ the wave that touches them.*
 **Plans**: 10 plans
 
 Plans:
+**Wave 1**
+
 - [ ] 11.1-01-PLAN.md — F-2 prerequisite: de-heavy the `connectors/` barrel so `ConnectorProvider` is import-inert, and fold it into the GATE-01 probe window (VENUE-03, D-04)
 - [ ] 11.1-02-PLAN.md — Wave-0 guards installed ahead of the change: the venue allowlist as default-deny (F-3) and a NON-ZERO-fee reservation test (Pitfall 2) (VENUE-04, VENUE-08)
 - [ ] 11.1-03-PLAN.md — D-01: the `Account` leaf drops its `Portfolio` back-reference; the three margin reads become method arguments (VENUE-01)
-- [ ] 11.1-04-PLAN.md — D-07: `rng` joins `EngineContext`; `ExecutionHandler` receives the one shared seeded RNG instead of deriving it (VENUE-06)
 - [ ] 11.1-05-PLAN.md — D-08: the memoized `VenueBundles` provider (`itrader/venues/bundles.py`) plus its memo-contract unit tests (VENUE-07)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 11.1-04-PLAN.md — D-07: `rng` joins `EngineContext`; `ExecutionHandler` receives the one shared seeded RNG instead of deriving it (VENUE-06)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 11.1-06-PLAN.md — D-05 + D-19: the backtest venue becomes `'paper'`, the registry alias is retired in full, and the three unguarded sites (F-3 / F-4 / F-11) are converted — oracle-gated (VENUE-04)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 11.1-07-PLAN.md — D-04 + D-17 + D-06 + D-08 wiring: the paper plugin builds its own `SimulatedExchange` and the backtest joins the venue path (VENUE-03, VENUE-05, VENUE-07)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
 - [ ] 11.1-08-PLAN.md — D-14: exactly one data provider per boot; `VenueBundles` replaces the eager per-account map on the live path (VENUE-07)
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
 - [ ] 11.1-09-PLAN.md — D-02 + D-03: `Portfolio` receives a built `Account`; `new_account` is the sole factory with the D-11 guard intact (F-1) (VENUE-02)
+
+**Wave 7** *(blocked on Wave 6 completion)*
+
 - [ ] 11.1-10-PLAN.md — D-18: the commission estimator is decomposed, late binding preserved, value identity proven under a non-zero fee model — oracle-gated (VENUE-08)
 
 *Cross-cutting constraints (apply to every plan): GATE-01 import inertness preserved (`test_okx_inertness.py` green, no new eager

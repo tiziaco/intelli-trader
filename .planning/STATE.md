@@ -4,15 +4,15 @@ milestone: v1.8
 milestone_name: Live System Refactor & Live-Readiness Hardening
 current_phase: 11.1
 current_phase_name: Account Provisioning + Mandatory Account Identity
-status: planning
-stopped_at: Phase 11.1 context gathered (structural scope; 11.2 split out)
-last_updated: "2026-07-22T16:26:58.607Z"
+status: ready_to_execute
+stopped_at: Phase 11.1 planned — 10 plans in 7 waves, all gates green (1 warning awaiting owner sign-off)
+last_updated: "2026-07-22T18:55:00.000Z"
 last_activity: 2026-07-22
-last_activity_desc: "Completed quick task 260722-hpz: closed WR-08, the last Phase 11 review finding outside 11.1"
+last_activity_desc: "Planned Phase 11.1: 10 plans / 7 waves; 8/8 VENUE reqs, 12/12 decisions, 17/17 probe edges; research corrected 11 CONTEXT facts"
 progress:
   total_phases: 14
   completed_phases: 10
-  total_plans: 43
+  total_plans: 53
   completed_plans: 43
   percent: 71
 ---
@@ -33,18 +33,75 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 
 ## Current Position
 
-Phase: 11.1 — Account Provisioning + Mandatory Account Identity (INSERTED)
-Plan: Not started
-Status: **Discussion PARTIAL — do NOT plan yet.** `11.1-CONTEXT.md` locks the structural area only
-(D-01..D-08). Three areas remain open: ACCT-02 provisioning bootstrap (nothing writes the first
-`venue_accounts` row once `_mint_account_rows` is deleted), WR-06/WR-07 (routed here by 11-REVIEW),
-and phase sizing/wave split. Resume: `/gsd:discuss-phase 11.1` → "Update it".
-Last activity: 2026-07-22 — Completed quick task 260722-hpz: closed WR-08, the last Phase 11 review finding outside 11.1
-locked seven-wave decomposition. Plan-checker: VERIFICATION PASSED, zero blockers, zero warnings. Gates green —
-7/7 MPORT requirements covered, 30/30 CONTEXT decisions cited by ID in must_haves, 14/14 spec-less probe edges
-authored (8 covered truths + 3 flat-scalar backstop markers + 3 flagged unclassified assumptions). Preceded by
-CONTEXT.md + DISCUSSION-LOG.md (13945336): eleven gray areas discussed, 30 decisions (D-01..D-30) locked, three
-sub-decisions explicitly superseded and reconciled in-file.
+Phase: 11.1 — Account Provisioning + Mandatory Account Identity (INSERTED; structural half only, per D-16)
+Plan: 10 plans in 7 waves — **Ready to execute**
+Status: **PLANNED.** The "discussion PARTIAL" blocker below is RESOLVED — the D-16 split moved ACCT-02
+provisioning to Phase 11.2, and WR-06 / WR-07 were settled in-file as D-15 (11.2) / D-14 (here).
+Sizing and wave split are locked by the plans. Resume: `/gsd:execute-phase 11.1`.
+Last activity: 2026-07-22 — Planned Phase 11.1: 10 plans / 7 waves.
+
+**Planning session (2026-07-22).** Research → pattern-map → plan → check, all gates green:
+8/8 VENUE requirements covered, **12/12** CONTEXT decisions (D-01..D-08, D-14, D-17..D-19) cited by
+`D-NN` token in `must_haves`/`objective`, 17/17 spec-less probe edges authored (10 plain truths +
+3 flat-scalar `verification: backstop` markers + 4 flagged `unclassified` assumptions, never
+auto-backstopped), 4 descriptor-less prohibitions. Plan-checker: **VERIFICATION PASSED**, zero
+blockers, one warning (see below). Artifacts: `11.1-RESEARCH.md` (73d97b1e), `11.1-VALIDATION.md`
+(74292922), `11.1-PATTERNS.md` (7e6c063a), plans (c80899fd, 4c67e8ac).
+
+**Research corrected 11 factual claims in CONTEXT.md.** The five that reshaped the plan:
+
+- **F-2 (CRITICAL, now Wave 1 / plan 01):** `ConnectorProvider` is NOT import-inert —
+  `itrader/connectors/__init__.py:11-12` eagerly re-exports `OkxConnector`, pulling `ccxt` **and**
+  `itrader.connectors.okx`, both in `test_okx_inertness.py`'s `_FORBIDDEN`. D-04 puts
+  `ConnectorProvider` on the backtest import path, so GATE-01 reddens unless the barrel is fixed
+  FIRST. Zero consumers tree-wide; two-line deletion. CONTEXT's D-04 GATE-01 evidence was correct
+  but about a different package (`itrader.venues`).
+- **F-5 (CRITICAL):** the byte-exact oracle runs the **legacy** construction arm
+  (`scripts/run_backtest.py:68` → `BacktestTradingSystem(exchange="csv", …)`), NOT
+  `build_backtest_system`. Editing only the factory arm would leave the oracle green while proving
+  nothing. Plans 04/06/07 name both arms.
+- **F-1 (CRITICAL):** D-03's "`new_account` loses its `portfolio_ref` parameter" is false for
+  `OkxVenuePlugin` — it uses `portfolio_ref` for D-11 account-identity resolution via
+  `_account_id_for`, which D-01 does not touch. Decision stands; plan 09 passes `account_id` on the
+  config from `add_portfolio` and preserves the raise-on-absent-id guard verbatim.
+- **F-3 / F-4 (CRITICAL):** the `'csv'`→`'paper'` blast radius is **27 files**, not "roughly six test
+  sites". Two production sites CONTEXT never named: `order_validator.py:117`'s allowlist (would
+  reject **every** order → 0 trades) and `universe_wiring.py:98`'s silent `.get` + `isinstance`
+  guard (Universe never injected, money arithmetic moves under a green suite — the phase's top
+  silent-corruption risk). Plan 06 asserts the lookup is non-None rather than trusting the oracle diff.
+- **F-10:** CONTEXT's "~360 lines deleted" spans 11.1 **and** 11.2; 11.1's real budget is **≈186**.
+  It is nowhere a plan gate, and a ROADMAP correction note was added.
+
+**Two owner decisions taken this session (post-research):**
+
+1. The `('simulated', DEFAULT_ACCOUNT_ID)` registry key is **retired in full**, not kept as a
+   transitional alias — so F-4 and F-11 land in the same commit as the re-key (plan 06).
+2. **D-06 and D-08 land in ONE wave** (plan 07). Landing D-06 alone makes `compose.py:239` return
+   `None` and the estimate degrade to `Decimal("0")` — *also* the golden value, so the oracle would
+   stay green while the reservation path is structurally broken.
+
+**Planner inverted RESEARCH's wave order:** D-05/D-19 (plan 06, wave 3) now lands *before* D-06/D-08
+(plan 07, wave 4). Renaming first means `('paper', default)` already exists and resolves when plan 07
+changes *who builds* the object behind it, so the green-and-wrong state never exists. Plan-checker
+scrutinised and confirmed this.
+
+**⚠ OPEN — owner sign-off needed before execution.** Plan 09 retains `_attach_venue_accounts` (116
+lines) rather than deleting it, for a boot-order fact neither CONTEXT nor RESEARCH states: live
+portfolios are rehydrated (`portfolio_rehydrate.py:130`) **before** `_build_account_specs` builds
+their `VenueSpec`, so a `VenueAccount` cannot be minted at portfolio-creation time. The
+construction-time account is therefore always the compute leaf. Consequence: the phase's headline
+"composition stops reaching in afterwards" holds for the **compute-account path** (backtest + paper,
+fully fixed by D-01/D-02/D-03) but the **live venue-truth swap** remains — reordering that boot is
+Phase 12 / COMP-01 territory. Confirm this narrowing is acceptable, or expand scope.
+
+---
+
+*Historical (Phase 11, superseded — retained for the record):* Phase 11 locked a seven-wave
+decomposition; plan-checker VERIFICATION PASSED with zero blockers and zero warnings; gates green —
+7/7 MPORT requirements covered, 30/30 CONTEXT decisions cited by ID in must_haves, 14/14 spec-less
+probe edges authored (8 covered truths + 3 flat-scalar backstop markers + 3 flagged unclassified
+assumptions). Preceded by CONTEXT.md + DISCUSSION-LOG.md (13945336): eleven gray areas discussed,
+30 decisions (D-01..D-30) locked, three sub-decisions explicitly superseded and reconciled in-file.
 
 **Carried into planning (found during discussion):**
 
