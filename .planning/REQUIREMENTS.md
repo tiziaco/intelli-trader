@@ -350,7 +350,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   makes an existing dimension explicit rather than adding one: every mutable field on `OkxExchange` is already
   account-scoped, and the markets/precision map lives on the connector (`okx.py:952-955`). (P11 CONTEXT D-27.)
 
-### Account Provisioning + Mandatory Account Identity (P11.1 — INSERTED follow-up to P11)
+### Account Provisioning + Mandatory Account Identity (P11.2 — split out of P11.1 on 2026-07-22)
 
 *Source: the Phase 11 code review (`11-REVIEW.md` CR-02/CR-03/WR-03/WR-05) plus the 2026-07-22 design
 discussion. Root decision: `(venue_name, account_id)` is mandatory for a live portfolio, and the DURABLE
@@ -599,7 +599,7 @@ Explicitly excluded — documented to prevent scope creep.
 
 ## Traceability
 
-Each requirement maps to exactly one phase. The roadmap was created 2026-07-09 with 12 phases; it now carries **13 integer phases plus three decimal insertions** (6.1, 10.1, 11.1), formalized in `.planning/ROADMAP.md` (`### Phase 1` .. `### Phase 13`, goals + success criteria + dependency graph). The old P4 (SqlEngine Migrations Relocation) and P5 (New Durable Stores) were merged into a single storage-schema phase P4 (both live-only, off the oracle hot path); Phase 12 (Live Composition-Root Dissolution) was inserted 2026-07-22, renumbering Test Migration + Gates to P13. Status `Pending` = mapped + roadmapped, awaiting execution.
+Each requirement maps to exactly one phase, **except Phase 11.1**, which carries none: after the 2026-07-22 D-16 split it is governed entirely by the locked decisions D-01..D-08 / D-14 / D-17..D-19 in its CONTEXT.md, and its eleven `ACCT-*` requirements moved to the new Phase 11.2. The roadmap was created 2026-07-09 with 12 phases; it now carries **13 integer phases plus four decimal insertions** (6.1, 10.1, 11.1, 11.2), formalized in `.planning/ROADMAP.md` (`### Phase 1` .. `### Phase 13`, goals + success criteria + dependency graph). The old P4 (SqlEngine Migrations Relocation) and P5 (New Durable Stores) were merged into a single storage-schema phase P4 (both live-only, off the oracle hot path); Phase 12 (Live Composition-Root Dissolution) was inserted 2026-07-22, renumbering Test Migration + Gates to P13. Status `Pending` = mapped + roadmapped, awaiting execution.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
@@ -687,6 +687,8 @@ Each requirement maps to exactly one phase. The roadmap was created 2026-07-09 w
 
 ---
 *Requirements defined: 2026-07-09*
-*Last updated: 2026-07-22 — added the six **COMP-0N** requirements for the INSERTED **Phase 12: Live Composition-Root Dissolution** (`build_live_system` disappears; the facade sheds config-ingress validation, the stats/status read-model, and the connector-loop signal callbacks). Test Migration + Gates renumbered **P12 → P13**. **86/86 requirements mapped, 0 orphans** (80 before COMP). Note the previously-stated "69/69" was stale: it predated the eleven `ACCT-*` requirements added 2026-07-22 for the inserted Phase 11.1, so the true count was already 80 before COMP. Full scope P1–P13 + 3 owner refinements.*
+*Last updated: 2026-07-22 (second edit) — **Phase 11.1 was SPLIT in two (D-16)**. The eleven `ACCT-*` requirements moved from P11.1 to the new **Phase 11.2: Account Provisioning Bootstrap + Review Closures**; P11.1 keeps its historical title/directory but now carries the structural half only and maps **zero** requirements (governed by its CONTEXT.md decisions instead). Requirement count and mapping are unchanged at **86/86, 0 orphans** — nothing was added or removed, only remapped.*
+
+*Previously: 2026-07-22 — added the six **COMP-0N** requirements for the INSERTED **Phase 12: Live Composition-Root Dissolution** (`build_live_system` disappears; the facade sheds config-ingress validation, the stats/status read-model, and the connector-loop signal callbacks). Test Migration + Gates renumbered **P12 → P13**. **86/86 requirements mapped, 0 orphans** (80 before COMP). Note the previously-stated "69/69" was stale: it predated the eleven `ACCT-*` requirements added 2026-07-22 for the inserted Phase 11.1, so the true count was already 80 before COMP. Full scope P1–P13 + 3 owner refinements.*
 
 *Prior: 2026-07-09 — roadmap revised to 12 phases (old P4 SqlEngine Migrations Relocation folded into old P5 New Durable Stores → merged storage-schema phase P4; all downstream phases renumbered −1); full scope P1–P12 + 3 owner refinements*

@@ -3,18 +3,18 @@ gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: Live System Refactor & Live-Readiness Hardening
 current_phase: 11.1
-current_phase_name: One Venue Path + Account Ownership (structural half; 11.2 split out)
+current_phase_name: Account Provisioning + Mandatory Account Identity
 status: planning
 stopped_at: Phase 11.1 context gathered (structural scope; 11.2 split out)
-last_updated: "2026-07-22T16:17:00.410Z"
+last_updated: "2026-07-22T16:26:58.607Z"
 last_activity: 2026-07-22
-last_activity_desc: "Phase 11.1 discussion complete — D-09..D-19 settled; phase SPLIT into 11.1 (structural, D-01..D-08/D-14/D-17..D-19) and a not-yet-created 11.2 (provisioning + ACCT-01..11)"
+last_activity_desc: "Completed quick task 260722-hpz: closed WR-08, the last Phase 11 review finding outside 11.1"
 progress:
-  total_phases: 13
+  total_phases: 14
   completed_phases: 10
   total_plans: 43
   completed_plans: 43
-  percent: 77
+  percent: 71
 ---
 
 # Project State
@@ -285,6 +285,7 @@ trim boundary P1–P8+P12+P13 core vs P9–P11 ★ is noted, not taken). Researc
 
 - Phase 10.1 inserted after Phase 10: StrategiesHandler Decomposition (URGENT)
 - Phase 11.1 inserted after Phase 11: Account Provisioning + Mandatory Account Identity — DB becomes sole source of portfolio+account truth; closes code-review CR-02/CR-03/WR-03/WR-05 (URGENT)
+- Phase 11.2 inserted after Phase 11.1: Split out of Phase 11.1 (D-16): ACCT-01..11 plus the locked decisions D-09..D-13/D-15 move here; 11.1 keeps the structural half
 
 ### Decisions
 
