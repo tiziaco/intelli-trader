@@ -625,7 +625,7 @@ class LiveTradingSystem:
             engine = self._engine
 
             # The uniformly-resolved venue exchange (D-11): the OKX exchange when
-            # present, else the paper 'simulated' exchange (permissive validate_symbol /
+            # present, else the 'paper' exchange (permissive validate_symbol /
             # resolve_precision defaults). set_venue_metadata is UNCONDITIONAL over this
             # inside SessionInitializer — no OKX guard, zero OKX coupling.
             # 11-09: read through the PRIMARY streaming lifecycle instead of the deleted
@@ -636,7 +636,7 @@ class LiveTradingSystem:
             venue_exchange = (
                 streaming[0].bundle.exchange if streaming
                 else self.execution_handler.exchanges.get(
-                    ('simulated', DEFAULT_ACCOUNT_ID)))  # D-27 pair key
+                    ('paper', DEFAULT_ACCOUNT_ID)))  # D-27/D-05 pair key
 
             # RUN-06/D-11 live-plane config: poll timeframe + remove_policy READ FROM the
             # LIVE universe sub-model (NOT the frozen determinism base — P9 D-09 keeps the
@@ -2029,10 +2029,14 @@ def build_live_system(
     connectors = ConnectorProvider(
         {'okx': OkxConnectorPlugin(resolver=credential_resolver)})
     exec_registry.register('okx', OkxVenuePlugin())
+    # D-05: the reach-in now names the SAME key the plugin is registered under —
+    # ``('paper', DEFAULT_ACCOUNT_ID)`` — because the venue and the exchange
+    # registry finally agree on one name. (Plan 11.1-07 deletes this reach-in
+    # entirely when PaperVenuePlugin builds its own SimulatedExchange.)
     exec_registry.register(
         'paper',
         PaperVenuePlugin(
-            execution_handler.exchanges[('simulated', DEFAULT_ACCOUNT_ID)]))
+            execution_handler.exchanges[('paper', DEFAULT_ACCOUNT_ID)]))
     data_registry.register('okx', OkxDataPlugin())
 
     # TEST-only DATA provider injection (D-21): production registers NO replay/test data

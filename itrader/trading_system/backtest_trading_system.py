@@ -90,7 +90,7 @@ class BacktestTradingSystem(object):
 	"""
 
 	def __init__(
-		self, exchange: str = 'binance',
+		self, exchange: str = 'paper',
 		start_date: Optional[str] = None,
 		end_date: str = '',
 		to_sql: bool = False,
@@ -110,6 +110,12 @@ class BacktestTradingSystem(object):
 		  the loose params; the holder builds the engine+runner internally via the
 		  same ``compose_engine`` seam (byte-identical wiring) so they work by
 		  renaming the class only (Wave 4 swaps them to the factory).
+
+		``exchange`` names the run's VENUE and defaults to ``'paper'`` (D-05) —
+		the ONE name for the simulated fill engine across backtest and
+		live-paper. It is a HOLDER attribute only: routing reads each
+		portfolio's own ``exchange``/``venue_name``, never this field, so the
+		default is documentation of intent rather than a routing input.
 		"""
 		self.logger = get_itrader_logger().bind(component="Engine")
 		self.exchange = exchange
@@ -400,9 +406,9 @@ class BacktestTradingSystem(object):
 				aggregate_series.to_frame(), aggregate_trades, periods=periods)
 
 			# Curated run settings (D-11, credential-free): the fee/slippage models are
-			# read off the LIVE simulated exchange; market_execution off the order handler.
+			# read off the LIVE paper exchange; market_execution off the order handler.
 			exchange = self.execution_handler.exchanges.get(
-				('simulated', DEFAULT_ACCOUNT_ID))  # D-27 pair key
+				('paper', DEFAULT_ACCOUNT_ID))  # D-27/D-05 pair key
 			order_config = OrderConfig(market_execution=self.order_handler.market_execution)
 			settings = curate_run_settings(
 				exchange,
@@ -525,16 +531,23 @@ def build_backtest_system(spec: SystemSpec) -> BacktestTradingSystem:
 
 	portfolio_ids = []
 	for portfolio_spec in spec.portfolios:
-		# Backtest portfolios use exchange="csv" (the offline golden venue). The
-		# portfolio's exchange string is carried onto its orders, and the order
-		# router resolves the 'csv' alias to the simulated matching engine
-		# (DEF-01-B, CLAUDE.md). Using spec.ticker here would route orders to an
-		# unregistered venue → Unknown exchange → no fills (byte-exact break);
-		# every other construction site (oracle/integration/scripts + the former
-		# e2e _build_and_run) uses "csv", so the factory must too.
+		# D-05/D-19: backtest portfolios name the ``'paper'`` venue — the ONE
+		# name for the simulated fill engine across backtest and live-paper —
+		# and pass ``venue_name`` EXPLICITLY as well as ``exchange``, so a
+		# backtest portfolio and a live portfolio are structurally identical at
+		# creation. ``portfolio.py`` derives ``self.exchange`` from
+		# ``venue_name`` when supplied, so the routing key is
+		# ``('paper', DEFAULT_ACCOUNT_ID)`` either way; the explicit field is
+		# about honesty of identity, not routing.
+		# The portfolio's exchange string is carried onto its orders. Using
+		# spec.ticker here would route to an unregistered venue → no fills
+		# (byte-exact break); every construction site (oracle/integration/
+		# scripts + the e2e scenarios) names the paper venue, so the factory
+		# must too.
 		pid = engine.portfolio_handler.add_portfolio(
 			name=portfolio_spec.name,
-			exchange='csv',
+			exchange='paper',
+			venue_name='paper',
 			cash=portfolio_spec.cash,
 		)
 		portfolio_ids.append(pid)

@@ -140,15 +140,16 @@ def _build_system(tmpdir: pathlib.Path):
     bars_csv = tmpdir / "trailusd_bars.csv"
     _write_bars_csv(bars_csv)
     system = BacktestTradingSystem(
-        exchange="csv",
+        exchange="paper",
         csv_paths={_TICKER: bars_csv},
         start_date=_START,
         end_date=_END,
     )
     strategy = _TrailingLongStrategy(timeframe="1d", tickers=[_TICKER])
     system.strategies_handler.add_strategy(strategy)
+    # D-05/D-19: the paper venue, with venue_name passed explicitly.
     portfolio_id = system.portfolio_handler.add_portfolio(
-        name="trailing_xval_pf", exchange="csv", cash=_CASH
+        name="trailing_xval_pf", exchange="paper", venue_name="paper", cash=_CASH
     )
     strategy.subscribe_portfolio(portfolio_id)
     system.runner._initialise_backtest_session()

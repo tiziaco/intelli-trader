@@ -3,8 +3,10 @@
 Formalizes the ``elif self.exchange == 'paper'`` composition-root execution block
 (``live_trading_system.py``) into a registrable plugin:
 
-  - ``PaperVenuePlugin`` — REUSES the compose-built ``'simulated'``
-    ``SimulatedExchange`` AS-IS (injected at register time). Paper adds NO new
+  - ``PaperVenuePlugin`` — REUSES the compose-built ``SimulatedExchange`` AS-IS
+    (injected at register time, read off the ``('paper', DEFAULT_ACCOUNT_ID)``
+    registry key — 11.1's D-05 retired the ``'simulated'``/``'csv'`` synonyms so
+    the venue name and the exchange key are now ONE name). Paper adds NO new
     exchange/adapter and NO cost-model extraction: with one shared fill-pricing
     implementation (the simulated exchange's, UNTOUCHED) there is nothing to
     drift, so PAPER-02 is satisfied-by-reuse (D-05). The bundle carries
@@ -18,10 +20,12 @@ package for ``tests/support/replay_harness.py``; production ``paper`` re-points 
 OKX live data feed (D-21), so the ``paper`` ↔ replay pairing now lives ONLY in the test
 fixture, never in production.
 
-Note ``'simulated'`` is deliberately NOT a registered venue name (D-05): it is the
-compose-built backtest/paper fill engine, injected into ``PaperVenuePlugin`` at the
-LTS root (``register('paper', PaperVenuePlugin(simulated_exchange))``), never
-resolved through the registry.
+Note ``'simulated'`` is NOT a venue name at all (Phase 5 D-05, hardened by 11.1's
+D-05 which retired it from the exchange registry too): ``SimulatedExchange`` is the
+class of the backtest/paper fill engine, and the ONE venue name that engine answers
+to is ``'paper'``. The object is injected into ``PaperVenuePlugin`` at the LTS root
+(``register('paper', PaperVenuePlugin(paper_exchange))``), never resolved through
+the venue registry.
 
 Indentation: 4-SPACE (``venues/`` package convention). ``mypy --strict`` applies.
 """
@@ -39,14 +43,14 @@ if TYPE_CHECKING:
 class PaperVenuePlugin:
     """The paper execution ``VenuePlugin`` — reuses the compose-built simulated exchange (D-05).
 
-    Constructed at the LTS root WITH the already-built ``'simulated'``
-    ``SimulatedExchange`` (``register('paper', PaperVenuePlugin(simulated_exchange))``).
+    Constructed at the LTS root WITH the already-built paper ``SimulatedExchange``
+    (``register('paper', PaperVenuePlugin(paper_exchange))``).
     ``build_bundle`` wraps that exchange AS-IS (identity) with ``connector=None`` —
     NO new exchange/adapter, NO ConnectorProvider access (D-05).
     """
 
     def __init__(self, simulated_exchange: AbstractExchange) -> None:
-        # The compose-built 'simulated' exchange, injected at register time. It
+        # The compose-built paper exchange, injected at register time. It
         # already satisfies AbstractExchange and holds no Account (D-06 — fills flow
         # FillEvent -> PortfolioHandler.on_fill), so it is reused verbatim.
         self._simulated_exchange = simulated_exchange
