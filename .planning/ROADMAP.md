@@ -587,7 +587,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 11.1-07-PLAN.md — D-04 + D-17 + D-06 + D-08 wiring: the paper plugin builds its own `SimulatedExchange` and the backtest joins the venue path (VENUE-03, VENUE-05, VENUE-07)
+- [x] 11.1-07-PLAN.md — D-04 + D-17 + D-06 + D-08 wiring: the paper plugin builds its own `SimulatedExchange` and the backtest joins the venue path (VENUE-03, VENUE-05, VENUE-07)
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
