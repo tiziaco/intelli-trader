@@ -13,6 +13,16 @@ from itrader.core.exceptions.base import ConfigurationError
 from itrader.core.exceptions.portfolio import PortfolioNotFoundError
 from itrader.logger import get_itrader_logger
 from itrader.venues.bundles import VenueBundles
+# 11.1-09 — RE-EXPORTED from the import-inert venue substrate.
+# ``DEFAULT_ACCOUNT_ID`` (the single-account key half, D-27/MPORT-07) and
+# ``COMPUTE_VENUE`` (``'paper'``, D-05) are venue-domain facts that BOTH handlers
+# need: this one resolves its exchange under them, and ``PortfolioHandler`` mints
+# every portfolio's construction-time compute leaf under them. They are declared
+# ONCE in ``venues/registry.py`` — which imports nothing at runtime, so this pulls
+# no concretion — and re-exported here so every existing
+# ``from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID``
+# keeps working. Their full rationale lives at the declaration.
+from itrader.venues.registry import COMPUTE_VENUE, DEFAULT_ACCOUNT_ID
 
 if TYPE_CHECKING:
 	# Read-model seam only (D-27): the Protocol is imported for TYPING ONLY so
@@ -23,20 +33,9 @@ if TYPE_CHECKING:
 	from itrader.core.portfolio_read_model import PortfolioReadModel
 
 
-#: The logical venue account of a SINGLE-account venue (D-27/MPORT-07).
-#:
-#: The exchange registry is keyed on the ``(venue, account_id)`` PAIR, because
-#: an order's real target is a specific AUTHENTICATED SESSION, not a venue.
-#: Venues that have only ever had one account — the ``'paper'`` venue that
-#: backs backtest and live-paper (D-05), and any venue before per-account
-#: wiring — register under this constant.
-#:
-#: It is deliberately a separate KEY HALF and never spliced into the venue
-#: name: ``Order.exchange`` is a persisted column, so a composed
-#: ``"venue:account"`` string would leak account topology into durable data and
-#: into every query over it. The key is a runtime tuple; the persisted column
-#: keeps the bare venue name.
-DEFAULT_ACCOUNT_ID = 'default'
+# mypy --strict disables implicit re-export, so the two venue constants above are
+# named explicitly here to stay importable from this module (their historical home).
+__all__ = ['COMPUTE_VENUE', 'DEFAULT_ACCOUNT_ID', 'ExecutionHandler', 'default_exchange_config']
 
 
 def default_exchange_config() -> ExchangeConfig:
@@ -160,10 +159,10 @@ class ExecutionHandler(AbstractExecutionHandler):
 		# the simulated fill engine across backtest and live-paper (D-05) — the
 		# retired ``'simulated'``/``'csv'`` synonyms no longer resolve anything,
 		# so this lookup must never be written against them again.
-		exchange = self.exchanges.get(('paper', DEFAULT_ACCOUNT_ID))
+		exchange = self.exchanges.get((COMPUTE_VENUE, DEFAULT_ACCOUNT_ID))
 		if not isinstance(exchange, SimulatedExchange):
 			raise ConfigurationError(
-				config_key='paper',
+				config_key=COMPUTE_VENUE,
 				reason='no paper exchange wired to update')
 		exchange.update_config(updates)
 
@@ -180,10 +179,10 @@ class ExecutionHandler(AbstractExecutionHandler):
 		no exchange is wired) — the SAME contract shape as ``update_config``.
 		"""
 		# D-27/D-05: single-account paper venue -> default-account key half.
-		exchange = self.exchanges.get(('paper', DEFAULT_ACCOUNT_ID))
+		exchange = self.exchanges.get((COMPUTE_VENUE, DEFAULT_ACCOUNT_ID))
 		if not isinstance(exchange, SimulatedExchange):
 			raise ConfigurationError(
-				config_key='paper',
+				config_key=COMPUTE_VENUE,
 				reason='no paper exchange wired to update')
 		exchange.validate_config(updates)
 
@@ -301,7 +300,7 @@ class ExecutionHandler(AbstractExecutionHandler):
 		# root's per-account loop (``assemble_venues`` + the registration loop in
 		# ``build_live_system``), which knows the account set; this seam has no way to
 		# enumerate accounts and must not guess one.
-		bundle = self._venue_bundles.get('paper', DEFAULT_ACCOUNT_ID, None)
+		bundle = self._venue_bundles.get(COMPUTE_VENUE, DEFAULT_ACCOUNT_ID, None)
 		simulated = bundle.exchange
 		# D-05: ONE venue name for the simulated fill engine — ``'paper'``.
 		# Backtest and live-paper are the SAME behaviour (a simulated fill
@@ -316,7 +315,7 @@ class ExecutionHandler(AbstractExecutionHandler):
 		# single-account, so it pairs with DEFAULT_ACCOUNT_ID. Only the venue
 		# half changed here; the key SHAPE is untouched.
 		exchanges: dict[tuple[str, str], Optional[AbstractExchange]] = {
-			('paper', DEFAULT_ACCOUNT_ID): simulated,
+			(COMPUTE_VENUE, DEFAULT_ACCOUNT_ID): simulated,
 		}
 
 		# Connect to exchanges that support it. Dedup by instance identity: two

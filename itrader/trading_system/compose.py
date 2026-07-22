@@ -45,6 +45,7 @@ from itrader.events_handler.error_handler import ErrorHandler
 from itrader.events_handler.error_policy import FailFastPolicy
 from itrader.events_handler.full_event_handler import EventHandler
 from itrader.execution_handler.execution_handler import (
+	COMPUTE_VENUE,
 	DEFAULT_ACCOUNT_ID,
 	ExecutionHandler,
 )
@@ -237,7 +238,15 @@ def compose_engine(
 
 	# ScreenersHandler is a deferred subsystem (ignore_errors override).
 	screeners_handler = ScreenersHandler(ctx.bus, feed)  # type: ignore[no-untyped-call]
-	portfolio_handler = PortfolioHandler(ctx.bus, environment=ctx.environment, sql_engine=ctx.sql_engine)
+	# D-02/D-03/D-08 (11.1-09): the portfolio handler and the execution handler now
+	# share ONE VenueBundles instance. The portfolio arm asks it for the ACCOUNT
+	# view (every portfolio's construction-time compute leaf, minted by
+	# PaperVenuePlugin.new_account — the sole account factory) and the execution arm
+	# asks the SAME memo for the exchange, so a single (venue, account_id) bundle
+	# backs both. COMPUTE_VENUE is the one home of the 'paper' name.
+	portfolio_handler = PortfolioHandler(
+		ctx.bus, environment=ctx.environment, sql_engine=ctx.sql_engine,
+		venue_bundles=venue_bundles, compute_venue=COMPUTE_VENUE)
 
 	# Execution handler is constructed BEFORE the order handler so the admission
 	# gate's commission estimator can adapt the simulated exchange's fee model
@@ -262,7 +271,7 @@ def compose_engine(
 	# D-27/D-05: pair-keyed registry; the paper venue is single-account and is
 	# now the ONLY key ``init_exchanges`` returns.
 	simulated_exchange = execution_handler.exchanges.get(
-		('paper', DEFAULT_ACCOUNT_ID))
+		(COMPUTE_VENUE, DEFAULT_ACCOUNT_ID))
 	commission_estimator = FeeModelCommissionEstimator(simulated_exchange)
 
 	# Plan 02-03 (D-09/D-14): thread the portfolio's margin settings into the
