@@ -21,7 +21,7 @@ from .order import Order
 from .operation_result import OperationResult
 from ..core.enums import OrderStatus, MarketExecution
 from ..core.ids import OrderId, PortfolioId
-from ..core.commission_estimator import CommissionEstimator
+from ..core.commission_estimator import FeeModelProvider
 from ..core.portfolio_read_model import PortfolioReadModel
 from ..core.exceptions.base import ConfigurationError
 from ..config import OrderConfig
@@ -55,7 +55,7 @@ class OrderManager:
 	def __init__(self, order_storage: OrderStorage, logger: Any,
 	             market_execution: "str | MarketExecution | None" = None,
 	             portfolio_handler: Optional[PortfolioReadModel] = None,
-	             commission_estimator: Optional[CommissionEstimator] = None,
+	             fee_model_provider: Optional[FeeModelProvider] = None,
 	             order_config: Optional[OrderConfig] = None,
 	             enable_margin: bool = False,
 	             portfolio_max_leverage: Decimal = Decimal("1")) -> None:
@@ -90,13 +90,17 @@ class OrderManager:
 		portfolio_handler : PortfolioReadModel, optional
 			Narrow portfolio read boundary for position-aware operations
 			(D-16: the concrete handler conforms structurally)
-		commission_estimator : CommissionEstimator, optional
-			Estimates the commission for an order as f(quantity, price) ->
-			Decimal, feeding the admission reservation amount (Plan 05-06,
-			D-04/D-15). INJECTED at wiring time as a typed read-model seam —
-			order_manager never imports across the execution boundary (RESEARCH
-			Pattern 1). None means a zero estimate, which reproduces the
-			pre-reservation funds-check math exactly (the golden run pins fees 0).
+		fee_model_provider : FeeModelProvider, optional
+			Returns the venue's CURRENT fee model as ``() -> FeeModel | None``,
+			feeding the admission reservation amount (Plan 05-06, D-04/D-18).
+			INJECTED at wiring time as a typed read-model seam — order_manager
+			never imports across the execution boundary (RESEARCH Pattern 1).
+			D-18 narrowed this from the old ``(quantity, price) -> Decimal``
+			estimator: the ``side="buy", order_type="market"`` admission
+			convention is admission POLICY and now lives in ``AdmissionManager``,
+			leaving only the WIRING half here. ``None`` (or a provider returning
+			``None``) means a zero estimate, which reproduces the pre-reservation
+			funds-check math exactly (the golden run pins fees 0).
 		"""
 		self.order_storage = order_storage
 		self.logger = logger
@@ -112,7 +116,7 @@ class OrderManager:
 		self.order_config = order_config
 		self.market_execution = order_config.market_execution
 		self.portfolio_handler = portfolio_handler
-		self.commission_estimator = commission_estimator
+		self.fee_model_provider = fee_model_provider
 
 		# Initialize validator if portfolio_handler is available
 		# Plan 02-03 (D-08/D-09): thread enable_margin so the validator defers its
@@ -147,7 +151,7 @@ class OrderManager:
 		# public process_signal delegates into it.
 		self.admission_manager = AdmissionManager(
 			order_storage, logger, self.order_validator, self.sizing_resolver,
-			portfolio_handler, commission_estimator, self._brackets,
+			portfolio_handler, fee_model_provider, self._brackets,
 			self.bracket_manager, enable_margin=enable_margin,
 			portfolio_max_leverage=portfolio_max_leverage)
 
