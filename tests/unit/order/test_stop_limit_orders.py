@@ -16,6 +16,8 @@ from itrader.events_handler.events import SignalEvent, BarEvent
 from itrader.core.enums import EventType, FillStatus, OrderType, Side
 from itrader.core.sizing import FractionOfCash, TradingDirection
 
+from tests.support.venue_wiring import backtest_venue_bundles
+
 
 class _StopLimitHarness:
     """Order-handler + simulated-exchange harness for resting stop/limit flows."""
@@ -25,7 +27,8 @@ class _StopLimitHarness:
         self.ptf = PortfolioHandler(self.queue)
         self.storage = OrderStorageFactory.create("test")
         self.order_handler = OrderHandler(self.queue, self.ptf, self.storage)
-        self.execution = ExecutionHandler(self.queue)
+        self.execution = ExecutionHandler(
+            self.queue, venue_bundles=backtest_venue_bundles(self.queue))
         exchange = self.execution.exchanges[("paper", DEFAULT_ACCOUNT_ID)]
         exchange.connect()
         exchange.update_config({"limits": {"supported_symbols": {"BTCUSDT"}}})

@@ -1,16 +1,18 @@
-import random
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from .base import AbstractExecutionHandler
 from .exchanges.base import AbstractExchange
 from itrader.events_handler.bus import EventBus
 from itrader.events_handler.events import BarEvent, FillEvent, OrderEvent
+# Still needed by update_config / validate_config, which isinstance-NARROW against
+# the simulated exchange. Nothing in this module constructs one any more (D-06).
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 
 from itrader.config import ExchangeConfig
 from itrader.core.exceptions.base import ConfigurationError
 from itrader.core.exceptions.portfolio import PortfolioNotFoundError
 from itrader.logger import get_itrader_logger
+from itrader.venues.bundles import VenueBundles
 
 if TYPE_CHECKING:
 	# Read-model seam only (D-27): the Protocol is imported for TYPING ONLY so
@@ -37,6 +39,32 @@ if TYPE_CHECKING:
 DEFAULT_ACCOUNT_ID = 'default'
 
 
+def default_exchange_config() -> ExchangeConfig:
+	"""Build the DEFAULT-PRESET exchange config (D-13, Trap 1; D-17).
+
+	Reproduces the historical direct-construction symbol set byte-exactly: the
+	default preset symbols UNION ``{BTCUSD}`` (the union the removed hardcoded
+	BTCUSD registration used to produce). Seeded at construction so it is
+	replacement-safe — a later ``update_config`` that re-derives
+	``_supported_symbols`` from ``config.limits`` can never wipe BTCUSD.
+
+	D-17: this is the FALLBACK for callers that have NO run-derived config — the
+	live root and the direct-construction test sites — and it is NEVER the
+	preferred source. The preferred source is the factory's run-derived config,
+	which folds THIS run's complete ticker set into ``limits.supported_symbols``;
+	a default preset silently narrows the tradeable symbol set and the failure
+	surfaces as refused orders far from its cause.
+
+	Promoted from the private ``ExecutionHandler._default_backcompat_config``
+	static in plan 11.1-07: the handler no longer builds an exchange, so its only
+	internal caller is gone, while the live root and the shared test-wiring helper
+	both need it.
+	"""
+	config = ExchangeConfig.default()
+	config.limits.supported_symbols = set(config.limits.supported_symbols) | {'BTCUSD'}
+	return config
+
+
 class ExecutionHandler(AbstractExecutionHandler):
 	"""
 	Enhanced execution handler with comprehensive error handling and monitoring.
@@ -52,15 +80,25 @@ class ExecutionHandler(AbstractExecutionHandler):
 	while maintaining backward compatibility with existing systems.
 	"""
 
-	def __init__(self, global_queue: "EventBus",
-				exchange_config: Optional[ExchangeConfig] = None,
-				portfolio_read_model: Optional["PortfolioReadModel"] = None,
-				rng: Optional[random.Random] = None) -> None:
+	def __init__(self, global_queue: "EventBus", *,
+				venue_bundles: "VenueBundles",
+				portfolio_read_model: Optional["PortfolioReadModel"] = None) -> None:
 		"""
 		Parameters
 		----------
 		global_queue: `Queue object`
 			The events queue of the trading system
+		venue_bundles: `VenueBundles`
+			The REQUIRED shared ``(venue, account_id)`` bundle memo (D-08). The
+			handler no longer MINTS an exchange — it ASKS for one, and the venue
+			plugin behind the memo is what builds it (D-06). The same instance is
+			held by the portfolio arm, so both arms see ONE exchange and ONE
+			account factory per venue+account; two independent ``build_bundle``
+			calls would double-spawn a live venue's fill/order streams.
+
+			It is REQUIRED, not ``Optional[...] = None``: a nullable seam here
+			would let a caller silently fall back to a hand-minted exchange, and
+			the two paths would then diverge without anything turning red.
 		portfolio_read_model: `PortfolioReadModel`, optional
 			The injected read-model used to resolve an order's VENUE ACCOUNT
 			from its portfolio (D-27/MPORT-07). The injection is ASYMMETRIC by
@@ -82,89 +120,30 @@ class ExecutionHandler(AbstractExecutionHandler):
 			through whatever session is registered as the default. Plan 11-08
 			owns the composition-time invariant that makes ``account_id``
 			mandatory in live; until then this refusal IS the guard.
-		exchange_config: `ExchangeConfig`, optional
-			Construction-time exchange configuration threaded to the
-			SimulatedExchange (D-13, COMP-01). When provided the FACTORY has
-			already folded the COMPLETE supported_symbols set
-			(default preset ∪ {BTCUSD} ∪ spec tickers) into
-			``exchange_config.limits.supported_symbols`` — replacement-safe so a
-			later ``update_config`` re-derivation never wipes a symbol
-			(PATTERNS-A2 Trap 1). When None a TEMPORARY backward-compat default
-			is built that unions ``{BTCUSD}`` into the preset, so the
-			direct-construction oracle/integration sites (still calling
-			``ExecutionHandler(global_queue)`` until Wave 4) keep BTCUSD
-			admitted byte-exactly. Wave 4 (04-05) removes the None fallback once
-			every site migrates to the spec-driven factory.
-		rng: `random.Random`, optional
-			The ONE shared seeded RNG for the run, taken off ``EngineContext.rng``
-			by ``compose_engine`` (D-07). The exchange AND its slippage model draw
-			from THIS object — supplying two different instances across a run (or
-			letting a second one be minted downstream) breaks reproducibility
-			silently, because two ``random.Random(42)`` objects look identical
-			until either is drawn from and the call ORDER diverges. Every
-			engine-wired run therefore injects it.
 
-			When ``None``, the handler falls back to deriving its own from
-			``_resolve_rng_seed()`` — the pre-D-07 behaviour. This is deliberate
-			backward-compat for the direct-construction sites (a number of
-			unit/integration tests build ``ExecutionHandler(global_queue)`` with no
-			``ctx`` at all), mirroring the ``_default_backcompat_config`` fallback
-			below. Removing it would turn this plan into a test-wide migration for
-			no correctness gain: those sites have no second component sharing the
-			RNG, so a locally-derived instance is observationally identical.
+		Notes
+		-----
+		D-07: the handler holds NO determinism seam any more. The ONE shared
+		seeded ``random.Random`` rides on ``EngineContext.rng`` and reaches the
+		exchange through ``PaperVenuePlugin.build_bundle`` — the component that
+		now BUILDS it (D-06). The former ``rng`` parameter (plus ``_rng`` /
+		``_rng_seed`` / ``_resolve_rng_seed``) lost its only reader when the mint
+		moved out and was removed rather than left accepted-and-ignored: a
+		vestigial seam here would let a caller believe determinism was wired
+		through this handler when it no longer is.
 		"""
 		# Initialize logger first
 		self.logger = get_itrader_logger().bind(component="ExecutionHandler")
 
 		self.global_queue = global_queue
-		self._exchange_config = exchange_config
+		self._venue_bundles = venue_bundles
 		self._portfolio_read_model = portfolio_read_model
 
-		# Determinism seam (D-11, moved to the wiring seam by D-07): ONE seeded
-		# random.Random per run, shared by every stochastic component (SimulatedExchange
-		# + its slippage model). Never seeded per-call, never duplicated — that is what
-		# makes a run reproducible (#5/PERF2).
-		#
-		# D-07: the engine-wired path now INJECTS it off ``EngineContext.rng``, because
-		# from plan 11.1-07 the venue plugin — not this handler — builds the stochastic
-		# exchange and cannot reach a private attribute here. The ``None`` arm keeps the
-		# pre-D-07 derivation for direct-construction sites (see the ``rng`` docstring).
-		self._rng_seed: Optional[int]
-		self._rng: random.Random
-		if rng is not None:
-			self._rng_seed = None
-			self._rng = rng
-		else:
-			self._rng_seed = self._resolve_rng_seed()
-			self._rng = random.Random(self._rng_seed)
-
-		# Initialize exchanges (requires logger + rng). Keyed on the
+		# Initialize exchanges (requires logger + the bundle memo). Keyed on the
 		# (venue, account_id) PAIR — see DEFAULT_ACCOUNT_ID (D-27/MPORT-07).
 		self.exchanges: dict[tuple[str, str], Optional[AbstractExchange]] = self.init_exchanges()
 
-		# D-07/T-11.1-14: report the injected case DISTINCTLY. Logging `rng_seed=None`
-		# after injection would read as "no seed / non-deterministic" when the opposite
-		# is true — the run is seeded upstream at the wiring seam.
-		if self._rng_seed is None:
-			self.logger.info('Execution Handler initialized (rng=injected from EngineContext)')
-		else:
-			self.logger.info('Execution Handler initialized (rng=derived, rng_seed=%s)', self._rng_seed)
-
-	def _resolve_rng_seed(self) -> int:
-		"""Resolve the determinism seed from the process-wide config singleton (D-16/W4-06).
-
-		Reads ``config.rng_seed`` off the single process-wide ``ITraderConfig``
-		initialised in ``itrader/__init__.py`` — NOT a second duplicate config
-		construction (the W4-06 duplication this fix removes). P9 D-09 moved the
-		seed off the retired ``config.performance.rng_seed`` onto the frozen
-		``ITraderConfig`` base (``config.rng_seed``), immutable at runtime
-		(RTCFG-04). One run-wide determinism setting (default 42); a boot YAML/env
-		override resolves before construction, making this read byte-identical or
-		strictly more correct. Seed stays 42 → the single shared
-		``random.Random(42)`` is unchanged → byte-exact.
-		"""
-		from itrader import config
-		return int(config.rng_seed)
+		self.logger.info('Execution Handler initialized (exchanges resolved via VenueBundles)')
 
 	def update_config(self, updates: Dict[str, Any]) -> None:
 		"""Update execution configuration at runtime (D-07/D-08/D-09).
@@ -307,26 +286,23 @@ class ExecutionHandler(AbstractExecutionHandler):
 	
 	def init_exchanges(self) -> dict[tuple[str, str], Optional[AbstractExchange]]:
 		"""
-		Initialize configured exchanges.
+		RESOLVE the wired exchanges through ``VenueBundles`` (D-06/D-08).
 
-		Creates exchange instances using their default configurations.
-		Each exchange manages its own fee models, slippage simulation, etc.
+		The handler MINTS NOTHING. The venue plugin behind the memo builds the
+		exchange from its own run-derived ``ExchangeConfig`` and the shared seeded
+		RNG (D-17/D-07), exactly as the OKX plugin builds its ``OkxExchange``.
+		Each exchange still manages its own fee/slippage models.
 		"""
-		# D-13/Trap 1: thread the construction-time ExchangeConfig into the
-		# SimulatedExchange so the COMPLETE supported_symbols set is seeded at
-		# construction (replacement-safe) instead of an additive post-construction
-		# register_symbol. When the factory supplies a config it has already folded
-		# default preset ∪ {BTCUSD} ∪ spec tickers into limits.supported_symbols.
+		# D-08: ASK the shared memo. ``spec=None`` because ``PaperVenuePlugin.build_bundle``
+		# reads no spec field at all (unlike the OKX arm, which reads spec.account_id) —
+		# passing a synthesized stand-in spec would invent a value nothing consumes.
 		#
-		# TEMPORARY backward-compat (Wave 4 / 04-05 removes this): when no config is
-		# supplied (direct-construction oracle/integration sites still calling
-		# ExecutionHandler(global_queue)), build a default-preset config that UNIONS
-		# {BTCUSD} so the golden ticker stays admitted byte-exactly — replacing the
-		# removed hardcoded BTCUSD registration without an additive mutation.
-		exchange_config = self._exchange_config or self._default_backcompat_config()
-		# Inject the single seeded Random (D-11) so the exchange + its slippage
-		# model share one deterministic RNG instance for the whole backtest run.
-		simulated = SimulatedExchange(self.global_queue, config=exchange_config, rng=self._rng)
+		# Only the PAPER arm is resolved here. The OKX arm is registered by the live
+		# root's per-account loop (``assemble_venues`` + the registration loop in
+		# ``build_live_system``), which knows the account set; this seam has no way to
+		# enumerate accounts and must not guess one.
+		bundle = self._venue_bundles.get('paper', DEFAULT_ACCOUNT_ID, None)
+		simulated = bundle.exchange
 		# D-05: ONE venue name for the simulated fill engine — ``'paper'``.
 		# Backtest and live-paper are the SAME behaviour (a simulated fill
 		# engine over computed accounts), so they carry one name, not a
@@ -368,22 +344,6 @@ class ExecutionHandler(AbstractExecutionHandler):
 				self.logger.debug('Exchange %s does not support connection management', exchange_name)
 		
 		return exchanges
-
-	@staticmethod
-	def _default_backcompat_config() -> ExchangeConfig:
-		"""Build the TEMPORARY no-config default exchange config (D-13, Trap 1).
-
-		Reproduces today's direct-construction symbol set byte-exactly: the
-		default preset symbols UNION ``{BTCUSD}`` (the union the removed
-		hardcoded BTCUSD registration used to produce). Seeded at
-		construction so it is replacement-safe — a later ``update_config`` that
-		re-derives ``_supported_symbols`` from ``config.limits`` can never wipe
-		BTCUSD. Wave 4 (04-05) removes this fallback once every construction site
-		passes a spec-derived config through the factory.
-		"""
-		config = ExchangeConfig.default()
-		config.limits.supported_symbols = set(config.limits.supported_symbols) | {'BTCUSD'}
-		return config
 
 	def get_exchange_health(self, exchange_name: Optional[str] = None) -> dict[str, Any]:
 		"""

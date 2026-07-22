@@ -80,17 +80,28 @@ _FORBIDDEN = (
     "itrader.storage.system_store",
     "itrader.storage.venue_store",
     "itrader.storage.strategy_registry_store",
-    # Phase 5 (05-05, VENUE-02 inertness gate): the concrete OKX + paper venue/data/
-    # connector plugin modules are LIVE-ONLY — they are registered at the LTS root
-    # (in build_live_system, P6) and their OKX concretion imports + OkxSettings()
-    # construction live INSIDE build*() (D-04 triple-deferral). The backtest
-    # composition root must pull NEITHER: paper_plugin now holds ONLY PaperVenuePlugin
-    # (the replay data plugin/provider left for tests/, D-18), and okx_plugin pulls the
-    # ccxt/OkxConnector stack only inside build*(). If a future edit hoists a plugin's
-    # concretion import to module scope (or pulls a plugin module onto the backtest path)
-    # this probe fails loudly, protecting the oracle byte-exactness + the W1/W2 perf gate.
+    # Phase 5 (05-05, VENUE-02 inertness gate): the concrete OKX venue/data/connector
+    # plugin module is LIVE-ONLY — it is registered at the LTS root (in
+    # build_live_system, P6) and its OKX concretion imports + OkxSettings()
+    # construction live INSIDE build*() (D-04 triple-deferral). If a future edit
+    # hoists that concretion import to module scope (or pulls okx_plugin onto the
+    # backtest path) this probe fails loudly, protecting the oracle byte-exactness +
+    # the W1/W2 perf gate.
+    #
+    # 11.1-07 (D-04) REMOVED `itrader.venues.paper_plugin` from this list — by
+    # DECISION, not by weakening. The backtest now goes through the SAME venue path
+    # live uses: `backtest_trading_system` builds an ExecutionVenueRegistry, registers
+    # `PaperVenuePlugin(exchange_config)` and hands compose a `VenueBundles`. The paper
+    # plugin module is therefore ON the backtest path on purpose, and forbidding it
+    # would forbid the wiring the phase exists to land.
+    #
+    # The protection that MATTERS is unchanged and is asserted below, not here: the
+    # register-vs-build block imports paper_plugin + registers the plugin objects
+    # INSIDE the ccxt-absent window, so a hoisted `SimulatedExchange`/ccxt import in the
+    # plugin still reddens this gate. `ccxt` / `ccxt.pro` / `itrader.connectors.okx`
+    # remain forbidden for the backtest root import above, which is the real invariant
+    # (paper_plugin must pull nothing heavy — not "paper_plugin must be unimported").
     "itrader.venues.okx_plugin",
-    "itrader.venues.paper_plugin",
     # Phase 11 (11-04, D-02 credentials boundary): the CredentialResolver seam is
     # LIVE-ONLY — it is constructed inside build_live_system and reached by PATH import
     # (mirroring okx_settings), never through the config barrel. Listing it here makes
@@ -241,17 +252,29 @@ from itrader.connectors.provider import ConnectorProvider
 _exec_registry = ExecutionVenueRegistry()
 _data_registry = DataProviderRegistry()
 # Register the concrete plugin OBJECTS (store-only — no build*): the OKX venue/data
-# plugins + the paper EXECUTION venue plugin (constructed WITH a dummy simulated exchange,
-# since it reuses an injected exchange AS-IS). TEST-01/D-18: paper_plugin no longer holds
-# a replay DATA plugin (it left for tests/); production paper selects the OKX data feed
-# (D-21). OkxConnectorPlugin is constructed too (an inert object; build() never called).
+# plugins + the paper EXECUTION venue plugin. 11.1-07 (D-06/D-17): the paper plugin now
+# takes an ExchangeConfig and BUILDS its own SimulatedExchange inside build_bundle — so
+# a real ExchangeConfig is constructed here (pure Pydantic, already on the graph) and
+# the registration below must still pull no concretion. TEST-01/D-18: paper_plugin no
+# longer holds a replay DATA plugin (it left for tests/); production paper selects the
+# OKX data feed (D-21). OkxConnectorPlugin is constructed too (an inert object;
+# build() never called).
+from itrader.config import ExchangeConfig
 _exec_registry.register("okx", OkxVenuePlugin())
-_exec_registry.register("paper", PaperVenuePlugin(object()))
+_exec_registry.register("paper", PaperVenuePlugin(ExchangeConfig.default()))
 _data_registry.register("okx", OkxDataPlugin())
 _okx_connector_plugin = OkxConnectorPlugin()
-# Phase 11.1 (D-04): the BACKTEST wiring passes a REAL, EMPTY ConnectorProvider — never
-# None. Constructing it is register-only (no plugin build*), so it must pull no ccxt.
+# Phase 11.1 (D-04/D-08): this is the REAL BACKTEST WIRING PATH, not a stand-in.
+# `backtest_trading_system` builds exactly these four objects before compose — an
+# ExecutionVenueRegistry holding the paper plugin, a REAL, EMPTY ConnectorProvider
+# (never None), and a VenueBundles over both. Constructing the memo is register-only:
+# no `build_bundle` runs until something calls `get`, which this probe deliberately
+# never does. Asserting inertness over the production SHAPE (rather than a parallel
+# ConnectorProvider({}) built beside it) is what keeps this gate honest — 11.1-01
+# left this instruction when it folded the provider into the ccxt-absent window.
+from itrader.venues.bundles import VenueBundles
 _connectors = ConnectorProvider({})
+_venue_bundles = VenueBundles(_exec_registry, _connectors, _ctx)
 
 _okx_leaked = [
     name
@@ -260,8 +283,9 @@ _okx_leaked = [
 ]
 assert not _okx_leaked, (
     "P5/11.1 register-vs-build inertness violation (VENUE-02/VENUE-03): importing + "
-    "registering the OKX/paper venue/data plugins, and importing + constructing the "
-    "ConnectorProvider({}) the backtest wires (D-04), pulled the OKX/ccxt stack: "
+    "registering the OKX/paper venue/data plugins, and building the registry + empty "
+    "ConnectorProvider + VenueBundles the backtest wires (D-04/D-08), pulled the "
+    "OKX/ccxt stack: "
     + repr(_okx_leaked)
     + " (the ccxt.pro import + OkxSettings() must stay inside a plugin's build*, never "
     "at module or register time — D-04 triple-deferral; and itrader/connectors/__init__.py "

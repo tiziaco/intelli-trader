@@ -51,15 +51,25 @@ class _ExplodingConnectorProvider:
         raise AssertionError("paper path must not touch the ConnectorProvider")
 
 
-class _FakeSimulatedExchange:
-    """A stand-in for the compose-built paper SimulatedExchange (reused AS-IS)."""
+def _paper_exchange_config() -> Any:
+    """The RUN-DERIVED ExchangeConfig the paper plugin builds its exchange from (D-17).
+
+    11.1-07: ``PaperVenuePlugin`` no longer takes a pre-built exchange — it takes the
+    config and mints its own, symmetric with ``OkxVenuePlugin``.
+    """
+    from itrader.config import ExchangeConfig
+
+    return ExchangeConfig.default()
 
 
 def _fake_ctx() -> SimpleNamespace:
-    """A fake EngineContext exposing the ``bus`` + ``config`` the OKX plugin reads."""
+    """A fake EngineContext exposing ``bus`` + ``config`` (OKX) and ``rng`` (paper, D-07)."""
+    import random
+
     from itrader.config import ITraderConfig
 
-    return SimpleNamespace(bus=object(), config=ITraderConfig())
+    return SimpleNamespace(
+        bus=object(), config=ITraderConfig(), rng=random.Random(42))
 
 
 def _spec(execution_venue: str, data_provider: str, account_id: str | None = None) -> SimpleNamespace:
@@ -82,7 +92,7 @@ def _okx_registries() -> tuple[Any, Any]:
     return exec_reg, data_reg
 
 
-def _paper_registries(simulated: Any) -> tuple[Any, Any]:
+def _paper_registries(exchange_config: Any) -> tuple[Any, Any]:
     from itrader.venues.paper_plugin import PaperVenuePlugin
     from itrader.venues.registry import DataProviderRegistry, ExecutionVenueRegistry
 
@@ -90,7 +100,7 @@ def _paper_registries(simulated: Any) -> tuple[Any, Any]:
 
     exec_reg = ExecutionVenueRegistry()
     data_reg = DataProviderRegistry()
-    exec_reg.register("paper", PaperVenuePlugin(simulated))
+    exec_reg.register("paper", PaperVenuePlugin(exchange_config))
     # TEST-01/D-18: the replay data plugin left production for the test harness; the
     # paper↔replay pairing survives ONLY here in the fixture (production paper → OKX, D-21).
     data_reg.register("replay", TestDataPlugin())
@@ -145,14 +155,15 @@ def test_assemble_paper_returns_connectorless_bundle_and_replay_provider() -> No
     The paper↔replay pairing is a TEST-only fixture now (D-18/D-21): the relocated
     ``TestDataPlugin`` is registered under ``'replay'`` in ``_paper_registries``.
     """
+    from itrader.execution_handler.exchanges.simulated import SimulatedExchange
     from itrader.venues.assemble import assemble_venue
     from itrader.venues.bundle import VenueBundle
     from itrader.venues.lifecycle import VenueLifecycle
 
     from tests.support.replay_harness import TestLiveDataProvider
 
-    simulated = _FakeSimulatedExchange()
-    exec_reg, data_reg = _paper_registries(simulated)
+    exchange_config = _paper_exchange_config()
+    exec_reg, data_reg = _paper_registries(exchange_config)
     # paper never touches the ConnectorProvider (D-05) — an exploding one proves it.
     connectors = _ExplodingConnectorProvider()
     spec = _spec("paper", "replay", account_id=None)
@@ -160,8 +171,10 @@ def test_assemble_paper_returns_connectorless_bundle_and_replay_provider() -> No
     bundle, lifecycle = assemble_venue(_fake_ctx(), spec, connectors, exec_reg, data_reg)
 
     assert isinstance(bundle, VenueBundle)
-    # D-05: reuse the injected simulated exchange AS-IS, no live connector.
-    assert bundle.exchange is simulated
+    # 11.1-07 (D-06/D-17): the plugin BUILDS its own SimulatedExchange from the
+    # injected config — nothing is handed in pre-built any more.
+    assert isinstance(bundle.exchange, SimulatedExchange)
+    assert bundle.exchange.config is exchange_config
     assert bundle.connector is None
     assert isinstance(lifecycle, VenueLifecycle)
     assert isinstance(lifecycle.provider, TestLiveDataProvider)

@@ -1,12 +1,18 @@
-"""Unit contract for the paper EXECUTION venue plugin (05-05, VENUE-02, D-05).
+"""Unit contract for the paper EXECUTION venue plugin (05-05, VENUE-02, D-05/D-06/D-17).
 
 Proves:
-  - ``PaperVenuePlugin(simulated_exchange).build_bundle`` returns a ``VenueBundle``
-    whose ``exchange`` IS the injected simulated exchange (identity — D-05
-    satisfied-by-reuse, NO new exchange/adapter), ``connector`` is ``None``,
-    ``lifecycle`` is ``None``, and ``account_factory`` mints a compute account;
+  - ``PaperVenuePlugin(exchange_config).build_bundle`` returns a ``VenueBundle``
+    whose ``exchange`` is a ``SimulatedExchange`` the plugin BUILT ITSELF from the
+    injected config (D-06 — symmetric with ``OkxVenuePlugin`` building its own
+    ``OkxExchange``), sharing ``ctx.rng`` (D-07); ``connector`` is ``None``, there
+    is no ``lifecycle`` field, and ``account_factory`` mints a compute account;
+  - the config must be PASSED, not defaulted (D-17): a plugin holding
+    ``ExchangeConfig.default()`` produces an exchange that REFUSES the golden
+    ``BTCUSD`` ticker, which is why the run-derived config rides in from the factory;
+  - the plugin is STATELESS — two ``build_bundle`` calls build two exchanges;
+    single-instance-ness is ``VenueBundles``' memo's job (D-08);
   - the paper bundle NEVER touches the ``ConnectorProvider`` (the ``connectors``
-    arg is unused — paper has no connector, D-05);
+    arg is unread — paper has no connector, D-05);
   - ``itrader.venues.paper_plugin`` no longer holds the replay DATA side (D-18):
     the module imports nothing heavy at module scope and defines only
     ``PaperVenuePlugin`` (the replay plugin/provider/parity window left for
@@ -18,6 +24,7 @@ top-level test packages break full-suite collection).
 
 from __future__ import annotations
 
+import random
 from types import SimpleNamespace
 from typing import Any
 
@@ -34,12 +41,22 @@ class _ExplodingConnectorProvider:
         raise AssertionError("paper path must not touch the ConnectorProvider")
 
 
-class _FakeSimulatedExchange:
-    """A stand-in for the compose-built paper SimulatedExchange (reused AS-IS)."""
+def _seeded_config(ticker: str = "BTCUSD") -> Any:
+    """A RUN-DERIVED ExchangeConfig: the default preset UNION a distinctive ticker.
+
+    This is the shape the backtest factory builds (``_seed_supported_symbols``) and
+    the shape D-17 requires be passed to the plugin.
+    """
+    from itrader.config import ExchangeConfig
+
+    config = ExchangeConfig.default()
+    config.limits.supported_symbols = set(config.limits.supported_symbols) | {ticker}
+    return config
 
 
-def _fake_ctx() -> SimpleNamespace:
-    return SimpleNamespace(bus=object())
+def _fake_ctx(rng: random.Random | None = None) -> SimpleNamespace:
+    """The two ctx fields ``build_bundle`` reads: the bus and the ONE seeded RNG (D-07)."""
+    return SimpleNamespace(bus=object(), rng=rng if rng is not None else random.Random(42))
 
 
 def _fake_spec(account_id: str | None = None) -> SimpleNamespace:
@@ -94,20 +111,36 @@ def test_paper_plugin_module_holds_no_replay_symbol() -> None:
     )
 
 
-def test_paper_venue_plugin_reuses_the_injected_simulated_exchange() -> None:
-    """The paper bundle wraps the injected simulated exchange by IDENTITY (D-05)."""
+def test_paper_venue_plugin_builds_its_own_exchange_from_the_injected_config() -> None:
+    """The plugin BUILDS a SimulatedExchange from its injected config (D-06/D-17/D-07).
+
+    The inverse of the pre-11.1-07 contract: nothing is handed in pre-built. The
+    plugin mints the exchange exactly as ``OkxVenuePlugin`` mints its ``OkxExchange``,
+    from the RUN-DERIVED config it received at construction, sharing the ctx's ONE
+    seeded RNG.
+    """
+    from itrader.execution_handler.exchanges.simulated import SimulatedExchange
     from itrader.venues.bundle import VenueBundle
     from itrader.venues.paper_plugin import PaperVenuePlugin
 
-    simulated = _FakeSimulatedExchange()
-    plugin = PaperVenuePlugin(simulated)
+    exchange_config = _seeded_config("BTCUSD")
+    plugin = PaperVenuePlugin(exchange_config)
+    rng = random.Random(7)
+    ctx = _fake_ctx(rng)
 
-    bundle = plugin.build_bundle(_fake_ctx(), _fake_spec(), _ExplodingConnectorProvider())
+    bundle = plugin.build_bundle(ctx, _fake_spec(), _ExplodingConnectorProvider())
 
     assert isinstance(bundle, VenueBundle)
-    # D-05: reuse AS-IS — the bundle's exchange IS the injected instance (identity),
-    # not a new exchange/adapter.
-    assert bundle.exchange is simulated
+    # D-06: a REAL SimulatedExchange the plugin built — not an injected stand-in.
+    assert isinstance(bundle.exchange, SimulatedExchange)
+    # D-17: built from THE injected config object (identity, not an equal copy) — so a
+    # run-derived symbol set provably reaches the exchange.
+    assert bundle.exchange.config is exchange_config
+    assert "BTCUSD" in bundle.exchange._supported_symbols
+    # D-07: the ONE seeded RNG, by IDENTITY. Equality of seed proves nothing — two
+    # random.Random(42) instances look identical until the call ORDER diverges.
+    assert bundle.exchange._rng is rng
+    assert bundle.exchange.global_queue is ctx.bus
     # Paper has no live connector (D-05).
     assert bundle.connector is None
     # 11-09: the dead ``VenueBundle.lifecycle`` field is gone — the lifecycle is returned
@@ -117,13 +150,52 @@ def test_paper_venue_plugin_reuses_the_injected_simulated_exchange() -> None:
     assert callable(bundle.account_factory)
 
 
+def test_two_build_bundle_calls_build_two_exchanges() -> None:
+    """The PLUGIN is stateless — two calls build two exchanges (D-08 boundary).
+
+    Single-instance-ness per ``(venue, account_id)`` is ``VenueBundles``' memo's job,
+    NOT the plugin's. Conflating the two is exactly how a second, divergent memo gets
+    hand-rolled inside a plugin — and a bundle memo that disagrees with the connector
+    memo re-opens the duplicate-session defect D-08 exists to close.
+    """
+    from itrader.venues.paper_plugin import PaperVenuePlugin
+
+    plugin = PaperVenuePlugin(_seeded_config())
+
+    first = plugin.build_bundle(_fake_ctx(), _fake_spec(), _ExplodingConnectorProvider())
+    second = plugin.build_bundle(_fake_ctx(), _fake_spec(), _ExplodingConnectorProvider())
+
+    assert first.exchange is not second.exchange
+
+
+def test_default_preset_config_refuses_the_golden_ticker() -> None:
+    """VENUE-05 empty edge / D-17's decisive evidence, as a guard.
+
+    ``ExchangeConfig.default()`` does NOT contain ``BTCUSD``. A plugin constructed
+    with the preset therefore builds an exchange that REFUSES the golden ticker,
+    while the run-derived (seeded) config admits it. This is why the config must be
+    PASSED from the factory and must never be defaulted or imported plugin-side —
+    the failure otherwise surfaces as refused orders far from its cause.
+    """
+    from itrader.config import ExchangeConfig
+    from itrader.venues.paper_plugin import PaperVenuePlugin
+
+    preset_exchange = PaperVenuePlugin(ExchangeConfig.default()).build_bundle(
+        _fake_ctx(), _fake_spec(), _ExplodingConnectorProvider()).exchange
+    seeded_exchange = PaperVenuePlugin(_seeded_config("BTCUSD")).build_bundle(
+        _fake_ctx(), _fake_spec(), _ExplodingConnectorProvider()).exchange
+
+    assert not preset_exchange.validate_symbol("BTCUSD")
+    assert seeded_exchange.validate_symbol("BTCUSD")
+
+
 def test_paper_account_factory_mints_a_compute_account() -> None:
     """account_factory mints a SimulatedCashAccount for a non-margin portfolio."""
     from itrader.portfolio_handler.account import SimulatedCashAccount
     from itrader.portfolio_handler.account.base import Account
     from itrader.venues.paper_plugin import PaperVenuePlugin
 
-    plugin = PaperVenuePlugin(_FakeSimulatedExchange())
+    plugin = PaperVenuePlugin(_seeded_config())
     bundle = plugin.build_bundle(_fake_ctx(), _fake_spec(), _ExplodingConnectorProvider())
 
     account = bundle.account_factory(_fake_portfolio(), initial_cash=1000.0)
@@ -154,7 +226,7 @@ def test_paper_venue_plugin_has_no_credential_model_and_no_venue_uid() -> None:
     """
     from itrader.venues.paper_plugin import PaperVenuePlugin
 
-    plugin = PaperVenuePlugin(_FakeSimulatedExchange())
+    plugin = PaperVenuePlugin(_seeded_config())
 
     assert plugin.credential_model is None
     assert plugin.fetch_venue_uid(object()) is None
@@ -167,7 +239,7 @@ def test_paper_plugins_satisfy_venue_and_data_protocols() -> None:
 
     from tests.support.replay_harness import TestDataPlugin
 
-    assert isinstance(PaperVenuePlugin(_FakeSimulatedExchange()), VenuePlugin)
+    assert isinstance(PaperVenuePlugin(_seeded_config()), VenuePlugin)
     assert isinstance(TestDataPlugin(), DataProviderPlugin)
 
 
@@ -180,7 +252,7 @@ def test_paper_new_account_mints_a_fresh_leaf_per_portfolio() -> None:
     from itrader.venues.bundle import VenueAccountConfig
     from itrader.venues.paper_plugin import PaperVenuePlugin
 
-    plugin = PaperVenuePlugin(_FakeSimulatedExchange())
+    plugin = PaperVenuePlugin(_seeded_config())
     config = VenueAccountConfig(initial_cash=1000.0)
 
     account_a = plugin.new_account(_fake_portfolio(), config)
@@ -205,7 +277,7 @@ def test_paper_new_account_selects_the_margin_leaf_when_enabled() -> None:
     from itrader.venues.bundle import VenueAccountConfig
     from itrader.venues.paper_plugin import PaperVenuePlugin
 
-    plugin = PaperVenuePlugin(_FakeSimulatedExchange())
+    plugin = PaperVenuePlugin(_seeded_config())
     config = VenueAccountConfig(initial_cash=1000.0)
 
     margin_portfolio = _fake_portfolio()
@@ -223,7 +295,7 @@ def test_paper_account_factory_delegates_to_new_account() -> None:
     from itrader.portfolio_handler.account import SimulatedCashAccount
     from itrader.venues.paper_plugin import PaperVenuePlugin
 
-    plugin = PaperVenuePlugin(_FakeSimulatedExchange())
+    plugin = PaperVenuePlugin(_seeded_config())
     bundle = plugin.build_bundle(_fake_ctx(), _fake_spec(), _ExplodingConnectorProvider())
 
     account = bundle.account_factory(_fake_portfolio(), initial_cash=2500.0)
