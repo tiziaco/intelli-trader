@@ -423,6 +423,47 @@ def test_the_same_account_id_on_two_venues_boots(live_db, okx_env) -> None:
         system.stop(timeout=5.0)
 
 
+def test_a_binance_portfolio_does_not_receive_the_okx_venue_account(
+    live_db, okx_env
+) -> None:
+    """CR-01 at the BOOT: the foreign-venue portfolio is not handed OKX's account.
+
+    Same seeding as the test above — a persisted ``binance``/``main`` portfolio while
+    the spec boots ``okx``/``main``. The composition root derived its account set and
+    attached venue accounts by BARE ``account_id``, so the binance portfolio was handed
+    the OKX "main" ``VenueAccount``: ``ReconciliationCoordinator`` would then snapshot
+    one venue's balance against the other venue's positions, and ``VenueReconciler``
+    would emit reconciling fills into the wrong portfolio.
+
+    The OKX-side assertions are deliberately UNCHANGED from the sibling test: the OKX
+    spec portfolio still legitimately names "main", so the bundle and the registry entry
+    are not what this fix touches — only who receives the resulting account is.
+    """
+    from itrader.portfolio_handler.account import VenueAccount
+
+    other = PortfolioId(uuid.uuid4())
+    VenueAccountStore(live_db).upsert(
+        "binance", "main", secret_ref=None, venue_uid=None, enabled=True,
+        config={}, at=_AT)
+    PortfolioDefinitionStore(live_db).upsert(
+        other, name="pf-binance", venue_name="binance", account_id="main",
+        initial_cash=Decimal("10000.00"), enabled=True, config=None, at=_AT)
+
+    system = build_live_system(_spec(["main"]))
+    try:
+        portfolio = system.portfolio_handler.get_portfolio(other)
+        assert portfolio.venue_name == "binance"
+        # It keeps its construction-time compute leaf: this boot assembled NOTHING on
+        # binance, so there is nothing correct to give it, and giving it the OKX
+        # account is the cross-venue conflation D-14/D-15 exist to prevent.
+        assert not isinstance(portfolio.account, VenueAccount)
+        assert portfolio.account.is_venue_truth is False
+        # Unchanged: the OKX spec account still assembles and registers.
+        assert set(_okx_entries(system)) == {(_VENUE, "main")}
+    finally:
+        system.stop(timeout=5.0)
+
+
 # --------------------------------------------------------------------------- #
 # The rehydrate boot gates (D-08) — placement and ordering, executably
 # --------------------------------------------------------------------------- #

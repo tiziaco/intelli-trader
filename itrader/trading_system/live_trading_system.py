@@ -1391,9 +1391,30 @@ def _read_account_secret_ref(
     return str(secret_ref) if secret_ref else None
 
 
+def _venue_of(portfolio: Any) -> Optional[str]:
+    """The venue a portfolio belongs to, or ``None`` when it cannot be resolved (CR-01).
+
+    ``Portfolio.venue_name`` is the SOURCE OF TRUTH (``portfolio.py:111``) and
+    ``self.exchange`` is derived from it, but a portfolio created the LEGACY way —
+    ``add_portfolio(name, 'okx', cash)`` — carries ``venue_name is None`` and
+    ``exchange == 'okx'``. Reading ``venue_name`` alone would treat every legacy live
+    portfolio as foreign and silently strip its venue account, which is a worse
+    regression than the defect this closes. Hence ``venue_name or exchange``.
+
+    Both reads are ``getattr`` because the callers duck-type over live ``Portfolio``
+    objects AND over spec rows / test fakes; a resolved venue of ``None`` is treated as
+    FOREIGN by every caller (there is no ambient default venue, and a real ``Portfolio``
+    always carries one).
+    """
+    return getattr(portfolio, 'venue_name', None) or getattr(
+        portfolio, 'exchange', None)
+
+
 def _account_ids_for_spec(
     spec: Any,
     portfolios: "Iterable[Any]" = (),
+    *,
+    venue_name: str,
 ) -> list[Optional[str]]:
     """Every distinct venue account this run must assemble a bundle for (11-07/11-09).
 
@@ -1428,6 +1449,29 @@ def _account_ids_for_spec(
 
     A ``VenueSpec`` (the ``for_exchange`` shape) carries no ``portfolios`` at all and
     therefore yields the single-account list when no portfolios are supplied either.
+
+    CR-01 — identity is the ``(venue_name, account_id)`` PAIR, never the bare id. The
+    same account-id string on two venues names two DIFFERENT real accounts; that is the
+    doctrine ``portfolio_handler/rehydrate/distinct_account_invariant.py`` already
+    encodes (it keys its ``_claim`` on the cross-venue pair) and which this derivation
+    discarded. ``rehydrate_portfolios`` restores EVERY persisted portfolio regardless of
+    venue, so a binance portfolio named "main" made an OKX boot mint an ``('okx','main')``
+    ``venue_accounts`` row AND assemble an OKX bundle for an account belonging to a
+    completely different venue. The rehydrated half of the union is therefore filtered by
+    ``venue_name``, and a portfolio whose venue cannot be resolved at all is treated as
+    FOREIGN.
+
+    The return stays a list of IDS rather than a list of pairs precisely because every id
+    it yields is scoped to ``venue_name`` BY CONSTRUCTION — a pair return would be
+    redundancy, not information, and ``assemble_venues`` keys its lifecycle map on the
+    bare id for the same reason (one ``assemble_venues`` call is single-venue by
+    construction).
+
+    Parameters
+    ----------
+    venue_name : str
+        The venue this boot is assembling. REQUIRED and keyword-only: a defaulted venue
+        is how the venue half gets dropped again by a caller that forgets it.
     """
     ordered: list[Optional[str]] = []
     primary = getattr(spec, 'account_id', None)
@@ -1439,8 +1483,12 @@ def _account_ids_for_spec(
             ordered.append(account_id)
     # 11-09: the rehydrated half of the union. Live ``Portfolio`` objects, not spec
     # rows — the two are read through the same ``account_id`` attribute name, so no
-    # adapter is needed and neither side is privileged.
+    # adapter is needed and neither side is privileged. Spec portfolios above carry NO
+    # venue and belong to the booted venue by definition (the same premise
+    # ``assert_distinct_accounts`` documents), so only THIS half is venue-filtered.
     for portfolio in portfolios:
+        if _venue_of(portfolio) != venue_name:
+            continue
         account_id = getattr(portfolio, 'account_id', None)
         if account_id is not None and account_id not in ordered:
             ordered.append(account_id)
@@ -1519,7 +1567,10 @@ def _build_account_specs(
     ``portfolios`` (11-09) are the ALREADY-REHYDRATED live portfolios, unioned into the
     account set so a restored portfolio's account is assembled too.
     """
-    account_ids = _account_ids_for_spec(spec, portfolios)
+    # CR-01: the booted venue is threaded into the derivation so the rehydrated half of
+    # the union is venue-scoped — without it a foreign-venue portfolio's account id mints
+    # a row and assembles a bundle on THIS venue.
+    account_ids = _account_ids_for_spec(spec, portfolios, venue_name=exchange)
     _mint_account_rows(venue_account_store, exchange, account_ids)
     data_provider = getattr(spec, 'data_provider', None)
     return [
@@ -1537,6 +1588,8 @@ def _build_account_specs(
 def _attach_venue_accounts(
     portfolio_handler: Any,
     lifecycles: Dict[str, Any],
+    *,
+    venue_name: str,
 ) -> Dict[str, Any]:
     """Give each portfolio the ``Account`` minted from ITS OWN account's bundle (11-09).
 
@@ -1575,6 +1628,22 @@ def _attach_venue_accounts(
       would quietly build two independent caches of one real venue balance if that
       invariant were ever relaxed, and memoizing also lets the reconcile coordinator
       dedupe by account IDENTITY.
+    * A portfolio on ANOTHER VENUE is not ours to attach (CR-01). ``lifecycles`` is keyed
+      by bare account id and one ``assemble_venues`` call is single-venue by
+      construction, so a venue-blind lookup handed a binance portfolio named "main" the
+      OKX "main" ``VenueAccount`` — and that account object is the identity the
+      ``ReconciliationCoordinator`` snapshot, the D-04 baseline HALT guard and
+      ``VenueReconciler`` all act on. This is NOT a silent hole: the portfolio's account
+      belongs to a venue THIS boot did not assemble, so there is nothing correct to give
+      it, and giving it the booted venue's account is exactly the cross-venue conflation
+      D-14/D-15 exist to prevent.
+
+    Parameters
+    ----------
+    venue_name : str
+        The venue this boot assembled ``lifecycles`` for. REQUIRED and keyword-only — a
+        defaulted venue is how the venue half gets dropped again by a caller that
+        forgets it.
 
     Returns
     -------
@@ -1591,6 +1660,17 @@ def _attach_venue_accounts(
     for portfolio in portfolio_handler._portfolios.values():
         account_id = getattr(portfolio, 'account_id', None)
         if not account_id:
+            continue
+        # CR-01 — guard ORDER is load-bearing. The venue guard must precede the lookup
+        # so a FOREIGN-venue portfolio naming an unassembled account is skipped rather
+        # than raising, while a SAME-venue portfolio naming an unassembled account still
+        # hits the fail-loud refusal below, unchanged.
+        portfolio_venue = _venue_of(portfolio)
+        if portfolio_venue != venue_name:
+            logger.debug(
+                "Skipping portfolio '%s' on venue %r: this boot assembled venue %r, "
+                "so it has no account of ours to attach",
+                getattr(portfolio, 'name', None), portfolio_venue, venue_name)
             continue
         lifecycle = lifecycles.get(account_id)
         if lifecycle is None:
@@ -2018,7 +2098,15 @@ def build_live_system(
         # ``is_venue_truth`` is False for all of them, and the whole venue reconcile
         # (snapshot / streaming / VenueReconciler / the D-04 baseline HALT gate) silently
         # no-ops behind a green suite. Fails LOUD on a named account with no lifecycle.
-        venue_accounts = _attach_venue_accounts(portfolio_handler, venue_lifecycles)
+        #
+        # CR-01: the attach is VENUE-SCOPED. `rehydrate_portfolios` restores every
+        # persisted portfolio regardless of venue, and `venue_lifecycles` is keyed by
+        # bare account id (one `assemble_venues` call is single-venue by construction),
+        # so without the booted venue a portfolio on another venue was handed THIS
+        # venue's VenueAccount — the identity the reconcile snapshot, the D-04 baseline
+        # HALT gate and VenueReconciler all act on.
+        venue_accounts = _attach_venue_accounts(
+            portfolio_handler, venue_lifecycles, venue_name=exchange)
     else:
         venue_accounts = {}
 

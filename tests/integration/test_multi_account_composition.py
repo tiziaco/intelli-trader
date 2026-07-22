@@ -100,7 +100,8 @@ def _okx_entries(system):
 # --------------------------------------------------------------------------- #
 def test_account_set_is_derived_from_the_portfolios() -> None:
     """Two portfolios naming two accounts yield two accounts, in spec order."""
-    assert _account_ids_for_spec(_spec(["acct-a", "acct-b"])) == ["acct-a", "acct-b"]
+    assert _account_ids_for_spec(
+        _spec(["acct-a", "acct-b"]), venue_name=_VENUE) == ["acct-a", "acct-b"]
 
 
 def test_two_portfolios_on_one_account_share_one_bundle() -> None:
@@ -110,13 +111,14 @@ def test_two_portfolios_on_one_account_share_one_bundle() -> None:
     per-portfolio connector would open N authenticated sessions against the same
     venue account and multiply that account's rate-limit budget by N.
     """
-    assert _account_ids_for_spec(_spec(["acct-a", "acct-a"])) == ["acct-a"]
+    assert _account_ids_for_spec(
+        _spec(["acct-a", "acct-a"]), venue_name=_VENUE) == ["acct-a"]
 
 
 def test_spec_level_account_is_primary_and_never_duplicated() -> None:
     """The spec-level account leads (deterministic primary) and is de-duplicated."""
     spec = _spec(["acct-b", "acct-a"], primary="acct-a")
-    assert _account_ids_for_spec(spec) == ["acct-a", "acct-b"]
+    assert _account_ids_for_spec(spec, venue_name=_VENUE) == ["acct-a", "acct-b"]
 
 
 def test_a_spec_naming_no_account_is_the_unchanged_single_account_path() -> None:
@@ -128,8 +130,40 @@ def test_a_spec_naming_no_account_is_the_unchanged_single_account_path() -> None
     """
     from itrader.trading_system.venue_spec import build_venue_spec
 
-    assert _account_ids_for_spec(build_venue_spec(_VENUE)) == [None]
-    assert _account_ids_for_spec(_spec([])) == [None]
+    assert _account_ids_for_spec(
+        build_venue_spec(_VENUE), venue_name=_VENUE) == [None]
+    assert _account_ids_for_spec(_spec([]), venue_name=_VENUE) == [None]
+
+
+def test_a_foreign_venue_portfolio_contributes_no_account_to_this_venues_set() -> None:
+    """CR-01: a REHYDRATED portfolio on ANOTHER venue contributes nothing here.
+
+    Identity is the ``(venue_name, account_id)`` PAIR — ``distinct_account_invariant``
+    already encodes that doctrine (``test_the_same_account_id_on_two_different_venues_passes``),
+    but the derivation read the bare id and discarded the venue half. A binance
+    portfolio named "main" therefore made this OKX boot mint an ``('okx','main')``
+    ``venue_accounts`` row and assemble an OKX bundle for an account that belongs to a
+    completely different venue.
+
+    The companion assertions are what keep the fix from degenerating into "ignore
+    rehydrated portfolios": a SAME-venue rehydrated portfolio is still included, and so
+    is a LEGACY one whose ``venue_name`` is ``None`` but whose ``exchange`` is ours
+    (``add_portfolio(name, 'okx', cash)`` — reading ``venue_name`` alone would silently
+    strip its venue account, a regression worse than the defect).
+    """
+    foreign = SimpleNamespace(
+        name="pf-binance", account_id="main", venue_name="binance",
+        exchange="binance")
+    assert _account_ids_for_spec(
+        _spec([]), [foreign], venue_name=_VENUE) == [None]
+
+    native = SimpleNamespace(
+        name="pf-okx", account_id="acct-native", venue_name=_VENUE, exchange=_VENUE)
+    legacy = SimpleNamespace(
+        name="pf-legacy", account_id="acct-legacy", venue_name=None, exchange=_VENUE)
+    assert _account_ids_for_spec(
+        _spec([]), [foreign, native, legacy], venue_name=_VENUE,
+    ) == ["acct-native", "acct-legacy"]
 
 
 # --------------------------------------------------------------------------- #
@@ -472,11 +506,13 @@ def test_a_portfolio_naming_an_unassembled_account_is_refused() -> None:
             connector=object(),
             account_factory=lambda portfolio: SimpleNamespace(
                 account_id="acct-primary")))
-    orphan = SimpleNamespace(name="pf-orphan", account_id="acct-missing", account=None)
+    orphan = SimpleNamespace(
+        name="pf-orphan", account_id="acct-missing", account=None,
+        venue_name=_VENUE, exchange=_VENUE)
     handler = SimpleNamespace(_portfolios={1: orphan})
 
     with pytest.raises(ValidationError) as exc_info:
-        _attach_venue_accounts(handler, {"acct-primary": primary})
+        _attach_venue_accounts(handler, {"acct-primary": primary}, venue_name=_VENUE)
 
     assert "acct-missing" in str(exc_info.value)
     # The refusal happened BEFORE any assignment — the portfolio was never quietly
@@ -492,11 +528,45 @@ def test_a_portfolio_naming_no_account_keeps_its_construction_time_leaf() -> Non
     an "attach everything" loop would silently reset the portfolio's opening balance.
     """
     original = object()
-    portfolio = SimpleNamespace(name="pf-paper", account_id=None, account=original)
+    portfolio = SimpleNamespace(
+        name="pf-paper", account_id=None, account=original,
+        venue_name=_VENUE, exchange=_VENUE)
     handler = SimpleNamespace(_portfolios={1: portfolio})
 
-    assert _attach_venue_accounts(handler, {}) == {}
+    assert _attach_venue_accounts(handler, {}, venue_name=_VENUE) == {}
     assert portfolio.account is original
+
+
+def test_a_foreign_venue_portfolio_is_never_given_this_venues_account() -> None:
+    """CR-01: a portfolio on ANOTHER venue is never handed THIS venue's account.
+
+    The attach resolved the lifecycle by bare ``account_id``, so a binance portfolio
+    named "main" was handed the OKX "main" ``VenueAccount``. That account object is the
+    identity ``ReconciliationCoordinator``'s snapshot, the D-04 baseline HALT guard and
+    ``VenueReconciler`` all act on — so the engine would snapshot one venue's balance
+    against another venue's positions and emit reconciling fills into the wrong
+    portfolio.
+
+    Asserted on the object IDENTITY of the sentinel rather than on a flag: identity is
+    the claim, and an equality/flag check would pass against an implementation that
+    handed over a different-but-equal account.
+    """
+    marker = object()
+    okx_lifecycle = SimpleNamespace(
+        bundle=SimpleNamespace(
+            connector=object(),
+            account_factory=lambda portfolio: marker))
+    sentinel = object()
+    foreign = SimpleNamespace(
+        name="pf-binance", account_id="main", venue_name="binance",
+        exchange="binance", account=sentinel)
+    handler = SimpleNamespace(_portfolios={1: foreign})
+
+    # Nothing was minted on this venue for a foreign portfolio...
+    assert _attach_venue_accounts(
+        handler, {"main": okx_lifecycle}, venue_name=_VENUE) == {}
+    # ...and the portfolio still holds the EXACT object it came in with.
+    assert foreign.account is sentinel
 
 
 def test_the_account_set_unions_spec_portfolios_with_rehydrated_ones() -> None:
@@ -506,12 +576,13 @@ def test_the_account_set_unions_spec_portfolios_with_rehydrated_ones() -> None:
     wrong on which account the one feed provider belongs to.
     """
     rehydrated = [
-        SimpleNamespace(account_id="acct-r1"),
-        SimpleNamespace(account_id="acct-a"),   # already named by the spec — deduped
-        SimpleNamespace(account_id="acct-r2"),
+        SimpleNamespace(account_id="acct-r1", venue_name=_VENUE),
+        # already named by the spec — deduped
+        SimpleNamespace(account_id="acct-a", venue_name=_VENUE),
+        SimpleNamespace(account_id="acct-r2", venue_name=_VENUE),
     ]
     assert _account_ids_for_spec(
-        _spec(["acct-a"], primary="acct-p"), rehydrated,
+        _spec(["acct-a"], primary="acct-p"), rehydrated, venue_name=_VENUE,
     ) == ["acct-p", "acct-a", "acct-r1", "acct-r2"]
 
 
