@@ -595,7 +595,7 @@ Plans:
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
-- [ ] 11.1-09-PLAN.md — D-02 + D-03: `Portfolio` receives a built `Account`; `new_account` is the sole factory with the D-11 guard intact (F-1) (VENUE-02)
+- [x] 11.1-09-PLAN.md — D-02 + D-03: `Portfolio` receives a built `Account`; `new_account` is the sole factory with the D-11 guard intact (F-1) (VENUE-02)
 
 **Wave 7** *(blocked on Wave 6 completion)*
 
