@@ -376,6 +376,13 @@ the code does not yet trust it.*
   `is_venue_truth=False`, which disables snapshot, streaming, `VenueReconciler` and the D-04
   unexplained-residual HALT behind a green suite. Hard-raise rather than per-portfolio quarantine (the
   `260718-e36`/`evz` precedent): unlike a dark strategy, an unattached portfolio still routes orders.
+  **Mandatory consequence (11-REVIEW WR-11)**: `tests/integration/test_multi_portfolio_lifecycle.py:104-125`
+  gives BOTH paper portfolios `account_id=DEFAULT_ACCOUNT_ID` and no `venue_name`, and passes today only
+  because that half-null shape makes `_persist_definition` skip the row (so the DB unique constraint never
+  sees it) and keeps `assert_distinct_accounts` off the path entirely — i.e. the phase's flagship
+  multi-portfolio test demonstrates the exact account sharing D-14/D-15 forbid. ACCT-03 makes the fixture
+  illegal, so it must be given distinct `account_id`s and a real `venue_name` in this phase; the phase
+  cannot go green otherwise. Close the half-null bypass explicitly rather than relying on it.
 - [ ] **ACCT-04** *(closes 11-REVIEW WR-03)*: The six live-path `or DEFAULT_ACCOUNT_ID` coercions are
   deleted. Registration writes `(venue, 'default')` while both readers construct `(venue, None)` raw, so for
   an unnamed account the registered key is unreachable by every reader — a write-only entry, not merely an
@@ -390,6 +397,20 @@ the code does not yet trust it.*
   composition time"* invariant (`execution_handler.py:209`, `core/portfolio_read_model.py:227`) are
   corrected — ACCT-03 is what makes it true. The two citing 11-08's **distinct**-account invariant
   (`live_trading_system.py:1627`, `reconciliation_coordinator.py:164`) are accurate and stay untouched.
+- [ ] **ACCT-07** *(closes 11-REVIEW WR-01)*: `PortfolioHandler._persist_definition` and
+  `SqlPortfolioStorage.save_config` agree on when a definition row is required. `save_config`'s legacy
+  account-state arm was deleted on the stated grounds that *"a live portfolio now always has a definition
+  row"*, but `_persist_definition` returns early when `venue_name` or `account_id` is `None` — so for such a
+  portfolio a runtime `portfolio:{id}` `CONFIG_UPDATE` raises `PortfolioStateError` out of `ConfigRouter`
+  and its config never persists. ACCT-03 makes that early-return unreachable, which resolves the
+  disagreement; the early-return itself is then removed or converted to the same typed raise so the two
+  halves cannot drift apart again.
+- [ ] **ACCT-08** *(closes 11-REVIEW WR-09)*: `PortfolioHandler` exposes `all_portfolios()` and
+  `has_portfolio(portfolio_id)`, and the production reach-ins to the private `_portfolios` dict are
+  converted (`portfolio_rehydrate.py:124`, `live_trading_system.py:1341/1591/1964`). Folded here because
+  ACCT-01 and ACCT-05 rewrite two of those call sites anyway — the handler already exposes
+  `get_active_portfolios()`, and every consumer reached for the private field only because no "all
+  portfolios" / "is registered" accessor existed.
 
 ### Test Migration + Gates (P12 — except TEST-01, pulled forward into P6)
 
