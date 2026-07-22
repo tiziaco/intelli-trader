@@ -583,7 +583,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 11.1-06-PLAN.md — D-05 + D-19: the backtest venue becomes `'paper'`, the registry alias is retired in full, and the three unguarded sites (F-3 / F-4 / F-11) are converted — oracle-gated (VENUE-04)
+- [x] 11.1-06-PLAN.md — D-05 + D-19: the backtest venue becomes `'paper'`, the registry alias is retired in full, and the three unguarded sites (F-3 / F-4 / F-11) are converted — oracle-gated (VENUE-04)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
