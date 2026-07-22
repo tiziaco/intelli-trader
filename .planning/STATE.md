@@ -3,18 +3,18 @@ gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: Live System Refactor & Live-Readiness Hardening
 current_phase: 11.1
-current_phase_name: Account Provisioning + Mandatory Account Identity
+current_phase_name: One Venue Path + Account Ownership (structural half; 11.2 split out)
 status: planning
-stopped_at: "Phase 11.1 discussion PARTIAL — structural area locked (D-01..D-08); 3 areas open, NOT ready to plan"
-last_updated: "2026-07-22T00:00:00.000Z"
+stopped_at: Phase 11.1 context gathered (structural scope; 11.2 split out)
+last_updated: "2026-07-22T16:17:00.410Z"
 last_activity: 2026-07-22
-last_activity_desc: "Phase 11.1 discuss: locked the structural redesign (D-01..D-08) — Account loses its Portfolio back-reference, one venue path across backtest+live, PaperVenuePlugin owns its SimulatedExchange, memoized VenueBundles provider; ~360 lines delete. Inserted Phase 12 (COMP-01..06), P12 test phase -> P13"
+last_activity_desc: "Phase 11.1 discussion complete — D-09..D-19 settled; phase SPLIT into 11.1 (structural, D-01..D-08/D-14/D-17..D-19) and a not-yet-created 11.2 (provisioning + ACCT-01..11)"
 progress:
-  total_phases: 16
-  completed_phases: 13
+  total_phases: 13
+  completed_phases: 10
   total_plans: 43
   completed_plans: 43
-  percent: 81
+  percent: 77
 ---
 
 # Project State
@@ -462,11 +462,11 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-21T07:57:33.832Z
-Stopped at: Phase 11 context gathered
+Last session: 2026-07-22T16:17:00.397Z
+Stopped at: Phase 11.1 context gathered (structural scope; 11.2 split out)
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
-Resume file: .planning/phases/11-multi-portfolio-live/11-CONTEXT.md
+Resume file: .planning/phases/11.1-account-provisioning-mandatory-account-identity/11.1-CONTEXT.md
 Carried todo: 14 pending todos in `todos/pending/` (10 fold into v1.8 as CF-1..CF-10; `v17-residual-carryforward.md`
 is the index; the substantive open item is `margin-equity-double-counts-notional-wr01`, owner-gated).
 
