@@ -21,9 +21,15 @@ annotation under ``from __future__ import annotations``), so importing
 ``connectors.provider`` pulls nothing heavy (the inertness gate).
 
 This file lives beside ``connectors/base.py`` / ``connectors/stream_supervisor.py``
-and is imported DIRECTLY (``from itrader.connectors.provider import ...``);
-``connectors/__init__.py`` is deliberately NOT edited so the barrel/inertness
-surface stays unchanged.
+and is still imported DIRECTLY (``from itrader.connectors.provider import ...``).
+Since Phase 11.1 (RESEARCH F-2, the D-04 prerequisite) ``connectors/__init__.py``
+no longer re-exports a connector CONCRETION — the barrel exports only the
+``LiveConnector`` Protocol — so importing this module is genuinely inert rather
+than inert-by-call-site-discipline: the package ``__init__`` it necessarily runs
+pulls neither ``ccxt`` nor ``itrader.connectors.okx``. That is what lets the
+BACKTEST composition root carry a ``ConnectorProvider`` (D-04 passes a real, empty
+``ConnectorProvider({})``, never ``None``) without reddening GATE-01
+(``tests/integration/test_okx_inertness.py``).
 
 Indentation: 4-SPACE (``connectors/`` package convention). ``mypy --strict`` applies.
 """

@@ -31,8 +31,9 @@ structural seam (D-04/D-08) that ``OkxConnector`` (Plan 02-02) and the local
 ``PaperConnector`` (Phase 4) satisfy, and that the connectors conftest's
 ``FakeLiveConnector`` satisfies for tests. There is no shared implementation to inherit;
 the arms only need the structural surface. Method bodies are ``...`` — this is a
-contract, not a base class. ``connectors/__init__.py`` gains ``OkxConnector`` in Plan
-02-02 when the concretion exists; it is not exported here.
+contract, not a base class. This Protocol is the ONLY thing ``connectors/__init__.py``
+exports: since Phase 11.1 (D-04/GATE-01) the barrel re-exports no connector concretion —
+``OkxConnector`` is imported directly from ``itrader.connectors.okx``.
 """
 
 from typing import Any, Awaitable, Protocol, TypeVar, runtime_checkable
