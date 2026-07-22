@@ -65,8 +65,9 @@ makes the engine *interfacable*, shipping no ASGI code.
 **Design source:** `docs/superpowers/specs/2026-07-07-v1.8-live-system-refactor-design.md` (LR-00..LR-22,
 CF-1..CF-10). **Research:** `.planning/research/SUMMARY.md` (validates the design vs Nautilus/LEAN; zero
 new third-party dependencies; 4 build-order refinements folded in). Requirements + traceability:
-`.planning/REQUIREMENTS.md` (64 v1 requirements across 13 categories → 12 phases; the SQL + STORE
-categories share the merged storage-schema phase P4).
+`.planning/REQUIREMENTS.md` (**69** v1 requirements across 13 categories → 12 phases; the SQL + STORE
+categories share the merged storage-schema phase P4). *(Was 64 at 2026-07-09; +4 `DECOMP-*` from the
+inserted Phase 10.1, +1 `MPORT-07` discovered during P11 discussion 2026-07-21.)*
 
 **Milestone-wide gates (apply to EVERY phase — restated as success criteria):**
 
@@ -111,7 +112,8 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 - [x] **Phase 9 ★: Runtime-Config Platform** - `RuntimeConfig` overlay, scoped `ConfigUpdateEvent` + allowlist, restart layering, stats/state UI read-model (RTCFG-01..06) (completed 2026-07-16)
 - [x] **Phase 10 ★: Strategies Registry** - Durable `StrategyRegistryStore` rehydrate, enable/disable via `STRATEGY_COMMAND`, atomic strategy-param reconfiguration (STRAT-01..03) (completed 2026-07-17)
 - [x] **Phase 10.1: StrategiesHandler Decomposition** - Split `strategies_handler.py` into a thin handler + `ManagedStrategies` holder + `StrategyLifecycleManager`; constructor-own the three live deps; dissolve every function-local import; rename `calculate_signals`→`on_bar` (DECOMP-01, 01a, 02, 03) (INSERTED — follow-up to Phase 10) (completed 2026-07-20)
-- [ ] **Phase 11 ★: Multi-Portfolio-Live** - Per-`account_id` account factory, distinct-`account_id` invariant (fail loud), per-portfolio reconcile, `clOrdId→client_order_id` (MPORT-01..06)
+- [x] **Phase 11 ★: Multi-Portfolio-Live** - Per-`account_id` account factory, distinct-`account_id` invariant (fail loud), per-portfolio reconcile, `clOrdId→client_order_id` (MPORT-01..06) (completed 2026-07-22)
+- [ ] **Phase 11.1: Account Provisioning + Mandatory Account Identity** - Make the composition root trust the account identity the DB already enforces: derive the account set from `venue_accounts` (not the spec), replace boot-time minting with a deliberate provisioning scope, hard-raise on an account-less live portfolio, attach on every creation path (ACCT-01..06) (INSERTED — follow-up to Phase 11)
 - [ ] **Phase 12: Test Migration + Gates** - live-smoke / config-restart / multi-portfolio-attribution gates (TEST-02..04; TEST-01 replay relocation pulled forward into P6)
 
 ## Phase Details
@@ -489,16 +491,84 @@ the wave that touches them.*
 
 **Goal**: Let multiple portfolios trade live independently — a per-`account_id` account factory replacing the single-portfolio guard, a distinct-`account_id` invariant that fails loud, per-portfolio reconciliation, and two-key attribution (`client_order_id` vs `portfolio_id`). (★ feature-add — LR-03 mandate, never trim.)
 **Depends on**: Phase 5, Phase 7
-**Requirements**: MPORT-01, MPORT-02, MPORT-03, MPORT-04, MPORT-05, MPORT-06
+**Requirements**: MPORT-01, MPORT-02, MPORT-03, MPORT-04, MPORT-05, MPORT-06, MPORT-07
 **Success Criteria** (what must be TRUE):
 
   1. The venue plugin's `new_account(portfolio_ref, config)` mints a per-portfolio account (venue-truth → `VenueAccount` scoped to `portfolio.account_id`; compute → a fresh `SimulatedAccount`); `_link_venue_account_to_portfolios` + its `RuntimeError(>1)` guard are deleted, and `PortfolioSpec` gains `account_id`.
   2. A distinct-`account_id` invariant fails **loud** at composition time — multiple portfolios sharing one venue `account_id` is rejected (pooled buying power the venue can't split is deferred).
   3. A signal fans out to each subscribed portfolio, each sizing/ordering independently against its own account; `clOrdId` is renamed `client_order_id` (distinct from `portfolio_id`) and fills route via `client_order_id`/`venue_order_id` → engine order → `FillEvent(portfolio_id)` → the right `Portfolio.on_fill`.
   4. Connectors are keyed `(venue, account_id)` (VENUE-03) so multi-account portfolios share/decouple correctly, and the `ReconciliationCoordinator` iterates active portfolios reconciling each against its own `VenueAccount`/`account_id`.
-  5. The backtest oracle stays byte-exact and `test_okx_inertness.py` stays green.
+  5. *(MPORT-07 — discovered 2026-07-21)* The **execution exchange** is keyed `(venue, account_id)` too: `ExecutionHandler.exchanges` keys on the pair and `on_order` resolves the account from `event.portfolio_id`, so one account's orders can never be submitted through another account's authenticated session. Without this, per-account credentials and accounts are all correct and orders still route to the wrong venue account.
+  6. The backtest oracle stays byte-exact and `test_okx_inertness.py` stays green.
 
-**Plans**: TBD
+**Plans**: 12 plans in 8 waves *(wave list written by hand — the starred header makes `roadmap.annotate-dependencies` no-op. 11-07b was split out of 11-07 on 2026-07-21 after a pre-execution audit — see below.)*
+
+**Wave 1** *(no dependencies — D-28 W1 schema, W5 attribution, and the identity plumbing W3 needs)*
+
+- [x] 11-01-PLAN.md — `venue_accounts` + `portfolios` definition tables and stores; composite natural PK, plain unique constraint, composite FK (MPORT-02) *(B2 fold-in moved to 11-03 pre-execution — D-29 binds it to Revision 2)*
+- [x] 11-02-PLAN.md — attribution: engine identifiers renamed off the venue's wire spelling, extraction consolidated behind one venue-vocabulary helper, strippable `assert` converted to a real raise (MPORT-04)
+- [x] 11-05-PLAN.md — one signature change: supplyable `portfolio_id` (F-1), `account_id`, `venue_name`-derived exchange; `account_for` on the read-model; `PortfolioSpec.account_id` (MPORT-05)
+
+**Wave 2** *(blocked on 11-01 / 11-05)*
+
+- [x] 11-03-PLAN.md — two chained Alembic revisions off `p10_strategy_portfolio_subs`; refuse-if-non-empty guard, `batch_alter_table`, the D-09 config data move + a value-asserting migration test; **plus the B2 fold-in ORM half moved here from 11-01** (MPORT-02)
+- [x] 11-04-PLAN.md — `CredentialResolver` Protocol + env resolver over a `secret_ref` pointer; `credential_model` on the plugin Protocol; trust-on-first-use venue-UID guard (MPORT-06)
+- [x] 11-06-PLAN.md — **MPORT-07**: `ExecutionHandler.exchanges` keyed on `(venue, account_id)`; `on_order` resolves the account from the order's portfolio; 10 source + 25 test sites; fake-multi-account routing gate
+
+**Wave 3** *(blocked on 11-04, 11-06 — D-28 W3 accounts)*
+
+- [x] 11-07-PLAN.md — **RESCOPED 2026-07-21**: `new_account()` Protocol method, required `account_id` on `VenueAccount`, per-account connector + exchange, **plus the multi-account composition-root loop and `venue_accounts` minting that make them live** (MPORT-01, MPORT-06). *Deletes nothing — a pre-execution audit found the original would have created `new_account` with zero production callers while deleting `account_factory()`, its only caller, leaving fewer working accounts than before behind a green suite. The D-26 spec-field rename was dropped: its premise was stale post-11-04 and the `getattr` read would have survived it silently, disarming both 11-04 mitigations.*
+
+**Wave 4** *(blocked on 11-03, 11-07 — D-28 W4 bootstrap)*
+
+- [x] 11-08-PLAN.md — portfolio rehydrate with persisted ids; the layering call moves below it; the four-constraint comment rewritten; distinct-account invariant over the union, refuse-to-start (MPORT-02, MPORT-03)
+
+**Wave 5** *(blocked on 11-07, 11-08 — D-28 W6 reconcile, first half)*
+
+- [x] 11-09-PLAN.md — coordinator drops its scalar account/connector and reads each portfolio's own; all-symbols baseline guard with per-instrument precision in the loop; evaluate-all (F-2) (MPORT-05)
+
+**Wave 6** *(blocked on 11-07, 11-09 — the deletions, sequenced last)*
+
+- [x] 11-07b-PLAN.md — split out of 11-07: delete `_link_venue_account_to_portfolios`, its `RuntimeError(>1)` guard and the facade `_venue_account` singleton, **after** rehoming the reconnect re-snapshot and the startup venue reconcile onto per-account accounts. *Sequenced after 11-08's invariant and 11-09's coordinator rehome because both deletions destroy live-safety wiring whose existing tests stay green (they assign the fields directly rather than driving the real path).* (MPORT-01)
+
+**Wave 7** *(blocked on 11-09 — D-28 W6 reconcile, second half)*
+
+- [x] 11-10-PLAN.md — **RESCOPED 2026-07-22 to documentation-only** (stale conformance docstrings, the OCO global-uniqueness comment, the coordinator comment repoint). *The per-portfolio quarantine it originally carried was DEFERRED to `todos/pending/per-portfolio-quarantine-mechanism.md`: no requirement demands it (MPORT-02/05 are delivered by 11-08/11-05/11-09), the global halt keeps the system safe, a real operator-only release is blocked on an auth layer that does not exist yet, and its admission-gate wiring risked a silent safety downgrade. The global safety arm is retained untouched.*
+
+**Wave 8** *(blocked on all — D-28 W7 tests)*
+
+- [x] 11-11-PLAN.md — two-paper-account lifecycle: independent sizing, fill attribution with the negative asserted, restart with stable ids and config proven equal by value (MPORT-03, MPORT-04)
+
+### Phase 11.1: Account Provisioning + Mandatory Account Identity (INSERTED — follow-up to Phase 11)
+
+**Goal**: Make the live composition root trust the account identity the database already enforces, and move account provisioning off the boot path. `portfolios.venue_name` and `portfolios.account_id` are already `NOT NULL` under a composite FK onto `venue_accounts`, so a *persisted* portfolio can never lack an account — yet the code still derives its account set from the spec, coerces nulls with `or DEFAULT_ACCOUNT_ID`, and mints `venue_accounts` rows at boot. This phase deletes that defensive layer, makes the DB the sole source of portfolio **and** account truth, and closes the Phase 11 code-review blockers that were gated on that decision. Source: `.planning/phases/11-multi-portfolio-live/11-REVIEW.md` (CR-02, CR-03, WR-03, WR-05) plus the 2026-07-22 design discussion. (Non-starred structural follow-up; inserted after Phase 11, does not renumber Phase 12.)
+**Depends on**: Phase 11
+**Requirements**: ACCT-01, ACCT-02, ACCT-03, ACCT-04, ACCT-05, ACCT-06, ACCT-07, ACCT-08, ACCT-09, ACCT-10, ACCT-11
+**Success Criteria** (what must be TRUE):
+
+  1. The account set for a live boot is derived from the durable store — `VenueAccountStore.read_enabled_for(venue_name)` — not from the spec. The spec-derived halves of `_account_ids_for_spec` and the `spec.portfolios` field are **deleted**; `assemble_venues` receives the account set as an argument and `live_trading_system.py` computes no account identity of its own. The CR-01 venue filter added by quick task `260722-g6w` becomes redundant and is removed with it, because the store query is already venue-scoped (ACCT-01).
+  2. `_mint_account_rows` is gone, replaced by a deliberate provisioning path: a `venue_account:{venue}/{id}` `config_router` scope mirroring the existing `venue:{name}` → `VenueStore` scope and reusing its secret-scrub guard. This is a **handoff, not a deletion** — minting is currently the ONLY production writer of `venue_accounts` (`live_trading_system.py:1534`; `config_router.py:333` writes the unrelated `VenueStore`), so removing it without a replacement makes the composite FK reject the first `add_portfolio` on a fresh DB and no portfolio can ever be created. The D-04 trust-on-first-use UID guard still finds a row to `record_venue_uid` into, now one created deliberately rather than conjured at boot (ACCT-02).
+  3. A live portfolio with no `account_id` raises at composition time instead of being silently skipped (code-review **CR-02**). The current skip leaves it on its `SimulatedCashAccount` leaf with `is_venue_truth=False`, which silently disables `VenueAccount.snapshot()`, `start_streaming()`, `VenueReconciler.reconcile()` and the D-04 unexplained-residual HALT — every gate that stops the engine trading against venue exposure it cannot explain — behind a fully green suite. Chosen over per-portfolio quarantine (the `260718-e36`/`evz` precedent) because unlike a dark strategy an unattached portfolio still *routes orders* (ACCT-03).
+  4. The six live-path `or DEFAULT_ACCOUNT_ID` coercions are deleted (`live_trading_system.py:1382,1530,2062,2082`; `venues/assemble.py:179`; `venues/venue_uid_guard.py:95`), which dissolves code-review **WR-03**'s registration/resolution asymmetry at its root: registration writes `(venue,'default')` while both readers (`ExecutionHandler._resolve_account_id` → `account_for`, and `ReconciliationCoordinator._exchange_for`) construct `(venue, None)` raw, so in the unnamed case the registered key is unreachable by every reader. The backtest/simulated `DEFAULT_ACCOUNT_ID` uses are **kept** (`compose.py:240`, `backtest_trading_system.py:395`, `universe_wiring.py:98`, `execution_handler.py:148/168/239/296/302/303/377`) — it is the backtest single-account identity and is load-bearing for the golden oracle (ACCT-04).
+  5. The venue account is attached on **every** portfolio creation path, not only inside `build_live_system` (code-review **CR-03**). Under DB-as-source-of-truth this is the PRIMARY path, not an edge case: on a fresh DB nothing rehydrates, so the first `add_portfolio` produces a portfolio that submits real orders to the venue while its cash, positions and PnL are tracked by a compute leaf with no reconcile and no baseline guard. Every portfolio passes through it exactly once, on the boot where it is born. The attach seam must respect the owner constraint against `None`-then-assign late wiring and post-construction setters (ACCT-05).
+  6. The two docstrings asserting a phantom invariant are corrected — `execution_handler.py:209` and `core/portfolio_read_model.py:227` both cite *"plan 11-08 makes account_id mandatory at composition time"*, which was never implemented and which criterion 3 is what actually makes true. `live_trading_system.py:1627` and `reconciliation_coordinator.py:164` cite 11-08's **distinct**-account invariant, which does exist (`assert_distinct_accounts`) — those are correct and stay untouched. Two real guards and two phantom ones sharing one plan number is how the gap survived review (ACCT-06).
+  7. `_persist_definition` and `save_config` agree on when a definition row is required (code-review **WR-01**). `save_config`'s legacy arm was deleted on the premise that a live portfolio always has a definition row, while `_persist_definition` still returns early on a null account — so today a runtime `CONFIG_UPDATE` on such a portfolio raises out of `ConfigRouter` and its config never persists. Criterion 3 makes that early-return unreachable; it is then removed or converted to the same typed raise so the two halves cannot drift again (ACCT-07).
+  8. `PortfolioHandler` exposes `all_portfolios()` and `has_portfolio(portfolio_id)`, and the four production reach-ins to the private `_portfolios` dict are converted (`portfolio_rehydrate.py:124`, `live_trading_system.py:1341/1591/1964`) — folded here because criteria 1 and 5 rewrite two of those call sites anyway (ACCT-08).
+
+  9. `ExecutionHandler.on_order`'s fail-closed paths emit a `FillEvent(REFUSED)` instead of only logging (code-review **WR-10**), so a misconfigured live engine no longer drops 100% of its orders while `get_status()` reports `RUNNING` / `errors_count: 0`. Criterion 3 makes the `account_id is None` branch unreachable, so this covers two paths and deletes the third (ACCT-09).
+  10. Runtime portfolio deactivation persists (code-review **WR-04**) — `PortfolioDefinitionStore.set_enabled(portfolio_id, enabled)` is written and called from whatever flips `PortfolioState`, so a portfolio an operator stops does not come back ACTIVE and trading on the next restart, and rehydrate's present-but-inactive branch becomes reachable as designed (ACCT-10).
+  11. The D-09 config move refuses rather than silently skipping (code-review **CR-04**), with a migration test whose staging inserts only `portfolio_account_state` rows — the real pre-upgrade shape, which the existing test cannot produce (**WR-12**). Confirmed greenfield 2026-07-22: no deployment holds real persisted state, so this is a guard against a state that should never arise, not a data migration (ACCT-11).
+
+**Folded-in review findings**: CR-02 (→3), CR-03 (→5), CR-04 (→11), WR-01 (→7), WR-02 (→8, same statement), WR-03 (→4), WR-04 (→10), WR-05 (→2), WR-09 (→8), WR-10 (→9), WR-11 (→3, mandatory: the flagship multi-portfolio fixture becomes illegal under criterion 3 and must be corrected for the phase to go green), WR-12 (→11).
+**Deferred to the 11.1 discussion** (genuine open choices, not consequences): WR-06 (the D-04 UID guard's five silent-inertness paths — candidate for a `venue_uid_guard_active` status flag here, with alert-sink rerouting deferred) and WR-07 (non-primary accounts build unwired credential-bearing data providers; the paper venue forces an OKX connector per paper account).
+**Explicitly NOT in this phase**: WR-08 only (`stop()` drives just the first venue lifecycle) — genuinely independent of account identity and handled as a standalone quick task. CR-01 and CR-05 were closed ahead of this phase by quick task `260722-g6w`.
+**Sizing note**: at 11 requirements this is a large phase. If it needs splitting, ACCT-11 (the D-09 migration guard) is the cleanest cut — it is thematically separate from account identity and has no dependency on ACCT-01..10.
+
+*Cross-cutting constraints (apply to every plan): the backtest path is untouched — SMA_MACD oracle byte-exact
+`134 / 46189.87730727451`; GATE-01 import inertness preserved (`test_okx_inertness.py` green, no new eager
+async/ccxt/SQL on the backtest import path); money stays `Decimal`; single UUIDv7 `idgen` scheme; indentation
+measured per file, never generalized per package (`live_trading_system.py` is 4-space, `compose.py` and
+`backtest_trading_system.py` are tabs); test gate is `poetry run pytest tests`, never `make test`.*
 
 ### Phase 12: Test Migration + Gates
 

@@ -1,10 +1,12 @@
 import threading
 from datetime import datetime, UTC
 from decimal import Decimal
-from typing import Optional, Dict, Any, Callable, TYPE_CHECKING
+from typing import (
+    Optional, Dict, List, Any, Callable, Iterable, Mapping, TYPE_CHECKING)
 
 from itrader.core.enums import HaltReason, SystemStatus
-from itrader.core.exceptions import StateError
+from itrader.core.exceptions import StateError, ValidationError
+from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
 from itrader.outils.time_parser import to_timedelta
 from itrader.trading_system.alert_sink import LogAlertSink
 from itrader.trading_system.venue_spec import build_venue_spec
@@ -113,7 +115,7 @@ class LiveTradingSystem:
         self,
         *,
         engine: "Engine",
-        lifecycle: "Optional[VenueLifecycle]" = None,
+        lifecycles: "Optional[Mapping[str, VenueLifecycle]]" = None,
         system_db_backend: Optional[Any] = None,
         halt_record_store: Optional[Any] = None,
         exchange: str,
@@ -123,9 +125,10 @@ class LiveTradingSystem:
 
         DIRECT pure injection over the pre-built collaborators — NO ``components``
         bag: the compose ``engine`` (the single source of truth for the handler
-        graph + its handler-owned storages + ``store=None``), the single
-        ``VenueLifecycle`` holder (D-07 — the venue/connector cluster, sourced off it
-        with the paper ``connector``-None guard, D-08), and the SEPARATE SQL spine +
+        graph + its handler-owned storages + ``store=None``), the per-account
+        ``VenueLifecycle`` MAP (D-07/11-09 — the venue/connector cluster, read
+        THROUGH each lifecycle with the paper ``connector``-None guard applied at the
+        use site, D-08), and the SEPARATE SQL spine +
         halt store (D-09 — storage/durable infra, NOT venue/connector). ``exchange``
         (the venue-name string) + ``status_callback`` are the remaining loose params.
         Holds NO wiring logic; initialises fresh per-instance RUNTIME state
@@ -141,9 +144,11 @@ class LiveTradingSystem:
         engine : Engine
             The compose ``Engine`` — the wired handler graph (+ handler-owned storages,
             ``store=None`` on live). Source of truth for ``_initialize_live_session``.
-        lifecycle : VenueLifecycle, optional
-            The single venue/connector holder ``assemble_venue`` returns (D-07). ``None``
-            when the venue is unregistered; paper carries a lifecycle with ``connector=None``.
+        lifecycles : Mapping[str, VenueLifecycle], optional
+            ONE venue/connector holder PER ACCOUNT, keyed by account id, as
+            ``assemble_venues`` returns it (D-07/11-09). PRIMARY FIRST — insertion
+            order is the contract. Empty/``None`` when the venue is unregistered;
+            paper carries lifecycles with ``connector=None``.
         system_db_backend, halt_record_store : optional
             The SEPARATE SQL spine + durable halt-record store (D-09) — storage/durable
             infra, never folded into the venue holder.
@@ -176,24 +181,29 @@ class LiveTradingSystem:
         self._system_db_backend: Optional[Any] = system_db_backend
         self._halt_record_store: Optional[Any] = halt_record_store
 
-        # -- Venue/connector handles sourced off the SINGLE VenueLifecycle holder
-        #    (D-07/D-08). The ``lifecycle.bundle.connector``-is-not-None guard is the
-        #    streaming-venue discriminator: paper (connector=None) keeps every ``_okx_*``
-        #    handle None — byte-identical to build_live_system's former guard. The
-        #    safety/reconcile/stream method bodies that read these fields stay UNCHURNED
-        #    (P7 extracts from a known baseline, D-08). --
-        self._venue_lifecycle: Optional[Any] = lifecycle
-        self._venue_bundle: Optional[Any] = (
-            lifecycle.bundle if lifecycle is not None else None)
-        self._okx_connector: Optional[Any] = (
-            lifecycle.bundle.connector if lifecycle is not None else None)
-        self._okx_exchange: Optional[Any] = None
-        self._venue_account: Optional[Any] = None
-        self._okx_data_provider: Optional[Any] = None
-        if lifecycle is not None and lifecycle.bundle.connector is not None:
-            self._okx_exchange = lifecycle.bundle.exchange
-            self._venue_account = lifecycle.bundle.account_factory()
-            self._okx_data_provider = lifecycle.provider
+        # -- ONE VenueLifecycle PER ACCOUNT, keyed by account id (11-09, D-19). --
+        #
+        # This field REPLACES the six scalar aliases the facade used to hold
+        # (``_venue_lifecycle`` / ``_venue_bundle`` / ``_okx_connector`` /
+        # ``_okx_exchange`` / ``_venue_account`` / ``_okx_data_provider``), five of
+        # which were literally ``lifecycle.<something>`` pre-derived at construction
+        # and three of which were then passed back DOWN into the reconciliation
+        # coordinator as separate scalars. You cannot have six scalars per account;
+        # you can have one lifecycle per account, and ``VenueLifecycle`` already
+        # exposes ``.bundle`` / ``.provider``, so every former alias is now a read
+        # THROUGH the lifecycle at its use site. This is a SUBTRACTION: six fields
+        # collapse to one, and no new type was introduced (``assemble_venues`` is a
+        # plain function beside ``assemble_venue``).
+        #
+        # Insertion order is the PRIMARY contract: ``_account_ids_for_spec`` puts the
+        # spec-level account first, so ``_primary_lifecycle`` below is deterministic
+        # across restarts — load-bearing because ONE data provider is bound to the ONE
+        # feed and it must be the same account's provider on every boot.
+        #
+        # The ``bundle.connector is not None`` streaming-venue discriminator is NOT
+        # applied here any more: it is applied at each use site, unchanged in meaning
+        # (paper carries a lifecycle with connector=None and reaches no venue arm).
+        self._venue_lifecycles: Dict[str, Any] = dict(lifecycles) if lifecycles else {}
 
         # -- Fresh per-instance RUNTIME state (NOT wiring) ----------------------
         # P7 (SAFE-01/03/§11e): the status latch + halt/pause machinery + the
@@ -269,6 +279,38 @@ class LiveTradingSystem:
         self._error_policy: Optional[Any] = None
 
         self.logger.info('Live trading system initialized')
+
+    # ---- Venue reads THROUGH the per-account lifecycle map (11-09) ----------------
+    # Two derived accessors, no stored state. They exist so the multi-account shape has
+    # ONE spelling: "the primary account's lifecycle" and "every streaming lifecycle".
+    # Note what is deliberately NOT here: no ``_okx_exchange`` / ``_venue_account`` /
+    # ``_okx_data_provider`` back-compat properties. Re-adding them as read-throughs
+    # would keep six names alive while pretending to delete them, and the whole point
+    # of holding the object instead of its pieces is that there is nothing left to
+    # keep in sync.
+
+    @property
+    def _primary_lifecycle(self) -> Optional[Any]:
+        """The PRIMARY account's ``VenueLifecycle``, or ``None`` when none is assembled.
+
+        The primary is the FIRST inserted entry (``_account_ids_for_spec`` puts the
+        spec-level account first, then portfolio accounts in stable order), so this is
+        deterministic across restarts — required because the ONE live feed is bound to
+        exactly one data provider and that binding must not move between boots.
+        """
+        return next(iter(self._venue_lifecycles.values()), None)
+
+    def _streaming_lifecycles(self) -> List[Any]:
+        """Every assembled lifecycle whose bundle carries a live connector.
+
+        ``bundle.connector is not None`` is the streaming-venue discriminator used
+        throughout this module (paper carries a lifecycle with no connector). Returning
+        a list rather than filtering at each call site keeps that one rule in one place.
+        """
+        return [
+            lifecycle for lifecycle in self._venue_lifecycles.values()
+            if lifecycle.bundle.connector is not None
+        ]
 
     @classmethod
     def for_exchange(
@@ -351,12 +393,20 @@ class LiveTradingSystem:
     def _build_reconciliation_coordinator(self) -> Any:
         """Construct the startup ReconciliationCoordinator from CURRENT venue state (SAFE-05/§11d).
 
-        Built at ``start()`` (not ``build_live_system``) so it reads the LIVE venue arms —
-        ``_venue_account`` / ``_okx_exchange`` / ``_okx_connector`` are facade fields that
-        an offline run swaps before ``start()``, and the reconcile must honour the current
-        values. ``halt`` is the facade delegator (-> ``SafetyController.halt``) so a
-        baseline residual latches the freeze-in-place halt. The import is lazy so the
-        backtest import path never pulls the reconcile module (inertness gate).
+        Built at ``start()`` (not ``build_live_system``) so it reads the LIVE handler
+        graph — an offline run swaps collaborators before ``start()`` and the reconcile
+        must honour the current values. ``halt`` is the facade delegator (->
+        ``SafetyController.halt``) so a baseline residual latches the freeze-in-place
+        halt. The import is lazy so the backtest import path never pulls the reconcile
+        module (inertness gate).
+
+        11-09 (D-19/MPORT-05): the three per-account SCALARS this used to pass down —
+        ``venue_account`` / ``connector`` / ``exchange`` — are GONE. The coordinator now
+        asks each portfolio for its OWN account, takes that account's connector from the
+        account itself, and resolves that account's exchange out of the pair-keyed
+        ``ExecutionHandler.exchanges`` registry. Passing a scalar account here is what
+        made "compare portfolio A against account B" expressible in the first place;
+        with the parameters removed it is not a rule any more, it is a type error.
         """
         from itrader.portfolio_handler.reconcile.reconciliation_coordinator import (
             ReconciliationCoordinator,
@@ -365,9 +415,7 @@ class LiveTradingSystem:
             portfolio_handler=self.portfolio_handler,
             seed_applied_trades=self.order_handler.order_manager.seed_applied_trades,
             order_storage=self._order_storage,
-            venue_account=self._venue_account,
-            connector=self._okx_connector,
-            exchange=self._okx_exchange,
+            execution_handler=self.execution_handler,
             global_queue=self.global_queue,
             halt=self.halt,
         )
@@ -579,9 +627,15 @@ class LiveTradingSystem:
             # present, else the paper 'simulated' exchange (permissive validate_symbol /
             # resolve_precision defaults). set_venue_metadata is UNCONDITIONAL over this
             # inside SessionInitializer — no OKX guard, zero OKX coupling.
+            # 11-09: read through the PRIMARY streaming lifecycle instead of the deleted
+            # ``_okx_exchange`` alias. Venue metadata (validate_symbol / resolve_precision)
+            # is a VENUE property, not an account property — every account on one venue
+            # shares it — so the primary's exchange is the right (and unchanged) source.
+            streaming = self._streaming_lifecycles()
             venue_exchange = (
-                self._okx_exchange if self._okx_exchange is not None
-                else self.execution_handler.exchanges.get('simulated'))
+                streaming[0].bundle.exchange if streaming
+                else self.execution_handler.exchanges.get(
+                    ('simulated', DEFAULT_ACCOUNT_ID)))  # D-27 pair key
 
             # RUN-06/D-11 live-plane config: poll timeframe + remove_policy READ FROM the
             # LIVE universe sub-model (NOT the frozen determinism base — P9 D-09 keeps the
@@ -601,7 +655,9 @@ class LiveTradingSystem:
                 engine,
                 universe_config=universe_config,
                 venue_exchange=venue_exchange,
-                data_provider=self._okx_data_provider,
+                # ONE feed, so ONE data provider: the primary streaming account's.
+                data_provider=(
+                    streaming[0].provider if streaming else None),
                 freeze_gate=(
                     lambda: self._safety.is_halted()
                     or self._safety.is_submission_paused()),
@@ -696,15 +752,26 @@ class LiveTradingSystem:
             # (a paper bundle has connector=None, so start() no-ops the connector step
             # via a structural None-guard, D-10); an unregistered venue has no
             # lifecycle at all. stop() tears the connector down unconditionally (CR-01).
-            if self._venue_lifecycle is not None:
-                self._venue_lifecycle.start()
+            # 11-09: EVERY assembled account's lifecycle is started, not just the
+            # primary's. Before this plan a second account's connector was assembled,
+            # registered in ExecutionHandler.exchanges and halt-wired — but NEVER
+            # connected, so every order routed to it would have failed against an
+            # unconnected session. Starting one lifecycle per account is the direct
+            # consequence of holding one lifecycle per account. At N=1 this is
+            # byte-identical to the former single call.
+            for lifecycle in self._venue_lifecycles.values():
+                lifecycle.start()
 
             # Phase 3 (FEED-05, RESEARCH Thread hand-off): warm the LIVE feed BEFORE
             # the socket goes live so every update() stays on the one thread until the
             # stream starts (single-writer ring/guard). Gated to the OKX arm — a
             # non-OKX venue has no provider, so the None provider is never dereferenced
             # (mirrors the CR-02 venue-guard). Warmup MUST precede start_stream.
-            if self._okx_data_provider is not None:
+            # 11-09: ONE feed, so ONE provider — the primary streaming account's
+            # (unchanged: the facade only ever wired the primary's provider to the feed).
+            streaming = self._streaming_lifecycles()
+            primary_provider = streaming[0].provider if streaming else None
+            if primary_provider is not None:
                 # Plan 06-05 (D-05): un-hardcode the stream symbol — the live
                 # subscription set is now SOURCED FROM MEMBERSHIP. For each member,
                 # warm the feed FIRST (REST replay sets the ring) THEN subscribe the
@@ -717,7 +784,7 @@ class LiveTradingSystem:
                 members = self.universe.members if self.universe is not None else []
                 for sym in members:
                     self.feed.warmup(sym, _system_config.stream.okx_stream_timeframe)
-                    self._okx_data_provider.subscribe(sym)
+                    primary_provider.subscribe(sym)
 
             # CR-01 (RECON-02, RES-01): spawn the order-arm venue streams. This is
             # the SOLE spawn site for OkxExchange._stream_fills()/_stream_orders()
@@ -732,8 +799,12 @@ class LiveTradingSystem:
             # call would swallow a failure — check .success and re-raise so the
             # failure flows through the existing except block (SystemStatus.ERROR,
             # return False); do NOT invent a second error path.
-            if self._okx_exchange is not None:
-                result = self._okx_exchange.connect()
+            # 11-09: spawn EVERY streaming account's order arm. A second account whose
+            # exchange was registered but whose fill/order streams were never spawned
+            # would leave that account's order mirror PENDING forever while looking
+            # healthy — the same defect CR-01 fixed for the primary. N=1 is unchanged.
+            for lifecycle in streaming:
+                result = lifecycle.bundle.exchange.connect()
                 if not result.success:
                     raise RuntimeError(
                         f'OKX exchange stream connect failed: {result.error_message}')
@@ -818,7 +889,23 @@ class LiveTradingSystem:
         # which drives ConnectorProvider.close_all() (disconnect every memoized
         # connector) — a safe no-op for paper (empty memo) and for an unregistered
         # venue (lifecycle is None, guarded below).
-        lifecycle = getattr(self, '_venue_lifecycle', None)
+        # WR-08: tear down EVERY account's lifecycle, symmetric with the start() loop
+        # above. The previous shortcut (stop only the primary) held for just ONE of
+        # VenueLifecycle.stop()'s two branches — the `self._connectors is not None` one,
+        # where ConnectorProvider.close_all() disconnects every memoized connector for
+        # the run. Its documented fallback, `elif self._bundle.connector is not None:
+        # disconnect()`, exists for lifecycles built WITHOUT a shared provider and covers
+        # only THAT bundle, so every non-primary connector leaked: a dangling
+        # authenticated venue socket in production, a ResourceWarning (hard failure)
+        # under filterwarnings=["error"]. The shared-provider case is unaffected by the
+        # extra calls — close_all() clears its memo in a finally
+        # (connectors/provider.py:82-91), so a second call iterates an empty memo.
+        # Snapshot into a list (not a live view) so a teardown that mutates the map
+        # cannot raise "dictionary changed size during iteration", and keep it BEFORE
+        # the try so the finally holds the full map on every return path. Read
+        # defensively (getattr) because stop() must survive a partially-constructed
+        # facade.
+        lifecycles = list((getattr(self, '_venue_lifecycles', None) or {}).items())
         try:
             if not self._running:
                 self.logger.warning('Live trading system is not running')
@@ -844,11 +931,21 @@ class LiveTradingSystem:
             # VenueLifecycle — cancel every spawned stream task and close the
             # ccxt/native sessions so no leaked socket / ResourceWarning survives
             # across runs. lifecycle.stop() drives ConnectorProvider.close_all().
-            if lifecycle is not None:
+            # WR-08 (guard placement, DECISION): the try/except sits INSIDE the loop, at
+            # this call site, per iteration — NOT inside VenueLifecycle.stop(). That
+            # method stays honest and keeps raising for its own single-lifecycle callers
+            # and its unit contract (tests/unit/venues/test_lifecycle.py); isolating here
+            # is what stops one bad venue from stranding the remaining venues' sockets or
+            # blocking the SQL-spine dispose below. Swallowing here also stops a teardown
+            # failure from masking an exception already propagating out of the try body.
+            # The old `if lifecycle is not None` guard is gone because the loop is
+            # self-guarding on an empty map — not a lost check.
+            for account_id, lifecycle in lifecycles:
                 try:
                     lifecycle.stop()
                 except Exception as e:
-                    self.logger.error(f'Error disconnecting venue connector: {e}')
+                    self.logger.error(
+                        f'Error disconnecting venue connector for account {account_id}: {e}')
             # 05-06: dispose the operational SQL spine (the CachedSql* stores compose it)
             # so its connection pool is closed at shutdown — an undisposed engine leaks a
             # socket / ResourceWarning under filterwarnings=["error"]. Safe no-op when the
@@ -1271,6 +1368,359 @@ def _layer_persisted_overrides(
             "stored override is invalid (%s); boot degrades clean", exc)
 
 
+def _read_account_secret_ref(
+    venue_account_store: Optional[Any],
+    venue_name: str,
+    account_id: Optional[str],
+) -> Optional[str]:
+    """This account's credential POINTER off its ``venue_accounts`` row (11-04, D-02).
+
+    Returns ``None`` — the legacy single-account path, where the connector plugin
+    constructs ``OkxSettings()`` from the ambient ``OKX_API_*`` environment — when
+    there is no SQL arm, no row for the pair, or a NULL ``secret_ref`` (the D-06 paper
+    shape). Those are all "this account has no per-account credentials", NOT the
+    T-11-18 fail-open case: a well-formed pointer that resolves to no material RAISES
+    inside the resolver and is never degraded here.
+
+    A read failure degrades clean with a WARNING rather than aborting the boot: the
+    account row is a credentials-ROUTING optimisation, and a schema/storage outage
+    should not take down a single-account deployment that never needed it.
+
+    The pair is normalized with the same ``account_id or 'default'`` idiom the venue
+    plugins apply inside ``build_bundle``, so the lookup key matches the row the
+    account was minted under (plan 11-07).
+    """
+    if venue_account_store is None:
+        return None
+    # NOTE: ``logger`` is a FUNCTION-LOCAL binding everywhere else in this module
+    # (build_live_system / _layer_persisted_overrides each bind their own), so this
+    # helper must bind its own — a module-level ``logger`` does not exist here. This
+    # module is under a mypy ``ignore_errors`` override, so the resulting NameError
+    # was invisible to mypy and surfaced only in tests/integration/test_store_live_drive.py.
+    logger = get_itrader_logger().bind(component="build_live_system")
+    try:
+        row = venue_account_store.get(venue_name, account_id or DEFAULT_ACCOUNT_ID)
+    except Exception as exc:
+        logger.warning(
+            "Could not read the venue account row for credential resolution "
+            "(%s); falling back to the ambient single-account credentials", exc)
+        return None
+    if row is None:
+        return None
+    secret_ref = row.get('secret_ref')
+    return str(secret_ref) if secret_ref else None
+
+
+def _venue_of(portfolio: Any) -> Optional[str]:
+    """The venue a portfolio belongs to, or ``None`` when it cannot be resolved (CR-01).
+
+    ``Portfolio.venue_name`` is the SOURCE OF TRUTH (``portfolio.py:111``) and
+    ``self.exchange`` is derived from it, but a portfolio created the LEGACY way —
+    ``add_portfolio(name, 'okx', cash)`` — carries ``venue_name is None`` and
+    ``exchange == 'okx'``. Reading ``venue_name`` alone would treat every legacy live
+    portfolio as foreign and silently strip its venue account, which is a worse
+    regression than the defect this closes. Hence ``venue_name or exchange``.
+
+    Both reads are ``getattr`` because the callers duck-type over live ``Portfolio``
+    objects AND over spec rows / test fakes; a resolved venue of ``None`` is treated as
+    FOREIGN by every caller (there is no ambient default venue, and a real ``Portfolio``
+    always carries one).
+    """
+    return getattr(portfolio, 'venue_name', None) or getattr(
+        portfolio, 'exchange', None)
+
+
+def _account_ids_for_spec(
+    spec: Any,
+    portfolios: "Iterable[Any]" = (),
+    *,
+    venue_name: str,
+) -> list[Optional[str]]:
+    """Every distinct venue account this run must assemble a bundle for (11-07/11-09).
+
+    The account set is derived from the PORTFOLIOS, not from a single spec-level
+    ``account_id``. Before 11-07 the composition root built ONE venue spec and
+    performed ONE registration write, so "one exchange per account" read as
+    satisfied only because there was never more than one account.
+
+    11-09 widened the derivation to the UNION of the spec's portfolios and the
+    REHYDRATED ones. 11-08 flagged this gap deliberately rather than building a second
+    path: a portfolio restored from a durable definition row has no entry in the spec,
+    so a spec-only derivation assembles no account for it — and after this plan's
+    per-portfolio attach that is not a cosmetic omission, it is a boot that FAILS LOUD
+    (correct) or, before the attach existed, one that silently left a restored
+    portfolio on its simulated leaf while the engine believed it was trading live.
+
+    Ordering rules, all of them load-bearing:
+
+    * the spec-level ``account_id`` (when present) comes FIRST and is the PRIMARY.
+      The facade binds ONE data provider to the ONE feed, so which account is primary
+      must be deterministic rather than dict-ordering dependent.
+    * portfolio account ids follow in spec order, de-duplicated. Two portfolios on
+      one account share that account's bundle — one connector per
+      ``(venue, account_id)`` pair, not one per portfolio (D-12).
+    * REHYDRATED portfolio account ids come last, in the handler's registration order.
+      ``PortfolioDefinitionStore.read_all`` is a documented ``portfolio_id ASC`` read
+      and ``add_portfolio`` preserves it, so this tail is reproducible across runs —
+      which is what keeps the primary stable across a restart.
+    * when NOTHING names an account the result is ``[None]``, which is EXACTLY the
+      pre-11-07 single-account call shape. N=1 is the same code path, not a separate
+      branch — a second branch is how the two drift apart.
+
+    A ``VenueSpec`` (the ``for_exchange`` shape) carries no ``portfolios`` at all and
+    therefore yields the single-account list when no portfolios are supplied either.
+
+    CR-01 — identity is the ``(venue_name, account_id)`` PAIR, never the bare id. The
+    same account-id string on two venues names two DIFFERENT real accounts; that is the
+    doctrine ``portfolio_handler/rehydrate/distinct_account_invariant.py`` already
+    encodes (it keys its ``_claim`` on the cross-venue pair) and which this derivation
+    discarded. ``rehydrate_portfolios`` restores EVERY persisted portfolio regardless of
+    venue, so a binance portfolio named "main" made an OKX boot mint an ``('okx','main')``
+    ``venue_accounts`` row AND assemble an OKX bundle for an account belonging to a
+    completely different venue. The rehydrated half of the union is therefore filtered by
+    ``venue_name``, and a portfolio whose venue cannot be resolved at all is treated as
+    FOREIGN.
+
+    The return stays a list of IDS rather than a list of pairs precisely because every id
+    it yields is scoped to ``venue_name`` BY CONSTRUCTION — a pair return would be
+    redundancy, not information, and ``assemble_venues`` keys its lifecycle map on the
+    bare id for the same reason (one ``assemble_venues`` call is single-venue by
+    construction).
+
+    Parameters
+    ----------
+    venue_name : str
+        The venue this boot is assembling. REQUIRED and keyword-only: a defaulted venue
+        is how the venue half gets dropped again by a caller that forgets it.
+    """
+    ordered: list[Optional[str]] = []
+    primary = getattr(spec, 'account_id', None)
+    if primary is not None:
+        ordered.append(primary)
+    for portfolio_spec in getattr(spec, 'portfolios', None) or ():
+        account_id = getattr(portfolio_spec, 'account_id', None)
+        if account_id is not None and account_id not in ordered:
+            ordered.append(account_id)
+    # 11-09: the rehydrated half of the union. Live ``Portfolio`` objects, not spec
+    # rows — the two are read through the same ``account_id`` attribute name, so no
+    # adapter is needed and neither side is privileged. Spec portfolios above carry NO
+    # venue and belong to the booted venue by definition (the same premise
+    # ``assert_distinct_accounts`` documents), so only THIS half is venue-filtered.
+    for portfolio in portfolios:
+        if _venue_of(portfolio) != venue_name:
+            continue
+        account_id = getattr(portfolio, 'account_id', None)
+        if account_id is not None and account_id not in ordered:
+            ordered.append(account_id)
+    if not ordered:
+        ordered.append(None)
+    return ordered
+
+
+def _mint_account_rows(
+    venue_account_store: Optional[Any],
+    venue_name: str,
+    account_ids: list[Optional[str]],
+) -> None:
+    """Ensure a ``venue_accounts`` row EXISTS for each account (11-07, MPORT-01).
+
+    Minting is gated on ABSENCE and writes ``secret_ref=None``. That gate is not a
+    micro-optimisation: ``VenueAccountStore.upsert`` is a delete-then-insert over the
+    composite key, so an unconditional write would CLOBBER the operator's own
+    ``secret_ref`` and ``venue_uid`` on every boot — silently reverting a configured
+    per-account credential pointer to the ambient single-account path.
+
+    Why mint at all when the minted row carries no credentials: the D-04
+    trust-on-first-use guard records the observed venue UID through
+    ``record_venue_uid``, which is a TARGETED UPDATE and a silent no-op when no row
+    matches. Without a row the identity guard has nowhere to write and stays inert.
+
+    Degrades clean with a WARNING rather than aborting the boot, matching
+    ``_read_account_secret_ref``: the row is routing/observability state, and a
+    storage outage should not take down a deployment that never needed it.
+    """
+    if venue_account_store is None:
+        return
+    # NOTE: ``logger`` is FUNCTION-LOCAL throughout this module — there is no
+    # module-level binding, and this module is under a mypy ``ignore_errors``
+    # override, so a missing binding ships as a NameError invisible to mypy AND to
+    # the suite (exactly what happened in 11-04).
+    logger = get_itrader_logger().bind(component="build_live_system")
+    for account_id in account_ids:
+        key = account_id or DEFAULT_ACCOUNT_ID
+        try:
+            if venue_account_store.get(venue_name, key) is not None:
+                continue
+            venue_account_store.upsert(
+                venue_name,
+                key,
+                secret_ref=None,
+                venue_uid=None,
+                enabled=True,
+                config={},
+                at=datetime.now(UTC),
+            )
+        except Exception as exc:
+            logger.warning(
+                "Could not mint the venue account row for (%s, %s): %s — the "
+                "venue-UID guard has no row to record into for this account",
+                venue_name, key, exc)
+
+
+def _build_account_specs(
+    spec: Any,
+    venue_account_store: Optional[Any],
+    exchange: str,
+    portfolios: "Iterable[Any]" = (),
+) -> list[Any]:
+    """One ``VenueSpec`` per account, each carrying ITS OWN credential pointer.
+
+    This is what moves MPORT-06 from dormant to live. Plan 11-04 shipped the
+    ``CredentialResolver`` wired and tested, but ``OkxConnectorPlugin.build``
+    short-circuits to the ambient ``OkxSettings()`` whenever ``secret_ref is None``,
+    and the pointer was read exactly ONCE for the spec-level account. Reading it PER
+    ACCOUNT is what makes two accounts authenticate with two different credential
+    sets instead of both silently using the one global ``OKX_API_*`` triple.
+
+    ``build_venue_spec`` stays the single home of the default-provider map (D-11).
+
+    ``portfolios`` (11-09) are the ALREADY-REHYDRATED live portfolios, unioned into the
+    account set so a restored portfolio's account is assembled too.
+    """
+    # CR-01: the booted venue is threaded into the derivation so the rehydrated half of
+    # the union is venue-scoped — without it a foreign-venue portfolio's account id mints
+    # a row and assembles a bundle on THIS venue.
+    account_ids = _account_ids_for_spec(spec, portfolios, venue_name=exchange)
+    _mint_account_rows(venue_account_store, exchange, account_ids)
+    data_provider = getattr(spec, 'data_provider', None)
+    return [
+        build_venue_spec(
+            exchange,
+            data_provider=data_provider,
+            account_id=account_id,
+            secret_ref=_read_account_secret_ref(
+                venue_account_store, exchange, account_id),
+        )
+        for account_id in account_ids
+    ]
+
+
+def _attach_venue_accounts(
+    portfolio_handler: Any,
+    lifecycles: Dict[str, Any],
+    *,
+    venue_name: str,
+) -> Dict[str, Any]:
+    """Give each portfolio the ``Account`` minted from ITS OWN account's bundle (11-09).
+
+    This is the attach half of MPORT-05. 11-07 delivered per-account MINTING (durable
+    ``venue_accounts`` rows plus one bundle per account); it explicitly did NOT attach
+    the resulting accounts to portfolios, and said so. Until this function existed the
+    ONLY code that ever assigned ``portfolio.account`` was
+    ``ReconciliationCoordinator._link_venue_account_to_portfolios``, which assigned ONE
+    scalar account to every active portfolio and refused outright at N>1.
+
+    Why here and not at construction: ``Portfolio._initialize_components`` builds its own
+    simulated leaf, and ``build_live_system`` does not construct portfolios, so there is
+    no injection seam at construction time. Attachment happens once the portfolio exists
+    and once its account's lifecycle has been assembled — which is exactly this point in
+    the boot.
+
+    The rules, each of which is a defect if inverted:
+
+    * ``portfolio.account_id`` is the SINGLE answer to "which account does this
+      portfolio use". ``lifecycles`` is a LOOKUP keyed by it, never an independent
+      assignment — there is no second source of truth to drift.
+    * A portfolio naming an account with NO assembled lifecycle FAILS LOUD. It is never
+      quietly given the primary's account (that is the cross-account conflation D-11
+      exists to prevent) and never left on its simulated leaf (which would make
+      ``is_venue_truth`` False, silently skipping the entire venue reconcile — snapshot,
+      streaming, ``VenueReconciler`` AND the D-04 baseline HALT gate — behind a fully
+      green suite).
+    * A portfolio naming NO account keeps its construction-time compute leaf. That is
+      the paper/backtest shape, not an error: there is nothing to scope and nothing to
+      conflate, and re-minting would reset its opening cash to the factory default.
+    * A NON-streaming (paper, ``connector is None``) lifecycle is skipped for the same
+      reason — its factory mints a fresh simulated leaf whose ``initial_cash`` would
+      clobber the portfolio's real opening balance.
+    * ONE account object per account id, memoized. Two portfolios sharing an account is
+      refused upstream by 11-08's distinct-account invariant, but minting per portfolio
+      would quietly build two independent caches of one real venue balance if that
+      invariant were ever relaxed, and memoizing also lets the reconcile coordinator
+      dedupe by account IDENTITY.
+    * A portfolio on ANOTHER VENUE is not ours to attach (CR-01). ``lifecycles`` is keyed
+      by bare account id and one ``assemble_venues`` call is single-venue by
+      construction, so a venue-blind lookup handed a binance portfolio named "main" the
+      OKX "main" ``VenueAccount`` — and that account object is the identity the
+      ``ReconciliationCoordinator`` snapshot, the D-04 baseline HALT guard and
+      ``VenueReconciler`` all act on. This is NOT a silent hole: the portfolio's account
+      belongs to a venue THIS boot did not assemble, so there is nothing correct to give
+      it, and giving it the booted venue's account is exactly the cross-venue conflation
+      D-14/D-15 exist to prevent.
+
+    Parameters
+    ----------
+    venue_name : str
+        The venue this boot assembled ``lifecycles`` for. REQUIRED and keyword-only — a
+        defaulted venue is how the venue half gets dropped again by a caller that
+        forgets it.
+
+    Returns
+    -------
+    dict[str, Any]
+        The minted accounts by account id — returned rather than discarded so the caller
+        can wire the reconnect-snapshot path over the SAME objects the portfolios hold.
+    """
+    # NOTE: ``logger`` is FUNCTION-LOCAL throughout this module — there is no module-level
+    # binding, and this module is under a mypy ``ignore_errors`` override, so a missing
+    # binding ships as a NameError invisible to mypy AND to the suite (11-04 shipped
+    # exactly that). Bind before any use.
+    logger = get_itrader_logger().bind(component="build_live_system")
+    minted: Dict[str, Any] = {}
+    for portfolio in portfolio_handler._portfolios.values():
+        account_id = getattr(portfolio, 'account_id', None)
+        if not account_id:
+            continue
+        # CR-01 — guard ORDER is load-bearing. The venue guard must precede the lookup
+        # so a FOREIGN-venue portfolio naming an unassembled account is skipped rather
+        # than raising, while a SAME-venue portfolio naming an unassembled account still
+        # hits the fail-loud refusal below, unchanged.
+        portfolio_venue = _venue_of(portfolio)
+        if portfolio_venue != venue_name:
+            logger.debug(
+                "Skipping portfolio '%s' on venue %r: this boot assembled venue %r, "
+                "so it has no account of ours to attach",
+                getattr(portfolio, 'name', None), portfolio_venue, venue_name)
+            continue
+        lifecycle = lifecycles.get(account_id)
+        if lifecycle is None:
+            raise ValidationError(
+                "account_id",
+                str(account_id),
+                f"Portfolio '{portfolio.name}' names venue account "
+                f"'{account_id}', but no venue lifecycle was assembled for it. "
+                "Refusing to fall back to the primary account (that would conflate "
+                "two real venue balances) and refusing to leave the portfolio on its "
+                "simulated leaf (that would silently disable the whole venue "
+                "reconcile). Check that the account is reachable from the spec or "
+                "from a persisted portfolio definition row.",
+            )
+        if lifecycle.bundle.connector is None:
+            # Paper/compute venue: the portfolio's construction-time leaf is already
+            # the correct account kind and already carries its opening cash.
+            continue
+        account = minted.get(account_id)
+        if account is None:
+            account = lifecycle.bundle.account_factory(portfolio)
+            minted[account_id] = account
+        portfolio.account = account
+    if minted:
+        logger.info(
+            "Attached %d venue account(s) to their portfolios by account_id",
+            len(minted))
+    return minted
+
+
 def build_live_system(
     spec: Any,
     *,
@@ -1426,7 +1876,12 @@ def build_live_system(
     engine = compose_engine(
         ctx, exchange_config=None, results_store=None,
         alert_sink=alert_sink, system_store=system_store, error_policy=error_policy,
-        strategy_catalog=strategy_catalog)
+        strategy_catalog=strategy_catalog,
+        # D-27/MPORT-07: LIVE resolves each order's venue account from its
+        # portfolio through the injected read-model, so an account's orders can
+        # never be submitted through another account's authenticated session.
+        # The backtest arm deliberately leaves this False — see compose_engine.
+        route_orders_by_account=True)
 
     # compose already wired portfolio_handler.set_order_storage(order_handler.storage) and
     # the FeeModelCommissionEstimator admission gate (D-05), so the former inline commission
@@ -1439,19 +1894,96 @@ def build_live_system(
     event_handler = engine.event_handler
 
     # ------------------------------------------------------------------
+    # PORTFOLIO BOOTSTRAP (11-08, D-08/D-14/D-15 — the W4 bootstrap boundary).
+    #
+    # Placed HERE, ABOVE the venue-wiring block below, and that position is the whole
+    # decision. The two steps run in this order and no other:
+    #
+    #  (1) THE DISTINCT-ACCOUNT INVARIANT, over the UNION of persisted rows and the
+    #      spec-supplied portfolios. It runs FIRST because D-15 says a collision must be
+    #      refused BEFORE any account exists. Running it after rehydrate would leave
+    #      portfolios built but unusable; running it after the account minting below would
+    #      be worse still — by then a colliding pair has already satisfied 11-07's
+    #      required-account_id guard and two portfolios are wired to one real balance.
+    #  (2) PORTFOLIO REHYDRATE, which creates the portfolio objects with their PERSISTED
+    #      ids so the seven portfolio-scoped child tables reattach to the right portfolio
+    #      (T-11-41) and the persisted strategy-subscription rows bind to portfolios that
+    #      still exist.
+    #
+    # Everything downstream then falls into place WITHOUT moving it: `_build_account_specs`
+    # (which mints the venue_accounts rows) is below, and `_layer_persisted_overrides` is
+    # below that inside the `system_store is not None` gate. Note for anyone re-reading the
+    # 11-08 plan text: it predicted the layering call would have to MOVE below rehydrate
+    # because it iterates `portfolio_handler._portfolios` and would otherwise apply nothing.
+    # That hazard is real but the move is NOT needed as the code now stands — plan 11-07
+    # restructured this function and the layering call already sits well below this point.
+    # It is pinned executably by
+    # tests/integration/test_distinct_account_invariant.py::
+    # test_a_persisted_portfolio_config_override_is_applied_on_the_rehydrated_portfolio,
+    # which reddens if rehydrate is ever moved back below the layering call.
+    #
+    # NOT inside _initialize_live_session, for the same reason the strategy rehydrate is
+    # not: two integration test files (three sites) monkeypatch that method to a no-op,
+    # including a RESTART test, so a rehydrate placed there is silently discarded exactly
+    # in the scenario it exists for — and a zero-portfolio boot still passes every
+    # assertion that only checks strategies.
+    #
+    # Imports stay LAZY in-body and neither module is barrel-exported (GATE-01).
+    if system_db_backend is not None:
+        from sqlalchemy import inspect as _sa_inspect
+
+        from itrader.portfolio_handler.rehydrate.distinct_account_invariant import (
+            assert_distinct_accounts,
+        )
+        from itrader.portfolio_handler.rehydrate.portfolio_rehydrate import (
+            rehydrate_portfolios,
+        )
+
+        # The store the handler already OWNS (DECOMP-01a — the same shape as reading the
+        # strategy registry store back off strategies_handler). One instance, so the
+        # rehydrate read and the add_portfolio write-back can never diverge.
+        definition_store = portfolio_handler.definition_store
+
+        # A not-yet-provisioned `portfolios` table is the D-21 first-start state (a fresh
+        # DB, or a deployment whose Alembic chain has not run), NOT a fault: degrade with
+        # a WARNING. This is deliberately narrow — it probes for the TABLE and nothing
+        # else, so a genuine store fault still propagates LOUD out of rehydrate rather
+        # than being converted into the silent zero-portfolio boot D-19 forbids.
+        has_table = definition_store is not None and _sa_inspect(
+            system_db_backend.engine).has_table("portfolios")
+        if definition_store is not None and not has_table:
+            logger.warning(
+                "The `portfolios` table is not provisioned — skipping portfolio "
+                "rehydrate (first start, or the Alembic chain has not run). No "
+                "portfolio will be restored until the schema exists.")
+
+        if has_table:
+            assert_distinct_accounts(
+                persisted=definition_store.read_all(),
+                spec_portfolios=getattr(spec, 'portfolios', None) or (),
+                venue_name=exchange,
+            )
+            rehydrate_portfolios(
+                store=definition_store,
+                portfolio_handler=portfolio_handler,
+            )
+
+    # ------------------------------------------------------------------
     # Venue wiring (Plan 02-05, D-04 / CONN-04 — relocated P5 D-06 assemble_venue call).
     # The whole OKX/paper venue stack is LAZY-imported here so the BACKTEST import path
     # stays async/ccxt/credential-free (the hot-path inertness gate).
-    # The single VenueLifecycle holder (D-07) + the two streaming handles the post-facade
-    # halt-signal wiring still needs (okx_exchange/okx_connector). The facade __init__
-    # sources ALL venue/connector fields (bundle/account/provider) off the lifecycle (D-08)
-    # — build_live_system no longer field-by-field unpacks it.
-    venue_lifecycle: Optional[Any] = None
-    okx_connector: Optional[Any] = None
-    okx_exchange: Optional[Any] = None
+    # 11-09: ONE VenueLifecycle PER ACCOUNT, keyed by account id and PRIMARY FIRST. The
+    # three former locals (venue_lifecycle / okx_connector / okx_exchange) that were
+    # hand-unpacked out of the primary bundle inside the assembly loop are gone — every
+    # downstream consumer reads through the lifecycle now.
+    venue_lifecycles: Dict[str, Any] = {}
+    # The ONE data provider bound to the ONE feed (the primary account's), or None when
+    # the venue is unregistered. Declared here so the post-facade wiring below sees it
+    # on every path.
+    provider: Optional[Any] = None
 
     from itrader.connectors.provider import ConnectorProvider
-    from itrader.venues.assemble import assemble_venue
+    from itrader.venues.assemble import assemble_venues
     from itrader.venues.okx_plugin import (
         OkxConnectorPlugin,
         OkxDataPlugin,
@@ -1463,14 +1995,37 @@ def build_live_system(
         ExecutionVenueRegistry,
     )
 
+    # (0) 11-04 (D-02/D-04): the credentials boundary's two collaborators.
+    #   - venue_account_store: the durable (venue_name, account_id) home. It supplies
+    #     the account's secret_ref POINTER for credential resolution AND is where the
+    #     D-04 trust-on-first-use venue_uid is recorded/asserted. Gated on the SQL arm
+    #     exactly like system_store above; the import stays LAZY inside the gate
+    #     (storage.venue_store, which it composes, is OKX-inertness _FORBIDDEN).
+    #   - credential_resolver: the env-backed CredentialResolver injected into the OKX
+    #     connector plugin. WITHOUT this injection the plugin falls back to a bare
+    #     OkxSettings() reading the ONE global OKX_API_* set, so two account_ids would
+    #     connect with IDENTICAL credentials while the system believes they are
+    #     separate accounts (the D-12 caveat) — the exact misroute D-04 detects.
+    from itrader.config.credential_resolver import EnvCredentialResolver
+
+    if system_db_backend is not None:
+        from itrader.storage.venue_account_store import VenueAccountStore
+        venue_account_store: Optional[Any] = VenueAccountStore(system_db_backend)
+    else:
+        venue_account_store = None
+    credential_resolver = EnvCredentialResolver()
+
     # (1) Build the two registries + the shared ConnectorProvider and register the
     # concrete plugins (store-only — no build*() runs, so this pulls no ccxt).
     exec_registry = ExecutionVenueRegistry()
     data_registry = DataProviderRegistry()
-    connectors = ConnectorProvider({'okx': OkxConnectorPlugin()})
+    connectors = ConnectorProvider(
+        {'okx': OkxConnectorPlugin(resolver=credential_resolver)})
     exec_registry.register('okx', OkxVenuePlugin())
     exec_registry.register(
-        'paper', PaperVenuePlugin(execution_handler.exchanges['simulated']))
+        'paper',
+        PaperVenuePlugin(
+            execution_handler.exchanges[('simulated', DEFAULT_ACCOUNT_ID)]))
     data_registry.register('okx', OkxDataPlugin())
 
     # TEST-only DATA provider injection (D-21): production registers NO replay/test data
@@ -1489,42 +2044,100 @@ def build_live_system(
     # feed left production for tests/). A TEST fixture injects a 'replay' plugin via
     # data_plugins and passes data_provider='replay' explicitly; production never does.
     # build_venue_spec owns the {okx,paper}->okx default-provider map (D-11 — one home).
-    venue_spec = build_venue_spec(
-        exchange,
-        data_provider=getattr(spec, 'data_provider', None),
-        account_id=getattr(spec, 'account_id', None),
-    )
+    # 11-07 (MPORT-01/MPORT-06): ONE VenueSpec PER ACCOUNT, each carrying its OWN
+    # credential pointer read off its own durable row. Before this plan the pointer
+    # was read once for a single spec-level account_id, which is why MPORT-06's
+    # resolver was shipped-but-dormant: with one account there was never a second
+    # pointer to resolve. `_build_account_specs` also mints an absent account row so
+    # the D-04 venue-UID guard has somewhere to record into.
+    #
+    # 11-04 (D-02): a missing store or a missing row yields secret_ref=None, which is
+    # the legacy single-account path — NOT the T-11-18 fail-open case (a well-formed
+    # pointer that resolves to nothing RAISES inside the resolver).
+    #
+    # 11-09: the account set is the UNION of the spec's portfolios and the ones
+    # rehydrated ABOVE, so a portfolio restored from a durable definition row gets an
+    # account assembled for it. Spec-only derivation is why 11-08 had to flag the
+    # rehydrated portfolio as unserved.
+    account_specs = _build_account_specs(
+        spec, venue_account_store, exchange,
+        portfolio_handler._portfolios.values())
 
     # (3) Delegate venue assembly (registry membership replaces the venue-string branch).
-    provider: Optional[Any] = None
+    # 11-09: ONE call builds ONE lifecycle per account, keyed by account id and PRIMARY
+    # FIRST (insertion order). The assembly LOGIC stays authored once in
+    # ``venues/assemble.py`` and unit-testable with no LiveTradingSystem.
     if exchange in exec_registry:
-        bundle, venue_lifecycle = assemble_venue(
-            ctx, venue_spec, connectors, exec_registry, data_registry)
-        provider = venue_lifecycle.provider
+        # 11-04 (D-04): account_store + alert_sink are what make the trust-on-first-use
+        # UID guard RUN. They are optional kwargs, which means omitting them here would
+        # ship the only high-severity spoofing mitigation in this phase as dead code
+        # behind a fully green suite. tests/unit/venues/test_venue_uid_guard.py asserts
+        # they are passed.
+        venue_lifecycles = assemble_venues(
+            ctx, account_specs, connectors, exec_registry, data_registry,
+            account_store=venue_account_store, alert_sink=alert_sink)
 
-        # bundle.connector is the STREAMING-venue discriminator (okx present, paper None).
-        # A paper (connector=None) bundle has no streaming okx exchange; its data provider
-        # is still wired to the feed below (the injected TEST 'replay' provider in tests, or
-        # the OKX data provider in production paper — D-21). The facade __init__ sources
-        # _venue_bundle/_venue_account/_okx_data_provider off the lifecycle (D-08); only the
-        # streaming-venue execution_handler registration + the halt-signal handles stay here.
-        okx_connector = bundle.connector
-        if bundle.connector is not None:
-            okx_exchange = bundle.exchange
-            execution_handler.exchanges[exchange] = bundle.exchange
+        for account_spec in account_specs:
+            lifecycle = venue_lifecycles[
+                account_spec.account_id or DEFAULT_ACCOUNT_ID]
+            # bundle.connector is the STREAMING-venue discriminator (okx present,
+            # paper None). A paper (connector=None) bundle has no streaming okx
+            # exchange; its data provider is still wired to the feed below (the
+            # injected TEST 'replay' provider in tests, or the OKX data provider in
+            # production paper — D-21).
+            if lifecycle.bundle.connector is None:
+                continue
+            # D-27/MPORT-07: register under the (venue, account_id) PAIR, using
+            # the account this bundle was actually built for. Registering under
+            # DEFAULT_ACCOUNT_ID here would blackhole every live order for a
+            # NAMED account: on_order resolves the portfolio's real account, so
+            # the lookup would miss and fail closed — silently, with no test
+            # covering it. The `or DEFAULT_ACCOUNT_ID` fallback is the same
+            # `spec.account_id or "default"` idiom the shipped venue plugins
+            # already use to memoize connectors, so venue and exchange agree on
+            # one key. (This is a REGISTRATION-side default for an unnamed
+            # account, NOT a resolution-side fallback — on_order must never
+            # coerce a None account into the default.)
+            execution_handler.exchanges[
+                (exchange, account_spec.account_id or DEFAULT_ACCOUNT_ID)
+            ] = lifecycle.bundle.exchange
 
         # (4) UNIFORM provider->feed wiring (D-10) that needs NO facade method.
+        # ONE feed, so ONE provider: the PRIMARY account's (the first inserted
+        # lifecycle). A second account's data provider would push the same venue's
+        # bars into the same feed a second time.
+        provider = next(iter(venue_lifecycles.values())).provider
         feed.set_provider(provider)
         provider.set_bar_sink(feed.update)
         provider.set_global_queue(global_queue)
 
+        # (5) 11-09 (MPORT-05) — THE ATTACH. Each portfolio receives the Account minted
+        # from ITS OWN account's bundle, resolved by ``portfolio.account_id``. This is
+        # the step that makes the reconcile per-portfolio: without it every portfolio
+        # keeps the SimulatedCashAccount leaf built in Portfolio._initialize_components,
+        # ``is_venue_truth`` is False for all of them, and the whole venue reconcile
+        # (snapshot / streaming / VenueReconciler / the D-04 baseline HALT gate) silently
+        # no-ops behind a green suite. Fails LOUD on a named account with no lifecycle.
+        #
+        # CR-01: the attach is VENUE-SCOPED. `rehydrate_portfolios` restores every
+        # persisted portfolio regardless of venue, and `venue_lifecycles` is keyed by
+        # bare account id (one `assemble_venues` call is single-venue by construction),
+        # so without the booted venue a portfolio on another venue was handed THIS
+        # venue's VenueAccount — the identity the reconcile snapshot, the D-04 baseline
+        # HALT gate and VenueReconciler all act on.
+        venue_accounts = _attach_venue_accounts(
+            portfolio_handler, venue_lifecycles, venue_name=exchange)
+    else:
+        venue_accounts = {}
+
     # Construct the facade via DIRECT PURE INJECTION (RUN-03/D-09/D-10): the compose Engine
-    # is the single source of truth for the handler graph; the VenueLifecycle is the single
-    # venue/connector holder (D-07); the SQL spine + halt store stay SEPARATE infra handles
-    # (D-09). No LiveSystemComponents bag — the facade sources everything off these directly.
+    # is the single source of truth for the handler graph; the per-account VenueLifecycle
+    # MAP is the venue/connector holder (D-07/11-09); the SQL spine + halt store stay
+    # SEPARATE infra handles (D-09). No LiveSystemComponents bag — the facade sources
+    # everything off these directly.
     facade = LiveTradingSystem(
         engine=engine,
-        lifecycle=venue_lifecycle,
+        lifecycles=venue_lifecycles,
         system_db_backend=system_db_backend,
         halt_record_store=halt_record_store,
         exchange=exchange,
@@ -1549,10 +2162,18 @@ def build_live_system(
         venue_store: Optional[Any] = VenueStore(system_db_backend)
 
         def _venue_kind(venue_name: str) -> bool:
-            """(venue_name) -> True when the venue's execution arm is a SimulatedExchange (D-14)."""
+            """(venue_name) -> True when the venue's execution arm is a SimulatedExchange (D-14).
+
+            D-27: the registry is pair-keyed, so this matches every registered
+            account on the named venue. The parameter stays a bare VENUE string
+            because the question ("is this venue simulated?") is a property of
+            the venue, not of one account on it.
+            """
             from itrader.execution_handler.exchanges.simulated import SimulatedExchange
-            return isinstance(
-                execution_handler.exchanges.get(venue_name), SimulatedExchange)
+            return any(
+                isinstance(exchange, SimulatedExchange)
+                for (venue, _account_id), exchange in execution_handler.exchanges.items()
+                if venue == venue_name)
 
         facade._config_router = ConfigRouter(
             config=_system_config,
@@ -1580,16 +2201,29 @@ def build_live_system(
 
         # STRATEGY REHYDRATE (D-01/STRAT-01): the stored roster becomes live instances.
         # THIS EXACT POSITION satisfies four independent constraints at once:
-        #  (1) portfolios are already layered ABOVE (_layer_persisted_overrides iterates
-        #      portfolio_handler._portfolios), so subscribe_portfolio binds to ids that
-        #      already exist and are restart-stable — portfolios-before-strategies holds.
+        #  (1) portfolios already EXIST, with RESTART-STABLE ids — so subscribe_portfolio
+        #      below binds each stored subscription to a portfolio that is really there and
+        #      will still carry the same id after the next restart. 11-08 REWROTE this
+        #      clause because it was TRUE ONLY VACUOUSLY when it was written: the live
+        #      system had ZERO portfolio-creation call sites, so "portfolios already exist"
+        #      held because there were none, and _layer_persisted_overrides — which this
+        #      clause used to point at — only ITERATES portfolio_handler._portfolios and
+        #      never created any. What now supplies the guarantee is named explicitly:
+        #      rehydrate_portfolios (11-08), which runs ABOVE the venue-wiring block and
+        #      recreates each portfolio with its PERSISTED id, and plan 11-05, which made
+        #      those ids survive a restart instead of being regenerated per construction.
+        #      Do NOT relax this back to a positional claim: the ordering is only
+        #      meaningful now that portfolios are real.
         #  (2) session init BELOW reads the strategy list: wire_universe derives membership
         #      from it via StrategyDerivedSelectionModel, and register_strategy_warmup sizes
         #      the feed ring from it. A strategy registered after either would never enter
         #      the universe and never size the ring — so rehydrate MUST precede them.
-        #  (3) NOT inside _initialize_live_session: three integration tests — including a
-        #      RESTART test — monkeypatch that method to a no-op, so rehydrate placed there
-        #      would be silently lost exactly where it matters most.
+        #  (3) NOT inside _initialize_live_session: two integration test FILES (three call
+        #      sites) — including a RESTART test — monkeypatch that method to a no-op, so
+        #      a rehydrate placed there would be silently lost exactly where it matters
+        #      most. This clause now does DOUBLE DUTY: it is the same reasoning that keeps
+        #      the 11-08 portfolio rehydrate in the builder, where a swallowed call would
+        #      boot zero portfolios and still pass every strategy-only assertion.
         #  (4) the rehydrate collaborator import stays LAZY inside this gate and is never
         #      barrel-exported, keeping the backtest import path SQL-free (GATE-01). The
         #      STORE's own SQL imports moved with it into StrategyRegistryStorageFactory,
@@ -1658,13 +2292,16 @@ def build_live_system(
         system_store=system_store,
     )
     # SAFE-04: engine-thread reconnect-resume I/O (catch-up + snapshot + all-streams gate
-    # -> resume). Injected with the venue arms the facade sourced off the lifecycle; each
-    # may be None on a non-OKX wiring (guard-claused inside on_reconnect).
+    # -> resume). 11-09: injected with the per-account LIFECYCLE MAP instead of the three
+    # scalar venue arms — so the catch-up and the health gate cover EVERY account rather
+    # than only the primary's. ``venue_accounts`` is a callable over the accounts the
+    # portfolios actually hold, so the reconnect snapshot refreshes the same objects the
+    # engine reads (a build-time capture would go stale the moment an account is
+    # re-attached). Both are empty on a non-OKX wiring — every call is guard-claused.
     stream_recovery = StreamRecoveryHandler(
         safety=safety,
-        okx_exchange=facade._okx_exchange,
-        venue_account=facade._venue_account,
-        okx_data_provider=facade._okx_data_provider,
+        lifecycles=venue_lifecycles,
+        venue_accounts=lambda: list(venue_accounts.values()),
     )
     # SAFE-06: pre-trade risk backstop (rate + notional caps). Off the WALL clock (the
     # live determinism seam) + the static config.safety.throttle caps.
@@ -1675,8 +2312,9 @@ def build_live_system(
     )
     # SAFE-05: the ReconciliationCoordinator is constructed at start() (in
     # _build_reconciliation_coordinator) rather than here — it must read the CURRENT
-    # venue account / exchange / connector at reconcile time (the venue arms are the live
-    # facade fields, swappable before start() for offline runs), not a build-time capture.
+    # handler graph at reconcile time (collaborators are swappable before start() for
+    # offline runs), not a build-time capture. 11-09: it takes no venue scalars at all
+    # now — each portfolio supplies its own account and that account's connector.
     facade._safety = safety
     facade._stream_recovery = stream_recovery
     facade._throttle = throttle
@@ -1698,15 +2336,27 @@ def build_live_system(
     # provider/exchange/connector halt-signal + stream-state listeners for a registered
     # venue now emit CONTROL events (§11c): _request_connector_halt -> ConnectorFatalEvent,
     # _on_venue_stream_down/up -> StreamStateEvent(down/up). No flag flips.
+    #
+    # 11-09: the former primary/secondary SPLIT (an ``if okx_exchange is not None``
+    # block for account 0, then a ``for secondary in secondary_bundles`` loop for the
+    # rest, doing the same three calls twice) is collapsed into ONE loop over every
+    # streaming lifecycle. Two copies of one wiring rule is how a second account ends up
+    # accepting orders after a connector-fatal halt latched the first — a
+    # partially-halted engine is worse than a single-account one, because the surviving
+    # arm looks healthy. The DATA provider stays deliberately single (one feed, the
+    # primary's provider), so it is wired outside the loop.
     if provider is not None:
         provider.set_halt_signal(facade._request_connector_halt)
         provider.set_stream_state_listener(
             facade._on_venue_stream_down, facade._on_venue_stream_up)
-        if okx_exchange is not None:
-            okx_exchange.set_halt_signal(facade._request_connector_halt)
-            okx_exchange.set_stream_state_listener(
-                facade._on_venue_stream_down, facade._on_venue_stream_up)
-            okx_connector.set_halt_signal(facade._request_connector_halt)
+    for lifecycle in venue_lifecycles.values():
+        bundle = lifecycle.bundle
+        if bundle.connector is None:
+            continue
+        bundle.exchange.set_halt_signal(facade._request_connector_halt)
+        bundle.exchange.set_stream_state_listener(
+            facade._on_venue_stream_down, facade._on_venue_stream_up)
+        bundle.connector.set_halt_signal(facade._request_connector_halt)
 
     # 08-03 (D-03/D-04): the CRITICAL/halt alert sink now rides into the ErrorHandler via
     # compose_engine (built above as ``alert_sink``, injected at construction) — the old

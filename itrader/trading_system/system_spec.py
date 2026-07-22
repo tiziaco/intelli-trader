@@ -42,10 +42,22 @@ class PortfolioSpec:
 	Promoted from ``scenario_spec.py::PortfolioSpec`` — the wiring fields the
 	factory consumes via ``add_portfolio`` (D-01). ACCT-04: the former
 	owning-user field was dropped (an app-layer concern, not a wiring input).
+
+	``account_id`` (MPORT-05, plan 11-05) is the spec-side half of the account
+	reference: a composition-supplied portfolio names its venue account HERE, and
+	``add_portfolio`` threads it onto the ``Portfolio``. It defaults and is appended
+	LAST so every existing construction site — including the byte-exact backtest
+	composition root — is untouched.
+
+	Plan 11-08 checks the UNION of spec-supplied and rehydrated portfolios for
+	account distinctness. Checking only one source would leave a hole: rehydrated
+	rows are already covered by the database's unique constraint, so the
+	application-level check's real job is catching duplicates within a spec.
 	"""
 
 	name: str
 	cash: int
+	account_id: str | None = None
 
 
 @dataclass(frozen=True)

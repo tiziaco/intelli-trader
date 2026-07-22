@@ -33,6 +33,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from itrader.core.enums import ErrorSeverity, FillStatus, OrderCommand, OrderType, Side
+from itrader.core.exceptions import ValidationError
 from itrader.core.ids import OrderId
 from itrader.core.money import to_money
 from itrader.events_handler.events import ErrorEvent, FillEvent, OrderEvent
@@ -593,6 +594,32 @@ def test_client_order_id_lossless_no_tail_bit_collision() -> None:
     assert id_b.isalnum() and len(id_b) <= 32
 
 
+def test_client_order_id_over_length_rendering_raises_typed_error() -> None:
+    """D-18 / T-11-06: the charset+length guard is a REAL raise, not a bare ``assert``.
+
+    A bare ``assert`` is stripped entirely under ``python -O``, which would leave the ONLY
+    guard on a venue-bound identifier silently absent in an optimized production run. The
+    identifier crosses into an authenticated venue session and is the sole handle correlating
+    a fill back to an engine order, so an out-of-contract rendering must be REFUSED, never
+    submitted and never silently truncated.
+
+    Drives the LENGTH branch: ``(1 << 190) - 1`` goes through the ``int`` fallback in
+    ``_client_order_id`` and renders to a 34-character base62 token — over OKX's 32-char
+    limit. (The CHARSET branch is unreachable by construction: ``_CLORDID_ALPHABET`` and the
+    ``it`` prefix are entirely alphanumeric, so ``clordid.isalnum()`` is always True. It is
+    deliberately NOT asserted here — an always-passing assertion would be false coverage.)
+    """
+    oversized = _make_order(order_id=(1 << 190) - 1)
+
+    with pytest.raises(ValidationError) as excinfo:
+        OkxExchange._client_order_id(oversized)
+
+    # The message names the offending identifier and the constraint it violated.
+    message = str(excinfo.value)
+    assert "it" in message
+    assert "32" in message
+
+
 def test_client_order_id_round_trip_correlation_resolves(
     exchange: OkxExchange, fake_client: MagicMock, queue: "Queue[Any]"
 ) -> None:
@@ -610,7 +637,7 @@ def test_client_order_id_round_trip_correlation_resolves(
 
     clordid = OkxExchange._client_order_id(order)
     assert fake_client.create_order.call_args.kwargs["params"]["clOrdId"] == clordid
-    assert exchange._index._orders_by_clOrdId[clordid] is order
+    assert exchange._index._orders_by_client_order_id[clordid] is order
 
     # An echoed fill carrying that clOrdId (venue-id lookup misses) resolves it.
     exchange._handle_trade({

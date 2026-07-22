@@ -123,7 +123,8 @@ def _spot_venue_portfolio(venue_connectors, btc_total: str) -> Portfolio:
     # no fetch_positions rows). This is the 05.1-08 real-quote wiring that turns
     # A4 GREEN — the assertions below are unchanged.
     account = VenueAccount(
-        connector, quote_currency="USDC", market_type="spot", symbol=_TICKER
+        connector, quote_currency="USDC", market_type="spot", symbol=_TICKER,
+        account_id="acct-test"
     )
     account.snapshot()
     portfolio.account = account

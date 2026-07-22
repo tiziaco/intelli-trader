@@ -20,6 +20,7 @@ path).
 """
 
 import inspect
+from types import SimpleNamespace
 
 import pytest
 
@@ -84,15 +85,35 @@ class _FakeProvider:
         return self._healthy
 
 
+def _lifecycles(*exchanges_and_providers) -> dict:
+    """Build the 11-09 per-account ``VenueLifecycle`` map from (exchange, provider) pairs.
+
+    The handler no longer takes ``okx_exchange`` / ``okx_data_provider`` scalars: those
+    covered only the PRIMARY account, so a second account's missed fills were never
+    caught up and its down streams never blocked the resume — submission would clear
+    while the engine was still blind to that account's fills.
+
+    ``bundle.connector`` is the streaming discriminator, so a non-None placeholder marks
+    an account as live.
+    """
+    return {
+        f"acct-{index}": SimpleNamespace(
+            bundle=SimpleNamespace(connector=object(), exchange=exchange),
+            provider=provider,
+        )
+        for index, (exchange, provider) in enumerate(exchanges_and_providers)
+    }
+
+
 def test_resume_happy_path_catchup_then_snapshot_then_resume() -> None:
     """All arms healthy → catch-up BEFORE snapshot BEFORE resume (D-25 + D-28 gate)."""
     order_log: list[str] = []
     safety = _FakeSafety(paused=True)
     handler = StreamRecoveryHandler(
         safety=safety,
-        okx_exchange=_FakeExchange(healthy=True, order_log=order_log),
-        venue_account=_FakeAccount(order_log=order_log),
-        okx_data_provider=_FakeProvider(healthy=True),
+        lifecycles=_lifecycles(
+            (_FakeExchange(healthy=True, order_log=order_log), _FakeProvider(healthy=True))),
+        venue_accounts=lambda: [_FakeAccount(order_log=order_log)],
     )
 
     handler.on_reconnect()
@@ -108,9 +129,9 @@ def test_resume_stays_paused_while_exchange_arm_down() -> None:
     safety = _FakeSafety(paused=True)
     handler = StreamRecoveryHandler(
         safety=safety,
-        okx_exchange=_FakeExchange(healthy=False, order_log=order_log),
-        venue_account=_FakeAccount(order_log=order_log),
-        okx_data_provider=_FakeProvider(healthy=True),
+        lifecycles=_lifecycles(
+            (_FakeExchange(healthy=False, order_log=order_log), _FakeProvider(healthy=True))),
+        venue_accounts=lambda: [_FakeAccount(order_log=order_log)],
     )
 
     handler.on_reconnect()
@@ -128,9 +149,9 @@ def test_resume_stays_paused_while_data_arm_down() -> None:
     safety = _FakeSafety(paused=True)
     handler = StreamRecoveryHandler(
         safety=safety,
-        okx_exchange=_FakeExchange(healthy=True, order_log=order_log),
-        venue_account=_FakeAccount(order_log=order_log),
-        okx_data_provider=_FakeProvider(healthy=False),
+        lifecycles=_lifecycles(
+            (_FakeExchange(healthy=True, order_log=order_log), _FakeProvider(healthy=False))),
+        venue_accounts=lambda: [_FakeAccount(order_log=order_log)],
     )
 
     handler.on_reconnect()
@@ -145,9 +166,9 @@ def test_resume_stays_paused_on_snapshot_exception_d12() -> None:
     safety = _FakeSafety(paused=True)
     handler = StreamRecoveryHandler(
         safety=safety,
-        okx_exchange=_FakeExchange(healthy=True, order_log=order_log),
-        venue_account=_FakeAccount(order_log=order_log, raises=True),
-        okx_data_provider=_FakeProvider(healthy=True),
+        lifecycles=_lifecycles(
+            (_FakeExchange(healthy=True, order_log=order_log), _FakeProvider(healthy=True))),
+        venue_accounts=lambda: [_FakeAccount(order_log=order_log, raises=True)],
     )
 
     handler.on_reconnect()
@@ -164,9 +185,9 @@ def test_resume_stays_paused_on_catchup_exception_d12() -> None:
     safety = _FakeSafety(paused=True)
     handler = StreamRecoveryHandler(
         safety=safety,
-        okx_exchange=_FakeExchange(healthy=True, order_log=order_log, raises=True),
-        venue_account=_FakeAccount(order_log=order_log),
-        okx_data_provider=_FakeProvider(healthy=True),
+        lifecycles=_lifecycles(
+            (_FakeExchange(healthy=True, order_log=order_log, raises=True), _FakeProvider(healthy=True))),
+        venue_accounts=lambda: [_FakeAccount(order_log=order_log)],
     )
 
     handler.on_reconnect()
@@ -175,6 +196,51 @@ def test_resume_stays_paused_on_catchup_exception_d12() -> None:
     assert order_log == ["catch_up"]
     assert safety.resume_calls == 0
     assert safety.is_submission_paused() is True
+
+
+def test_every_accounts_arm_is_caught_up_and_gates_the_resume() -> None:
+    """11-09: catch-up and the health gate cover EVERY account, not just the primary.
+
+    Two accounts; the SECOND one's fill stream is still down. Under the old scalar
+    wiring only account 0 was reached, so account 1's fills were never recovered and its
+    down stream never blocked resume — submission would clear while the engine was blind
+    to half the venue. A partially-recovered engine is worse than an unrecovered one
+    because the surviving arm looks healthy.
+    """
+    order_log: list[str] = []
+    safety = _FakeSafety(paused=True)
+    handler = StreamRecoveryHandler(
+        safety=safety,
+        lifecycles=_lifecycles(
+            (_FakeExchange(healthy=True, order_log=order_log),
+             _FakeProvider(healthy=True)),
+            (_FakeExchange(healthy=False, order_log=order_log), None)),
+        venue_accounts=lambda: [_FakeAccount(order_log=order_log)],
+    )
+
+    handler.on_reconnect()
+
+    # BOTH accounts' arms were caught up...
+    assert order_log == ["catch_up", "catch_up", "snapshot"]
+    # ...and the second account's down stream held the pause.
+    assert safety.resume_calls == 0
+
+
+def test_a_shared_account_is_snapshotted_once() -> None:
+    """Dedupe by IDENTITY — one account object handed back twice snapshots once.
+
+    Account leaves are not hashable-by-value, so identity is the only correct key; a
+    duplicate would double-snapshot one real venue account on every reconnect.
+    """
+    order_log: list[str] = []
+    shared = _FakeAccount(order_log=order_log)
+    safety = _FakeSafety(paused=True)
+    handler = StreamRecoveryHandler(
+        safety=safety, venue_accounts=lambda: [shared, shared])
+
+    handler.on_reconnect()
+
+    assert order_log == ["snapshot"]
 
 
 def test_resume_guard_clauses_none_arms() -> None:
@@ -194,9 +260,9 @@ def test_on_reconnect_noop_when_not_paused() -> None:
     safety = _FakeSafety(paused=False)
     handler = StreamRecoveryHandler(
         safety=safety,
-        okx_exchange=_FakeExchange(healthy=True, order_log=order_log),
-        venue_account=_FakeAccount(order_log=order_log),
-        okx_data_provider=_FakeProvider(healthy=True),
+        lifecycles=_lifecycles(
+            (_FakeExchange(healthy=True, order_log=order_log), _FakeProvider(healthy=True))),
+        venue_accounts=lambda: [_FakeAccount(order_log=order_log)],
     )
 
     handler.on_reconnect()

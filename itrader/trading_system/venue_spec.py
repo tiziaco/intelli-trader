@@ -50,6 +50,13 @@ class VenueSpec:
 	execution_venue: str
 	data_provider: str
 	account_id: Optional[str] = None
+	# 11-04 (D-02/MPORT-06): a POINTER at wherever this ACCOUNT's credentials live
+	# (``env:<PREFIX>`` today), read off the durable ``venue_accounts`` row. NEVER a
+	# credential itself. The connector plugin resolves it through the injected
+	# ``CredentialResolver`` inside ``build``, which is what makes two ``account_id``s
+	# connect with DIFFERENT keys instead of the one global ``OKX_API_*`` set (the
+	# D-12 caveat). ``None`` = the pre-MPORT-06 single-account deployment.
+	secret_ref: Optional[str] = None
 
 
 def build_venue_spec(
@@ -57,6 +64,7 @@ def build_venue_spec(
 	*,
 	data_provider: Optional[str] = None,
 	account_id: Optional[str] = None,
+	secret_ref: Optional[str] = None,
 ) -> VenueSpec:
 	"""Build the live ``VenueSpec``, applying the default-provider map (D-11).
 
@@ -77,6 +85,9 @@ def build_venue_spec(
 	account_id :
 		The connector-memo key; ``None`` defers to the plugins' ``"default"``
 		fallback (``assemble_venue`` does NOT re-default it).
+	secret_ref :
+		The account's credential POINTER off its ``venue_accounts`` row (D-02).
+		``None`` = no per-account credentials (paper, or a pre-MPORT-06 deployment).
 	"""
 	resolved_provider = data_provider or {
 		'okx': 'okx', 'paper': 'okx'}.get(execution_venue, 'okx')
@@ -84,4 +95,5 @@ def build_venue_spec(
 		execution_venue=execution_venue,
 		data_provider=resolved_provider,
 		account_id=account_id,
+		secret_ref=secret_ref,
 	)

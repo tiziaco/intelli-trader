@@ -192,24 +192,30 @@ def _codec_rec(rec: Mapping[str, Any]) -> Mapping[str, Any]:
 	return {**rec, "config_json": rec.get("config")}
 
 
-def _resolve_portfolio_id(raw: str) -> PortfolioId:
+def _resolve_portfolio_id(raw: "str | uuid.UUID") -> PortfolioId:
 	"""Rebuild a stored portfolio-subscription id into the handle the fan-out expects.
 
-	The ``strategy_portfolio_subscriptions.portfolio_id`` column is a ``String`` because
-	``to_dict`` serializes each handle via ``str(pid)`` — the stored form is a string by the
-	round trip's own construction, and this function is that round trip's parsing inverse.
-	(Whether the column should instead become a ``Uuid`` column is a separate open question,
-	filed as B2, and is NOT settled here.) The inverse therefore has to PARSE — handing the
-	raw string on would be a silent
-	correctness bug rather than a typing nit: ``on_bar`` fans an intent out over
+	B2 (SETTLED, 11-03/D-29): ``strategy_portfolio_subscriptions.portfolio_id`` is a ``Uuid``
+	column now, so the store hands back a ``uuid.UUID`` directly and the common path is a
+	plain re-wrap. The STRING branch is deliberately KEPT rather than deleted, because the
+	function still has two live sources of not-yet-UUID input:
+
+	* LEGACY ROWS — anything written before the ``p11_b2_uuid_fk_config_move`` migration, or
+	  read through a store instance predating it;
+	* any caller handing over a serialized id (``Strategy.to_dict`` still projects each handle
+	  via ``str(pid)``, and that projection round-trips back through here).
+
+	The parse is load-bearing, not a typing nit: ``on_bar`` fans an intent out over
 	``subscribed_portfolios`` and puts each id straight onto ``SignalEvent.portfolio_id``
 	(``strategies_handler.py``, FL-02: "the runtime value is always a UUIDv7-backed
-	PortfolioId"). A bare ``str`` would reach the portfolio lookup as an id that matches
-	NOTHING — the strategy would rehydrate looking healthy and then trade into the void.
+	PortfolioId"). A bare ``str`` would reach the portfolio lookup as an id matching NOTHING —
+	the strategy would rehydrate looking healthy and then trade into the void.
 
 	A malformed id raises ``StrategyConfigError`` so the D-19 quarantine claims it: an
 	instance whose fan-out cannot be reconstructed must not register half-wired.
 	"""
+	if isinstance(raw, uuid.UUID):
+		return PortfolioId(raw)
 	try:
 		return PortfolioId(uuid.UUID(raw))
 	except (ValueError, AttributeError, TypeError) as exc:

@@ -24,9 +24,26 @@ from itrader.venues import (
 
 
 class _FakeVenuePlugin:
-    """Structural ``VenuePlugin`` — exposes ``build_bundle`` (body irrelevant here)."""
+    """Structural ``VenuePlugin`` — exposes the full Protocol surface (bodies irrelevant).
+
+    11-04 widened ``VenuePlugin`` with ``credential_model`` (D-03) and
+    ``fetch_venue_uid`` (D-04); 11-07 widened it again with ``new_account`` (D-10).
+    ``isinstance`` against a ``runtime_checkable`` Protocol is a hasattr check over
+    EVERY member, so a fake that only implements ``build_bundle`` stops conforming
+    the moment the Protocol grows — which is why every member is declared here in
+    the same commit as the Protocol change. This has now caught three plans in a
+    row; the lesson is that a Protocol widening is never a one-file change.
+    """
+
+    credential_model = None
 
     def build_bundle(self, ctx, spec, connectors):  # noqa: ANN001, ANN201
+        return None
+
+    def new_account(self, portfolio_ref, config):  # noqa: ANN001, ANN201
+        return None
+
+    def fetch_venue_uid(self, connector):  # noqa: ANN001, ANN201
         return None
 
 
@@ -95,9 +112,13 @@ def test_venue_bundle_optional_arm_defaults_to_none() -> None:
     bundle = VenueBundle(exchange=exchange, account_factory=account_factory)
     assert bundle.exchange is exchange
     assert bundle.account_factory is account_factory
-    # D-02: the optional live arm defaults to None (paper carries neither).
+    # D-02: the optional live arm defaults to None (paper carries none).
     assert bundle.connector is None
-    assert bundle.lifecycle is None
+    # 11-09: the dead ``lifecycle`` field is GONE. It was never populated by anything —
+    # assemble_venue returns the lifecycle ALONGSIDE the bundle — so its only references
+    # in the whole tree were three tests asserting it was None. The composition root now
+    # holds one lifecycle per account; the bundle carries none.
+    assert not hasattr(bundle, "lifecycle")
 
 
 def test_venue_bundle_is_frozen() -> None:

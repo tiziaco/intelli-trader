@@ -315,27 +315,134 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 
 ### ★ Multi-Portfolio-Live (P11)
 
-- [ ] **MPORT-01**: The venue plugin's `new_account(portfolio_ref, config)` mints a per-portfolio account
+- [x] **MPORT-01**: The venue plugin's `new_account(portfolio_ref, config)` mints a per-portfolio account
   (venue-truth → `VenueAccount` scoped to `portfolio.account_id`; compute → a fresh `SimulatedAccount`);
   `_link_venue_account_to_portfolios` + its `RuntimeError(>1)` guard are deleted (LR-03/§10b).
 
-- [ ] **MPORT-02**: A distinct-`account_id` invariant fails **loud** at composition time — multiple
+- [x] **MPORT-02**: A distinct-`account_id` invariant fails **loud** at composition time — multiple
   portfolios sharing one venue `account_id` is rejected (pooled buying power the venue can't split back
   out is deferred) (§10a).
 
-- [ ] **MPORT-03**: A signal fans out to each subscribed portfolio; each sizes/orders independently against
+- [x] **MPORT-03**: A signal fans out to each subscribed portfolio; each sizes/orders independently against
   its own account; the venue partitions balance/positions/fills by `account_id` (§10a).
 
-- [ ] **MPORT-04**: `clOrdId` is renamed `client_order_id` (venue↔engine correlation), distinct from
+- [x] **MPORT-04**: `clOrdId` is renamed `client_order_id` (venue↔engine correlation), distinct from
   `portfolio_id` (attribution); every submitted order is tagged with its portfolio; fills route via
   `client_order_id`/`venue_order_id` → engine order → `FillEvent(portfolio_id)` → the right
   `Portfolio.on_fill` (LR-19/§10c).
 
-- [ ] **MPORT-05**: `PortfolioSpec` gains `account_id`; the `ReconciliationCoordinator` iterates active
+- [x] **MPORT-05**: `PortfolioSpec` gains `account_id`; the `ReconciliationCoordinator` iterates active
   portfolios, reconciling each against its own `VenueAccount`/`account_id` (§10b-c).
 
-- [ ] **MPORT-06**: Connectors are keyed `(venue, account_id)` (VENUE-03) so multi-account portfolios share
+- [x] **MPORT-06**: Connectors are keyed `(venue, account_id)` (VENUE-03) so multi-account portfolios share
   or decouple connectors correctly without a combinatorial matrix (LR-20/§8c).
+
+- [x] **MPORT-07** *(DISCOVERED during P11 discussion, 2026-07-21 — not in the 2026-07-07 design)*: The
+  **execution exchange** is keyed `(venue, account_id)`, not by venue name alone. `ExecutionHandler.exchanges`
+  keys on the pair, `on_order` resolves the account from `event.portfolio_id` (via a new
+  `PortfolioReadModel.account_for`), and `VenueBundle` carries per-account exchanges. **Why this is required, not
+  an optimization:** `ExecutionHandler.on_order` currently does a bare `self.exchanges.get(event.exchange)`
+  (`execution_handler.py:126`) while `OkxExchange` holds exactly one connector (`okx.py:101`) — so two portfolios
+  on one venue with distinct `account_id`s both resolve to the *same* exchange and one account's orders would be
+  submitted through the other account's authenticated session, silently defeating MPORT-01/03/06 even when
+  credentials, accounts and the distinct-`account_id` invariant are all correct. `watch_my_trades` is a **private
+  per-account stream**, so a shared exchange cannot subscribe to both accounts' fills at all. Architecturally this
+  makes an existing dimension explicit rather than adding one: every mutable field on `OkxExchange` is already
+  account-scoped, and the markets/precision map lives on the connector (`okx.py:952-955`). (P11 CONTEXT D-27.)
+
+### Account Provisioning + Mandatory Account Identity (P11.1 — INSERTED follow-up to P11)
+
+*Source: the Phase 11 code review (`11-REVIEW.md` CR-02/CR-03/WR-03/WR-05) plus the 2026-07-22 design
+discussion. Root decision: `(venue_name, account_id)` is mandatory for a live portfolio, and the DURABLE
+STORE — not the spec — is the source of truth for both portfolios and accounts. The schema already encodes
+this (`portfolios.venue_name` / `.account_id` are `NOT NULL` under a composite FK onto `venue_accounts`);
+the code does not yet trust it.*
+
+- [ ] **ACCT-01**: The live account set is derived from `VenueAccountStore.read_enabled_for(venue_name)`,
+  not from the spec. The spec-derived halves of `_account_ids_for_spec` and the `spec.portfolios` field are
+  deleted; `assemble_venues` receives the account set as an argument, and `live_trading_system.py` computes
+  no account identity of its own. Decouples provisioning from portfolio creation — an account can be
+  provisioned before any portfolio references it, which is what makes the composite FK satisfiable at
+  `add_portfolio` time.
+- [ ] **ACCT-02**: `_mint_account_rows` is replaced by a deliberate provisioning path — a
+  `venue_account:{venue}/{id}` `config_router` scope mirroring the existing `venue:{name}` → `VenueStore`
+  scope and reusing its secret-scrub guard. A **handoff, not a deletion**: minting is currently the only
+  production writer of `venue_accounts`, so removing it unreplaced makes the FK reject the first
+  `add_portfolio` on a fresh DB. Minting also writes `secret_ref=None`, routing that account to the ambient
+  `OKX_API_*` credentials — the fail-open composite of `11-REVIEW.md` WR-05 — so it is a liability, not a
+  convenience.
+- [ ] **ACCT-03** *(closes 11-REVIEW CR-02)*: A live portfolio naming no venue account **raises** at
+  composition time. Today it is silently skipped and left on its `SimulatedCashAccount` leaf with
+  `is_venue_truth=False`, which disables snapshot, streaming, `VenueReconciler` and the D-04
+  unexplained-residual HALT behind a green suite. Hard-raise rather than per-portfolio quarantine (the
+  `260718-e36`/`evz` precedent): unlike a dark strategy, an unattached portfolio still routes orders.
+  **Mandatory consequence (11-REVIEW WR-11)**: `tests/integration/test_multi_portfolio_lifecycle.py:104-125`
+  gives BOTH paper portfolios `account_id=DEFAULT_ACCOUNT_ID` and no `venue_name`, and passes today only
+  because that half-null shape makes `_persist_definition` skip the row (so the DB unique constraint never
+  sees it) and keeps `assert_distinct_accounts` off the path entirely — i.e. the phase's flagship
+  multi-portfolio test demonstrates the exact account sharing D-14/D-15 forbid. ACCT-03 makes the fixture
+  illegal, so it must be given distinct `account_id`s and a real `venue_name` in this phase; the phase
+  cannot go green otherwise. Close the half-null bypass explicitly rather than relying on it.
+- [ ] **ACCT-04** *(closes 11-REVIEW WR-03)*: The six live-path `or DEFAULT_ACCOUNT_ID` coercions are
+  deleted. Registration writes `(venue, 'default')` while both readers construct `(venue, None)` raw, so for
+  an unnamed account the registered key is unreachable by every reader — a write-only entry, not merely an
+  asymmetry. The backtest/simulated uses are KEPT: `DEFAULT_ACCOUNT_ID` is the backtest single-account
+  identity and is load-bearing for the golden oracle.
+- [ ] **ACCT-05** *(closes 11-REVIEW CR-03)*: The venue account is attached on every portfolio creation
+  path, not only inside `build_live_system`. Under DB-as-source-of-truth this is the PRIMARY creation path:
+  on a fresh DB nothing rehydrates, so the first `add_portfolio` yields a portfolio submitting real orders
+  against a compute-leaf ledger with no reconcile. The attach seam must not use `None`-then-assign late
+  wiring or a post-construction setter.
+- [ ] **ACCT-06**: The two docstrings asserting the phantom *"plan 11-08 makes account_id mandatory at
+  composition time"* invariant (`execution_handler.py:209`, `core/portfolio_read_model.py:227`) are
+  corrected — ACCT-03 is what makes it true. The two citing 11-08's **distinct**-account invariant
+  (`live_trading_system.py:1627`, `reconciliation_coordinator.py:164`) are accurate and stay untouched.
+- [ ] **ACCT-07** *(closes 11-REVIEW WR-01)*: `PortfolioHandler._persist_definition` and
+  `SqlPortfolioStorage.save_config` agree on when a definition row is required. `save_config`'s legacy
+  account-state arm was deleted on the stated grounds that *"a live portfolio now always has a definition
+  row"*, but `_persist_definition` returns early when `venue_name` or `account_id` is `None` — so for such a
+  portfolio a runtime `portfolio:{id}` `CONFIG_UPDATE` raises `PortfolioStateError` out of `ConfigRouter`
+  and its config never persists. ACCT-03 makes that early-return unreachable, which resolves the
+  disagreement; the early-return itself is then removed or converted to the same typed raise so the two
+  halves cannot drift apart again.
+- [ ] **ACCT-08** *(closes 11-REVIEW WR-09)*: `PortfolioHandler` exposes `all_portfolios()` and
+  `has_portfolio(portfolio_id)`, and the production reach-ins to the private `_portfolios` dict are
+  converted (`portfolio_rehydrate.py:124`, `live_trading_system.py:1341/1591/1964`). Folded here because
+  ACCT-01 and ACCT-05 rewrite two of those call sites anyway — the handler already exposes
+  `get_active_portfolios()`, and every consumer reached for the private field only because no "all
+  portfolios" / "is registered" accessor existed. **Co-located (11-REVIEW WR-02)**: the portfolio arm of
+  `_layer_persisted_overrides` wraps its whole `for` loop in ONE `try/except _degrade_clean`, so a single
+  poisoned `config_json` skips every portfolio after it in iteration order with one warning naming only the
+  first failure — despite the docstring claiming per-scope isolation. The guard moves INSIDE the loop.
+  Folded here because WR-02 and this requirement edit the SAME statement (`live_trading_system.py:1341`).
+- [ ] **ACCT-09** *(closes 11-REVIEW WR-10)*: `ExecutionHandler.on_order`'s fail-closed paths emit a
+  `FillEvent(REFUSED)` — the established rejection-as-event convention, which also reconciles the order
+  mirror instead of leaving it PENDING forever — rather than only calling `logger.error(...)` and
+  returning. Today a misconfigured live engine drops 100% of its orders while `get_status()` reports
+  `RUNNING`, `errors_count: 0` and no halt reason. **Scope note**: ACCT-03 makes the middle branch
+  (`if account_id is None`) unreachable, so this covers TWO paths (unknown portfolio, unregistered
+  `(venue, account)` pair), and the dead branch is removed rather than instrumented — its comment is one of
+  the two phantom-invariant citations ACCT-06 corrects.
+- [ ] **ACCT-10** *(closes 11-REVIEW WR-04)*: Runtime portfolio deactivation PERSISTS. `_persist_definition`
+  hardcodes `enabled=True` and is gated on row absence, and nothing else ever writes `enabled=False`, so
+  `Portfolio.set_state(INACTIVE)` never reaches the store and a portfolio an operator deliberately stopped
+  comes back ACTIVE and trading on the next restart — money-relevant, and silent. Add a
+  `set_enabled(portfolio_id, enabled)` write on `PortfolioDefinitionStore`, called from whatever flips
+  `PortfolioState`. This also makes `rehydrate_portfolios`' present-but-inactive branch
+  (`portfolio_rehydrate.py:141-147`) reachable as designed instead of only via an out-of-band DB write.
+- [ ] **ACCT-11** *(closes 11-REVIEW CR-04 + WR-12)*: The D-09 config move REFUSES rather than silently
+  skipping. `_move_config` copies `portfolio_account_state.config_json` onto a matching `portfolios` row and
+  counts a non-match as a benign "orphan" — but `portfolios` is created empty by the immediately preceding
+  revision and the module docstring itself states nothing wrote `portfolios` rows before this phase, so
+  EVERY source row is an orphan and `moved` is provably `0`. Meanwhile `load_config` (`sql_storage.py:597`)
+  now reads ONLY `portfolios.config_json`, so any such blob is unreadable after `alembic upgrade head` —
+  verbatim the failure the revision docstring calls *"the single highest-regression-risk operation in the
+  phase, and the risk is that it fails SILENTLY"*. **Confirmed greenfield (2026-07-22): no deployment holds
+  real persisted state**, so this is a guard against a state that should never arise, not a data migration —
+  count orphans and raise with remediation instructions. WR-12: `_seed_for_the_move`
+  (`test_p11_migration_chain.py:78-111`) hand-inserts a `portfolios` row at `_REVISION_ONE`, a state
+  unreachable in a real chain, and the negative control varies only the chain head — so add a test whose
+  staging inserts ONLY `portfolio_account_state` rows (the real pre-upgrade shape) and asserts the refusal.
 
 ### Test Migration + Gates (P12 — except TEST-01, pulled forward into P6)
 
@@ -457,12 +564,13 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | DECOMP-01a | P10.1 | Complete |
 | DECOMP-02 | P10.1 | Complete |
 | DECOMP-03 | P10.1 | Complete |
-| MPORT-01 | P11 | Pending |
-| MPORT-02 | P11 | Pending |
-| MPORT-03 | P11 | Pending |
-| MPORT-04 | P11 | Pending |
-| MPORT-05 | P11 | Pending |
-| MPORT-06 | P11 | Pending |
+| MPORT-01 | P11 | Complete |
+| MPORT-02 | P11 | Complete |
+| MPORT-03 | P11 | Complete |
+| MPORT-04 | P11 | Complete |
+| MPORT-05 | P11 | Complete |
+| MPORT-06 | P11 | Complete |
+| MPORT-07 | P11 | Complete |
 | TEST-01 | P6 | Complete |
 | TEST-02 | P12 | Pending |
 | TEST-03 | P12 | Pending |
@@ -476,4 +584,6 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 
 ---
 *Requirements defined: 2026-07-09*
-*Last updated: 2026-07-09 — roadmap revised to 12 phases (old P4 SqlEngine Migrations Relocation folded into old P5 New Durable Stores → merged storage-schema phase P4; all downstream phases renumbered −1); 64/64 requirements mapped, 0 orphans; full scope P1–P12 + 3 owner refinements*
+*Last updated: 2026-07-21 — added **MPORT-07** (discovered during P11 discussion: the execution exchange must be keyed `(venue, account_id)`, not by venue name alone). **69/69 requirements mapped, 0 orphans.** Note the previously-stated "64/64" was stale from 2026-07-09: it predated the four `DECOMP-*` requirements added by the inserted Phase 10.1, so the true count was already 68 before MPORT-07. Full scope P1–P12 + 3 owner refinements.*
+
+*Prior: 2026-07-09 — roadmap revised to 12 phases (old P4 SqlEngine Migrations Relocation folded into old P5 New Durable Stores → merged storage-schema phase P4; all downstream phases renumbered −1); full scope P1–P12 + 3 owner refinements*

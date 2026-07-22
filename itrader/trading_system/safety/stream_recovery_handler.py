@@ -42,9 +42,26 @@ no facade back-reference. 4-space indentation (matches ``safety_controller.py`` 
 ``live_trading_system.py``).
 """
 
-from typing import Any, Optional
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
 from itrader.logger import get_itrader_logger
+
+
+def _distinct(items: Iterable[Any]) -> List[Any]:
+    """The given objects de-duplicated by IDENTITY, order preserved (11-09).
+
+    ``Account`` leaves are not hashable-by-value and two portfolios may legitimately be
+    handed the SAME account object, so identity — not equality — is the right key: a
+    duplicate would otherwise double-snapshot one venue account on every reconnect.
+    """
+    seen: set[int] = set()
+    unique: List[Any] = []
+    for item in items:
+        if id(item) in seen:
+            continue
+        seen.add(id(item))
+        unique.append(item)
+    return unique
 
 
 class StreamRecoveryHandler:
@@ -62,31 +79,55 @@ class StreamRecoveryHandler:
         The injected ``SafetyController`` (Plan 03). ``is_submission_paused`` gates
         the resume work; ``resume_submission`` is called only when every wired arm
         is healthy (which also triggers the deferred-protective replay).
-    okx_exchange
-        The OKX execution arm (``catch_up_missed_fills`` / ``is_streaming_healthy``).
-        ``None`` on a non-OKX wiring — the calls are guard-claused (absent ⇒ skip /
-        healthy).
-    venue_account
-        The venue-truth account leaf (``snapshot``). ``None`` when the run uses a
-        compute account — the snapshot is guard-claused.
-    okx_data_provider
-        The OKX candle data-provider arm (``is_streaming_healthy``). ``None`` on a
-        non-OKX wiring — treated as healthy (absent ⇒ never blocks resume).
+    lifecycles
+        11-09: the per-account ``VenueLifecycle`` map, keyed by account id and PRIMARY
+        FIRST. REPLACES the former ``okx_exchange`` / ``okx_data_provider`` scalars —
+        each account's execution arm is reached through ``lifecycle.bundle.exchange``
+        and the ONE feed provider through the primary's ``lifecycle.provider``. The
+        scalars covered only the primary account, so a second account's missed fills
+        were never caught up and its down streams never blocked the resume: submission
+        would resume while the engine was still blind to that account's fills. Empty on
+        a non-OKX wiring — every call is guard-claused (absent ⇒ skip / healthy).
+    venue_accounts
+        11-09: a CALLABLE returning the venue-truth account leaves to re-snapshot.
+        Callable rather than a captured list because the accounts live ON the portfolios
+        and are attached during composition — a build-time capture would go stale. The
+        default returns nothing, which is the compute-account case (snapshot skipped).
     """
 
     def __init__(
         self,
         *,
         safety: Any,
-        okx_exchange: Optional[Any] = None,
-        venue_account: Optional[Any] = None,
-        okx_data_provider: Optional[Any] = None,
+        lifecycles: Optional[Mapping[str, Any]] = None,
+        venue_accounts: Optional[Callable[[], Iterable[Any]]] = None,
     ) -> None:
         self.logger = get_itrader_logger().bind(component="StreamRecoveryHandler")
         self._safety = safety
-        self._okx_exchange = okx_exchange
-        self._venue_account = venue_account
-        self._okx_data_provider = okx_data_provider
+        self._lifecycles: Dict[str, Any] = dict(lifecycles) if lifecycles else {}
+        self._venue_accounts: Callable[[], Iterable[Any]] = (
+            venue_accounts if venue_accounts is not None else list)
+
+    # ---- venue arms read THROUGH the lifecycles (no stored scalar aliases) ---------
+
+    def _streaming_exchanges(self) -> List[Any]:
+        """Every account's execution arm that actually carries a live connector.
+
+        ``bundle.connector is not None`` is the streaming-venue discriminator used
+        throughout the live wiring (paper carries a lifecycle with no connector).
+        """
+        return [
+            lifecycle.bundle.exchange
+            for lifecycle in self._lifecycles.values()
+            if lifecycle.bundle.connector is not None
+        ]
+
+    def _data_provider(self) -> Optional[Any]:
+        """The ONE feed data provider — the PRIMARY (first-inserted) account's, or None."""
+        for lifecycle in self._lifecycles.values():
+            if lifecycle.bundle.connector is not None:
+                return lifecycle.provider
+        return None
 
     def on_reconnect(self) -> None:
         """Resume after a venue stream reconnected — engine-thread I/O (SAFE-04/D-19).
@@ -114,16 +155,19 @@ class StreamRecoveryHandler:
             # already reflects the recovered trade. Engine thread here (safe to block; the
             # bounded fetch_my_trades page bridges through the connector). Each trade routes
             # through _handle_trade and is deduped by the D-08 {symbol}:{trade_id} guard, so
-            # a later reconcile never double-settles it. Guard-claused on _okx_exchange
-            # (mirrors the _venue_account guard); a catch-up failure is caught by the same
-            # except below (stay paused, never resume blind).
-            if self._okx_exchange is not None:
-                self._okx_exchange.catch_up_missed_fills()
-            if self._venue_account is not None:
-                # WR-04: fresh REST balance/position snapshot before resuming (engine
-                # thread — safe to block); NOT a full two-sided reconcile — a mid-session
-                # reconcile would spuriously HALT on legitimately-held positions.
-                self._venue_account.snapshot()
+            # a later reconcile never double-settles it. 11-09: run for EVERY account's
+            # execution arm — a second account's fills settled during the outage are just
+            # as missed as the primary's. An empty list is the non-OKX skip.
+            for venue_exchange in self._streaming_exchanges():
+                venue_exchange.catch_up_missed_fills()
+            # WR-04: fresh REST balance/position snapshot before resuming (engine
+            # thread — safe to block); NOT a full two-sided reconcile — a mid-session
+            # reconcile would spuriously HALT on legitimately-held positions.
+            # 11-09: one snapshot per DISTINCT account object. Deduped by identity so a
+            # shared account is never double-snapshotted; an empty result is the
+            # compute-account case (nothing to refresh).
+            for account in _distinct(self._venue_accounts()):
+                account.snapshot()
         except Exception as e:
             # D-12: on snapshot/catch-up failure, STAY PAUSED and retry on the next
             # stream-up signal (no failure-counter / halt-escalation added in P7). Staying
@@ -151,16 +195,21 @@ class StreamRecoveryHandler:
         """True unless a WIRED venue arm reports its stream set down (D-28 / WR-03).
 
         The compound resume gate: resume NEW submission only when EVERY wired arm —
-        the exchange arm (fills+orders) AND the data-provider arm (candles) — reports
-        its own ``_streams_down`` empty. Each arm OWNS its health state; the handler only
-        READS a public per-arm predicate, adding NO engine-side aggregate stream set and
-        NO namespaced stream names. A None (unwired) arm never blocks (absent ⇒ healthy),
-        so non-OKX runs resume unconditionally.
+        EVERY account's exchange arm (fills+orders) AND the data-provider arm (candles)
+        — reports its own ``_streams_down`` empty. Each arm OWNS its health state; the
+        handler only READS a public per-arm predicate, adding NO engine-side aggregate
+        stream set and NO namespaced stream names. An unwired arm never blocks
+        (absent ⇒ healthy), so non-OKX runs resume unconditionally.
+
+        11-09 widened the exchange half from the primary's arm to EVERY account's. A
+        second account whose fill stream is still down must keep submission paused for
+        the same reason the first one does: resuming while blind to fills is the defect,
+        and being blind to only SOME accounts' fills is not a lesser version of it.
         """
-        if (self._okx_exchange is not None
-                and not self._okx_exchange.is_streaming_healthy()):
-            return False
-        if (self._okx_data_provider is not None
-                and not self._okx_data_provider.is_streaming_healthy()):
+        for venue_exchange in self._streaming_exchanges():
+            if not venue_exchange.is_streaming_healthy():
+                return False
+        provider = self._data_provider()
+        if provider is not None and not provider.is_streaming_healthy():
             return False
         return True

@@ -252,7 +252,7 @@ def test_fill_resolves_via_clordid_before_venue_id(
     order = _make_order(order_id=77)
     clordid = OkxExchange._client_order_id(order)
     # Pending correlation registered BEFORE the RPC returns the venue id.
-    exchange._index._orders_by_clOrdId[clordid] = order
+    exchange._index._orders_by_client_order_id[clordid] = order
     fill = {
         "id": "T-5",
         "order": "OID-LATE",   # not yet in _orders_by_venue_id
@@ -283,7 +283,7 @@ def test_submit_registers_clordid_pending_correlation(
     exchange.on_order(order)
 
     assert fake_client.create_order.call_args.kwargs["params"]["clOrdId"] == clordid
-    assert exchange._index._orders_by_clOrdId[clordid] is order
+    assert exchange._index._orders_by_client_order_id[clordid] is order
 
 
 # --- (ii-a) D-16 WR-02/WR-03: mark-seen-after-emit + release drains via resolve --
@@ -344,7 +344,7 @@ def test_release_drain_routes_buffered_fill_through_resolve_correlation(
     # drained by release rather than by register).
     exchange._index._orders_by_venue_id["OID-1"] = order
     exchange._index._venue_id_by_order_id[order.order_id] = "OID-1"
-    exchange._index._clordid_by_venue_id["OID-1"] = "it1"
+    exchange._index._client_order_id_by_venue_id["OID-1"] = "it1"
 
     exchange.release_venue_correlation("OID-1")
 
@@ -464,7 +464,7 @@ def test_release_pending_on_definitive_submit_failure(
     exchange.on_order(order)
 
     # Definitive rejection -> the pending correlation is released (no leak).
-    assert clordid not in exchange._index._orders_by_clOrdId
+    assert clordid not in exchange._index._orders_by_client_order_id
 
 
 def test_release_pending_not_called_on_ambiguous_submit_timeout(
@@ -479,7 +479,7 @@ def test_release_pending_not_called_on_ambiguous_submit_timeout(
     exchange.on_order(order)
 
     # Ambiguous transport -> pending correlation retained (NOT released).
-    assert exchange._index._orders_by_clOrdId.get(clordid) is order
+    assert exchange._index._orders_by_client_order_id.get(clordid) is order
 
 
 # --- (iii) stream resilience: a malformed trade does not kill the loop ---------

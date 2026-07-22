@@ -19,10 +19,12 @@ store wrapped in ``try/finally: store.dispose()``.
 """
 
 import pathlib
+import uuid
 from datetime import UTC, datetime
+from decimal import Decimal
 
 import pytest
-from sqlalchemy import String
+from sqlalchemy import Uuid, insert
 from sqlalchemy.exc import IntegrityError
 
 from itrader.config.sql import SqlDriver, SqlSettings
@@ -38,6 +40,53 @@ _AT2 = datetime(2026, 1, 2, 9, 30, 0, tzinfo=UTC)
 
 _TYPE = "SMAMACDStrategy"
 
+# B2 (11-03): ``portfolio_id`` is a ``Uuid`` column with a CASCADE FK to ``portfolios``, so
+# the old opaque "p1"/"p2" string ids can no longer be stored at all. These four are chosen so
+# their HEX ordering matches their numbering — the IN-01 ``portfolio_id ASC`` ordering
+# assertions below depend on a stable, predictable sort on both dialects (SQLite orders the
+# CHAR(32) hex; Postgres orders the native UUID bytes — same result for these values).
+_P1 = uuid.UUID("11111111-1111-4111-8111-111111111111")
+_P2 = uuid.UUID("22222222-2222-4222-8222-222222222222")
+_P3 = uuid.UUID("33333333-3333-4333-8333-333333333333")
+# Deliberately NEVER given a ``portfolios`` row — the "absent id" used by the remove-a-row-
+# that-is-not-there no-op case (a DELETE needs no FK parent).
+_P9 = uuid.UUID("99999999-9999-4999-8999-999999999999")
+
+
+def _seed_portfolios(store: StrategyRegistryStore) -> None:
+    """Create the ``portfolios`` parent rows the subscription CASCADE FK now requires.
+
+    ``StrategyRegistryStore.__init__`` registers ``portfolios`` (and its own
+    ``venue_accounts`` FK parent) on the shared MetaData, so ``provision_schema`` builds both
+    — but the FK needs actual ROWS, not just tables. Idempotent: safe to call again after a
+    dispose→reopen (the restart-survival test provisions twice over one file).
+    """
+    metadata = store.backend.metadata
+    accounts = metadata.tables["venue_accounts"]
+    portfolios = metadata.tables["portfolios"]
+    seeded = ((_P1, "one"), (_P2, "two"), (_P3, "three"))
+    with store.engine.begin() as connection:
+        if connection.execute(portfolios.select().limit(1)).first() is not None:
+            return
+        # D-14 pins (venue_name, account_id) UNIQUE across portfolios, so each seeded
+        # portfolio needs its OWN venue account — and ``portfolios`` has an unconditional
+        # composite FK onto it, so the accounts must be inserted FIRST.
+        connection.execute(insert(accounts), [
+            {
+                "venue_name": "paper", "account_id": name, "secret_ref": None,
+                "venue_uid": None, "enabled": True, "config_json": {}, "updated_at": _AT1,
+            }
+            for _, name in seeded
+        ])
+        connection.execute(insert(portfolios), [
+            {
+                "portfolio_id": portfolio_id, "name": name, "venue_name": "paper",
+                "account_id": name, "initial_cash": Decimal("10000"),
+                "enabled": True, "config_json": None, "updated_at": _AT1,
+            }
+            for portfolio_id, name in seeded
+        ])
+
 
 def _make_memory_store() -> StrategyRegistryStore:
     """An in-memory durable double — the shared ``SqlEngine`` on ``:memory:`` SQLite.
@@ -47,6 +96,7 @@ def _make_memory_store() -> StrategyRegistryStore:
     """
     store = StrategyRegistryStore(SqlEngine(SqlSettings.default()))
     provision_schema(store.backend)
+    _seed_portfolios(store)
     return store
 
 
@@ -59,6 +109,7 @@ def _make_file_store(db_path: pathlib.Path) -> StrategyRegistryStore:
     settings = SqlSettings(driver=SqlDriver.SQLITE_PYSQLITE, database=str(db_path))
     store = StrategyRegistryStore(SqlEngine(settings))
     provision_schema(store.backend)
+    _seed_portfolios(store)
     return store
 
 
@@ -88,9 +139,17 @@ def test_build_strategy_registry_tables_shape() -> None:
         fk = next(iter(subs.c.strategy_name.foreign_keys))
         assert fk.column.table.name == "strategy_registry"
         assert fk.column.name == "strategy_name"
-        # portfolio_id is String because base.py serializes each handle via str(pid)
-        # and rehydrate parses it back. A Uuid column is open as B2, not decided.
-        assert isinstance(subs.c.portfolio_id.type, String)
+        # B2 (SETTLED, 11-03/D-29) — portfolio_id is a Uuid column, NOT a String, and it
+        # carries an ON DELETE CASCADE FK to portfolios.portfolio_id. Asserting the TYPE
+        # here matters: the whole-chain parity gate in test_migrations.py compares column
+        # NAMES only, so a registrar/migration type divergence is invisible to it.
+        assert isinstance(subs.c.portfolio_id.type, Uuid)
+        portfolio_fk = next(iter(subs.c.portfolio_id.foreign_keys))
+        # ``target_fullname``, not ``.column``: this test builds ONLY the registry tables on
+        # a bare MetaData, and ``.column`` would try to RESOLVE the reference and raise
+        # NoReferencedTableError. The string target is what the registrar declares.
+        assert portfolio_fk.target_fullname == "portfolios.portfolio_id"
+        assert portfolio_fk.ondelete == "CASCADE"
         # idempotent reuse
         assert build_strategy_registry_tables(backend.metadata) == tables
     finally:
@@ -152,7 +211,7 @@ def test_upsert_of_subscribed_strategy_preserves_children() -> None:
     store = _make_memory_store()
     try:
         store.upsert("sma_macd", _TYPE, {"fast": 10}, True, _AT1)
-        store.set_portfolio_subscriptions("sma_macd", ["p1"], _AT1)
+        store.set_portfolio_subscriptions("sma_macd", [_P1], _AT1)
         store.upsert("sma_macd", "RsiStrategy", {"fast": 20, "slow": 50}, False, _AT2)
         rec = {r["strategy_name"]: r for r in store.read_all()}["sma_macd"]
         assert rec["strategy_type"] == "RsiStrategy"
@@ -160,7 +219,7 @@ def test_upsert_of_subscribed_strategy_preserves_children() -> None:
         assert rec["enabled"] is False
         assert rec["updated_at"] == _AT2
         # Subscriptions survived the config overwrite (parent row was never deleted).
-        assert rec["portfolio_ids"] == ["p1"]
+        assert rec["portfolio_ids"] == [_P1]
     finally:
         store.dispose()
 
@@ -194,11 +253,11 @@ def test_set_portfolio_subscriptions_replaces_and_is_ordered() -> None:
     try:
         store.upsert("s1", _TYPE, {"fast": 10}, True, _AT1)
         # Insert out of order — the read is ordered by portfolio_id ASC (IN-01).
-        store.set_portfolio_subscriptions("s1", ["p2", "p1"], _AT1)
-        assert store.portfolio_subscriptions("s1") == ["p1", "p2"]
+        store.set_portfolio_subscriptions("s1", [_P2, _P1], _AT1)
+        assert store.portfolio_subscriptions("s1") == [_P1, _P2]
         # Replace semantics (not append).
-        store.set_portfolio_subscriptions("s1", ["p2"], _AT2)
-        assert store.portfolio_subscriptions("s1") == ["p2"]
+        store.set_portfolio_subscriptions("s1", [_P2], _AT2)
+        assert store.portfolio_subscriptions("s1") == [_P2]
     finally:
         store.dispose()
 
@@ -208,7 +267,7 @@ def test_set_portfolio_subscriptions_bumps_parent_updated_at() -> None:
     store = _make_memory_store()
     try:
         store.upsert("s1", _TYPE, {"fast": 10}, True, _AT1)
-        store.set_portfolio_subscriptions("s1", ["p1"], _AT2)
+        store.set_portfolio_subscriptions("s1", [_P1], _AT2)
         row = store.get("s1")
         assert row is not None
         assert row["updated_at"] == _AT2
@@ -221,7 +280,7 @@ def test_set_portfolio_subscriptions_empty_clears_all() -> None:
     store = _make_memory_store()
     try:
         store.upsert("s1", _TYPE, {"fast": 10}, True, _AT1)
-        store.set_portfolio_subscriptions("s1", ["p1", "p2"], _AT1)
+        store.set_portfolio_subscriptions("s1", [_P1, _P2], _AT1)
         store.set_portfolio_subscriptions("s1", [], _AT2)
         assert store.portfolio_subscriptions("s1") == []
     finally:
@@ -233,15 +292,15 @@ def test_add_and_remove_portfolio_subscription_are_idempotent() -> None:
     store = _make_memory_store()
     try:
         store.upsert("s1", _TYPE, {"fast": 10}, True, _AT1)
-        store.add_portfolio_subscription("s1", "p3")
-        store.add_portfolio_subscription("s1", "p3")  # idempotent — no IntegrityError
-        assert store.portfolio_subscriptions("s1") == ["p3"]
+        store.add_portfolio_subscription("s1", _P3)
+        store.add_portfolio_subscription("s1", _P3)  # idempotent — no IntegrityError
+        assert store.portfolio_subscriptions("s1") == [_P3]
 
         # remove of an ABSENT row is a silent no-op, not an error.
-        store.remove_portfolio_subscription("s1", "p9")
-        assert store.portfolio_subscriptions("s1") == ["p3"]
+        store.remove_portfolio_subscription("s1", _P9)
+        assert store.portfolio_subscriptions("s1") == [_P3]
 
-        store.remove_portfolio_subscription("s1", "p3")
+        store.remove_portfolio_subscription("s1", _P3)
         assert store.portfolio_subscriptions("s1") == []
     finally:
         store.dispose()
@@ -253,10 +312,10 @@ def test_portfolio_subscriptions_are_per_strategy_scoped() -> None:
     try:
         store.upsert("s1", _TYPE, {"n": 1}, True, _AT1)
         store.upsert("s2", _TYPE, {"n": 2}, True, _AT1)
-        store.set_portfolio_subscriptions("s1", ["p1", "p2"], _AT1)
-        store.set_portfolio_subscriptions("s2", ["p2"], _AT1)
-        assert store.portfolio_subscriptions("s1") == ["p1", "p2"]
-        assert store.portfolio_subscriptions("s2") == ["p2"]
+        store.set_portfolio_subscriptions("s1", [_P1, _P2], _AT1)
+        store.set_portfolio_subscriptions("s2", [_P2], _AT1)
+        assert store.portfolio_subscriptions("s1") == [_P1, _P2]
+        assert store.portfolio_subscriptions("s2") == [_P2]
     finally:
         store.dispose()
 
@@ -270,9 +329,47 @@ def test_orphan_portfolio_subscription_raises_integrity_error() -> None:
     store = _make_memory_store()
     try:
         with pytest.raises(IntegrityError):
-            store.set_portfolio_subscriptions("ghost_strategy", ["p1"], _AT1)
+            store.set_portfolio_subscriptions("ghost_strategy", [_P1], _AT1)
         with pytest.raises(IntegrityError):
-            store.add_portfolio_subscription("ghost_strategy", "p1")
+            store.add_portfolio_subscription("ghost_strategy", _P1)
+    finally:
+        store.dispose()
+
+
+def test_subscription_to_a_nonexistent_portfolio_raises_integrity_error() -> None:
+    """B2 (11-03) — the CASCADE FK also binds the PORTFOLIO side, not just the strategy side.
+
+    Before B2 the column was an unconstrained ``String``, so a subscription could name a
+    portfolio that did not exist and rehydrate would fan signals at an id matching NOTHING.
+    ``_P9`` deliberately has no ``portfolios`` row.
+    """
+    store = _make_memory_store()
+    try:
+        store.upsert("s1", _TYPE, {"fast": 10}, True, _AT1)
+        with pytest.raises(IntegrityError):
+            store.add_portfolio_subscription("s1", _P9)
+    finally:
+        store.dispose()
+
+
+def test_deleting_a_portfolio_cascades_away_its_subscription_rows() -> None:
+    """B2 (11-03) — ON DELETE CASCADE is LIVE: dropping a portfolio drops its edges.
+
+    A subscription to a deleted portfolio has no meaning, so the row goes with it rather
+    than lingering as an orphan rehydrate would fan signals into the void.
+    """
+    store = _make_memory_store()
+    try:
+        store.upsert("s1", _TYPE, {"fast": 10}, True, _AT1)
+        store.set_portfolio_subscriptions("s1", [_P1, _P2], _AT1)
+        portfolios = store.backend.metadata.tables["portfolios"]
+        with store.engine.begin() as connection:
+            connection.execute(
+                portfolios.delete().where(portfolios.c.portfolio_id == _P1)
+            )
+        # _P1's edge cascaded away; _P2's is untouched, and the strategy itself survives.
+        assert store.portfolio_subscriptions("s1") == [_P2]
+        assert store.get("s1") is not None
     finally:
         store.dispose()
 
@@ -282,7 +379,7 @@ def test_delete_removes_children_before_parent() -> None:
     store = _make_memory_store()
     try:
         store.upsert("s1", _TYPE, {"fast": 10}, True, _AT1)
-        store.set_portfolio_subscriptions("s1", ["p1", "p2"], _AT1)
+        store.set_portfolio_subscriptions("s1", [_P1, _P2], _AT1)
         store.delete("s1")  # 2 children held — raises no FK IntegrityError
         assert store.get("s1") is None
         assert store.read_all() == []
@@ -305,10 +402,10 @@ def test_read_all_left_outer_joins_portfolio_ids() -> None:
     try:
         store.upsert("subscribed", _TYPE, {"n": 1}, True, _AT1)
         store.upsert("lonely", _TYPE, {"n": 2}, True, _AT1)
-        store.set_portfolio_subscriptions("subscribed", ["p1", "p2"], _AT2)
+        store.set_portfolio_subscriptions("subscribed", [_P1, _P2], _AT2)
         rows = {r["strategy_name"]: r for r in store.read_all()}
         assert set(rows) == {"subscribed", "lonely"}
-        assert rows["subscribed"]["portfolio_ids"] == ["p1", "p2"]
+        assert rows["subscribed"]["portfolio_ids"] == [_P1, _P2]
         assert rows["lonely"]["portfolio_ids"] == []  # zero-subscription strategy appears
     finally:
         store.dispose()
@@ -324,10 +421,10 @@ def test_read_all_is_deterministically_ordered() -> None:
         store.upsert("alpha", _TYPE, {"n": 2}, True, _AT1)
         store.upsert("bravo", _TYPE, {"n": 3}, True, _AT1)
         # Set subscriptions in NON-sorted portfolio_id order.
-        store.set_portfolio_subscriptions("alpha", ["p3", "p1", "p2"], _AT2)
+        store.set_portfolio_subscriptions("alpha", [_P3, _P1, _P2], _AT2)
         records = store.read_all()
         assert [r["strategy_name"] for r in records] == ["alpha", "bravo", "charlie"]
-        assert records[0]["portfolio_ids"] == ["p1", "p2", "p3"]
+        assert records[0]["portfolio_ids"] == [_P1, _P2, _P3]
     finally:
         store.dispose()
 
@@ -358,7 +455,7 @@ def test_restart_survival_file_backed(tmp_path: pathlib.Path) -> None:
     store = _make_file_store(db_path)
     try:
         store.upsert("sma_macd", _TYPE, {"fast": 10, "slow": 30}, True, _AT1)
-        store.set_portfolio_subscriptions("sma_macd", ["p1", "p2"], _AT2)
+        store.set_portfolio_subscriptions("sma_macd", [_P1, _P2], _AT2)
     finally:
         store.dispose()
 
@@ -368,6 +465,6 @@ def test_restart_survival_file_backed(tmp_path: pathlib.Path) -> None:
         assert rec["strategy_type"] == _TYPE
         assert rec["config"] == {"fast": 10, "slow": 30}
         assert rec["enabled"] is True
-        assert rec["portfolio_ids"] == ["p1", "p2"]
+        assert rec["portfolio_ids"] == [_P1, _P2]
     finally:
         reopened.dispose()

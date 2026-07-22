@@ -36,9 +36,13 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import delete, func, insert, select, update
 
 from itrader.core.enums import CashOperationType, PositionSide, TransactionType
+from itrader.core.exceptions import PortfolioStateError
 from itrader.core.ids import PositionId, TransactionId
 from itrader.logger import get_itrader_logger
 from itrader.storage import SqlEngine
+from itrader.storage.portfolio_definition_store import (
+    build_portfolio_definition_tables,
+)
 
 from ..base import PortfolioStateStorage
 from itrader.portfolio_handler.account import CashOperation
@@ -76,10 +80,20 @@ class SqlPortfolioStateStorage(PortfolioStateStorage):
         self.locked_margin = tables["locked_margin"]
         self.cash_operations = tables["cash_operations"]
         self.equity_snapshots = tables["equity_snapshots"]
-        # D-25 — the base SQL storage now OWNS the account-state carrier's config_json
-        # column (previously only the cached wrapper bound this table). The portfolio-scope
-        # runtime config rides the bound portfolio's single account-state row.
-        self._account_state = tables["portfolio_account_state"]
+        # 11-08 — the ``portfolio_account_state`` binding was DROPPED here. It survived the
+        # D-09 config rehome only to serve ``save_config``/``load_config``'s legacy arms,
+        # and this class has no other account-state method (the account-state carrier is
+        # owned by ``CachedSqlPortfolioStateStorage``, which binds its own handle). With
+        # both arms removed the attribute was dead. The TABLE is still registered on the
+        # shared MetaData by ``build_portfolio_tables`` above, so provisioning is unchanged.
+        #
+        # D-09 — the config blob's real home is the DEFINITION row, not the state row. The
+        # registrar pulls ``venue_accounts`` too (the composite FK resolves by table NAME at
+        # DDL-emit time, so the parent must sit on the SAME MetaData); registering both is
+        # required for ``provision_schema``/``create_all`` consumers to build a valid schema.
+        self._portfolios = build_portfolio_definition_tables(
+            sql_engine.metadata
+        )["portfolios"]
 
         # WR-03/D-14 — schema-pure: register the tables, never create them (Alembic-owned
         # in production; tests provision via tests.support.schema.provision_schema).
@@ -523,53 +537,80 @@ class SqlPortfolioStateStorage(PortfolioStateStorage):
             row = connection.execute(statement).mappings().first()
         return None if row is None else self._row_to_snapshot(row)
 
-    # -- Runtime config (portfolio scope — config_json on the account-state row, D-25) --
+    # -- Runtime config (portfolio scope — config_json on the DEFINITION row, D-09) ------
+    #
+    # D-09 REHOME. The blob's home is now ``portfolios.config_json`` (the DEFINITION row),
+    # not ``portfolio_account_state.config_json`` (a STATE row). Config describes what a
+    # portfolio IS; it only ever lived on the state row because no definition row existed
+    # before Phase 11. The ``p11_b2_uuid_fk_config_move`` revision moves existing blobs over.
+    #
+    # The PUBLIC CONTRACT is deliberately unchanged — same method names, same signatures,
+    # same ``Optional[Dict[str, Any]]`` returned VERBATIM. The stored blob is a free-form
+    # PARTIAL override that ``Portfolio.update_config`` merges recursively at load time, so
+    # it must never be reshaped, key-filtered, validated or coerced into a typed model.
+    # Only the backing table changed.
+    #
+    # THE LEGACY ARM IS GONE (plan 11-08). Both methods used to fall back to the
+    # account-state column when the portfolio had NO ``portfolios`` definition row. That
+    # arm existed for exactly one reason: at the time it was written nothing constructed
+    # ``PortfolioDefinitionStore`` and nothing wrote a ``portfolios`` row, so raising
+    # would have turned every ``save_config`` into a hard error. Plan 11-08 created that
+    # missing guarantee — ``PortfolioHandler._persist_definition`` writes a definition row
+    # on every live portfolio creation — so the fallback is now unreachable AND actively
+    # harmful: silently writing config to a STATE row would put the blob somewhere
+    # ``load_config`` no longer looks after the D-09 rehome, losing it on restart.
+    #
+    # A missing definition row is therefore a WIRING BUG now, and it fails loud below
+    # rather than degrading into a write nobody reads back.
 
     def save_config(self, config: Dict[str, Any], at: datetime) -> None:
-        """Persist THIS portfolio's config on the bound account-state row's ``config_json``.
+        """Persist THIS portfolio's config on its ``portfolios.config_json`` definition row.
 
-        UPDATE-first, INSERT-with-zero-sentinel-accumulators-if-absent (NEVER a partial
-        INSERT). The restart-layering path only READS ``load_config``, so the FIRST write of
-        a portfolio's config is either construction-time or a runtime ``portfolio:{id}``
-        ConfigUpdateEvent — both can precede the portfolio's first fill, so an UPDATE-only
-        contract would silently drop it (RTCFG-03 fail). The zero-sentinel accumulators are
-        the exact no-trading-activity baseline the first real ``save_account_state``
-        overwrites, so no stale money can leak. Scoped to ``self._portfolio_id`` (V4).
+        D-09: the blob's home is the DEFINITION row. A zero ``rowcount`` means this
+        portfolio has NO definition row, which after 11-08's writer is a wiring bug rather
+        than an expected first-write state — so it RAISES instead of silently writing the
+        blob to a state row that ``load_config`` no longer reads. Degrading here would be
+        invisible: the restart-layering caller guards on truthiness and swallows failures
+        into a warning, so a dropped blob boots clean and trades on defaults.
+
+        Scoped to ``self._portfolio_id`` (V4 isolation); parameterized Core (SEC-01).
         """
         with self.engine.begin() as connection:
-            result = connection.execute(
-                update(self._account_state)
-                .where(self._account_state.c.portfolio_id == self._portfolio_id)
-                .values(config_json=config, updated_time=at)
+            definition = connection.execute(
+                update(self._portfolios)
+                .where(self._portfolios.c.portfolio_id == self._portfolio_id)
+                .values(config_json=config, updated_at=at)
             )
-            if result.rowcount == 0:
-                connection.execute(
-                    insert(self._account_state),
-                    [
-                        {
-                            "portfolio_id": self._portfolio_id,
-                            "cash_balance": Decimal("0"),
-                            "realized_pnl": Decimal("0"),
-                            "total_equity": Decimal("0"),
-                            "peak_equity": Decimal("0"),
-                            "open_positions_count": 0,
-                            "config_json": config,
-                            "updated_time": at,
-                        }
-                    ],
-                )
+            if definition.rowcount:
+                return
+        raise PortfolioStateError(
+            # ``PortfolioIdLike`` covers PortfolioId/int/str, not a bare ``uuid.UUID``
+            # (which is what this store binds) — project the handle for the diagnostic.
+            str(self._portfolio_id),
+            "no-`portfolios`-definition-row (so the D-09 config blob has nowhere to "
+            "live; the portfolio was created without a (venue_name, account_id) "
+            "account reference, or its definition write did not run)",
+            required_state="a-`portfolios`-definition-row",
+            operation="save_config",
+        )
 
     def load_config(self) -> Optional[Dict[str, Any]]:
-        """Return this portfolio's persisted config, or ``None`` when no row / NULL config.
+        """Return this portfolio's persisted config, or ``None`` when none is stored.
+
+        Reads the DEFINITION row (D-09) and nothing else — the legacy account-state
+        fallback went away in plan 11-08 together with the write arm that fed it. ``None``
+        covers both "no definition row" and "definition row with a NULL blob"; the
+        restart-layering caller treats both as "no persisted override".
 
         Parameterized SELECT scoped to ``self._portfolio_id`` (V4 isolation).
         """
-        statement = select(self._account_state.c.config_json).where(
-            self._account_state.c.portfolio_id == self._portfolio_id
-        )
         with self.engine.connect() as connection:
-            row = connection.execute(statement).mappings().first()
-        if row is None or row["config_json"] is None:
+            definition = connection.execute(
+                select(self._portfolios.c.config_json).where(
+                    self._portfolios.c.portfolio_id == self._portfolio_id
+                )
+            ).mappings().first()
+        if definition is None or definition["config_json"] is None:
             return None
-        config: Dict[str, Any] = row["config_json"]
-        return config
+        stored: Dict[str, Any] = definition["config_json"]
+        return stored

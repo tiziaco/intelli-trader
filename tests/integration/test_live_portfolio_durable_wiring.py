@@ -21,6 +21,7 @@ Two observable guarantees the composition-root wiring must hold:
 (auto-memory: package-collision hazard). Folder-derived ``integration`` marker.
 """
 
+from decimal import Decimal
 from typing import Any, List
 
 import pytest
@@ -43,6 +44,12 @@ class _StubVenueAccount:
 
     is_venue_truth = True
     positions: dict = {}
+    account_id = "acct-stub"
+
+    def __init__(self) -> None:
+        # 11-09 (D-19): the coordinator reads the connector OFF the account rather than
+        # from a scalar parameter, so a venue-truth double must expose one.
+        self.connector = object()
 
     def snapshot(self) -> None:  # noqa: D401 - no-op stub
         pass
@@ -138,28 +145,27 @@ def test_portfolio_rehydrate_runs_before_reconcile_on_live_start(monkeypatch) ->
         # ensure the store exposes rehydrate() so the reconcile sub-block runs. No connector /
         # data-provider / exchange -> the earlier OKX network sub-blocks all skip.
         monkeypatch.setattr(system, "_initialize_live_session", lambda: None)
-        # WR-01/WR-03: the venue-link + baseline-guard steps live on the
-        # ReconciliationCoordinator now (the copy production runs via
-        # _build_reconciliation_coordinator().run_startup_reconcile()). Patch the coordinator
-        # CLASS so the freshly-built instance in start() picks up the no-op link (both
-        # methods take (self, account)).
-        monkeypatch.setattr(
-            ReconciliationCoordinator,
-            "_link_venue_account_to_portfolios",
-            lambda self, account: None,
-        )
+        # 11-09 (MPORT-05): the venue reconcile is PER PORTFOLIO now — it reads
+        # ``portfolio.account`` rather than a facade-level scalar, and
+        # ``_link_venue_account_to_portfolios`` is deleted (the attach happens once, at
+        # composition, in ``_attach_venue_accounts``). So the venue-truth branch is
+        # entered by giving an ACTIVE PORTFOLIO the stub account, which is exactly how
+        # production reaches it. Emptying ``_venue_lifecycles`` keeps the earlier OKX
+        # network sub-blocks skipping, as the three None scalars used to.
         system.exchange = "okx"
-        system._okx_connector = None
-        system._okx_data_provider = None
-        system._okx_exchange = None
-        system._venue_account = _StubVenueAccount()
+        system._venue_lifecycles = {}
+        portfolio_id = system.portfolio_handler.add_portfolio(
+            name="pf-reconcile", exchange="okx", cash=Decimal("10000"))
+        system.portfolio_handler.get_portfolio(portfolio_id).account = (
+            _StubVenueAccount())
         monkeypatch.setattr(system._order_storage, "rehydrate", lambda: None, raising=False)
         # Halt in the post-reconcile baseline guard so start() refuses RUNNING and spawns no
         # thread — the rehydrate/reconcile ordering is already captured by then. Patch the
         # coordinator CLASS (production runs the coordinator's copy, not a facade method).
+        # 11-09: the guard takes no account argument — it iterates the portfolios itself.
         monkeypatch.setattr(
             ReconciliationCoordinator, "_run_session_baseline_guard",
-            lambda self, account: system.halt("test-stop-after-reconcile"),
+            lambda self: system.halt("test-stop-after-reconcile"),
         )
 
         started = system.start()

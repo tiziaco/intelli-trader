@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: Live System Refactor & Live-Readiness Hardening
-current_phase: 11
-current_phase_name: Multi-Portfolio-Live
+current_phase: 12
+current_phase_name: Test Migration + Gates
 status: planning
-stopped_at: Phase 10.1 complete
-last_updated: "2026-07-21T06:12:53.383Z"
-last_activity: 2026-07-21
-last_activity_desc: "Codebase map refreshed (506f20a9) + CLAUDE.md drift corrected (260721-b68, e10ee1ef) + residual drift fixed at source in .planning/codebase/ (f475d170). Next is Phase 11 ★."
+stopped_at: Phase 11 context gathered
+last_updated: "2026-07-22T10:32:17.444Z"
+last_activity: 2026-07-22
+last_activity_desc: "Completed quick task 260722-g6w: closed Phase 11 code-review blockers CR-01 + CR-05"
 progress:
-  total_phases: 11
+  total_phases: 12
   completed_phases: 10
   total_plans: 43
   completed_plans: 43
-  percent: 91
+  percent: 83
 ---
 
 # Project State
@@ -26,17 +26,73 @@ See: .planning/PROJECT.md (Current Milestone: v1.8 — Live System Refactor & Li
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct,
 deterministic, cross-validated numbers (oracle **134 / `46189.87730727451`**; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 shipped a live operating mode (paper-first on OKX) without disturbing that oracle.
-**Current focus:** Phase 11 ★ — Multi-Portfolio-Live (10.1 complete)
+**Current focus:** Phase 11 — multi-portfolio-live
 thin ~200-line facade over focused, venue-parametrized, FastAPI-ready collaborators — **without
 disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI itself is out of scope
 (LR-01). Full scope: core refactor (P1–P8 + P12) + the three ★ feature-adds (P9–P11).
 
 ## Current Position
 
-Phase: 11 ★ — Multi-Portfolio-Live
+Phase: 11.1 — Account Provisioning + Mandatory Account Identity (INSERTED)
 Plan: Not started
-Status: Ready to discuss/plan
-Last activity: 2026-07-21 — Codebase map refreshed for v1.8 Phases 8–10.1 (506f20a9); CLAUDE.md factual drift corrected (quick 260721-b68, e10ee1ef); residual drift fixed at its source in `.planning/codebase/{ARCHITECTURE,STRUCTURE,CONVENTIONS}.md` (fast 260721-cdx, f475d170) so the next `/gsd-map-codebase` regenerates CLAUDE.md's managed blocks correctly.
+Status: Ready to plan
+Last activity: 2026-07-22 — Completed quick task 260722-hpz: closed WR-08, the last Phase 11 review finding outside 11.1
+locked seven-wave decomposition. Plan-checker: VERIFICATION PASSED, zero blockers, zero warnings. Gates green —
+7/7 MPORT requirements covered, 30/30 CONTEXT decisions cited by ID in must_haves, 14/14 spec-less probe edges
+authored (8 covered truths + 3 flat-scalar backstop markers + 3 flagged unclassified assumptions). Preceded by
+CONTEXT.md + DISCUSSION-LOG.md (13945336): eleven gray areas discussed, 30 decisions (D-01..D-30) locked, three
+sub-decisions explicitly superseded and reconciled in-file.
+
+**Carried into planning (found during discussion):**
+
+- **D-27 / MPORT-07 (discovered, now a numbered requirement):** the **exchange** must become per-`(venue, account_id)`.
+  `ExecutionHandler.exchanges` is keyed by bare name (`execution_handler.py:66,126`) while `OkxExchange` holds
+  exactly one connector (`okx.py:101`) — so two portfolios on `okx` with different accounts both route to the same
+  exchange and **account B's orders would submit through account A's connector**, even with per-account credentials
+  and accounts all correct. Verified architecturally sound: every mutable field on `OkxExchange` is already
+  account-scoped and the markets/precision map lives on the connector (`okx.py:952-955`), so this makes an existing
+  dimension explicit rather than adding one. `watch_my_trades` being a private per-account stream makes it mandatory.
+  Now a numbered requirement: **MPORT-07** in REQUIREMENTS.md, mapped to P11, ROADMAP success criterion 5. SETTLED.
+
+- **F-1 (HIGH, confirmed):** `portfolio.py:71` mints a fresh UUIDv7 `portfolio_id` on every construction with no way
+  to supply one, while `portfolio.py:68` and `live_trading_system.py:1583-1585` both assert restart-stability that
+  does not exist. On restart the prior run's `portfolio_account_state` rows orphan and P10's persisted
+  `strategy_portfolio_subscriptions` rows dangle. Pre-existing; P11 is where it stops being survivable. Fix + correct
+  both comments in the W4 bootstrap plan.
+
+- **F-2 (MEDIUM):** `_run_session_baseline_guard` (`reconciliation_coordinator.py:216`) returns on the first
+  portfolio mismatch — benign at N=1, wrong at N>1. Must become evaluate-all.
+
+- **Highest regression risk:** D-09 moves per-portfolio config off `portfolio_account_state.config_json` (P9 D-25)
+  onto the new `portfolios` row — that is the tested RTCFG-03 path **P12's TEST-03 gate verifies**. The migration
+  must move data, not just repoint reads.
+
+- **Folded todo:** `b2-strategy-subscription-portfolio-id-uuid-column` — String→Uuid **and** the FK to `portfolios`
+  (CASCADE). The type change is a prerequisite for the FK, not cosmetic.
+
+- **Decomposition locked (D-28):** seven waves, ONE phase — W1 Schema → W2 Credentials → W3 Accounts →
+  W4 Bootstrap → W6 Reconcile, with W5 Attribution parallelizable and W7 Tests last.
+
+Note (P11 planning): as predicted, the starred header `### Phase 11 ★:` broke `roadmap.get-phase` (`found:false`)
+and the phase dir had to be created by hand. Expect `init.plan-phase` to return `phase_req_ids: null` — inject
+MPORT-01..07 manually into the researcher/planner/checker prompts, and expect `roadmap.annotate-dependencies` to
+no-op so the wave list must be written by hand. Also: `state.record-session` does not refresh `last_activity_desc`
+(no registered handler for that field) — it was corrected by direct edit.
+
+Note (P11 planning, CONFIRMED + two new failure modes): every prediction above held — `roadmap.get-phase 11`
+`found:false`, `phase_req_ids:null` (MPORT-01..07 injected by hand into all three agent prompts),
+`roadmap.annotate-dependencies` `updated:false` (wave list written by hand). Two more starred-header casualties
+found this session, both silent:
+
+1. **The BLOCKING decision-coverage gate could not parse 7 of the 30 decision bullets** (D-02/04/11/17/18/24/27),
+   reporting `could-not-parse, total: 23`. Causes: a line-wrapped `):**` header (D-02/11/17), a second colon in
+   the header with no em-dash (D-04/18/27), and a bare `*` inside `` `state.*` `` (D-24). The parser accepts
+   `- **D-NN <no colon, no asterisk>:**`, or one colon then `**`, or an em-dash form with the closing `**` on the
+   SAME line. Fixed by reformatting headers only (`dc47ff08`); all 30 now parse and the gate passes 30/30.
+
+2. **`state.planned-phase` no-opped (`updated: []`).** It is template-aware by design — it only overwrites
+   KNOWN_TEMPLATE_DEFAULTS, so the executor-authored `Status:`/`Last activity:` in `## Current Position` were
+   preserved and nothing moved. STATE.md was updated by hand to what the handler would have written.
 
 Note: `phase.complete` again advanced current_phase to 12 (its next-phase dir-scan skips the not-yet-created
 P11 ★ dir); corrected to 11 per the roadmap sequence. P12 (core-final) depends on P11.
@@ -46,7 +102,46 @@ Note (P10 planning): the starred header `### Phase 10 ★:` again broke `roadmap
 checker prompts, and `roadmap.annotate-dependencies` no-opped (`updated:false`) so the ROADMAP wave list was
 written by hand. Expect the same on P11 ★.
 
-**Carried into execution (found during planning, not in CONTEXT):**
+**Carried into execution (P11 — found during planning, not in CONTEXT):**
+
+- **F-3 (HIGH):** **the D-25 two-paper-account test structurally CANNOT prove MPORT-07.**
+  `live_trading_system.py:1473` builds `PaperVenuePlugin(execution_handler.exchanges['simulated'])`, so both paper
+  accounts resolve to the *same* exchange object by construction. Paper stays the right venue for the
+  lifecycle/restart path, but MPORT-07 got its own gate in **11-06** using a fake multi-account plugin. 11-11's
+  docstring must state why it does not gate routing.
+
+- **F-4 (MEDIUM, and larger than research found):** bare-name `exchanges[...]` lookups are **35 sites across 22
+  files**, not the single `on_order` site CONTEXT names (`execution_handler.py:126`). Research found 10 source
+  sites; the planner grepped `tests/`/`scripts/` too and found 25 more, including **all 10 e2e scenario files**.
+  Three of the source sites hardcode `'simulated'` on the **backtest-shared** path — missing those is an oracle
+  break, so 11-06 enumerates them and gates on the e2e suite.
+
+- **F-5 (LOW, sequencing):** F-1's pinnable `portfolio_id` and D-06's `account_id` are the **same signature edit**
+  on the same lines of `Portfolio.__init__` / `add_portfolio`. Merged into one task (**11-05**) and pulled into
+  **wave 1** — D-28 groups it under W4, but `account_for` reads `portfolio.account_id`, making it a hard
+  prerequisite of the W3 exchange keying. A sequencing change, not a decomposition change.
+
+- **C-1 (correction to D-16):** `clOrdId` spans **three** files, not the two CONTEXT claims — `okx.py` (23),
+  `venue_correlation.py` (22), and one at `reconciliation_coordinator.py:172` inside the `RuntimeError` string
+  MPORT-01 deletes. Since W5 is parallelizable, a two-file completion grep false-passes or false-fails depending
+  on W3/W5 ordering: 11-02 scopes its check by file allowlist, 11-07 carries the repo-wide assertion.
+
+- **`id()` alias dedup in `on_market_data` is DO-NOT-TOUCH.** It dedups *aliases* (one object under two keys);
+  distinct per-account exchanges have distinct `id()` and are correctly driven separately. It is what keeps the
+  oracle byte-exact through D-27. Marked explicitly in 11-06 so an executor does not "fix" it.
+
+- **Two open questions assigned, not dropped:** (a) whether two paper portfolios sharing one `MatchingEngine`
+  resting book interfere on brackets/OCO — an 11-07 task that **must complete before 11-11 writes the lifecycle
+  test**; if interference exists it is a real defect, not a test artifact. (b) the D-15 invariant runs over the
+  **union** of persisted and spec portfolios (11-08) — checking one source is a hole.
+
+- **Watch item — D-09 (11-03).** `load_config()` returning `None` degrades clean with no warning
+  (`live_trading_system.py:1266,1268`), so a repointed-but-unmoved config yields a **green suite and silently
+  default-config portfolios**. The gate asserts the migrated value by **equality**; a non-null assertion is
+  written into the prohibitions as insufficient. PATTERNS found **no shipped analog** — all 11 existing Alembic
+  revisions are pure DDL, none move data.
+
+**Carried into execution (P10 — found during planning, not in CONTEXT):**
 
 - **F-1 (HIGH, confirmed real):** `cache_registration.py:226::derive_warmup_depth` is a bare `max(s.warmup)` with no
   timeframe scaling, while `warmup` counts strategy-timeframe bars and the ring is sized in base bars → a coarser-
@@ -98,10 +193,10 @@ Dependency graph (not strict numeric order): `P1 · P2` (no deps) → `P3{P1,P2}
 | 8 | Error Subsystem | ERR-01..04 | **CF-1 aggregate breaker MUST trip** (hard criterion); CF-5 |
 | 9 ★ | Runtime-Config Platform | RTCFG-01..06 | feature-add; allowlist + venue-kind-aware fee/slippage gate |
 | 10 ★ | Strategies Registry | STRAT-01..03 | feature-add; STRAT-03 atomic re-config folds pair-strategy TODO |
-| 11 ★ | Multi-Portfolio-Live | MPORT-01..06 | LR-03 (never trim); distinct-`account_id` fails loud |
+| 11 ★ | Multi-Portfolio-Live | MPORT-01..07 | LR-03 (never trim); distinct-`account_id` fails loud |
 | 12 | Test Migration + Gates | TEST-01..04 | lands last; production replay-free; attribution gate |
 
-**Coverage: 64/64 mapped, 0 orphans.** ★ = trimmable feature-add (in scope — owner chose full scope; the
+**Coverage: 69/69 mapped, 0 orphans.** *(was stated as 64/64 through 2026-07-20 — stale: it predated the four `DECOMP-*` reqs from the inserted P10.1, so the true count was 68 before MPORT-07 was added 2026-07-21.)* ★ = trimmable feature-add (in scope — owner chose full scope; the
 trim boundary P1–P8+P12 core vs P9–P11 ★ is noted, not taken). Research flags (plan-time research): P6
 (`UniverseWiring` byte-exact discipline), P8 (CF-1 route-classification + livelock test), P11
 (`client_order_id`/`portfolio_id` two-key attribution). Skip research-phase: P2/P4/P5 (specified/mechanical).
@@ -183,6 +278,7 @@ trim boundary P1–P8+P12 core vs P9–P11 ★ is noted, not taken). Research fl
   rename folded into P3 (only migrations *relocation* stays in the merged P4).
 
 - Phase 10.1 inserted after Phase 10: StrategiesHandler Decomposition (URGENT)
+- Phase 11.1 inserted after Phase 11: Account Provisioning + Mandatory Account Identity — DB becomes sole source of portfolio+account truth; closes code-review CR-02/CR-03/WR-03/WR-05 (URGENT)
 
 ### Decisions
 
@@ -328,6 +424,9 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 | 260718-fxm | Reorganize the events_handler/events/ package to a one-class-per-domain layout (pure relocation, zero behavior change): new portfolio.py/screener.py/strategy.py/feed.py; market.py trimmed to TimeEvent+BarEvent; UniverseUpdateEvent moved market→universe; OrderAckEvent merged into order.py; ack.py deleted; barrel re-pointed with an unchanged public name set (blast-radius shield); 6 direct-submodule importers repointed; STRATEGY_COMMAND enum comment + CLAUDE.md events-split line synced. 2464 passed/75 skipped (env), mypy --strict clean, oracle byte-exact (134 / 46189.87730727451) | 2026-07-18 | 6e3f6f4c | [260718-fxm-reorganize-events-package-by-domain-file](./quick/260718-fxm-reorganize-events-package-by-domain-file/) |
 | 260721-b68 | Correct factual drift in CLAUDE.md surfaced by the 2026-07-21 codebase remap (`506f20a9`) — docs-only, 12 insertions / 12 deletions, CLAUDE.md sole file. **8 briefed corrections** (each pre-verified against live code by the orchestrator, not taken from mapper prose): event base is `msgspec.Struct(frozen=True, kw_only=True, gc=False)` at `events_handler/events/base.py:21`, NOT a frozen dataclass; `type` pinned via `type: ClassVar[EventType]`, not `field(default=..., init=False)`; the routes table is PUBLIC `EventHandler.routes` not `_routes` (4 sites; `full_event_handler.py:87`); `SqlBackend`/`backend.py` → `SqlEngine`/`itrader/storage/engine.py` + the 4 newer stores (strategy_registry/system_stats/system/venue); Alembic chain relocated `itrader/storage/migrations/` → repo-root `migrations/` (`alembic.ini::script_location`); and 3 dead-module reference sites for the removed `order_handler/storage/postgresql_storage.py` (live storage is `CachedSqlOrderStorage` wrapping `SqlOrderStorage`). **+2 planner-added** (derived from the same verified facts): Pattern-Overview `slots=True` parenthetical, Data-Flow postgresql storage arm. **+2 executor-found** blocking issues fixed: L82's historical note contained the dead filename its own gate demanded be absent (mutually exclusive), and L445 needed all three real modules not a single swap. Executor declined to game two bad gates — refused to pad prose to satisfy an unsatisfiable `self.routes >= 3` count (the qualified `EventHandler.routes` form splits it 2+2; the substantive `_routes == 0` requirement holds), and reported the plan's `<!-- GSD:` baseline as wrong (14 at HEAD, not 12; integrity preserved 14→14). Suite deliberately not run — no importable code changed, so oracle/inertness gates are structurally unreachable. **Known exposure:** corrections 4–8 + both planner-added ones sit inside GSD-managed blocks regenerated from `.planning/codebase/{STACK,CONVENTIONS,ARCHITECTURE}.md`, which still carry the same drift — next `/gsd-map-codebase` will overwrite them stale. Corrections 1–3 are in the hand-written `## Architecture` section and are not at risk. | 2026-07-21 | e10ee1ef | [260721-b68-update-claude-md-to-correct-factual-drif](./quick/260721-b68-update-claude-md-to-correct-factual-drif/) |
 | 260721-cdx | Fix residual factual drift in .planning/codebase/{ARCHITECTURE,STRUCTURE,CONVENTIONS}.md at its source so the next /gsd-map-codebase does not regenerate CLAUDE.md's managed blocks stale (follow-up to 260721-b68): _routes -> public routes (2), postgresql_storage.py -> sql_storage.py/cached_sql_storage.py (3), SqlBackend -> SqlEngine (2), events are msgspec.Struct with type: ClassVar[EventType] not frozen dataclasses (1). CONVENTIONS.md edited on 2 lines only; Pinned Decisions block verified untouched via diff. Gates: zero postgresql_storage/SqlBackend/_routes/slots=True in all three files; CLAUDE.md still clean. | 2026-07-21 | f475d170 | (fast — no dir) |
+| 260722-g6w | Close the two Phase 11 code-review BLOCKERS that need no product decision, as two atomic commits. **CR-01 (cross-venue account conflation)** — the live composition root derived its account set and attached venue accounts by bare `account_id` STRING, discarding the venue half of the `(venue_name, account_id)` pair the rest of the phase pins identity on (the `venue_accounts` composite PK, the `portfolios` FK, `ExecutionHandler.exchanges`, `ConnectorProvider._memo`). A durable portfolio on `binance/main` was handed the **OKX** `VenueAccount` on an okx boot — so `ReconciliationCoordinator` snapshotted one venue's account against another venue's positions and `VenueReconciler` could emit reconciling fills into the wrong portfolio. Fix is the venue FILTER, not a re-key: `_account_ids_for_spec` + `_attach_venue_accounts` take a required keyword-only `venue_name` and skip portfolios whose venue isn't the booted one, venue resolved as `venue_name or exchange` so legacy `add_portfolio(name,'okx',cash)` portfolios (venue_name=None) are NOT stripped. The lifecycle map was deliberately NOT re-keyed to a pair — `assemble_venues` keys by `spec.account_id or 'default'` (`assemble.py:178`) and every spec in one call shares `exchange`, so the map is single-venue BY CONSTRUCTION; re-keying would ripple into 5 call sites for zero behavioural gain. Existing fail-loud `ValidationError` for a same-venue unassembled account preserved (guard ORDER is load-bearing: venue guard precedes the lookup). 8 existing test call sites updated. **CR-05 (per-account credential bleed)** — `OkxSettings(**resolved)` is a `pydantic_settings.BaseSettings`, so every field a partial per-account prefix didn't supply was still env-completed via `validation_alias`: a prefix supplying only `OKX_ACCT_B_API_KEY` authenticated with account B's key + the **ambient global** secret+passphrase, silently, reintroducing at FIELD granularity the fallback T-11-18 forbids at REFERENCE granularity (and D-04's UID guard can't catch it — the ambient secret is a real account whose UID is stable, so trust-on-first-use records the wrong one). Fix gates `OkxSettings`' REQUIRED field set (derived from class-level `model_fields`, = exactly the auth triple; `sandbox`/`region` carry defaults) before construction and raises `CredentialResolutionError` naming missing FIELD NAMES only. Env source deliberately NOT suppressed — init kwargs already outrank it, and suppression would strip `sandbox`/`region` and silently flip a configured EEA account to global+sandbox (OKX 50119). Legacy `secret_ref is None` ambient path byte-identical. **RED proof independently reproduced by the orchestrator**, not taken on the executor's word: pre-fix derivation returned `['main']` for a binance portfolio on an okx boot (post-fix `[None]`, while same-venue AND legacy-venue portfolios stay included), and the CR-05 test failed `DID NOT RAISE CredentialResolutionError` with a probe showing the built connector carrying the ambient secret. Gates: 2819 passed / 6 skipped (pre-existing OKX-credential-gated live suites), oracle byte-exact (134 / 46189.87730727451), inertness green, mypy clean (281 files), exactly 5 files touched. **Deliberately left open** (need product decisions): CR-02 (is account_id mandatory in live), CR-03 (post-boot attach), CR-04 (D-09 config migration no-op), and every WR-* — notably WR-03, whose `or DEFAULT_ACCOUNT_ID` registration/raw-read asymmetry touches the same code and is byte-identical to before. | 2026-07-22 | 47a0e185 | [260722-g6w-fix-code-review-blockers-cr-01-cross-ven](./quick/260722-g6w-fix-code-review-blockers-cr-01-cross-ven/) |
+
+| 260722-hpz | Close Phase 11 code-review **WR-08** — the last review finding not folded into Phase 11.1. `LiveTradingSystem.start()` starts EVERY venue lifecycle but `stop()` read `next(iter(lifecycles.values()), None)` and stopped only the primary, justified by "close_all() … the memo is shared across accounts". That justification covers only ONE of `VenueLifecycle.stop()`'s two branches: the `self._connectors is not None` arm drives `ConnectorProvider.close_all()` (shared memo, every account), but its documented `elif self._bundle.connector is not None: disconnect()` fallback exists precisely for lifecycles built WITHOUT a shared provider and covers only THAT bundle — so in that configuration every non-primary connector leaked a dangling authenticated venue socket, and a `ResourceWarning` is a HARD failure under `filterwarnings=["error"]`. Fix: snapshot `_venue_lifecycles.items()` into a list BEFORE the `try` (keeps the defensive `getattr` for a partially-constructed facade, keeps the map available to `finally` on every return path, and avoids dict-mutation-during-iteration), then loop in the `finally`. Safe because `close_all()` clears its memo inside a `finally` (`connectors/provider.py:82-91`) — **idempotency independently verified by the orchestrator**, since it is the load-bearing premise — so extra calls iterate an empty memo. **Guard placement (decision):** the `try/except` sits at the facade call site, per iteration, NOT inside `VenueLifecycle.stop()` — that method must keep raising for its own single-lifecycle callers and its unit contract; isolation is a property of the fan-out, and only the call site knows there are siblings left to stop and a SQL-spine dispose still to run. Swallowing here also stops a teardown failure from masking an exception already propagating out of the `try` body. The old `if lifecycle is not None` guard is gone because an empty-map loop is self-guarding. Error log now names the failing account. **RED independently reproduced by the orchestrator** at the pre-fix commit: exactly 3 failed / 99 passed, all three showing `assert ['acct-a'] == ['acct-a', 'acct-b', 'acct-c']`. The 4th test (partially-constructed facade) passes both before and after and is labelled a preservation guard so its green is not misread as evidence. Gates: 2823 passed / 6 skipped (pre-existing OKX-credential-gated opt-ins), oracle byte-exact (134 / 46189.87730727451), inertness green, mypy clean (281 files), exactly 2 files touched. Executor noted two out-of-scope observations for Phase 11.1: `_streaming_lifecycles()` has no teardown counterpart in `stop()`, and `VenueLifecycle.stop()`'s shared-provider branch has cross-account side effects (the first `close_all()` disconnects every account), which matters if 11.1 ever needs to stop one account without stopping the run. | 2026-07-22 | 59eb44e3 | [260722-hpz-fix-code-review-wr-08-stop-tears-down-ev](./quick/260722-hpz-fix-code-review-wr-08-stop-tears-down-ev/) |
 
 ## Deferred Items
 
@@ -357,11 +456,11 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-17T11:09:39.781Z
-Stopped at: Phase 10 context gathered
+Last session: 2026-07-21T07:57:33.832Z
+Stopped at: Phase 11 context gathered
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
-Resume file: .planning/phases/10-strategies-registry/10-CONTEXT.md
+Resume file: .planning/phases/11-multi-portfolio-live/11-CONTEXT.md
 Carried todo: 14 pending todos in `todos/pending/` (10 fold into v1.8 as CF-1..CF-10; `v17-residual-carryforward.md`
 is the index; the substantive open item is `margin-equity-double-counts-notional-wr01`, owner-gated).
 

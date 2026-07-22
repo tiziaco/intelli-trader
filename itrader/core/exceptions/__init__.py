@@ -26,7 +26,8 @@ from .portfolio import (
     PortfolioStateError,
     PortfolioConfigurationError,
     PortfolioValidationError,
-    ReconciliationError
+    ReconciliationError,
+    DuplicateVenueAccountError
 )
 
 # Order exceptions
@@ -42,6 +43,11 @@ from .strategy import (
     UnknownParamError,
     MissingParamError,
     StrategyValidationError
+)
+
+# Credential exceptions
+from .credential import (
+    CredentialResolutionError
 )
 
 # Data exceptions
@@ -76,6 +82,7 @@ __all__ = [
     'PortfolioConfigurationError',
     'PortfolioValidationError',
     'ReconciliationError',
+    'DuplicateVenueAccountError',
 
     # Order exceptions
     'OrderError',
@@ -87,6 +94,9 @@ __all__ = [
     'UnknownParamError',
     'MissingParamError',
     'StrategyValidationError',
+
+    # Credential exceptions
+    'CredentialResolutionError',
 
     # Data exceptions
     'DataError',

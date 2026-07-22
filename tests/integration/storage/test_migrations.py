@@ -29,9 +29,11 @@ from itrader.portfolio_handler.storage.models import build_portfolio_tables
 from itrader.storage import SqlEngine
 from itrader.storage.engine import NAMING_CONVENTION
 from itrader.storage.halt_record_store import build_halt_records_table
+from itrader.storage.portfolio_definition_store import build_portfolio_definition_tables
 from itrader.storage.strategy_registry_store import build_strategy_registry_tables
 from itrader.storage.system_stats_store import build_system_stats_table
 from itrader.storage.system_store import build_system_store_table
+from itrader.storage.venue_account_store import build_venue_accounts_table
 from itrader.storage.venue_store import build_venue_store_table
 from itrader.strategy_handler.storage.models import build_signal_tables
 
@@ -44,6 +46,12 @@ from itrader.strategy_handler.storage.models import build_signal_tables
 # ``strategy_portfolio_subscriptions`` in its place (D-06). The
 # ``portfolio_account_state.config_json`` column is NOT a new table — it is an ADD COLUMN
 # checked separately below.
+#
+# Phase 11 (11-03, D-28/D-29) chains ``p11_venue_accounts_portfolios``, which creates BOTH
+# ``venue_accounts`` and ``portfolios``. Extended BY HAND, deliberately: this tuple drives the
+# per-table column-parity loop below and there is NO dynamic table enumeration to fall back on
+# (the "the gate widens itself" assumption was proven FALSE in Phase 9 and the tuple had to be
+# extended manually there too). A new table absent from this tuple is silently unchecked.
 _NEW_TABLES = (
     "system_store",
     "venue_store",
@@ -51,11 +59,19 @@ _NEW_TABLES = (
     "strategy_portfolio_subscriptions",
     "order_config",
     "system_stats",
+    "venue_accounts",
+    "portfolios",
 )
 
 # The single head of the relocated chain. Updated by every migration-owner plan that chains
-# a new revision on top (P9: ``system_stats``; P10/10-02: ``p10_strategy_portfolio_subs``).
-_HEAD = "p10_strategy_portfolio_subs"
+# a new revision on top (P9: ``system_stats``; P10/10-02: ``p10_strategy_portfolio_subs``;
+# P11/11-03: ``p11_venue_accounts_portfolios`` then ``p11_b2_uuid_fk_config_move``).
+_HEAD = "p11_b2_uuid_fk_config_move"
+
+# The pre-P10 revision — what the P10 assertions downgrade BACK to. Named rather than
+# reached by a relative ``-1``: every revision chained on top silently changes what ``-1``
+# means and would quietly re-point these tests at the wrong revision (Phase 11 chains two).
+_PRE_P10_HEAD = "system_stats"
 
 # Repo-root-anchored paths so the Alembic Config is cwd-INDEPENDENT: Alembic resolves a
 # RELATIVE ``script_location`` against the process cwd (not the ini location), so the test
@@ -267,6 +283,13 @@ def test_create_all_vs_migration_parity(tmp_path: pathlib.Path) -> None:
     # both new tables (registrar == migration).
     build_order_config_table(metadata)
     build_system_stats_table(metadata)
+    # Phase 11 (11-03): the W1-schema-boundary registrars. ``build_portfolio_definition_tables``
+    # DELEGATES to ``build_venue_accounts_table`` (its composite FK resolves by table NAME at
+    # DDL-emit time, so the parent must sit on the SAME MetaData) — so this ONE call registers
+    # BOTH ``venue_accounts`` and ``portfolios``. The parent is named explicitly first to
+    # document that dependency; both registrars are idempotent, so this does not double-register.
+    build_venue_accounts_table(metadata)
+    build_portfolio_definition_tables(metadata)
     engine_a = create_engine(a_url)
 
     # Engine B — migration-built schema via upgrade head.
@@ -282,6 +305,17 @@ def test_create_all_vs_migration_parity(tmp_path: pathlib.Path) -> None:
         tables_a = set(inspector_a.get_table_names())
         tables_b = set(inspector_b.get_table_names()) - {"alembic_version"}
         assert tables_a == tables_b  # same table set across both paths ...
+
+        # NON-VACUITY (Phase 11 handoff trap). ``tables_a == tables_b`` is satisfied just as
+        # happily when NEITHER side knows about a table as when both do — which is exactly
+        # the state the tree was in before 11-03 registered the two W1 registrars on
+        # ``migrations/env.py``. Asserting PRESENCE on both sides separately is what makes a
+        # "tables exist in tests, never in production" split fail loud here instead of
+        # passing green. Without these four lines a reverted ``env.py`` registration and a
+        # reverted migration would cancel out silently.
+        for new_table in ("venue_accounts", "portfolios"):
+            assert new_table in tables_a, f"{new_table} missing from the create_all schema"
+            assert new_table in tables_b, f"{new_table} missing from the migrated schema"
 
         # ... and the same column-name set per new table (registrar == migration).
         for table in _NEW_TABLES:
@@ -373,12 +407,17 @@ def test_p10_upgrade_reshapes_strategy_registry_schema(tmp_path: pathlib.Path) -
 
 
 def test_p10_downgrade_restores_the_p4_schema(tmp_path: pathlib.Path) -> None:
-    """D-06: ``downgrade -1`` is a TRUE inverse — restores the P4 table, undoes the P10 adds."""
+    """D-06: the P10 downgrade is a TRUE inverse — restores the P4 table, undoes the P10 adds.
+
+    Downgrades to the NAMED pre-P10 revision rather than a relative ``-1``: Phase 11 chained
+    two revisions on top of P10, so ``-1`` no longer reaches the P10 migration at all (it
+    would silently assert against the wrong revision and pass/fail for the wrong reason).
+    """
     db_path = tmp_path / "p10_downgrade.db"
     url = f"sqlite+pysqlite:///{db_path}"
     cfg = _alembic_config(url)
     command.upgrade(cfg, "head")
-    command.downgrade(cfg, "-1")
+    command.downgrade(cfg, _PRE_P10_HEAD)
 
     engine = create_engine(url)
     try:
@@ -394,7 +433,7 @@ def test_p10_downgrade_restores_the_p4_schema(tmp_path: pathlib.Path) -> None:
         assert "strategy_type" not in _table_columns(engine, "strategy_registry")
         with engine.connect() as conn:
             applied = conn.execute(text("SELECT version_num FROM alembic_version")).fetchall()
-        assert applied[0][0] == "system_stats"  # back on the pre-P10 head
+        assert applied[0][0] == _PRE_P10_HEAD  # back on the pre-P10 head
     finally:
         engine.dispose()
 
@@ -457,6 +496,10 @@ def test_p10_upgrade_downgrade_upgrade_is_replay_safe(tmp_path: pathlib.Path) ->
 
     A migration whose downgrade is not a true inverse silently drifts on replay (a rollback
     then re-deploy would leave a different schema than a clean deploy).
+
+    Rolls back to the NAMED pre-P10 revision, so the replay covers the P10 migration AND
+    every Phase 11 revision chained on top of it — a relative ``-1`` would now only exercise
+    the newest link and quietly stop testing what this test is named for.
     """
     once_path = tmp_path / "p10_once.db"
     once_url = f"sqlite+pysqlite:///{once_path}"
@@ -466,7 +509,7 @@ def test_p10_upgrade_downgrade_upgrade_is_replay_safe(tmp_path: pathlib.Path) ->
     replay_url = f"sqlite+pysqlite:///{replay_path}"
     replay_cfg = _alembic_config(replay_url)
     command.upgrade(replay_cfg, "head")
-    command.downgrade(replay_cfg, "-1")
+    command.downgrade(replay_cfg, _PRE_P10_HEAD)
     command.upgrade(replay_cfg, "head")
 
     once_engine = create_engine(once_url)

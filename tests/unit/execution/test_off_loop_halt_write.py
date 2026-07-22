@@ -77,7 +77,7 @@ def test_connector_fatal_durable_write_runs_off_the_loop_thread(monkeypatch) -> 
     system._safety._halt_record_store = store
     try:
         # The PRODUCTION-wired connector-fatal signal (wired at construction on the okx arm).
-        assert system._okx_exchange._halt_signal is not None
+        assert system._primary_lifecycle.bundle.exchange._halt_signal is not None
 
         # Drive the escalation on a dedicated "connector asyncio loop" thread — exactly the
         # thread the fatal/ceiling/catch-all supervisor arms escalate from.
@@ -85,7 +85,7 @@ def test_connector_fatal_durable_write_runs_off_the_loop_thread(monkeypatch) -> 
 
         def loop() -> None:
             loop_ident["id"] = threading.get_ident()
-            system._okx_exchange._supervisor._escalate_halt(
+            system._primary_lifecycle.bundle.exchange._supervisor._escalate_halt(
                 "fills", RuntimeError("secret-bearing venue error"), "fatal auth/permission error")
 
         t = threading.Thread(target=loop, name="connector-loop")
@@ -115,7 +115,7 @@ def test_connector_fatal_winner_only_single_durable_write(monkeypatch) -> None:
     store = _CapturingHaltStore()
     system._safety._halt_record_store = store
     try:
-        signal = system._okx_exchange._halt_signal
+        signal = system._primary_lifecycle.bundle.exchange._halt_signal
 
         def loop() -> None:
             # Two escalations from the loop (e.g. both stream arms fail) only put events.

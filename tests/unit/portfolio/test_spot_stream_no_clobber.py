@@ -24,7 +24,7 @@ def _spot_account() -> VenueAccount:
         MagicMock(name="connector"),
         quote_currency="USDC",
         market_type="spot",
-        symbol="BTC/USDC",
+        symbol="BTC/USDC", account_id="acct-test"
     )
 
 

@@ -77,12 +77,16 @@ def test_durably_halted_start_refuses_before_any_venue_io(monkeypatch) -> None:
     # Spy/stub EVERY call start() could make before the refusal. On the fixed (top-gate)
     # code none of these run; on the pre-fix (late-gate) code they all run before refusing.
     system._initialize_live_session = MagicMock(name="_initialize_live_session")
-    system._okx_connector.connect = MagicMock(name="connector.connect")
+    # 11-09: the venue arms are reached through the PRIMARY account's lifecycle now (the
+    # six facade scalars are gone). The venue ACCOUNT is no longer a facade field at all
+    # — accounts live on portfolios — so the snapshot/start_streaming assertions below
+    # are made against the coordinator that would have driven them.
+    lifecycle = system._primary_lifecycle
+    lifecycle.bundle.connector.connect = MagicMock(name="connector.connect")
     system.feed.warmup = MagicMock(name="feed.warmup")
-    system._okx_data_provider.start_stream = MagicMock(name="provider.start_stream")
-    system._okx_exchange.connect = MagicMock(
+    lifecycle.provider.start_stream = MagicMock(name="provider.start_stream")
+    lifecycle.bundle.exchange.connect = MagicMock(
         name="exchange.connect", return_value=SimpleNamespace(success=True))
-    system._venue_account = MagicMock(name="venue_account")
     # WR-01/WR-03: the venue-link + baseline-guard logic no longer lives on the facade —
     # production reconciles exclusively via _build_reconciliation_coordinator()
     # .run_startup_reconcile() (the coordinator owns the link + guard copies). Spy the
@@ -102,12 +106,10 @@ def test_durably_halted_start_refuses_before_any_venue_io(monkeypatch) -> None:
 
         # D-20: the refusal is at the TOP — ZERO session init and ZERO venue I/O ran.
         system._initialize_live_session.assert_not_called()
-        system._okx_connector.connect.assert_not_called()
+        lifecycle.bundle.connector.connect.assert_not_called()
         system.feed.warmup.assert_not_called()
-        system._okx_data_provider.start_stream.assert_not_called()
-        system._okx_exchange.connect.assert_not_called()
-        system._venue_account.snapshot.assert_not_called()
-        system._venue_account.start_streaming.assert_not_called()
+        lifecycle.provider.start_stream.assert_not_called()
+        lifecycle.bundle.exchange.connect.assert_not_called()
         # The top-gate refuses BEFORE reconcile: the coordinator is never even built, so
         # its run_startup_reconcile (venue link + baseline guard) never runs (WR-03).
         system._build_reconciliation_coordinator.assert_not_called()
@@ -127,20 +129,28 @@ def test_healthy_start_still_runs_session_init_when_no_durable_halt(monkeypatch)
     # No durable store -> the gate is skipped entirely (in-memory fallback).
     system._safety._halt_record_store = None
 
-    system._okx_connector.connect = MagicMock(name="connector.connect")
+    # 11-09: reached through the primary lifecycle (the facade scalars are deleted).
+    lifecycle = system._primary_lifecycle
+    lifecycle.bundle.connector.connect = MagicMock(name="connector.connect")
     system.feed.warmup = MagicMock(name="feed.warmup")
-    system._okx_data_provider.start_stream = MagicMock(name="provider.start_stream")
-    system._okx_exchange.connect = MagicMock(
+    lifecycle.provider.start_stream = MagicMock(name="provider.start_stream")
+    lifecycle.bundle.exchange.connect = MagicMock(
         name="exchange.connect", return_value=SimpleNamespace(success=True))
-    system._venue_account = MagicMock(name="venue_account")
+    # The venue-account snapshot is now per PORTFOLIO. This system has no portfolios, so
+    # the reconcile is a clean skip — spy the coordinator to prove it still RAN (the
+    # top-gate did not short-circuit it) rather than asserting on a facade account field
+    # that no longer exists.
+    reconcile_spy = MagicMock(name="run_startup_reconcile")
+    system._build_reconciliation_coordinator = MagicMock(
+        return_value=SimpleNamespace(run_startup_reconcile=reconcile_spy))
 
     try:
         started = system.start()
         assert started is True
         assert system.get_status()["status"] == SystemStatus.RUNNING.value
         # The venue handshake ran (the top-gate did not short-circuit a healthy start).
-        system._okx_connector.connect.assert_called_once()
-        system._okx_exchange.connect.assert_called_once()
-        system._venue_account.snapshot.assert_called_once()
+        lifecycle.bundle.connector.connect.assert_called_once()
+        lifecycle.bundle.exchange.connect.assert_called_once()
+        reconcile_spy.assert_called_once()
     finally:
         system.stop()

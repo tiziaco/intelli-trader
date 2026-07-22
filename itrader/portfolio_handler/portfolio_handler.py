@@ -80,7 +80,28 @@ class PortfolioHandler:
         # to keep the SqlEngine import off this hot-path module (GATE-01).
         self._environment = environment
         self._sql_engine = sql_engine
-        
+
+        # 11-08 (D-07/D-08): the DEFINITION-row writer. Before this plan nothing in
+        # the phase ever wrote the ``portfolios`` table — ``PortfolioDefinitionStore``
+        # had zero production callers — so ``rehydrate_portfolios`` would have read an
+        # empty table on EVERY production boot, forever, while every fixture-provisioned
+        # test passed. Constructing it here (rather than at the composition root) is
+        # what makes the guarantee hold for POST-BOOT ``add_portfolio`` calls too: live
+        # portfolios are added by the application after build_live_system returns, and a
+        # writer that only ran at boot would persist none of them.
+        #
+        # The import is LAZY inside the gate deliberately — this module is on the
+        # BACKTEST import graph and the store pulls SQLAlchemy, so a module-top import
+        # would break the GATE-01 inertness gate (tests/integration/test_okx_inertness.py).
+        # The backtest composition root passes environment="backtest" + sql_engine=None,
+        # so this stays None and the byte-exact oracle path is untouched.
+        self.definition_store: Optional[Any] = None
+        if environment == "live" and sql_engine is not None:
+            from itrader.storage.portfolio_definition_store import (
+                PortfolioDefinitionStore,
+            )
+            self.definition_store = PortfolioDefinitionStore(sql_engine)
+
         # Initialize configuration by constructing the Pydantic model directly
         # (M2-06 / D-01): the registry/provider getters were deleted. Pydantic validates
         # on construction, so no separate validator is needed.
@@ -195,24 +216,49 @@ class PortfolioHandler:
         yield correlation_id
     
     # Main portfolio management methods (keeping same names for compatibility)
-    def add_portfolio(self, name: str, exchange: str, cash: float, portfolio_config: Optional[PortfolioConfig] = None) -> PortfolioId:
+    def add_portfolio(self, name: str, exchange: str, cash: "float | Decimal",
+                      portfolio_config: Optional[PortfolioConfig] = None,
+                      portfolio_id: Optional[PortfolioId] = None,
+                      account_id: Optional[str] = None,
+                      venue_name: Optional[str] = None) -> PortfolioId:
         """Create a new portfolio with enhanced capabilities.
 
         ACCT-04: the former owning-user first positional parameter was dropped —
         that mapping is an app-layer (FastAPI) concern, not a Portfolio concern,
-        and is not relocated onto the Account. The surviving signature is
-        ``(name, exchange, cash, portfolio_config=None)``.
+        and is not relocated onto the Account.
+
+        F-5 (11-05): ``portfolio_id`` / ``account_id`` / ``venue_name`` mirror the
+        ``Portfolio.__init__`` parameters one-for-one and are threaded straight
+        through. All three DEFAULT so the byte-exact backtest composition-root call
+        — ``add_portfolio(name=, exchange='csv', cash=)`` — stays untouched.
+
+        * ``portfolio_id`` — an EXISTING id to reattach to on rehydrate (F-1).
+          Supplying an id already registered here RAISES rather than overwriting:
+          a silent overwrite would destroy the first portfolio's cash and positions.
+        * ``account_id`` — the venue account this portfolio's orders reach (D-06).
+        * ``venue_name`` — the source of truth for the portfolio's exchange (D-07);
+          when supplied it wins and ``exchange`` is derived from it.
         """
-        
+
         with self._operation_context("add_portfolio") as correlation_id:
             try:
                 # Global validations
                 if cash <= 0:
                     raise PortfolioValidationError(0, "initial_cash", "Initial cash must be positive")
-                
+
                 if not name.strip():
                     raise PortfolioValidationError(0, "name", "Portfolio name cannot be empty")
-                
+
+                # F-1 (11-05): now that ids are supplyable, a duplicate must fail
+                # loud. The store below is an unconditional dict assignment, so
+                # without this guard a re-add would SILENTLY destroy the first
+                # portfolio along with its cash and open positions.
+                if portfolio_id is not None and portfolio_id in self._portfolios:
+                    raise PortfolioValidationError(
+                        portfolio_id, "portfolio_id",
+                        "A portfolio with this id is already registered"
+                    )
+
                 # Check global limits
                 if len(self._portfolios) >= self.max_portfolios:
                     raise PortfolioConfigurationError("max_portfolios", self.max_portfolios, "maximum portfolios limit reached")
@@ -229,11 +275,18 @@ class PortfolioHandler:
                     config=portfolio_config,
                     environment=self._environment,
                     sql_engine=self._sql_engine,
+                    portfolio_id=portfolio_id,
+                    account_id=account_id,
+                    venue_name=venue_name,
                 )
                 
                 # Store portfolio
                 self._portfolios[portfolio.portfolio_id] = portfolio
-                
+
+                # 11-08 (D-07/D-08): persist the DEFINITION row so this portfolio
+                # rehydrates with the SAME id on the next boot. No-op on backtest.
+                self._persist_definition(portfolio, cash)
+
                 self.logger.info(
                     "Portfolio created successfully",
                     portfolio_id=portfolio.portfolio_id,
@@ -248,6 +301,60 @@ class PortfolioHandler:
                 self._publish_error_event(e, "add_portfolio", correlation_id)
                 raise
     
+    def _persist_definition(self, portfolio: Portfolio, cash: "float | Decimal") -> None:
+        """Write this portfolio's DEFINITION row (D-07/D-08) — the 11-08 writer.
+
+        The row records what a portfolio IS (``portfolio_id`` / ``name`` /
+        ``(venue_name, account_id)`` / ``initial_cash``), as opposed to the seven
+        child tables that record what it HAS. It is the SOURCE OF TRUTH that
+        ``rehydrate_portfolios`` reads at the next boot, and the persisted
+        ``portfolio_id`` is what makes those child tables reattach to the RIGHT
+        portfolio across a restart (T-11-41).
+
+        Three guards, each load-bearing:
+
+        * **No store** — the backtest/in-memory arm. Nothing to write.
+        * **No account reference** — ``venue_name`` and ``account_id`` are both NOT
+          NULL and together carry an unconditional composite FK onto
+          ``venue_accounts`` (D-06/D-07), so a portfolio that names neither has no
+          well-formed definition row to write. This is the pre-11-05 call shape
+          (``add_portfolio(name=, exchange=, cash=)``) and it stays supported.
+        * **GATED ON ABSENCE** — ``upsert`` is a DELETE-then-INSERT on
+          ``portfolio_id``, so re-writing a row that already exists would WIPE its
+          ``config_json`` (the D-09 home of the per-portfolio config blob). Rehydrate
+          re-enters this method for every persisted portfolio on every boot, so the
+          unconditional form would silently discard the operator's persisted config on
+          the FIRST restart after it was saved. Same discipline, same reason, as
+          11-07's ``_mint_account_rows``.
+
+        A write failure PROPAGATES (``add_portfolio``'s except arm publishes the error
+        event and re-raises). It is deliberately not degrade-clean: a portfolio whose
+        definition did not persist boots into nothing on the next restart while its
+        positions and cash rows orphan in the child tables — a silent, money-relevant
+        loss, which is exactly the outcome D-19 rates as worse than failing loud. The
+        likely cause is a genuine misconfiguration: a duplicate ``(venue_name,
+        account_id)`` pair (the D-14 unique constraint) or an ``account_id`` with no
+        ``venue_accounts`` parent row.
+        """
+        if self.definition_store is None:
+            return
+        if portfolio.venue_name is None or portfolio.account_id is None:
+            return
+        if self.definition_store.get(portfolio.portfolio_id) is not None:
+            return
+        self.definition_store.upsert(
+            portfolio.portfolio_id,
+            name=portfolio.name,
+            venue_name=portfolio.venue_name,
+            account_id=portfolio.account_id,
+            initial_cash=to_money(cash),
+            enabled=True,
+            # The config blob is owned by save_config/load_config on this same row
+            # (D-09); a definition write never authors or overwrites it.
+            config=None,
+            at=datetime.now(UTC),
+        )
+
     def get_portfolio(self, portfolio_id: PortfolioId) -> Portfolio:
         """Get portfolio instance."""
         if portfolio_id not in self._portfolios:
@@ -366,6 +473,24 @@ class PortfolioHandler:
         """Return the exchange the portfolio trades on (admission metadata, OQ1)."""
         exchange: str = self.get_portfolio(portfolio_id).exchange
         return exchange
+
+    def account_for(self, portfolio_id: PortfolioId) -> Optional[str]:
+        """Return the venue account the portfolio's orders reach (D-27, plan 11-05).
+
+        The direct mirror of ``exchange_for``: an order's target is the pair
+        ``(venue, account_id)`` and this reads the account half. Routed through
+        ``get_portfolio`` so an unknown id raises ``PortfolioNotFoundError``,
+        identically to ``exchange_for``.
+
+        ``Optional[str]`` because ``Portfolio.account_id`` is optional — the
+        default keeps the byte-exact backtest call site untouched; plan 11-08's
+        composition-time invariant is what requires a named account in live.
+
+        ExecutionHandler reads this through the injected ``PortfolioReadModel``
+        Protocol (11-06) and never imports this class.
+        """
+        account_id: Optional[str] = self.get_portfolio(portfolio_id).account_id
+        return account_id
 
     def open_position_count(self, portfolio_id: PortfolioId) -> int:
         """Return the number of open positions (position-limit check, OQ1)."""

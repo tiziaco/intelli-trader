@@ -40,7 +40,7 @@ def _spot_account_snapshotted(pre_fill_quote: str) -> VenueAccount:
         connector,
         quote_currency="USDC",
         market_type="spot",
-        symbol="BTC/USDC",
+        symbol="BTC/USDC", account_id="acct-test"
     )
     account.snapshot()
     return account

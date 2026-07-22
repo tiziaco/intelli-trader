@@ -115,7 +115,8 @@ def _spot_venue_portfolio(venue_connectors, handler, btc_total: str) -> Portfoli
     connector = venue_connectors(_spot_payloads_with_btc(btc_total))
     portfolio = Portfolio("spot_venue_pf", "okx", Decimal("150000"), datetime.now())
     account = VenueAccount(
-        connector, quote_currency="USDC", market_type="spot", symbol=_TICKER
+        connector, quote_currency="USDC", market_type="spot", symbol=_TICKER,
+        account_id="acct-test"
     )
     account.snapshot()
     portfolio.account = account

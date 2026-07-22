@@ -217,12 +217,20 @@ def build_portfolio_tables(metadata: MetaData) -> dict[str, Table]:
             Column("peak_equity", Numeric, nullable=False),
             Column("open_positions_count", Integer, nullable=False),
             Column("updated_time", UtcIsoText, nullable=False),
-            # D-25 — the portfolio-scope runtime-config carrier rides THIS account-state
+            # D-25 — the portfolio-scope runtime-config carrier rode THIS account-state
             # row (NO new portfolio_config table). Nullable so an account-state row can
             # exist with no config yet, AND a config row can exist before any account-state
             # write (the save_config UPDATE-first / zero-sentinel-INSERT-if-absent arm).
-            # A JSONB blob mirroring VenueStore.config_json. The ALTER ... ADD config_json
-            # migration lands in Plan 04 (the migration-owner).
+            # A JSONB blob mirroring VenueStore.config_json.
+            #
+            # VESTIGIAL POST-D-09 (Phase 11, 11-03). The config blob's home is now
+            # ``portfolios.config_json`` — the DEFINITION row — and the
+            # ``p11_b2_uuid_fk_config_move`` revision moved existing blobs there. THIS column
+            # is deliberately NOT dropped: the migration leaves it in place so the move stays
+            # recoverable and the downgrade honest, and ``save_config``/``load_config`` keep a
+            # legacy arm against it for portfolios that have no definition row yet (plan
+            # 11-08 removes the arm once it creates that guarantee). Do NOT route new config
+            # writes back here — the destination is ``portfolios.config_json``.
             Column("config_json", json_variant(), nullable=True),
         )
 

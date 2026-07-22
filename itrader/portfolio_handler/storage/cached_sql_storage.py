@@ -343,6 +343,16 @@ class CachedSqlPortfolioStateStorage(PortfolioStateStorage):
         engine thread and each owns disjoint columns — ``save_config`` → ``config_json``;
         ``save_account_state`` → the six accumulators, carrying ``config_json`` through
         unchanged.
+
+        VESTIGIAL POST-D-09 (Phase 11, 11-03). ``save_config``/``load_config`` were rehomed
+        onto ``portfolios.config_json`` (the DEFINITION row), so for any portfolio that HAS a
+        definition row this carry-forward now preserves a column nothing reads. It is kept
+        deliberately, not by oversight: the rehome retains a legacy arm against this column
+        for the transitional window before a definition row exists (removed by 11-08), and
+        dropping the carry-forward would silently clobber a blob written through that arm.
+        Do NOT "clean this up" by restoring writes to the abandoned column — the destination
+        is ``portfolios.config_json``. When 11-08 deletes the legacy arm, this carry-forward
+        and the column itself can retire together.
         """
         table = self._account_state
         existing_config = connection.execute(

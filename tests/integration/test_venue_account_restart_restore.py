@@ -82,7 +82,7 @@ def test_venue_account_restart_restore_does_not_raise_or_clobber(
     engine scalar must NOT overwrite it. Before the fix ``restore_cash`` raised
     ``NotImplementedError`` and the whole live restart failed.
     """
-    account = VenueAccount(fake_venue_connector)
+    account = VenueAccount(fake_venue_connector, account_id="acct-test")
     account.snapshot()
     assert account.balance == _VENUE_SNAPSHOT_BALANCE
 
@@ -99,7 +99,7 @@ def test_venue_account_restore_cash_is_documented_noop(
     fake_venue_connector: FakeLiveConnector,
 ) -> None:
     """``VenueAccount.restore_cash`` accepts the scalar and leaves the cache untouched."""
-    account = VenueAccount(fake_venue_connector)
+    account = VenueAccount(fake_venue_connector, account_id="acct-test")
     account.snapshot()
     before = account.balance
 
