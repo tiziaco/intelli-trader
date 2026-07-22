@@ -62,7 +62,7 @@ def test_start_connects_when_connector_present() -> None:
     from itrader.venues.lifecycle import VenueLifecycle
 
     connector = _FakeConnector()
-    lifecycle = VenueLifecycle(_bundle(connector), _provider())
+    lifecycle = VenueLifecycle(_bundle(connector), provider=_provider())
 
     lifecycle.start()
 
@@ -76,7 +76,7 @@ def test_stop_closes_via_provider_when_present() -> None:
 
     connector = _FakeConnector()
     connectors = _FakeConnectorProvider()
-    lifecycle = VenueLifecycle(_bundle(connector), _provider(), connectors=connectors)
+    lifecycle = VenueLifecycle(_bundle(connector), provider=_provider(), connectors=connectors)
 
     lifecycle.stop()
 
@@ -91,7 +91,7 @@ def test_stop_disconnects_bundle_connector_without_provider() -> None:
     from itrader.venues.lifecycle import VenueLifecycle
 
     connector = _FakeConnector()
-    lifecycle = VenueLifecycle(_bundle(connector), _provider())
+    lifecycle = VenueLifecycle(_bundle(connector), provider=_provider())
 
     lifecycle.stop()
 
@@ -102,7 +102,7 @@ def test_paper_bundle_start_stop_noop_connector_step() -> None:
     """paper-shaped bundle (connector=None): start/stop no-op the connector step, never raise."""
     from itrader.venues.lifecycle import VenueLifecycle
 
-    lifecycle = VenueLifecycle(_bundle(None), _provider())
+    lifecycle = VenueLifecycle(_bundle(None), provider=_provider())
 
     # Absent connector -> structural None-guard, no AttributeError.
     lifecycle.start()
@@ -114,7 +114,7 @@ def test_paper_bundle_with_provider_stop_is_safe_noop() -> None:
     from itrader.venues.lifecycle import VenueLifecycle
 
     connectors = _FakeConnectorProvider()
-    lifecycle = VenueLifecycle(_bundle(None), _provider(), connectors=connectors)
+    lifecycle = VenueLifecycle(_bundle(None), provider=_provider(), connectors=connectors)
 
     lifecycle.start()
     lifecycle.stop()
@@ -129,7 +129,68 @@ def test_bundle_and_provider_are_exposed_read_only() -> None:
 
     bundle = _bundle(_FakeConnector())
     provider = _provider()
-    lifecycle = VenueLifecycle(bundle, provider)
+    lifecycle = VenueLifecycle(bundle, provider=provider)
 
     assert lifecycle.bundle is bundle
     assert lifecycle.provider is provider
+
+
+# --------------------------------------------------------------------------- #
+# D-14 — the provider is OPTIONAL: only the PRIMARY account's lifecycle carries one
+# --------------------------------------------------------------------------- #
+def test_a_provider_less_lifecycle_is_fully_functional() -> None:
+    """No provider -> ``provider is None``, and start()/stop() still drive the connector.
+
+    ``provider`` used to be a REQUIRED positional this class never read, so
+    ``assemble_venue`` built one per account and all but the primary's were discarded
+    (WR-07 — each is a live credential-bearing object with no owner or halt path). D-14
+    stops constructing them, which is only safe if a provider-less lifecycle is a FULLY
+    FUNCTIONAL one rather than a degraded one. That is what this asserts: the connector
+    lifecycle is untouched by the provider's absence.
+    """
+    from itrader.venues.lifecycle import VenueLifecycle
+
+    connector = _FakeConnector()
+    lifecycle = VenueLifecycle(_bundle(connector))
+
+    assert lifecycle.provider is None
+
+    lifecycle.start()
+    lifecycle.stop()
+
+    assert connector.connected == 1
+    assert connector.disconnected == 1
+
+
+def test_a_provider_less_paper_lifecycle_start_stop_is_a_clean_noop() -> None:
+    """connector=None AND provider=None — the non-primary paper shape — never raises."""
+    from itrader.venues.lifecycle import VenueLifecycle
+
+    lifecycle = VenueLifecycle(_bundle(None))
+
+    lifecycle.start()
+    lifecycle.stop()
+
+    assert lifecycle.provider is None
+
+
+def test_provider_is_keyword_only() -> None:
+    """``provider`` cannot be passed positionally (D-14).
+
+    Keyword-only is the mechanical half of the decision: a positional second argument
+    is how a caller silently re-supplies a per-account provider, which is precisely the
+    construction D-14 removes. The signature refuses it rather than accepting it
+    quietly.
+    """
+    import inspect
+
+    import pytest
+
+    from itrader.venues.lifecycle import VenueLifecycle
+
+    parameter = inspect.signature(VenueLifecycle).parameters["provider"]
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+    assert parameter.default is None
+
+    with pytest.raises(TypeError):
+        VenueLifecycle(_bundle(None), _provider())  # type: ignore[misc]

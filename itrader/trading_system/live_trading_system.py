@@ -2109,24 +2109,68 @@ def build_live_system(
     # FIRST (insertion order). The assembly LOGIC stays authored once in
     # ``venues/assemble.py`` and unit-testable with no LiveTradingSystem.
     if exchange in exec_registry:
+        # (3a) THE ONE DATA PROVIDER (11.1-08, D-14). ONE feed means ONE provider, and it
+        # is built HERE, explicitly, for the PRIMARY account — the FIRST element of
+        # `account_specs`, the ordering contract `assemble_venues` documents. A
+        # non-primary account's provider is therefore never CONSTRUCTED at all.
+        #
+        # That is `11-REVIEW.md` WR-07's real fix. `assemble_venue` used to build a data
+        # provider per account and this root discarded all but the first. Each
+        # construction resolves that account's OWN credentials through the
+        # `CredentialResolver`, so a discarded provider is a live credential-bearing
+        # object with no owner, no lifecycle and no halt path. The review's alternative —
+        # wire `set_halt_signal` / `set_stream_state_listener` onto EVERY provider — is
+        # REJECTED: it contradicts the single-feed decision preserved in the
+        # facade-dependent wiring block below, and 11-09 collapsed the primary/secondary
+        # split for the exchange/connector arms precisely so a second account cannot keep
+        # trading after a connector-fatal halt. There is one feed; wiring N providers into
+        # it is meaningless, and doing so makes the defect look intentional.
+        #
+        # The provider is built BEFORE assembly so it can be INJECTED at the primary
+        # lifecycle's construction rather than assigned onto it afterwards — a lifecycle
+        # is never observable half-wired. `DataProviderRegistry.get` fails loud (KeyError)
+        # on an unregistered data_provider, the guard `assemble_venue` used to carry.
+        # D-09/VENUE-07 empty edge: a boot with ZERO account specs builds ZERO providers
+        # and does not raise — a live boot with no accounts is the normal fresh-deployment
+        # state. (The former read of the first lifecycle's own provider raised
+        # StopIteration there.)
+        if account_specs:
+            primary_spec = account_specs[0]
+            provider = data_registry.get(
+                primary_spec.data_provider).build_provider(
+                    ctx, primary_spec, connectors)
+
         # 11-04 (D-04): account_store + alert_sink are what make the trust-on-first-use
         # UID guard RUN. They are optional kwargs, which means omitting them here would
         # ship the only high-severity spoofing mitigation in this phase as dead code
         # behind a fully green suite. tests/unit/venues/test_venue_uid_guard.py asserts
         # they are passed.
+        #
+        # 11.1-08 (D-08): assembly takes the SHARED `venue_bundles` memo instead of the
+        # exec registry, so `lifecycle.bundle` and the registration write below are
+        # provably the same object per (venue, account_id). Before this, assembly called
+        # the registry directly and a live paper boot built a SECOND, unread
+        # SimulatedExchange — inert only because every reader of it was connector-gated.
+        # The same gap would build a second OkxExchange per account the moment anything
+        # asked the memo for ('okx', account_id), and `OkxExchange.connect()` is the sole
+        # spawn site for `_stream_fills`/`_stream_orders`.
         venue_lifecycles = assemble_venues(
-            ctx, account_specs, connectors, exec_registry, data_registry,
+            account_specs, connectors, venue_bundles,
+            primary_provider=provider,
             account_store=venue_account_store, alert_sink=alert_sink)
 
         for account_spec in account_specs:
-            lifecycle = venue_lifecycles[
-                account_spec.account_id or DEFAULT_ACCOUNT_ID]
+            account_id = account_spec.account_id or DEFAULT_ACCOUNT_ID
+            # D-08: read the bundle from the SHARED memo. This is a memo HIT — assembly
+            # above populated the same key through the same object — so it is one build
+            # per (venue, account_id) tree-wide, not a second one here.
+            bundle = venue_bundles.get(exchange, account_id, account_spec)
             # bundle.connector is the STREAMING-venue discriminator (okx present,
             # paper None). A paper (connector=None) bundle has no streaming okx
             # exchange; its data provider is still wired to the feed below (the
             # injected TEST 'replay' provider in tests, or the OKX data provider in
             # production paper — D-21).
-            if lifecycle.bundle.connector is None:
+            if bundle.connector is None:
                 continue
             # D-27/MPORT-07: register under the (venue, account_id) PAIR, using
             # the account this bundle was actually built for. Registering under
@@ -2139,18 +2183,16 @@ def build_live_system(
             # one key. (This is a REGISTRATION-side default for an unnamed
             # account, NOT a resolution-side fallback — on_order must never
             # coerce a None account into the default.)
-            execution_handler.exchanges[
-                (exchange, account_spec.account_id or DEFAULT_ACCOUNT_ID)
-            ] = lifecycle.bundle.exchange
+            execution_handler.exchanges[(exchange, account_id)] = bundle.exchange
 
         # (4) UNIFORM provider->feed wiring (D-10) that needs NO facade method.
-        # ONE feed, so ONE provider: the PRIMARY account's (the first inserted
-        # lifecycle). A second account's data provider would push the same venue's
-        # bars into the same feed a second time.
-        provider = next(iter(venue_lifecycles.values())).provider
-        feed.set_provider(provider)
-        provider.set_bar_sink(feed.update)
-        provider.set_global_queue(global_queue)
+        # ONE feed, so ONE provider: the PRIMARY account's, built at (3a) above. A
+        # second account's data provider would push the same venue's bars into the
+        # same feed a second time — which is why there is no second one to wire.
+        if provider is not None:
+            feed.set_provider(provider)
+            provider.set_bar_sink(feed.update)
+            provider.set_global_queue(global_queue)
 
         # (5) 11-09 (MPORT-05) — THE ATTACH. Each portfolio receives the Account minted
         # from ITS OWN account's bundle, resolved by ``portfolio.account_id``. This is
@@ -2386,6 +2428,14 @@ def build_live_system(
     # partially-halted engine is worse than a single-account one, because the surviving
     # arm looks healthy. The DATA provider stays deliberately single (one feed, the
     # primary's provider), so it is wired outside the loop.
+    #
+    # 11.1-08 (D-14): it is now BUILT outside the loop as well as wired outside it — see
+    # (3a) in the venue-assembly block above. That is what makes this comment's claim
+    # structural rather than aspirational: previously N providers existed and N-1 reached
+    # neither this halt-signal wiring nor the feed (WR-07). The review's proposal to loop
+    # this block over every provider was REJECTED for the reason stated above — there is
+    # ONE feed. The ``is not None`` guard stays: the unregistered-venue arm and a
+    # zero-account boot (D-09) both legitimately yield no provider.
     if provider is not None:
         provider.set_halt_signal(facade._request_connector_halt)
         provider.set_stream_state_listener(

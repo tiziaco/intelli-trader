@@ -47,7 +47,7 @@ from typing import TYPE_CHECKING, Any
 from itrader.logger import get_itrader_logger
 
 if TYPE_CHECKING:
-    from itrader.venues.bundle import VenueBundle
+    from itrader.venues.bundle import VenueBundle, VenuePlugin
     from itrader.venues.registry import ExecutionVenueRegistry
 
 # The ``spec.account_id or "default"`` normalization the venue plugins apply inside
@@ -96,3 +96,23 @@ class VenueBundles:
                 self._ctx, spec, self._connectors
             )
         return self._memo[key]
+
+    def plugin_for(self, venue: str) -> VenuePlugin:
+        """Return the plugin registered for ``venue`` — METADATA only, never to build.
+
+        11.1-08 (D-08/D-14): ``assemble_venue`` needs the venue's PLUGIN OBJECT for the
+        D-04 venue-UID guard (``VenueLifecycle`` calls ``plugin.venue_uid(connector)``),
+        while its BUNDLE must come from ``get`` above so exactly one exchange exists per
+        ``(venue, account_id)``. Exposing this narrow read — rather than threading a
+        second ``ExecutionVenueRegistry`` argument alongside the memo — is what makes a
+        divergent registry unrepresentable: the guard's plugin and the bundle's builder
+        are provably the same object.
+
+        Callers MUST NOT call ``build_bundle`` on the returned plugin. That is the
+        memo-bypass this class exists to prevent (it is how a boot ends up with two
+        ``OkxExchange`` objects for one authenticated account, double-spawning
+        ``_stream_fills`` / ``_stream_orders``). Ask ``get`` for a bundle.
+
+        Fails loud with ``KeyError`` on an unregistered venue, exactly like ``get``.
+        """
+        return self._registry.get(venue)
