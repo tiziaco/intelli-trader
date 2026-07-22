@@ -58,16 +58,18 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`; v1.1 under
 facade (~200 lines) over focused, independently-testable collaborators — venue-parametrized (zero
 `if self.exchange == …`), config-centralized, and FastAPI-ready — **without disturbing the byte-exact
 backtest oracle (`134 / 46189.87730727451`) or the OKX import-inertness gate**
-(`tests/integration/test_okx_inertness.py`). Full scope: the core refactor (P1–P8 + P12) **plus** the
+(`tests/integration/test_okx_inertness.py`). Full scope: the core refactor (P1–P8 + P12 + P13) **plus** the
 three ★ feature-adds (P9–P11; LR-03/LR-04). FastAPI itself is out of scope (LR-01) — this milestone
 makes the engine *interfacable*, shipping no ASGI code.
 
 **Design source:** `docs/superpowers/specs/2026-07-07-v1.8-live-system-refactor-design.md` (LR-00..LR-22,
 CF-1..CF-10). **Research:** `.planning/research/SUMMARY.md` (validates the design vs Nautilus/LEAN; zero
 new third-party dependencies; 4 build-order refinements folded in). Requirements + traceability:
-`.planning/REQUIREMENTS.md` (**69** v1 requirements across 13 categories → 12 phases; the SQL + STORE
-categories share the merged storage-schema phase P4). *(Was 64 at 2026-07-09; +4 `DECOMP-*` from the
-inserted Phase 10.1, +1 `MPORT-07` discovered during P11 discussion 2026-07-21.)*
+`.planning/REQUIREMENTS.md` (**86** v1 requirements across 16 categories → 13 integer phases + three
+decimal insertions; the SQL + STORE categories share the merged storage-schema phase P4). *(Was 64 at
+2026-07-09; +4 `DECOMP-*` from the inserted Phase 10.1, +1 `MPORT-07` from the P11 discussion
+2026-07-21, +11 `ACCT-*` from the inserted Phase 11.1 and +6 `COMP-*` from the inserted Phase 12, both
+2026-07-22.)*
 
 **Milestone-wide gates (apply to EVERY phase — restated as success criteria):**
 
@@ -81,15 +83,15 @@ inserted Phase 10.1, +1 `MPORT-07` discovered during P11 discussion 2026-07-21.)
    **register-vs-build** on P1/P2/P4/P5 (registering a venue imports no `ccxt.pro` until built;
    `SystemConfig` never constructs Postgres `SqlSettings` at import; `FifoEventBus`/
    `EngineContext(sql_engine=None)` pull nothing heavy). **Zero new third-party dependency / no poetry
-   change** anywhere in P1–P12.
+   change** anywhere in P1–P13.
 
 3. **Held throughout** — Decimal money end-to-end; single UUIDv7; determinism (business `time`, seeded
    RNG, injected clock); `mypy --strict` clean on new code; `filterwarnings=["error"]` green; tabs/spaces
    indentation matched to the file (never normalized).
 
-**Trim boundary (noted, NOT taken this milestone):** P1–P8 + P12 = the core God-object refactor; **P9–P11
+**Trim boundary (noted, NOT taken this milestone):** P1–P8 + P12 + P13 = the core God-object refactor; **P9–P11
 (★)** are the feature-adds (LR-03/LR-04) — deferrable at milestone-init without destabilizing the core.
-Owner chose **full scope**, so all 12 phases are in. The ★ marker keeps the boundary visible. The ten
+Owner chose **full scope**, so all 13 phases are in. The ★ marker keeps the boundary visible. The ten
 folded backlog TODOs (**CF-1..CF-10**) all land in core (non-★) phases (P1/P5/P6/P7/P8), so the trim
 boundary is unaffected.
 
@@ -114,7 +116,8 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 - [x] **Phase 10.1: StrategiesHandler Decomposition** - Split `strategies_handler.py` into a thin handler + `ManagedStrategies` holder + `StrategyLifecycleManager`; constructor-own the three live deps; dissolve every function-local import; rename `calculate_signals`→`on_bar` (DECOMP-01, 01a, 02, 03) (INSERTED — follow-up to Phase 10) (completed 2026-07-20)
 - [x] **Phase 11 ★: Multi-Portfolio-Live** - Per-`account_id` account factory, distinct-`account_id` invariant (fail loud), per-portfolio reconcile, `clOrdId→client_order_id` (MPORT-01..06) (completed 2026-07-22)
 - [ ] **Phase 11.1: Account Provisioning + Mandatory Account Identity** - Make the composition root trust the account identity the DB already enforces: derive the account set from `venue_accounts` (not the spec), replace boot-time minting with a deliberate provisioning scope, hard-raise on an account-less live portfolio, attach on every creation path (ACCT-01..06) (INSERTED — follow-up to Phase 11)
-- [ ] **Phase 12: Test Migration + Gates** - live-smoke / config-restart / multi-portfolio-attribution gates (TEST-02..04; TEST-01 replay relocation pulled forward into P6)
+- [ ] **Phase 12: Live Composition-Root Dissolution** - `build_live_system` disappears: the 687-line builder dissolves into independently-constructible composition steps, the facade sheds its remaining non-facade concerns (config-ingress validation, the stats/status read-model, the connector-loop signal callbacks), and the nine-field None-then-assign wiring pattern is eliminated — every collaborator a required constructor argument (COMP-01..06)
+- [ ] **Phase 13: Test Migration + Gates** - live-smoke / config-restart / multi-portfolio-attribution gates (TEST-02..04; TEST-01 replay relocation pulled forward into P6)
 
 ## Phase Details
 
@@ -541,7 +544,7 @@ the wave that touches them.*
 
 ### Phase 11.1: Account Provisioning + Mandatory Account Identity (INSERTED — follow-up to Phase 11)
 
-**Goal**: Make the live composition root trust the account identity the database already enforces, and move account provisioning off the boot path. `portfolios.venue_name` and `portfolios.account_id` are already `NOT NULL` under a composite FK onto `venue_accounts`, so a *persisted* portfolio can never lack an account — yet the code still derives its account set from the spec, coerces nulls with `or DEFAULT_ACCOUNT_ID`, and mints `venue_accounts` rows at boot. This phase deletes that defensive layer, makes the DB the sole source of portfolio **and** account truth, and closes the Phase 11 code-review blockers that were gated on that decision. Source: `.planning/phases/11-multi-portfolio-live/11-REVIEW.md` (CR-02, CR-03, WR-03, WR-05) plus the 2026-07-22 design discussion. (Non-starred structural follow-up; inserted after Phase 11, does not renumber Phase 12.)
+**Goal**: Make the live composition root trust the account identity the database already enforces, and move account provisioning off the boot path. `portfolios.venue_name` and `portfolios.account_id` are already `NOT NULL` under a composite FK onto `venue_accounts`, so a *persisted* portfolio can never lack an account — yet the code still derives its account set from the spec, coerces nulls with `or DEFAULT_ACCOUNT_ID`, and mints `venue_accounts` rows at boot. This phase deletes that defensive layer, makes the DB the sole source of portfolio **and** account truth, and closes the Phase 11 code-review blockers that were gated on that decision. Source: `.planning/phases/11-multi-portfolio-live/11-REVIEW.md` (CR-02, CR-03, WR-03, WR-05) plus the 2026-07-22 design discussion. (Non-starred structural follow-up; inserted after Phase 11.) *(Amended 2026-07-22: a Phase 12 — Live Composition-Root Dissolution — was subsequently inserted ahead of the closing test phase, so the original "does not renumber Phase 12" note no longer holds; Test Migration + Gates is now Phase 13. Phase 12 depends on this phase.)*
 **Depends on**: Phase 11
 **Requirements**: ACCT-01, ACCT-02, ACCT-03, ACCT-04, ACCT-05, ACCT-06, ACCT-07, ACCT-08, ACCT-09, ACCT-10, ACCT-11
 **Success Criteria** (what must be TRUE):
@@ -570,15 +573,34 @@ async/ccxt/SQL on the backtest import path); money stays `Decimal`; single UUIDv
 measured per file, never generalized per package (`live_trading_system.py` is 4-space, `compose.py` and
 `backtest_trading_system.py` are tabs); test gate is `poetry run pytest tests`, never `make test`.*
 
-### Phase 12: Test Migration + Gates
+### Phase 12: Live Composition-Root Dissolution
 
-**Goal**: Add the live-smoke, config-restart, and multi-portfolio-attribution gates that lock the decomposed live surface. Lands last (needs the whole surface incl. multi-portfolio). *(TEST-01 — the replay-driver relocation to `tests/` — was pulled forward into P6; P12 now inherits replay-free production and only adds the surface-dependent gates.)*
-**Depends on**: Phase 6, Phase 11
+**Goal**: `build_live_system` disappears. The milestone's headline promise was a thin (~200-line) facade over focused collaborators; `live_trading_system.py` is **2409 lines** — a 1143-line facade class welded to a 1160-line composition root that the backtest path has never had (backtest splits this three ways: `backtest_trading_system.py` / `compose.py` / `backtest_runner.py`; live has no `compose.py` peer). This phase dissolves the 687-line `build_live_system` into independently-constructible composition steps, sheds the three remaining non-facade concerns off the class, and **eliminates the None-then-assign wiring pattern outright** — all nine `Optional[Any] = None` collaborator fields become required constructor arguments, so an unwired facade is no longer constructible. Structural and behaviour-preserving throughout — no semantic change to boot order, wiring, or any live contract. Source: the 2026-07-22 pre-11.1 structural read of `live_trading_system.py` (the "Tier 2" findings; Tier 1 — the account-provisioning + venue-wiring extraction — is Phase 11.1's own Wave 1). (Non-★ core structural phase; inserted 2026-07-22 ahead of the closing test phase, which renumbers to Phase 13.)
+**Depends on**: Phase 11.1
+**Requirements**: COMP-01, COMP-02, COMP-03, COMP-04, COMP-05, COMP-06
+**Success Criteria** (what must be TRUE):
+
+  1. **`build_live_system` no longer exists as a builder.** No single function anywhere in the tree carries the live composition root. Composition is an ordered sequence of named, independently-constructible steps — storage bootstrap → engine → portfolio bootstrap → venue wiring → runtime-config platform → safety → runner — each of which can be constructed and asserted on **without booting a `LiveTradingSystem`**. A thin ordered entry point survives so the only three externally-imported names (`LiveTradingSystem`, `build_live_system`, `_layer_persisted_overrides` — verified 2026-07-22 as the complete external surface across `itrader/`, `tests/`, `scripts/`) keep resolving; whether that entry point keeps the `build_live_system` name is a discussion decision, not a given (COMP-01).
+  2. Live storage bootstrap — the `SqlSettings` credential probe resolving `(environment, sql_engine, halt_record_store, system_store)` (`live_trading_system.py:1779–1826`) — is a pure step with no facade, venue, or handler knowledge, unit-testable on both arms (Postgres present / in-memory fallback) (COMP-02).
+  3. Config-ingress validation (`_validate_config_ingress` + `_dry_validate_config_ingress`, `:1135–1238`, 105 lines) leaves the facade. It touches no facade state beyond `self._config_router is None` and the logger, and it is the literal FastAPI-400 boundary this milestone exists to expose. It is **reconciled against `config_router.py:402::_dry_validate_copy`** — today two implementations of one validation contract, kept in sync by hand and deliberately divergent (fresh-default instance vs `model_copy`, for cross-thread safety). Either unify them or pin the divergence as a decision with the thread-ownership rationale in-code; do not leave it undocumented (COMP-03).
+  4. The live stats + status read-model leaves the facade: `_stats` / `_stats_lock` / `_update_stats` / `_on_order_throttle_rejected` / `_increment_error_count` / `_snapshot_system_stats` (`:498`) / `get_status` (`:973`) — ~180 lines — become one collaborator owning its own lock. `get_status` is a 68-line dict assembly merging four sources (safety snapshot, stats, throttle, runner thread, error policy); it is precisely what the FastAPI layer will serve, so it belongs in a read-model, not on the lifecycle object (COMP-04).
+  5. The three connector-loop callbacks — `_on_venue_stream_down` / `_on_venue_stream_up` / `_request_connector_halt` (`:423–462`) — leave the facade onto an object constructed with the bus. They touch **only** `global_queue` and the logger; nothing facade-owned. This is load-bearing beyond tidiness: it is one of the two knots forcing the builder to construct the facade mid-function (`:2138`) before it can wire venue callbacks at `:2348–2358` (COMP-05).
+  6. **The None-then-assign wiring pattern is gone — zero survivors.** The **nine** `Optional[Any] = None` wiring fields on `LiveTradingSystem.__init__` (`_safety`, `_stream_recovery`, `_throttle`, `_config_router`, `_system_store`, `_system_stats_store`, `_live_runner`, `_error_policy`, `_quarantined_strategies`) all become **required constructor arguments** with real values at construction. Grep-clean on both halves: no `Optional[Any] = None` wiring field, no post-construction `facade._<field> =` assignment in composition. **Scope boundary:** wiring fields only — `universe` / `_universe_handler` / `_session_initialized` are runtime state populated by `_initialize_live_session` at `start()` (D-12 keeps session init deferred) and are explicitly out of scope. Achievable rather than aspirational, verified 2026-07-22: **six of the nine hold no facade reference at all** and are injectable today; the three genuine cycles (`_safety`, `_live_runner`, `_error_policy`) close once COMP-04/COMP-05 move their callback bodies off the facade — so those two are hard prerequisites, not neighbours. `_stop_event` needs explicit re-homing (created in `__init__` today, handed out to `LiveRunner` + `WorkerSupervisor`). **The checkable consequence:** the WR-02 `StateError` guard at `start()` (`:697`, *"facade constructed outside build_live_system … unwired"*) becomes unreachable and is **deleted** — an unwired facade stops being constructible, so it stops needing a runtime check. If that guard cannot be deleted, the criterion is not met. Blast radius is one production construction site (`:2138`), zero direct constructions in `tests/`, and five test-side late-attach assignments that convert to construction-time injection (COMP-06).
+  7. Behaviour-preserving: the backtest oracle stays byte-exact `134 / 46189.87730727451`, `test_okx_inertness.py` stays green (lazy live/SQL/ccxt imports must survive the move — the extracted steps are on the same import graph the builder body was protecting), and the full suite stays green. Boot ORDER is a hard invariant, not an implementation detail: the distinct-account invariant → portfolio rehydrate → account/venue assembly → config layering → strategy rehydrate sequence is pinned by `tests/integration/test_distinct_account_invariant.py` and documented at `:1896–1929` as load-bearing in four independent ways.
+
+*Cross-cutting constraints (apply to every plan): pure code-motion — no semantic change to any live contract; per-plan oracle + inertness gate; indentation measured per file, never generalized per package (`live_trading_system.py` is 4-space, `compose.py` and `backtest_trading_system.py` are tabs); test gate is `poetry run pytest tests`, never `make test`. Note this module is under a mypy `ignore_errors` override, so dead code and unused imports left behind by a move pass mypy AND the suite silently — sweep imports explicitly after each extraction.*
+
+**Plans**: TBD
+
+### Phase 13: Test Migration + Gates
+
+**Goal**: Add the live-smoke, config-restart, and multi-portfolio-attribution gates that lock the decomposed live surface. Lands last (needs the whole surface incl. multi-portfolio AND the P12 composition dissolution — gates written against the pre-dissolution shape would lock a surface that is about to move). *(TEST-01 — the replay-driver relocation to `tests/` — was pulled forward into P6; this phase now inherits replay-free production and only adds the surface-dependent gates.)*
+**Depends on**: Phase 6, Phase 11, Phase 12
 **Requirements**: TEST-02, TEST-03, TEST-04 *(TEST-01 delivered in P6)*
 **Success Criteria** (what must be TRUE):
 
-  1. *(TEST-01 delivered in P6 — production is already replay-free: `run_paper_replay` → `tests/` `ReplayRunner`, `replay` plugin fixture-registered-only. P12 inherits this; no P12 action.)*
-  2. A live-smoke gate exercises the decomposed live surface end-to-end (facade → factory → `LiveRunner` → controllers) on the replay fixture.
+  1. *(TEST-01 delivered in P6 — production is already replay-free: `run_paper_replay` → `tests/` `ReplayRunner`, `replay` plugin fixture-registered-only. This phase inherits it; no action.)*
+  2. A live-smoke gate exercises the decomposed live surface end-to-end (facade → composition steps → `LiveRunner` → controllers) on the replay fixture.
   3. A config-restart gate proves persisted runtime overrides survive a restart (RTCFG-03).
   4. A multi-portfolio attribution gate proves fills route to the correct portfolio and the distinct-`account_id` invariant fails loud (MPORT-02/MPORT-04).
   5. The backtest oracle stays byte-exact and `test_okx_inertness.py` stays green.
@@ -589,7 +611,7 @@ measured per file, never generalized per package (`live_trading_system.py` is 4-
 
 **Execution Order (dependency graph, not strict numeric):**
 `P1 · P2 → P3 → P4` and `P3 → {P5}` with `P2 → P5`; `{P4,P5} → P6 → {P7, P8}`;
-`{P4,P7} → P9 ★`; `{P4,P6} → P10 ★`; `{P5,P7} → P11 ★`; `{P6,P11} → P12`.
+`{P4,P7} → P9 ★`; `{P4,P6} → P10 ★`; `{P5,P7} → P11 ★ → P11.1 → P12`; `{P6,P11,P12} → P13`.
 P1 and P2 have no dependencies and can start in parallel.
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -606,7 +628,9 @@ P1 and P2 have no dependencies and can start in parallel.
 | 9 ★. Runtime-Config Platform | v1.8 | 0/TBD | Not started | - |
 | 10 ★. Strategies Registry | v1.8 | 0/TBD | Not started | - |
 | 11 ★. Multi-Portfolio-Live | v1.8 | 0/TBD | Not started | - |
-| 12. Test Migration + Gates | v1.8 | 0/TBD | Not started | - |
+| 11.1 (INSERTED). Account Provisioning + Mandatory Account Identity | v1.8 | 0/TBD | Not started | - |
+| 12. Live Composition-Root Dissolution | v1.8 | 0/TBD | Not started | - |
+| 13. Test Migration + Gates | v1.8 | 0/TBD | Not started | - |
 
 ## Phases (shipped — archived detail)
 
@@ -789,10 +813,11 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 ## Progress
 
 Milestones through v1.7 are shipped and archived under `milestones/`. **v1.8 — Live System Refactor &
-Live-Readiness Hardening is the active milestone** (12 phases, 64 requirements; roadmap created
-2026-07-09, revised to 12 phases 2026-07-09 — old P4 SqlEngine Migrations Relocation folded into old P5
-New Durable Stores → merged storage-schema phase P4). Per-phase v1.8 status is tracked in the
-**Progress (v1.8 — active)** table above.
+Live-Readiness Hardening is the active milestone** (13 integer phases + three decimal insertions
+(6.1/10.1/11.1), 86 requirements; roadmap created 2026-07-09 at 12 phases — old P4 SqlEngine Migrations
+Relocation folded into old P5 New Durable Stores → merged storage-schema phase P4; Phase 12 (Live
+Composition-Root Dissolution) inserted 2026-07-22, renumbering Test Migration + Gates to P13).
+Per-phase v1.8 status is tracked in the **Progress (v1.8 — active)** table above.
 
 **Milestone summary** (full per-phase detail archived under `milestones/`):
 
@@ -806,7 +831,7 @@ New Durable Stores → merged storage-schema phase P4). Per-phase v1.8 status is
 | v1.5 — Backtest Performance Optimization | 1-8 | 26 | ✅ Shipped | 2026-06-26 |
 | v1.6 — N+3b Persistence Foundation | 1-5 | 21 | ✅ Shipped | 2026-06-30 |
 | v1.7 — Live Trading Readiness | 1-7 + 05.1/05.2/05.3 | 75 | ✅ Shipped | 2026-07-07 |
-| v1.8 — Live System Refactor & Live-Readiness Hardening | 1-12 | TBD | 🚧 In progress | - |
+| v1.8 — Live System Refactor & Live-Readiness Hardening | 1-13 (+6.1/10.1/11.1) | TBD | 🚧 In progress | - |
 
 **Next:** `/gsd:plan-phase 1` (Config Centralization) — or plan P1 and P2 in parallel (both dependency-free).
 

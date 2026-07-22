@@ -22,7 +22,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 2. **OKX import-inertness** — `tests/integration/test_okx_inertness.py` stays green; extended to assert
    register-vs-build on P1/P2/P4/P5. Registering a venue imports no `ccxt.pro` until built; `SystemConfig`
    never constructs Postgres `SqlSettings` at import; `FifoEventBus`/`EngineContext(sql_engine=None)` pull
-   nothing heavy. **Zero new third-party dependency, no poetry change** anywhere in P1–P12 (research STACK).
+   nothing heavy. **Zero new third-party dependency, no poetry change** anywhere in P1–P13 (research STACK).
 
 3. **Held throughout** — Decimal money end-to-end; single UUIDv7; determinism (business `time`, seeded RNG,
    injected clock); `mypy --strict` clean on new code; `filterwarnings=["error"]` green; tabs/spaces
@@ -444,9 +444,106 @@ the code does not yet trust it.*
   unreachable in a real chain, and the negative control varies only the chain head — so add a test whose
   staging inserts ONLY `portfolio_account_state` rows (the real pre-upgrade shape) and asserts the refusal.
 
-### Test Migration + Gates (P12 — except TEST-01, pulled forward into P6)
+### Live Composition-Root Dissolution (P12 — INSERTED 2026-07-22)
 
-- [x] **TEST-01** *(delivered in **P6**, pulled forward from P12)*: the ENTIRE replay test-harness moves
+> Source: the 2026-07-22 pre-11.1 structural read of `itrader/trading_system/live_trading_system.py`.
+> The file is **2409 lines** — a 1143-line facade class (105–1248) welded to a 1160-line composition
+> root (1250–2409) of which `build_live_system` alone is **687 lines**. The backtest path splits the
+> same job three ways (`backtest_trading_system.py` / `compose.py` / `backtest_runner.py`); live has
+> no `compose.py` peer. The milestone goal states a *~200-line* facade and the `__init__` docstring
+> at `:138` still cites that P7-EXIT gate; post-P7 the class is 1143 lines and grew through P9/P10/P11.
+> These are the "Tier 2" findings — Tier 1 (the account-provisioning + venue-wiring extraction,
+> ~510 lines) is Phase 11.1's own Wave 1, since 8 of 11 ACCT criteria edit that region.
+> All six are **behaviour-preserving code motion**: no semantic change to any live contract.
+
+- [ ] **COMP-01**: `build_live_system` **disappears as a builder**. No single function anywhere in the
+  tree carries the live composition root. Composition becomes an ordered sequence of named,
+  independently-constructible steps — storage bootstrap → engine → portfolio bootstrap → venue wiring →
+  runtime-config platform → safety → runner — each constructible and assertable **without booting a
+  `LiveTradingSystem`**. The seams are already legible in the current body's own section comments
+  (`:1779` / `:1828` / `:1896` / `:1971` / `:2147` / `:2266`). A thin ordered entry point survives so
+  the three externally-imported names keep resolving — verified 2026-07-22 that `LiveTradingSystem`,
+  `build_live_system` and `_layer_persisted_overrides` are the **complete** external surface across
+  `itrader/`, `tests/` (37 files touch the module) and `scripts/`, so the move is cheap behind a
+  re-export. Whether the entry point keeps the `build_live_system` name is a discussion decision.
+- [ ] **COMP-02**: Live storage bootstrap is a pure step. The `SqlSettings` credential probe that
+  resolves `(environment, sql_engine, halt_record_store, system_store)` (`:1779–1826`) has no facade,
+  venue or handler knowledge and is unit-testable on both arms — Postgres credential present, and the
+  in-memory fallback that WR-10 requires to warn loudly rather than default a credential string.
+- [ ] **COMP-03**: Config-ingress validation leaves the facade. `_validate_config_ingress` +
+  `_dry_validate_config_ingress` (`:1135–1238`, 105 lines) touch no facade state beyond
+  `self._config_router is None` and the logger, and are the literal FastAPI-400 boundary this milestone
+  exists to expose (LR-01 keeps the ASGI code out; the *seam* is in scope). **Reconcile with**
+  `config_router.py:402::_dry_validate_copy` — today two implementations of one validation contract,
+  hand-synced and deliberately divergent (a fresh default instance vs `model_copy`, because the ingress
+  check runs on the EXTERNAL caller thread and must not read the sub-models the engine thread writes).
+  Either unify them or pin the divergence as a decision with the thread-ownership rationale in-code.
+- [ ] **COMP-04**: The live stats + status read-model leaves the facade — `_stats` / `_stats_lock` /
+  `_update_stats` / `_on_order_throttle_rejected` / `_increment_error_count` / `_snapshot_system_stats`
+  (`:498`, 49 lines) / `get_status` (`:973`, 68 lines) — ~180 lines into one collaborator owning its own
+  lock. `get_status` merges four sources (safety snapshot, stats dict, throttle counter, runner thread
+  state, error-policy breaker snapshot) into a dict; that is what the FastAPI layer serves, so it belongs
+  in a read-model, not on the lifecycle object. Together with COMP-05 this is what breaks the
+  construction cycle COMP-06 measures.
+- [ ] **COMP-05**: The three connector-loop callbacks leave the facade —
+  `_on_venue_stream_down` / `_on_venue_stream_up` / `_request_connector_halt` (`:423–462`, 41 lines) —
+  onto an object constructed with the bus. They touch **only** `global_queue` and the logger; nothing
+  facade-owned. Load-bearing beyond tidiness: they are one of the two knots forcing the builder to
+  construct the facade mid-function (`:2138`) before it can wire venue callbacks (`:2348–2358`). Their
+  Pitfall-9 contract is preserved verbatim — thread-safe `bus.put` only, never blocking venue I/O on the
+  connector asyncio loop, and `_request_connector_halt` keeps emitting the FIXED
+  `HaltReason.CONNECTOR_FATAL.value` literal and never `str(exc)` (V7/T-07-01, no secret crosses the
+  loop→engine boundary).
+- [ ] **COMP-06**: **The None-then-assign wiring pattern is GONE — zero survivors, not a reduced count.**
+  `LiveTradingSystem.__init__` today declares **nine** `Optional[Any] = None` wiring fields (`_safety`,
+  `_stream_recovery`, `_throttle`, `_config_router`, `_system_store`, `_system_stats_store`,
+  `_live_runner`, `_error_policy`, `_quarantined_strategies`) that composition assigns afterward across
+  ~10 statements. Every one becomes a **required constructor argument** with a real value at
+  construction: no `Optional[Any] = None` wiring field, no post-construction `facade._<field> =`
+  assignment anywhere in composition. Grep-clean on both, verified as a completion gate.
+
+  *Scope boundary — WIRING fields only, not runtime state.* `universe` / `_universe_handler` /
+  `_session_initialized` are populated by `_initialize_live_session` at `start()` and legitimately do not
+  exist at construction (D-12 keeps session init deferred, and the live suite monkeypatches that method
+  in three places). They are runtime state, stay as they are, and this requirement does not touch them.
+  The distinction is the point: a collaborator that exists before the facade must be injected; state that
+  comes into being during the run must not be faked into the constructor.
+
+  *Why this is achievable rather than aspirational* (verified against the code 2026-07-22):
+  **six of the nine hold no facade reference at all** — `_stream_recovery`, `_throttle`,
+  `_config_router`, `_system_store`, `_system_stats_store`, `_quarantined_strategies` are constructed
+  from stores/config/bus/lifecycles and are late-attached only by habit; they are injectable today with
+  no prerequisite. The **three genuine construction cycles** — `_safety` (needs
+  `notify_status_change=facade._notify_status_change`), `_live_runner` (needs five facade hooks:
+  `_on_loop_start` / `_update_stats` / `_record_bar_metrics` / `_on_loop_error` /
+  `_on_order_throttle_rejected`), and `_error_policy` (`.bind(error_counter=facade._increment_error_count)`)
+  — all close once **COMP-04 and COMP-05** move those callback bodies off the facade: every one of them
+  reduces to `safety.update_status` + a stats write + a `portfolio_handler` read, none of which is
+  facade-unique. COMP-04/05 are therefore hard prerequisites of this requirement, not neighbours.
+
+  *One field needs explicit handling:* `_stop_event` is created in `__init__` today and handed **out**
+  to `LiveRunner` + `WorkerSupervisor` by the builder. It must be created before the facade and injected
+  into all three, so ownership is stated once rather than inverted.
+
+  *Consequence that makes this checkable:* the WR-02 `StateError` guard at `start()`
+  (`live_trading_system.py:697` — *"facade constructed outside build_live_system
+  (LiveRunner/ErrorPolicy/SafetyController unwired)"*) becomes **unreachable and is deleted**. An unwired
+  facade stops being constructible, so it stops needing a runtime check. If that guard cannot be deleted,
+  this requirement is not met.
+
+  *Blast radius (measured 2026-07-22):* exactly **one** production construction site
+  (`live_trading_system.py:2138`) and **zero** direct constructions in `tests/` — every test reaches the
+  facade through `build_live_system` / `for_exchange`. Five test-side late-attach assignments
+  (`tests/unit/trading_system/test_stop_tears_down_every_lifecycle.py` ×2,
+  `tests/support/replay_harness.py`, `tests/integration/test_strategy_external_add_lifecycle.py`,
+  `tests/integration/test_config_ingress.py`) convert to construction-time injection. The other ~10
+  matching assignments elsewhere in `itrader/` are other classes assigning their OWN constructor
+  arguments (`session_initializer`, `route_registrar`, `stream_recovery_handler`, `config_router`,
+  `full_event_handler`, `error_handler`) and are out of scope.
+
+### Test Migration + Gates (P13 — except TEST-01, pulled forward into P6)
+
+- [x] **TEST-01** *(delivered in **P6**, pulled forward from this phase)*: the ENTIRE replay test-harness moves
   OUT of the `itrader` package into `tests/` — `run_paper_replay` → **`TestRunner`**, `ReplayDataProvider`
   → **`TestLiveDataProvider`**, `ReplayDataPlugin` → **`TestDataPlugin`** (registered **only** by a test
   fixture), `PAPER_PARITY_*`/`_PAPER_*` → `tests/`; production is replay-free (concern 9/§13/§8e). The
@@ -502,7 +599,7 @@ Explicitly excluded — documented to prevent scope creep.
 
 ## Traceability
 
-Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is created — the 12 phases are formalized in `.planning/ROADMAP.md` (`### Phase 1` .. `### Phase 12`, goals + success criteria + dependency graph). The old P4 (SqlEngine Migrations Relocation) and P5 (New Durable Stores) were merged into a single storage-schema phase P4 (both live-only, off the oracle hot path). Status `Pending` = mapped + roadmapped, awaiting execution.
+Each requirement maps to exactly one phase. The roadmap was created 2026-07-09 with 12 phases; it now carries **13 integer phases plus three decimal insertions** (6.1, 10.1, 11.1), formalized in `.planning/ROADMAP.md` (`### Phase 1` .. `### Phase 13`, goals + success criteria + dependency graph). The old P4 (SqlEngine Migrations Relocation) and P5 (New Durable Stores) were merged into a single storage-schema phase P4 (both live-only, off the oracle hot path); Phase 12 (Live Composition-Root Dissolution) was inserted 2026-07-22, renumbering Test Migration + Gates to P13. Status `Pending` = mapped + roadmapped, awaiting execution.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
@@ -571,10 +668,16 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | MPORT-05 | P11 | Complete |
 | MPORT-06 | P11 | Complete |
 | MPORT-07 | P11 | Complete |
+| COMP-01 | P12 | Pending |
+| COMP-02 | P12 | Pending |
+| COMP-03 | P12 | Pending |
+| COMP-04 | P12 | Pending |
+| COMP-05 | P12 | Pending |
+| COMP-06 | P12 | Pending |
 | TEST-01 | P6 | Complete |
-| TEST-02 | P12 | Pending |
-| TEST-03 | P12 | Pending |
-| TEST-04 | P12 | Pending |
+| TEST-02 | P13 | Pending |
+| TEST-03 | P13 | Pending |
+| TEST-04 | P13 | Pending |
 
 **Coverage:**
 
@@ -584,6 +687,6 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 
 ---
 *Requirements defined: 2026-07-09*
-*Last updated: 2026-07-21 — added **MPORT-07** (discovered during P11 discussion: the execution exchange must be keyed `(venue, account_id)`, not by venue name alone). **69/69 requirements mapped, 0 orphans.** Note the previously-stated "64/64" was stale from 2026-07-09: it predated the four `DECOMP-*` requirements added by the inserted Phase 10.1, so the true count was already 68 before MPORT-07. Full scope P1–P12 + 3 owner refinements.*
+*Last updated: 2026-07-22 — added the six **COMP-0N** requirements for the INSERTED **Phase 12: Live Composition-Root Dissolution** (`build_live_system` disappears; the facade sheds config-ingress validation, the stats/status read-model, and the connector-loop signal callbacks). Test Migration + Gates renumbered **P12 → P13**. **86/86 requirements mapped, 0 orphans** (80 before COMP). Note the previously-stated "69/69" was stale: it predated the eleven `ACCT-*` requirements added 2026-07-22 for the inserted Phase 11.1, so the true count was already 80 before COMP. Full scope P1–P13 + 3 owner refinements.*
 
 *Prior: 2026-07-09 — roadmap revised to 12 phases (old P4 SqlEngine Migrations Relocation folded into old P5 New Durable Stores → merged storage-schema phase P4; all downstream phases renumbered −1); full scope P1–P12 + 3 owner refinements*

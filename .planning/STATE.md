@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: Live System Refactor & Live-Readiness Hardening
-current_phase: 12
-current_phase_name: Test Migration + Gates
+current_phase: 11.1
+current_phase_name: Account Provisioning + Mandatory Account Identity
 status: planning
-stopped_at: Phase 11 context gathered
-last_updated: "2026-07-22T10:32:17.444Z"
+stopped_at: "Phase 11.1 discussion PARTIAL — structural area locked (D-01..D-08); 3 areas open, NOT ready to plan"
+last_updated: "2026-07-22T00:00:00.000Z"
 last_activity: 2026-07-22
-last_activity_desc: "Completed quick task 260722-g6w: closed Phase 11 code-review blockers CR-01 + CR-05"
+last_activity_desc: "Phase 11.1 discuss: locked the structural redesign (D-01..D-08) — Account loses its Portfolio back-reference, one venue path across backtest+live, PaperVenuePlugin owns its SimulatedExchange, memoized VenueBundles provider; ~360 lines delete. Inserted Phase 12 (COMP-01..06), P12 test phase -> P13"
 progress:
-  total_phases: 12
-  completed_phases: 10
+  total_phases: 16
+  completed_phases: 13
   total_plans: 43
   completed_plans: 43
-  percent: 83
+  percent: 81
 ---
 
 # Project State
@@ -29,13 +29,16 @@ deterministic, cross-validated numbers (oracle **134 / `46189.87730727451`**; v1
 **Current focus:** Phase 11 — multi-portfolio-live
 thin ~200-line facade over focused, venue-parametrized, FastAPI-ready collaborators — **without
 disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI itself is out of scope
-(LR-01). Full scope: core refactor (P1–P8 + P12) + the three ★ feature-adds (P9–P11).
+(LR-01). Full scope: core refactor (P1–P8 + P12 + P13) + the three ★ feature-adds (P9–P11).
 
 ## Current Position
 
 Phase: 11.1 — Account Provisioning + Mandatory Account Identity (INSERTED)
 Plan: Not started
-Status: Ready to plan
+Status: **Discussion PARTIAL — do NOT plan yet.** `11.1-CONTEXT.md` locks the structural area only
+(D-01..D-08). Three areas remain open: ACCT-02 provisioning bootstrap (nothing writes the first
+`venue_accounts` row once `_mint_account_rows` is deleted), WR-06/WR-07 (routed here by 11-REVIEW),
+and phase sizing/wave split. Resume: `/gsd:discuss-phase 11.1` → "Update it".
 Last activity: 2026-07-22 — Completed quick task 260722-hpz: closed WR-08, the last Phase 11 review finding outside 11.1
 locked seven-wave decomposition. Plan-checker: VERIFICATION PASSED, zero blockers, zero warnings. Gates green —
 7/7 MPORT requirements covered, 30/30 CONTEXT decisions cited by ID in must_haves, 14/14 spec-less probe edges
@@ -64,7 +67,7 @@ sub-decisions explicitly superseded and reconciled in-file.
   portfolio mismatch — benign at N=1, wrong at N>1. Must become evaluate-all.
 
 - **Highest regression risk:** D-09 moves per-portfolio config off `portfolio_account_state.config_json` (P9 D-25)
-  onto the new `portfolios` row — that is the tested RTCFG-03 path **P12's TEST-03 gate verifies**. The migration
+  onto the new `portfolios` row — that is the tested RTCFG-03 path **P13's TEST-03 gate verifies** (was P12 before the 2026-07-22 renumber). The migration
   must move data, not just repoint reads.
 
 - **Folded todo:** `b2-strategy-subscription-portfolio-id-uuid-column` — String→Uuid **and** the FK to `portfolios`
@@ -170,7 +173,7 @@ Progress: [██████████] 100% (8/9 core phases; the three ★ 
 2. **OKX import-inertness** — `tests/integration/test_okx_inertness.py` stays green, extended to assert
    **register-vs-build** on P1/P2/P4/P5 (registering a venue imports no `ccxt.pro` until built;
    `SystemConfig` never constructs Postgres `SqlSettings` at import). **Zero new dependency / no poetry
-   change** anywhere in P1–P12.
+   change** anywhere in P1–P13.
 
 3. **Held throughout** — Decimal money end-to-end; single UUIDv7; determinism (business `time`, seeded
    RNG, injected clock); `mypy --strict` clean on new code; `filterwarnings=["error"]` green; tabs/spaces
@@ -179,7 +182,7 @@ Progress: [██████████] 100% (8/9 core phases; the three ★ 
 ## Phase Map (v1.8 — Phases 1-12, numbering reset)
 
 Dependency graph (not strict numeric order): `P1 · P2` (no deps) → `P3{P1,P2}` → `P4{P3}`; `P5{P2,P3}`;
-`P6{P4,P5}` → `P7{P6}` · `P8{P6}`; `P9★{P4,P7}`; `P10★{P4,P6}`; `P11★{P5,P7}`; `P12{P6,P11}`.
+`P6{P4,P5}` → `P7{P6}` · `P8{P6}`; `P9★{P4,P7}`; `P10★{P4,P6}`; `P11★{P5,P7}` → `P11.1{P11}` → `P12{P11.1}`; `P13{P6,P11,P12}`.
 
 | Phase | Name | Requirements | Notes |
 |-------|------|--------------|-------|
@@ -193,11 +196,14 @@ Dependency graph (not strict numeric order): `P1 · P2` (no deps) → `P3{P1,P2}
 | 8 | Error Subsystem | ERR-01..04 | **CF-1 aggregate breaker MUST trip** (hard criterion); CF-5 |
 | 9 ★ | Runtime-Config Platform | RTCFG-01..06 | feature-add; allowlist + venue-kind-aware fee/slippage gate |
 | 10 ★ | Strategies Registry | STRAT-01..03 | feature-add; STRAT-03 atomic re-config folds pair-strategy TODO |
+| 10.1 | StrategiesHandler Decomposition | DECOMP-01, 01a, 02, 03 | INSERTED follow-up to P10 |
 | 11 ★ | Multi-Portfolio-Live | MPORT-01..07 | LR-03 (never trim); distinct-`account_id` fails loud |
-| 12 | Test Migration + Gates | TEST-01..04 | lands last; production replay-free; attribution gate |
+| 11.1 | Account Provisioning + Mandatory Account Identity | ACCT-01..11 | INSERTED follow-up to P11; DB as sole account-truth source |
+| 12 | Live Composition-Root Dissolution | COMP-01..06 | INSERTED 2026-07-22; `build_live_system` disappears; behaviour-preserving |
+| 13 | Test Migration + Gates | TEST-01..04 | lands last; production replay-free; attribution gate |
 
-**Coverage: 69/69 mapped, 0 orphans.** *(was stated as 64/64 through 2026-07-20 — stale: it predated the four `DECOMP-*` reqs from the inserted P10.1, so the true count was 68 before MPORT-07 was added 2026-07-21.)* ★ = trimmable feature-add (in scope — owner chose full scope; the
-trim boundary P1–P8+P12 core vs P9–P11 ★ is noted, not taken). Research flags (plan-time research): P6
+**Coverage: 86/86 mapped, 0 orphans.** *(was stated as 69/69 through 2026-07-22 — stale: it predated the eleven `ACCT-*` reqs from the inserted P11.1, so the true count was 80 before the six `COMP-*` were added 2026-07-22. Earlier "64/64" was likewise stale from before the four `DECOMP-*` of P10.1.)* ★ = trimmable feature-add (in scope — owner chose full scope; the
+trim boundary P1–P8+P12+P13 core vs P9–P11 ★ is noted, not taken). Research flags (plan-time research): P6
 (`UniverseWiring` byte-exact discipline), P8 (CF-1 route-classification + livelock test), P11
 (`client_order_id`/`portfolio_id` two-key attribution). Skip research-phase: P2/P4/P5 (specified/mechanical).
 
@@ -390,7 +396,7 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 - **Indentation hazard:** handler modules use tabs; `config/`, `core/`, `price_handler/feed/`,
   `itrader/storage/`, events package use 4 spaces. Match the sibling file — never normalize.
 
-- **Zero new dependency / no poetry change** anywhere in P1–P12 (adding a lib regresses inertness).
+- **Zero new dependency / no poetry change** anywhere in P1–P13 (adding a lib regresses inertness).
 - New requirements discovered during execution are added to REQUIREMENTS.md with traceability, not
   silently folded into a running phase.
 
