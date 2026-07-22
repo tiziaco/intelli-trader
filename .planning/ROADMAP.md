@@ -591,7 +591,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 11.1-08-PLAN.md — D-14: exactly one data provider per boot; `VenueBundles` replaces the eager per-account map on the live path (VENUE-07)
+- [x] 11.1-08-PLAN.md — D-14: exactly one data provider per boot; `VenueBundles` replaces the eager per-account map on the live path (VENUE-07)
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
