@@ -599,7 +599,7 @@ Plans:
 
 **Wave 7** *(blocked on Wave 6 completion)*
 
-- [ ] 11.1-10-PLAN.md — D-18: the commission estimator is decomposed, late binding preserved, value identity proven under a non-zero fee model — oracle-gated (VENUE-08)
+- [x] 11.1-10-PLAN.md — D-18: the commission estimator is decomposed, late binding preserved, value identity proven under a non-zero fee model — oracle-gated (VENUE-08)
 
 *Cross-cutting constraints (apply to every plan): GATE-01 import inertness preserved (`test_okx_inertness.py` green, no new eager
 async/ccxt/SQL on the backtest import path); money stays `Decimal`; single UUIDv7 `idgen` scheme; indentation
