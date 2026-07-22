@@ -579,7 +579,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 11.1-04-PLAN.md — D-07: `rng` joins `EngineContext`; `ExecutionHandler` receives the one shared seeded RNG instead of deriving it (VENUE-06)
+- [x] 11.1-04-PLAN.md — D-07: `rng` joins `EngineContext`; `ExecutionHandler` receives the one shared seeded RNG instead of deriving it (VENUE-06)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
