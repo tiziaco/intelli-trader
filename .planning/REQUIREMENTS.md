@@ -315,29 +315,29 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 
 ### ★ Multi-Portfolio-Live (P11)
 
-- [ ] **MPORT-01**: The venue plugin's `new_account(portfolio_ref, config)` mints a per-portfolio account
+- [x] **MPORT-01**: The venue plugin's `new_account(portfolio_ref, config)` mints a per-portfolio account
   (venue-truth → `VenueAccount` scoped to `portfolio.account_id`; compute → a fresh `SimulatedAccount`);
   `_link_venue_account_to_portfolios` + its `RuntimeError(>1)` guard are deleted (LR-03/§10b).
 
-- [ ] **MPORT-02**: A distinct-`account_id` invariant fails **loud** at composition time — multiple
+- [x] **MPORT-02**: A distinct-`account_id` invariant fails **loud** at composition time — multiple
   portfolios sharing one venue `account_id` is rejected (pooled buying power the venue can't split back
   out is deferred) (§10a).
 
-- [ ] **MPORT-03**: A signal fans out to each subscribed portfolio; each sizes/orders independently against
+- [x] **MPORT-03**: A signal fans out to each subscribed portfolio; each sizes/orders independently against
   its own account; the venue partitions balance/positions/fills by `account_id` (§10a).
 
-- [ ] **MPORT-04**: `clOrdId` is renamed `client_order_id` (venue↔engine correlation), distinct from
+- [x] **MPORT-04**: `clOrdId` is renamed `client_order_id` (venue↔engine correlation), distinct from
   `portfolio_id` (attribution); every submitted order is tagged with its portfolio; fills route via
   `client_order_id`/`venue_order_id` → engine order → `FillEvent(portfolio_id)` → the right
   `Portfolio.on_fill` (LR-19/§10c).
 
-- [ ] **MPORT-05**: `PortfolioSpec` gains `account_id`; the `ReconciliationCoordinator` iterates active
+- [x] **MPORT-05**: `PortfolioSpec` gains `account_id`; the `ReconciliationCoordinator` iterates active
   portfolios, reconciling each against its own `VenueAccount`/`account_id` (§10b-c).
 
-- [ ] **MPORT-06**: Connectors are keyed `(venue, account_id)` (VENUE-03) so multi-account portfolios share
+- [x] **MPORT-06**: Connectors are keyed `(venue, account_id)` (VENUE-03) so multi-account portfolios share
   or decouple connectors correctly without a combinatorial matrix (LR-20/§8c).
 
-- [ ] **MPORT-07** *(DISCOVERED during P11 discussion, 2026-07-21 — not in the 2026-07-07 design)*: The
+- [x] **MPORT-07** *(DISCOVERED during P11 discussion, 2026-07-21 — not in the 2026-07-07 design)*: The
   **execution exchange** is keyed `(venue, account_id)`, not by venue name alone. `ExecutionHandler.exchanges`
   keys on the pair, `on_order` resolves the account from `event.portfolio_id` (via a new
   `PortfolioReadModel.account_for`), and `VenueBundle` carries per-account exchanges. **Why this is required, not
@@ -470,13 +470,13 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | DECOMP-01a | P10.1 | Complete |
 | DECOMP-02 | P10.1 | Complete |
 | DECOMP-03 | P10.1 | Complete |
-| MPORT-01 | P11 | Pending |
-| MPORT-02 | P11 | Pending |
-| MPORT-03 | P11 | Pending |
-| MPORT-04 | P11 | Pending |
-| MPORT-05 | P11 | Pending |
-| MPORT-06 | P11 | Pending |
-| MPORT-07 | P11 | Pending |
+| MPORT-01 | P11 | Complete |
+| MPORT-02 | P11 | Complete |
+| MPORT-03 | P11 | Complete |
+| MPORT-04 | P11 | Complete |
+| MPORT-05 | P11 | Complete |
+| MPORT-06 | P11 | Complete |
+| MPORT-07 | P11 | Complete |
 | TEST-01 | P6 | Complete |
 | TEST-02 | P12 | Pending |
 | TEST-03 | P12 | Pending |

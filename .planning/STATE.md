@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: Live System Refactor & Live-Readiness Hardening
-current_phase: 11
-current_phase_name: multi-portfolio-live
-status: executing
-stopped_at: Phase 11 planned — 11 plans in 7 waves, ready to execute
-last_updated: "2026-07-21T10:54:26.427Z"
-last_activity: 2026-07-21
-last_activity_desc: Phase 11 execution started
+current_phase: 12
+current_phase_name: Test Migration + Gates
+status: planning
+stopped_at: Phase 11 context gathered
+last_updated: "2026-07-22T08:55:15.032Z"
+last_activity: 2026-07-22
+last_activity_desc: Phase 11 complete, transitioned to Phase 12
 progress:
   total_phases: 11
   completed_phases: 10
@@ -33,10 +33,10 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 
 ## Current Position
 
-Phase: 11 (multi-portfolio-live) — EXECUTING
-Plan: 1 of 11
-Status: Executing Phase 11
-Last activity: 2026-07-21 — Phase 11 execution started
+Phase: 12 — Test Migration + Gates
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-07-22 — Phase 11 complete, transitioned to Phase 12
 locked seven-wave decomposition. Plan-checker: VERIFICATION PASSED, zero blockers, zero warnings. Gates green —
 7/7 MPORT requirements covered, 30/30 CONTEXT decisions cited by ID in must_haves, 14/14 spec-less probe edges
 authored (8 covered truths + 3 flat-scalar backstop markers + 3 flagged unclassified assumptions). Preceded by
