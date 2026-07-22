@@ -111,10 +111,18 @@ class EnhancedOrderValidator:
             "default": {"open": time(0, 0), "close": time(23, 59)}  # 24/7 for crypto
         }
         
-        # Supported exchanges. "csv" is the offline golden-feed venue used by the backtest
-        # path: portfolios are created with exchange="csv", so signals carry that venue and
-        # the validator must admit it for the offline run (DEF-01-B class, Plan 01-04).
-        self.supported_exchanges = {"NYSE", "NASDAQ", "BINANCE", "OANDA", "default", "simulated", "csv"}
+        # Supported venues. "paper" is the ONE name of the simulated fill engine
+        # (D-05): every backtest portfolio AND every live-paper portfolio is created
+        # with exchange="paper"/venue_name="paper" (D-19), so signals carry that venue
+        # and the validator must admit it or the offline run refuses every order and
+        # produces zero trades. It replaces the retired "csv"/"simulated" synonyms.
+        #
+        # This is a DEFAULT-DENY allowlist on the admission path (ASVS V5): a venue
+        # that is not a member is refused with a typed UNSUPPORTED_EXCHANGE ERROR.
+        # It must NEVER be widened to accept-all and the membership check must never
+        # be removed to make a rename pass — that converts a rename bug into a
+        # permanently open gate. Repoint it; do not weaken it.
+        self.supported_exchanges = {"NYSE", "NASDAQ", "BINANCE", "OANDA", "default", "paper"}
     
     def validate_order_pipeline(self, order: Order) -> ValidationResult:
         """

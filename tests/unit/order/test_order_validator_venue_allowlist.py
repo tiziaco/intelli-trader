@@ -4,9 +4,9 @@ Proves:
 - **VENUE-04** — the venue name a portfolio carries must be admitted at
   admission; an unknown or empty venue must be REFUSED with a typed error code,
   never silently accepted.
-- **D-05** — the backtest venue name is renamed by plan 11.1-06. The rename is
-  only safe if the allowlist moves with it; this file is what goes red if it
-  does not.
+- **D-05** — plan 11.1-06 renamed the backtest venue to ``paper``. The rename was
+  only safe because the allowlist moved with it; this file is what goes red if a
+  future rename forgets the allowlist.
 - **D-19** — the venue reaches the validator as ``Portfolio.exchange``, which is
   exactly the field D-19 changes.
 - **RESEARCH F-3** — ``order_validator.py:117`` is a default-deny allowlist and
@@ -14,9 +14,9 @@ Proves:
   SMA_MACD signal at admission: a total, silent, zero-trade run.
 
 This file exists because that control was unguarded. The backtest venue name in
-the parametrized set below is EXPECTED TO CHANGE when D-05 lands — plan 11.1-06
-must update this list and ``EnhancedOrderValidator.supported_exchanges`` in the
-SAME commit, or one of them goes red.
+the parametrized set below CHANGED when D-05 landed — plan 11.1-06 updated this
+list and ``EnhancedOrderValidator.supported_exchanges`` in the SAME commit, which
+is the only way both stay in step.
 
 Scope: these tests call ``_validate_exchange_support`` directly rather than
 driving ``validate_order_pipeline``. The full pipeline layers price, quantity
@@ -58,7 +58,7 @@ def _make_order(**overrides) -> Order:
         "action": Side.BUY,
         "price": 40000.0,
         "quantity": 0.1,
-        "exchange": "csv",
+        "exchange": "paper",
         "strategy_id": 1,
         "portfolio_id": 1,
     }
@@ -73,14 +73,15 @@ def _validator_reporting_venue(venue: str) -> EnhancedOrderValidator:
     return EnhancedOrderValidator(read_model)
 
 
-# The venue names a backtest portfolio can currently carry. "csv" is the golden
-# offline feed venue (`scripts/run_backtest.py` and `build_backtest_system` both
-# create portfolios with exchange="csv"); "default" and "simulated" are the
-# harness/simulated-exchange venues.
+# The venue names a backtest portfolio can currently carry. "paper" is the ONE
+# name of the simulated fill engine (`scripts/run_backtest.py` and
+# `build_backtest_system` both create portfolios with exchange="paper" /
+# venue_name="paper"); "default" is the harness venue.
 #
-# Plan 11.1-06 (D-05) adds the NEW backtest venue name to BOTH this list and
-# `EnhancedOrderValidator.supported_exchanges`, in the same commit.
-@pytest.mark.parametrize("venue", ["csv", "default", "simulated"])
+# Plan 11.1-06 (D-05) landed the rename: it repointed BOTH this list and
+# `EnhancedOrderValidator.supported_exchanges` off the retired "csv"/"simulated"
+# synonyms onto "paper", in one commit.
+@pytest.mark.parametrize("venue", ["paper", "default"])
 def test_backtest_venue_names_are_admitted(venue):
     """Every venue a backtest portfolio can carry passes the allowlist check.
 
@@ -139,7 +140,7 @@ def test_allowlist_is_default_deny_not_accept_all():
     edge is structurally satisfied — no iteration order is observable to any
     caller, so no verdict can be order-dependent.
     """
-    validator = _validator_reporting_venue("csv")
+    validator = _validator_reporting_venue("paper")
 
     assert isinstance(validator.supported_exchanges, set)
     assert validator.supported_exchanges

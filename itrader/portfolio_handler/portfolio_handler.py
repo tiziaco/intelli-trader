@@ -229,8 +229,10 @@ class PortfolioHandler:
 
         F-5 (11-05): ``portfolio_id`` / ``account_id`` / ``venue_name`` mirror the
         ``Portfolio.__init__`` parameters one-for-one and are threaded straight
-        through. All three DEFAULT so the byte-exact backtest composition-root call
-        — ``add_portfolio(name=, exchange='csv', cash=)`` — stays untouched.
+        through. All three DEFAULT, so a minimal call still works — but D-19 makes
+        the backtest composition root pass ``venue_name`` EXPLICITLY:
+        ``add_portfolio(name=, exchange='paper', venue_name='paper', cash=)``, the
+        same shape a live portfolio is created with.
 
         * ``portfolio_id`` — an EXISTING id to reattach to on rehydrate (F-1).
           Supplying an id already registered here RAISES rather than overwriting:
