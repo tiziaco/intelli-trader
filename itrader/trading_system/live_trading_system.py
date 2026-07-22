@@ -889,13 +889,23 @@ class LiveTradingSystem:
         # which drives ConnectorProvider.close_all() (disconnect every memoized
         # connector) — a safe no-op for paper (empty memo) and for an unregistered
         # venue (lifecycle is None, guarded below).
-        # 11-09: ONE stop() is enough for every account. VenueLifecycle.stop() drives
-        # ConnectorProvider.close_all(), which disconnects EVERY memoized connector for
-        # the run — the memo is shared across accounts — so calling it on the primary
-        # tears down all of them. Read defensively (getattr) because stop() must survive
-        # a partially-constructed facade.
-        lifecycles = getattr(self, '_venue_lifecycles', None) or {}
-        lifecycle = next(iter(lifecycles.values()), None)
+        # WR-08: tear down EVERY account's lifecycle, symmetric with the start() loop
+        # above. The previous shortcut (stop only the primary) held for just ONE of
+        # VenueLifecycle.stop()'s two branches — the `self._connectors is not None` one,
+        # where ConnectorProvider.close_all() disconnects every memoized connector for
+        # the run. Its documented fallback, `elif self._bundle.connector is not None:
+        # disconnect()`, exists for lifecycles built WITHOUT a shared provider and covers
+        # only THAT bundle, so every non-primary connector leaked: a dangling
+        # authenticated venue socket in production, a ResourceWarning (hard failure)
+        # under filterwarnings=["error"]. The shared-provider case is unaffected by the
+        # extra calls — close_all() clears its memo in a finally
+        # (connectors/provider.py:82-91), so a second call iterates an empty memo.
+        # Snapshot into a list (not a live view) so a teardown that mutates the map
+        # cannot raise "dictionary changed size during iteration", and keep it BEFORE
+        # the try so the finally holds the full map on every return path. Read
+        # defensively (getattr) because stop() must survive a partially-constructed
+        # facade.
+        lifecycles = list((getattr(self, '_venue_lifecycles', None) or {}).items())
         try:
             if not self._running:
                 self.logger.warning('Live trading system is not running')
@@ -921,11 +931,21 @@ class LiveTradingSystem:
             # VenueLifecycle — cancel every spawned stream task and close the
             # ccxt/native sessions so no leaked socket / ResourceWarning survives
             # across runs. lifecycle.stop() drives ConnectorProvider.close_all().
-            if lifecycle is not None:
+            # WR-08 (guard placement, DECISION): the try/except sits INSIDE the loop, at
+            # this call site, per iteration — NOT inside VenueLifecycle.stop(). That
+            # method stays honest and keeps raising for its own single-lifecycle callers
+            # and its unit contract (tests/unit/venues/test_lifecycle.py); isolating here
+            # is what stops one bad venue from stranding the remaining venues' sockets or
+            # blocking the SQL-spine dispose below. Swallowing here also stops a teardown
+            # failure from masking an exception already propagating out of the try body.
+            # The old `if lifecycle is not None` guard is gone because the loop is
+            # self-guarding on an empty map — not a lost check.
+            for account_id, lifecycle in lifecycles:
                 try:
                     lifecycle.stop()
                 except Exception as e:
-                    self.logger.error(f'Error disconnecting venue connector: {e}')
+                    self.logger.error(
+                        f'Error disconnecting venue connector for account {account_id}: {e}')
             # 05-06: dispose the operational SQL spine (the CachedSql* stores compose it)
             # so its connection pool is closed at shutdown — an undisposed engine leaks a
             # socket / ResourceWarning under filterwarnings=["error"]. Safe no-op when the
