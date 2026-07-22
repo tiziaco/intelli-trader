@@ -562,11 +562,25 @@ class PortfolioHandler:
         account. A spot (``SimulatedCashAccount``) account has no margin
         requirement and returns ``Decimal("0")``. The PortfolioReadModel
         signature ``maintenance_margin(portfolio_id) -> Decimal`` is FROZEN.
+
+        D-01 (11.1-03): the MATH still lives on the leaf — what changed is that
+        this handler now SUPPLIES the portfolio-side inputs (the open positions
+        and the portfolio id) instead of the leaf reaching back through an
+        ``Account -> Portfolio`` reference for them. Only the body moved; the
+        ``PortfolioReadModel`` signature above is unchanged.
         """
-        account = self.get_portfolio(portfolio_id).account
+        portfolio = self.get_portfolio(portfolio_id)
+        account = portfolio.account
         if not isinstance(account, SimulatedMarginAccount):
             return Decimal("0")
-        return account.maintenance_margin()
+        # Pass ``portfolio.portfolio_id``, NOT the ``portfolio_id`` argument: the
+        # argument may arrive as an int under the in-flight id migration (which
+        # is why ``_portfolios`` is Any-keyed), and the WR-02 StateError carries
+        # the resolved PortfolioId as its attribution context.
+        return account.maintenance_margin(
+            portfolio.position_manager.get_all_positions(),
+            portfolio.portfolio_id,
+        )
 
     def margin_ratio(self, portfolio_id: PortfolioId) -> Decimal:
         """Return ``total_equity / maintenance_margin`` (D-12/D-13).
@@ -574,11 +588,22 @@ class PortfolioHandler:
         ACCT-02: pulled DOWN to ``SimulatedMarginAccount.margin_ratio``; this is a
         thin pass-through. A spot account returns the deterministic ``Decimal("0")``
         sentinel (no margin required). Signature FROZEN (PortfolioReadModel).
+
+        D-01 (11.1-03): as with ``maintenance_margin``, this handler now supplies
+        the portfolio-side inputs — mark-to-market equity, the open positions and
+        the portfolio id — while the ratio arithmetic and its zero-maintenance
+        sentinel stay on the leaf. The ``PortfolioReadModel`` signature stays
+        frozen at ``margin_ratio(portfolio_id) -> Decimal``.
         """
-        account = self.get_portfolio(portfolio_id).account
+        portfolio = self.get_portfolio(portfolio_id)
+        account = portfolio.account
         if not isinstance(account, SimulatedMarginAccount):
             return Decimal("0")
-        return account.margin_ratio()
+        return account.margin_ratio(
+            portfolio.total_equity,
+            portfolio.position_manager.get_all_positions(),
+            portfolio.portfolio_id,
+        )
 
     # ------------------------------------------------------------------
     # Isolated-margin liquidation engine (LIQ-01/02, D-01-CORR/D-03-CORR/D-04/
