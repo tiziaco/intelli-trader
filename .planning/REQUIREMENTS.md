@@ -350,6 +350,73 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   makes an existing dimension explicit rather than adding one: every mutable field on `OkxExchange` is already
   account-scoped, and the markets/precision map lives on the connector (`okx.py:952-955`). (P11 CONTEXT D-27.)
 
+### One Venue Path + Account Ownership (P11.1 — added 2026-07-22 when P11.1 was split)
+
+*Source: the 2026-07-22 Phase 11.1 discussion (`11.1-CONTEXT.md`, decisions D-01..D-08 / D-14 /
+D-17..D-19). Root decision: domain objects stop participating in their own wiring — **objects receive
+their collaborators; composition constructs them**. `Portfolio` mints its own `Account` and
+`ExecutionHandler` mints its own `SimulatedExchange`, and composition then reaches in to overwrite or
+alias the result. Fixing that at the source DELETES ~360 lines that a relocation would merely have moved.
+The discussion explicitly rejected extracting a `trading_system/venue_wiring.py` module. Backtest and
+live then differ only in which plugins are registered. Every requirement here is oracle-gated: SMA_MACD
+byte-exact `134 / 46189.87730727451`.*
+
+- [ ] **VENUE-01** *(D-01)*: `Account` carries no reference to `Portfolio`. `SimulatedCashAccount(initial_cash)`
+  and `SimulatedMarginAccount(initial_cash)` drop the `portfolio` constructor parameter; `VenueAccount` already
+  takes none. The two portfolio-dependent reads move into their method signatures — `maintenance_margin(positions, ...)`
+  and `margin_ratio(equity)` — supplied by `PortfolioHandler`, already their only caller
+  (`portfolio_handler.py:569` / `:581`). The mutual reference is an accident, not a structural constraint:
+  `SimulatedCashAccount` stores `self.portfolio` and never reads it (that is the byte-exact oracle leaf), and only
+  `SimulatedMarginAccount` reads it, at `simulated.py:831-833` and `:873`. **The `Account` ABC does NOT change** —
+  neither method is abstract, and `account/conformance.py` references neither.
+- [ ] **VENUE-02** *(D-02, D-03)*: `Portfolio.__init__` receives a **built** `Account`; the duplicate account-leaf
+  selection at `portfolio.py:176-179` is deleted, and `VenuePlugin.new_account` becomes the sole account factory,
+  losing its `portfolio_ref` parameter. Passing a *factory* into `Portfolio` was considered and rejected — it would
+  leave `Portfolio` participating in its own wiring, which is the defect rather than the fix. Today the same
+  margin-vs-cash selection is implemented twice, and `PaperVenuePlugin.new_account`'s own docstring admits it is
+  the pre-11-07 `account_factory` copied verbatim.
+- [ ] **VENUE-03** *(D-04)*: The backtest registers `PaperVenuePlugin` and goes through the same venue path as live,
+  passing a real, empty `ConnectorProvider({})` — **no `Optional`/`None` wiring seam**, honouring the standing
+  constraint against late-init. Safe because `ConnectorProvider.__init__` takes a plain plugin dict and
+  `PaperVenuePlugin.build_bundle` deliberately ignores its `connectors` argument (paper has no venue session).
+  GATE-01 inertness is preserved and independently evidenced: `venues/__init__.py` imports no concretion by P5
+  acceptance gate, `venues/registry.py` has zero runtime imports, and `itrader.venues` is absent from
+  `test_okx_inertness.py`'s `_FORBIDDEN` list.
+- [ ] **VENUE-04** *(D-05, D-19)*: The backtest venue is named `'paper'`, the `('csv', DEFAULT_ACCOUNT_ID)` alias in
+  `ExecutionHandler` is retired, and backtest portfolios pass `venue_name='paper'` explicitly so backtest and live
+  portfolios are structurally identical at creation. **Highest oracle-risk item in the phase** — it warrants its own
+  byte-exact-gated plan. Blast radius: `backtest_trading_system.py:520` (the string is `'csv'`, not `'simulated'`),
+  the whole `exchanges` dict literal at `execution_handler.py:290-303` including the dead `('ccxt', …): None` slot,
+  the direct reads at `backtest_trading_system.py:395` and `compose.py:239-240`, and ~6 test sites. All fail loudly.
+- [ ] **VENUE-05** *(D-06, D-17)*: `PaperVenuePlugin` builds its **own** `SimulatedExchange` inside `build_bundle`,
+  symmetric with `OkxVenuePlugin` building its own `OkxExchange`, from an `ExchangeConfig` received at construction
+  (`PaperVenuePlugin(exchange_config)` at registration). `ExecutionHandler` neither mints one (`:290`) nor is handed
+  one. This dissolves the compose-versus-venue-assembly cycle at its source — `PaperVenuePlugin(execution_handler.exchanges[...])`
+  at `live_trading_system.py:2028` has nothing left to reach for. The config must be passed, not imported: it is absent
+  from the `ITraderConfig` singleton AND run-derived, since `_seed_supported_symbols` folds this run's complete ticker
+  set into `limits.supported_symbols` (`backtest_trading_system.py:67-78`, `:463-466`).
+- [ ] **VENUE-06** *(D-07)*: `EngineContext` carries `rng`, so the one shared seeded `random.Random` reaches the plugin
+  that now builds a stochastic component. A consequence of VENUE-05: determinism requires ONE instance injected at the
+  wiring seam rather than re-derived per plugin. `EngineContext` currently carries only
+  `bus`/`config`/`environment`/`feed`/`store`/`sql_engine`.
+- [ ] **VENUE-07** *(D-08, D-14)*: A memoized `VenueBundles` provider over `(registry, connectors, ctx)` is held by BOTH
+  `ExecutionHandler` and `PortfolioHandler`, each asking for the view it needs (the exchange, or the account). Nothing is
+  passed in pre-built and nothing is mutated from outside. It REPLACES `assemble_venues`' eager map plus the registration
+  loop at `live_trading_system.py:2101` — a swap, not an addition. Memoization is load-bearing: two independent
+  `build_bundle` callers would produce two `OkxExchange` instances per account, and `OkxExchange.connect()` is the sole
+  spawn site for `_stream_fills`/`_stream_orders`, so the fill streams would double-spawn. Exactly **one** data provider
+  is built, for the feed, which closes `11-REVIEW.md` **WR-07** structurally — non-primary accounts build none, so there
+  are no unwired credential-bearing providers to wire. The review's alternative fix (wire halt-signal on every provider)
+  is rejected: it contradicts the documented single-feed decision at `live_trading_system.py:2347`.
+- [ ] **VENUE-08** *(D-18)*: The commission estimator is decomposed. `FeeModelCommissionEstimator` leaves `compose.py`
+  (`:57-81`), the `core/commission_estimator.py` seam narrows to a fee-model provider, and the admission convention
+  (`side="buy"`, `order_type="market"`) moves into `AdmissionManager`, which owns it — it is admission policy, not wiring.
+  Late binding MUST be preserved: `simulated.py:775` **replaces** the fee model object on config update, so holding it
+  directly would silently compute reservations against a stale rate. **Reopens the prior-phase D-15 Protocol shape** —
+  deliberate, not accidental. Side effect: the `isinstance(self._exchange, SimulatedExchange)` guard at `compose.py:78`
+  is replaced by an explicit "this venue exposes no fee model" contract. The golden run pins `ZeroFeeModel` so the estimate
+  is `0` under both shapes, but the reservation path is oracle-critical and value-identity must be PROVEN byte-exact.
+
 ### Account Provisioning + Mandatory Account Identity (P11.2 — split out of P11.1 on 2026-07-22)
 
 *Source: the Phase 11 code review (`11-REVIEW.md` CR-02/CR-03/WR-03/WR-05) plus the 2026-07-22 design
@@ -599,7 +666,7 @@ Explicitly excluded — documented to prevent scope creep.
 
 ## Traceability
 
-Each requirement maps to exactly one phase, **except Phase 11.1**, which carries none: after the 2026-07-22 D-16 split it is governed entirely by the locked decisions D-01..D-08 / D-14 / D-17..D-19 in its CONTEXT.md, and its eleven `ACCT-*` requirements moved to the new Phase 11.2. The roadmap was created 2026-07-09 with 12 phases; it now carries **13 integer phases plus four decimal insertions** (6.1, 10.1, 11.1, 11.2), formalized in `.planning/ROADMAP.md` (`### Phase 1` .. `### Phase 13`, goals + success criteria + dependency graph). The old P4 (SqlEngine Migrations Relocation) and P5 (New Durable Stores) were merged into a single storage-schema phase P4 (both live-only, off the oracle hot path); Phase 12 (Live Composition-Root Dissolution) was inserted 2026-07-22, renumbering Test Migration + Gates to P13. Status `Pending` = mapped + roadmapped, awaiting execution.
+Each requirement maps to exactly one phase. The roadmap was created 2026-07-09 with 12 phases; it now carries **13 integer phases plus four decimal insertions** (6.1, 10.1, 11.1, 11.2), formalized in `.planning/ROADMAP.md` (`### Phase 1` .. `### Phase 13`, goals + success criteria + dependency graph). The old P4 (SqlEngine Migrations Relocation) and P5 (New Durable Stores) were merged into a single storage-schema phase P4 (both live-only, off the oracle hot path); Phase 12 (Live Composition-Root Dissolution) was inserted 2026-07-22, renumbering Test Migration + Gates to P13. Status `Pending` = mapped + roadmapped, awaiting execution.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
@@ -687,7 +754,7 @@ Each requirement maps to exactly one phase, **except Phase 11.1**, which carries
 
 ---
 *Requirements defined: 2026-07-09*
-*Last updated: 2026-07-22 (second edit) — **Phase 11.1 was SPLIT in two (D-16)**. The eleven `ACCT-*` requirements moved from P11.1 to the new **Phase 11.2: Account Provisioning Bootstrap + Review Closures**; P11.1 keeps its historical title/directory but now carries the structural half only and maps **zero** requirements (governed by its CONTEXT.md decisions instead). Requirement count and mapping are unchanged at **86/86, 0 orphans** — nothing was added or removed, only remapped.*
+*Last updated: 2026-07-22 (second edit) — **Phase 11.1 was SPLIT in two (D-16)**. The eleven `ACCT-*` requirements moved from P11.1 to the new **Phase 11.2: Account Provisioning Bootstrap + Review Closures**, and eight new **VENUE-0N** requirements were added for P11.1's retained structural scope (one venue path + account ownership), derived from its locked decisions D-01..D-08 / D-14 / D-17..D-19. **94/94 requirements mapped, 0 orphans** (86 before VENUE). Every phase maps at least one requirement again.*
 
 *Previously: 2026-07-22 — added the six **COMP-0N** requirements for the INSERTED **Phase 12: Live Composition-Root Dissolution** (`build_live_system` disappears; the facade sheds config-ingress validation, the stats/status read-model, and the connector-loop signal callbacks). Test Migration + Gates renumbered **P12 → P13**. **86/86 requirements mapped, 0 orphans** (80 before COMP). Note the previously-stated "69/69" was stale: it predated the eleven `ACCT-*` requirements added 2026-07-22 for the inserted Phase 11.1, so the true count was already 80 before COMP. Full scope P1–P13 + 3 owner refinements.*
 
