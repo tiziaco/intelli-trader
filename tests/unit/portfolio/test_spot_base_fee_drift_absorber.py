@@ -37,6 +37,10 @@ from itrader.portfolio_handler.account.venue import VenueAccount
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.portfolio_handler.transaction import Transaction
+from tests.support.venue_wiring import (
+    backtest_portfolio_handler,
+    compute_account,
+)
 
 _TICKER = "BTC/USDC"
 _SPOT_FIXTURE = Path(__file__).parent / "okx_recon_payloads_spot.json"
@@ -100,7 +104,7 @@ def venue_connectors():
 
 @pytest.fixture
 def handler() -> PortfolioHandler:
-    return PortfolioHandler(queue.Queue())
+    return backtest_portfolio_handler(queue.Queue())
 
 
 @pytest.fixture
@@ -113,7 +117,8 @@ def halt_calls(handler: PortfolioHandler) -> list:
 def _spot_venue_portfolio(venue_connectors, handler, btc_total: str) -> Portfolio:
     """A registered Portfolio whose account is a VenueAccount snapshotted from spot truth."""
     connector = venue_connectors(_spot_payloads_with_btc(btc_total))
-    portfolio = Portfolio("spot_venue_pf", "okx", Decimal("150000"), datetime.now())
+    portfolio = Portfolio("spot_venue_pf", "okx", Decimal("150000"), datetime.now(),
+                          account=compute_account(Decimal("150000")))
     account = VenueAccount(
         connector, quote_currency="USDC", market_type="spot", symbol=_TICKER,
         account_id="acct-test"

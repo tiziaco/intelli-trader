@@ -17,9 +17,9 @@ import pytest
 from itrader.order_handler.order_manager import OrderManager
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.order_handler.storage.in_memory_storage import InMemoryOrderStorage
-from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.core.enums import MarketExecution
 from itrader.core.exceptions.base import ConfigurationError
+from tests.support.venue_wiring import backtest_portfolio_handler
 
 
 # --- OrderManager.update_config ----------------------------------------------
@@ -55,7 +55,7 @@ def test_manager_bad_value_raises_configuration_error(manager):
 @pytest.fixture
 def handler():
     q = Queue()
-    ptf_handler = PortfolioHandler(q)
+    ptf_handler = backtest_portfolio_handler(q)
     ptf_handler.add_portfolio("test_ptf", "default", 10000)
     return OrderHandler(q, ptf_handler)
 

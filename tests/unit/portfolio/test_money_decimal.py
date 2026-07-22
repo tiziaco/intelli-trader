@@ -22,6 +22,7 @@ import uuid_utils.compat as uuid_compat
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
 from itrader import idgen
+from tests.support.venue_wiring import compute_account
 
 
 @pytest.fixture
@@ -31,6 +32,7 @@ def portfolio():
         exchange="paper",
         cash=150000,
         time=datetime.now(),
+        account=compute_account(150000),
     )
 
 

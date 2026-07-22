@@ -17,12 +17,12 @@ from datetime import datetime
 from decimal import Decimal
 from queue import Queue
 
-from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.order_handler.storage import OrderStorageFactory
 from itrader.events_handler.events import SignalEvent
 from itrader.core.enums import OrderType, Side
 from itrader.core.sizing import FractionOfCash, TradingDirection
+from tests.support.venue_wiring import backtest_portfolio_handler
 
 
 def _unsized_buy_signal(portfolio_id):
@@ -49,7 +49,7 @@ def _unsized_buy_signal(portfolio_id):
 
 def test_position_snapshot_captured_once_per_process_signal():
     queue = Queue()
-    ptf_handler = PortfolioHandler(queue)
+    ptf_handler = backtest_portfolio_handler(queue)
     storage = OrderStorageFactory.create("test")
     order_handler = OrderHandler(queue, ptf_handler, storage)
     portfolio_id = ptf_handler.add_portfolio("test_ptf", "default", 10000)

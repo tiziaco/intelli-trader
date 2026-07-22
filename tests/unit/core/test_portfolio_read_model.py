@@ -38,6 +38,7 @@ import pytest
 from itrader.core.enums import PositionSide
 from itrader.core.ids import OrderId, PortfolioId
 from itrader.core.portfolio_read_model import PortfolioReadModel, PositionView
+from tests.support.venue_wiring import backtest_portfolio_handler
 
 pytestmark = pytest.mark.unit
 
@@ -220,7 +221,7 @@ def handler_with_portfolio():
 
     from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 
-    handler = PortfolioHandler(Queue())
+    handler = backtest_portfolio_handler(Queue())
     portfolio_id = handler.add_portfolio("Conformance", "paper", 100000)
     return handler, portfolio_id
 

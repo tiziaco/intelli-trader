@@ -606,7 +606,13 @@ def test_a_portfolio_naming_an_unassembled_account_is_refused() -> None:
     primary = SimpleNamespace(
         bundle=SimpleNamespace(
             connector=object(),
-            account_factory=lambda portfolio: SimpleNamespace(
+            # 11.1-09 (D-03): the factory is KEYWORD-ONLY and takes no portfolio.
+            # Signed explicitly rather than with a `**kwargs` catch-all — a
+            # double that swallows anything would keep passing after a real
+            # signature change, which is the failure 11-07 removed from
+            # production for the same reason.
+            account_factory=lambda *, account_id=None, initial_cash=0.0,
+            enable_margin=False, state_storage=None: SimpleNamespace(
                 account_id="acct-primary")))
     orphan = SimpleNamespace(
         name="pf-orphan", account_id="acct-missing", account=None,
@@ -657,7 +663,9 @@ def test_a_foreign_venue_portfolio_is_never_given_this_venues_account() -> None:
     okx_lifecycle = SimpleNamespace(
         bundle=SimpleNamespace(
             connector=object(),
-            account_factory=lambda portfolio: marker))
+            # Keyword-only and portfolio-free (D-03), signed explicitly.
+            account_factory=lambda *, account_id=None, initial_cash=0.0,
+            enable_margin=False, state_storage=None: marker))
     sentinel = object()
     foreign = SimpleNamespace(
         name="pf-binance", account_id="main", venue_name="binance",

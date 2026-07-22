@@ -30,6 +30,7 @@ from itrader.portfolio_handler.transaction import Transaction, TransactionType
 from itrader.config import PortfolioConfig, get_portfolio_preset
 from itrader.outils.dict_merge import recursive_merge
 from itrader import idgen
+from tests.support.venue_wiring import compute_account
 
 
 def _margin_config(max_leverage: str = "10") -> PortfolioConfig:
@@ -53,7 +54,8 @@ _FIXED_TIME = datetime(2024, 1, 1, tzinfo=timezone.utc)
 def portfolio():
     """A fresh simulated portfolio funded with $150000 (mirrors test_portfolio.py)."""
     # IN-02: Decimal cash (money is Decimal end-to-end); IN-01: fixed timestamp.
-    return Portfolio("test_pf", "paper", Decimal("150000"), _FIXED_TIME)
+    return Portfolio("test_pf", "paper", Decimal("150000"), _FIXED_TIME,
+                     account=compute_account(Decimal("150000")))
 
 
 @pytest.fixture
@@ -62,6 +64,7 @@ def margin_portfolio():
     return Portfolio(
         "margin_pf", "paper", Decimal("150000"), _FIXED_TIME,
         config=_margin_config(),
+        account=compute_account(Decimal("150000"), enable_margin=True),
     )
 
 

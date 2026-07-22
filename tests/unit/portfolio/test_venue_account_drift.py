@@ -33,6 +33,7 @@ from itrader.core.ids import CorrelationId
 from itrader.portfolio_handler.account.simulated import SimulatedCashAccount
 from itrader.portfolio_handler.account.venue import VenueAccount
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
+from tests.support.venue_wiring import backtest_portfolio_handler
 
 _BTC = "BTC/USDT"
 _SPOT_FIXTURE = Path(__file__).parent / "okx_recon_payloads_spot.json"
@@ -81,7 +82,7 @@ def _cid() -> CorrelationId:
 
 @pytest.fixture
 def handler() -> PortfolioHandler:
-    return PortfolioHandler(queue.Queue())
+    return backtest_portfolio_handler(queue.Queue())
 
 
 @pytest.fixture

@@ -31,6 +31,7 @@ from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.portfolio_handler.position import Position
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
+from tests.support.venue_wiring import backtest_portfolio_handler
 
 
 def _margin_config(max_leverage: str = "10") -> PortfolioConfig:
@@ -71,7 +72,7 @@ class _StubUniverse:
 
 
 def _handler(universe: Any = None) -> PortfolioHandler:
-    h = PortfolioHandler(Queue())
+    h = backtest_portfolio_handler(Queue())
     if universe is not None:
         h.set_universe(universe)
     return h

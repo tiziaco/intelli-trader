@@ -176,6 +176,25 @@ class SimulatedCashAccount(Account):
         )
 
     @property
+    def state_storage(self) -> "PortfolioStateStorage":
+        """The shared persistence seam this leaf routes its working state through.
+
+        Exposed READ-ONLY (11.1-09, D-02) so ``Portfolio`` can ADOPT the seam of the
+        account it is handed rather than building a second one. That inversion is
+        what makes the account/managers split structurally impossible: the account is
+        now built BEFORE its portfolio exists, so a portfolio that built its own
+        backend would leave the leaf on a private one — and the live restart path
+        (``state_storage.rehydrate(account)``) repopulates the reservation and
+        locked-margin caches on the PORTFOLIO's instance, so every reservation would
+        be silently lost across a restart. Backtest reads none of those containers
+        anywhere else, so the byte-exact oracle would stay green throughout.
+
+        There is NO setter: rebinding the seam after construction is the late-init
+        shape this phase exists to remove.
+        """
+        return self._storage
+
+    @property
     def balance(self) -> Decimal:
         """Get current cash balance."""
         return self._balance

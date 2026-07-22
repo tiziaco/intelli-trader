@@ -25,8 +25,10 @@ top-level test packages break full-suite collection).
 from __future__ import annotations
 
 import random
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
+from tests.support.venue_wiring import compute_account
 
 
 class _ExplodingConnectorProvider:
@@ -63,11 +65,17 @@ def _fake_spec(account_id: str | None = None) -> SimpleNamespace:
     return SimpleNamespace(account_id=account_id)
 
 
-def _fake_portfolio() -> SimpleNamespace:
-    """A minimal portfolio the compute-account factory needs (cash leaf, no margin)."""
-    return SimpleNamespace(
-        config=SimpleNamespace(trading_rules=SimpleNamespace(enable_margin=False)),
-    )
+def _fake_storage() -> SimpleNamespace:
+    """A stand-in ``PortfolioStateStorage`` used only to prove the seam is forwarded.
+
+    11.1-09 (D-03): the compute leaf routes reserved cash / locked margin / the
+    cash-operation audit trail through this seam, and the live restart path
+    repopulates the caches on the PORTFOLIO's instance — so a leaf that quietly
+    builds its own backend loses every reservation across a restart while the
+    backtest (which reads none of those containers elsewhere) stays byte-exact. The
+    object is opaque on purpose: the assertion is IDENTITY, not behaviour.
+    """
+    return SimpleNamespace()
 
 
 def test_paper_plugin_module_holds_no_replay_symbol() -> None:
@@ -198,7 +206,7 @@ def test_paper_account_factory_mints_a_compute_account() -> None:
     plugin = PaperVenuePlugin(_seeded_config())
     bundle = plugin.build_bundle(_fake_ctx(), _fake_spec(), _ExplodingConnectorProvider())
 
-    account = bundle.account_factory(_fake_portfolio(), initial_cash=1000.0)
+    account = bundle.account_factory(initial_cash=1000.0)
     assert isinstance(account, Account)
     assert isinstance(account, SimulatedCashAccount)
 
@@ -255,8 +263,8 @@ def test_paper_new_account_mints_a_fresh_leaf_per_portfolio() -> None:
     plugin = PaperVenuePlugin(_seeded_config())
     config = VenueAccountConfig(initial_cash=1000.0)
 
-    account_a = plugin.new_account(_fake_portfolio(), config)
-    account_b = plugin.new_account(_fake_portfolio(), config)
+    account_a = plugin.new_account(config)
+    account_b = plugin.new_account(config)
 
     assert isinstance(account_a, SimulatedCashAccount)
     assert isinstance(account_b, SimulatedCashAccount)
@@ -278,16 +286,41 @@ def test_paper_new_account_selects_the_margin_leaf_when_enabled() -> None:
     from itrader.venues.paper_plugin import PaperVenuePlugin
 
     plugin = PaperVenuePlugin(_seeded_config())
-    config = VenueAccountConfig(initial_cash=1000.0)
 
-    margin_portfolio = _fake_portfolio()
-    margin_portfolio.config.trading_rules.enable_margin = True
-    cash_portfolio = _fake_portfolio()
+    # D-03 (11.1-09): the flag rides on the CONFIG, sourced from the owning
+    # PortfolioConfig.trading_rules by PortfolioHandler.add_portfolio — it is no
+    # longer read off a portfolio the plugin was handed.
+    margin_config = VenueAccountConfig(initial_cash=1000.0, enable_margin=True)
+    cash_config = VenueAccountConfig(initial_cash=1000.0, enable_margin=False)
 
-    assert isinstance(plugin.new_account(margin_portfolio, config),
-                      SimulatedMarginAccount)
-    assert isinstance(plugin.new_account(cash_portfolio, config),
-                      SimulatedCashAccount)
+    assert isinstance(plugin.new_account(margin_config), SimulatedMarginAccount)
+    assert isinstance(plugin.new_account(cash_config), SimulatedCashAccount)
+
+
+def test_paper_new_account_forwards_the_shared_state_storage_seam() -> None:
+    """The leaf lands on the config's seam, never on a private backend (D-01/D-03).
+
+    The account and its three sibling managers MUST share ONE
+    ``PortfolioStateStorage``: the live restart path calls
+    ``state_storage.rehydrate(account)`` and repopulates the reservation /
+    locked-margin caches on the PORTFOLIO's instance. A leaf on its own backend
+    silently loses every reservation across a restart — and stays byte-exact in
+    backtest, where nothing else reads those containers, so no other test goes red.
+    Asserted on BOTH arms because the margin superset takes the same seam.
+    """
+    from itrader.venues.bundle import VenueAccountConfig
+    from itrader.venues.paper_plugin import PaperVenuePlugin
+
+    plugin = PaperVenuePlugin(_seeded_config())
+    seam = _fake_storage()
+
+    cash_leaf = plugin.new_account(
+        VenueAccountConfig(initial_cash=10.0, state_storage=seam))
+    margin_leaf = plugin.new_account(VenueAccountConfig(
+        initial_cash=10.0, enable_margin=True, state_storage=seam))
+
+    assert cash_leaf._storage is seam
+    assert margin_leaf._storage is seam
 
 
 def test_paper_account_factory_delegates_to_new_account() -> None:
@@ -298,6 +331,52 @@ def test_paper_account_factory_delegates_to_new_account() -> None:
     plugin = PaperVenuePlugin(_seeded_config())
     bundle = plugin.build_bundle(_fake_ctx(), _fake_spec(), _ExplodingConnectorProvider())
 
-    account = bundle.account_factory(_fake_portfolio(), initial_cash=2500.0)
+    account = bundle.account_factory(initial_cash=2500.0)
 
     assert isinstance(account, SimulatedCashAccount)
+
+
+def test_paper_account_factory_is_keyword_only_and_has_no_catch_all() -> None:
+    """The 11-07 removal of the ``(*args, **kwargs)`` catch-all is NOT reverted.
+
+    An arg-swallowing arm type-checks clean against a STRUCTURAL Protocol while
+    silently returning one shared unscoped account — a defect the type system cannot
+    see. Asserted on the SIGNATURE so a future "convenience" widening fails here
+    rather than in production.
+    """
+    import inspect
+
+    from itrader.venues.paper_plugin import PaperVenuePlugin
+
+    bundle = PaperVenuePlugin(_seeded_config()).build_bundle(
+        _fake_ctx(), _fake_spec(), _ExplodingConnectorProvider())
+    parameters = inspect.signature(bundle.account_factory).parameters
+
+    assert all(
+        parameter.kind is inspect.Parameter.KEYWORD_ONLY
+        for parameter in parameters.values()
+    ), f"account_factory must be keyword-only: {parameters!r}"
+    assert set(parameters) == {
+        "initial_cash", "enable_margin", "account_id", "state_storage"}
+
+
+def test_paper_account_factory_carries_every_knob_through_to_the_leaf() -> None:
+    """The closure forwards ALL of its arguments — a dropped one is silent (D-03).
+
+    ``enable_margin`` selects the leaf KIND and ``state_storage`` selects the
+    persistence backend; both default, so a closure that accepted them and forgot to
+    pass them on would mint a plausible-looking wrong account with nothing red.
+    """
+    from itrader.portfolio_handler.account import SimulatedMarginAccount
+    from itrader.venues.paper_plugin import PaperVenuePlugin
+
+    bundle = PaperVenuePlugin(_seeded_config()).build_bundle(
+        _fake_ctx(), _fake_spec(), _ExplodingConnectorProvider())
+    seam = _fake_storage()
+
+    account = bundle.account_factory(
+        initial_cash=4200.0, enable_margin=True, state_storage=seam)
+
+    assert isinstance(account, SimulatedMarginAccount)
+    assert account._storage is seam
+    assert account.balance == Decimal("4200.00")

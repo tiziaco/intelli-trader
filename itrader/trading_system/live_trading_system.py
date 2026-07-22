@@ -1712,7 +1712,13 @@ def _attach_venue_accounts(
             continue
         account = minted.get(account_id)
         if account is None:
-            account = lifecycle.bundle.account_factory(portfolio)
+            # 11.1-09 (D-03): the factory is KEYWORD-ONLY and no longer takes a
+            # portfolio. The account id this loop already resolved off
+            # ``portfolio.account_id`` is passed EXPLICITLY, so the venue arm mints
+            # under the SAME id the lifecycle was looked up by. It is never omitted
+            # here: an omitted id falls back to the BUNDLE's own, which is correct
+            # only for the facade's no-portfolio call site.
+            account = lifecycle.bundle.account_factory(account_id=account_id)
             minted[account_id] = account
         portfolio.account = account
     if minted:
