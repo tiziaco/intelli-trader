@@ -3,9 +3,9 @@ phase: 11
 slug: multi-portfolio-live
 # status lifecycle: draft (seeded by plan-phase) → validated (set by validate-phase §6)
 # audit-milestone §5.5 distinguishes NOT-VALIDATED (draft) from PARTIAL (validated + nyquist_compliant: false) (#2117)
-status: draft
+status: validated
 nyquist_compliant: false
-wave_0_complete: false
+wave_0_complete: true
 created: 2026-07-21
 ---
 
@@ -61,12 +61,15 @@ unexpected warning fails the suite, and every marker used must be declared (`uni
 
 ## Per-Task Verification Map
 
-> Populated by `/gsd-validate-phase` after plans exist. Requirement→behavior coverage is pinned
-> below in *Requirement Coverage Targets*; the per-task rows bind those to plan task IDs.
+> Requirement→behavior coverage is pinned below in *Requirement Coverage Targets*; the per-task
+> rows bind those to the plan task IDs. The W7 D-25 lifecycle proof (plan 11-11) is the row set
+> below; every gate was mutation-tested (see `11-11-SUMMARY.md § Mutation testing`).
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| {N}-01-01 | 01 | 1 | MPORT-{XX} | T-11-{XX} / — | {expected secure behavior or "N/A"} | unit | `{command}` | ✅ / ❌ W0 | ⬜ pending |
+| 11-11-01 | 11 | 7 | MPORT-03 | T-11-61 | Two paper accounts with DIFFERENT cash size independently — `qty_A != qty_B` because `cash_A != cash_B` (2:1 exact); one signal fans out to each subscribed portfolio; draining A leaves B able to order | integration (offline) | `poetry run python -m pytest tests/integration/test_multi_portfolio_lifecycle.py -q -k "distinct_account or fans_out or sizes_against or draining"` | ✅ | ✅ green |
+| 11-11-02 | 11 | 7 | MPORT-04 | T-11-58 | A fill for A changes A AND leaves B byte-unchanged (asserted both directions on real `Portfolio`s); two portfolios hold independent positions in the same symbol; the durable order row carries the ordering portfolio id | integration (offline) | `poetry run python -m pytest tests/integration/test_multi_portfolio_lifecycle.py -q -k "fill_for or same_symbol or durable_order_row"` | ✅ | ✅ green |
+| 11-11-03 | 11 | 7 | MPORT-03 / F-1 / D-08 | T-11-59 / T-11-60 | REAL restart — a second `build_live_system` over the same DB returns BOTH ids from the definition rows; `initial_cash` + `config_json` read off the ROW equal persisted (config by VALUE); strategy subscriptions rebind to the SAME ids so the fan-out still reaches both | integration (Postgres-gated; SKIPs Dockerless) | `poetry run python -m pytest tests/integration/test_multi_portfolio_lifecycle.py -q -k "restart or rebind"` | ✅ | ✅ green |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -95,14 +98,18 @@ unexpected warning fails the suite, and every marker used must be declared (`uni
 
 ## Wave 0 Requirements
 
-- [ ] `tests/integration/test_multi_portfolio_lifecycle.py` — D-25 two-paper-account + restart (MPORT-03/04/05, F-1)
-- [ ] `tests/integration/test_per_account_exchange_routing.py` — MPORT-07 with a **fake** multi-account venue plugin (F-3: paper cannot prove this — `live_trading_system.py:1473` hands `PaperVenuePlugin` the single `exchanges['simulated']` object, so both paper accounts necessarily resolve to one exchange)
-- [ ] `tests/integration/test_distinct_account_invariant.py` — MPORT-02 at **both** layers (app check + DB unique index)
-- [ ] Migration data-movement test for D-09 — **assert the migrated value**, not just non-null (a warning-only degrade-clean at `live_trading_system.py:1268` means lost config yields a green suite and silently default-config portfolios)
-- [ ] Rewrite `tests/integration/test_live_system_okx_wiring.py:292,319` and `tests/integration/test_live_portfolio_durable_wiring.py:148` (they call the deleted `_link_venue_account_to_portfolios`)
-- [ ] Refresh stale prose in `tests/integration/test_early_durable_halt_refusal.py:91` and `tests/integration/test_paper_restart_restore.py:6,15`
-- [ ] New cases on the existing reconciliation-coordinator unit tests (D-20 per-symbol baseline, D-21 evaluate-all, D-22 quarantine)
-- [ ] Framework install: **none needed** — pytest is present
+- [x] `tests/integration/test_multi_portfolio_lifecycle.py` — D-25 two-paper-account + restart (MPORT-03/04, F-1/D-08). Delivered by plan 11-11 (10 tests: 8 offline + 2 Postgres-gated). Every gate mutation-tested.
+- [x] `tests/integration/test_per_account_exchange_routing.py` — MPORT-07 with a **fake** multi-account venue plugin (F-3: paper cannot prove this). Delivered by plan 11-06; file present, suite green.
+- [x] `tests/integration/test_distinct_account_invariant.py` — MPORT-02 at **both** layers (app check + DB unique index). Delivered by plan 11-08; file present, suite green.
+- [x] Migration data-movement test for D-09 — **assert the migrated value**, not just non-null. Delivered in `tests/integration/test_p11_migration_chain.py` (plan 11-08 inverted the legacy fallback case to fail-loud); the same value-not-nonnull discipline is re-proven end-to-end by the 11-11 restart test (`config_json` compared by VALUE; mutation M5 confirmed RED).
+- [x] Rewrite `test_live_system_okx_wiring.py` / `test_live_portfolio_durable_wiring.py` (they called the deleted `_link_venue_account_to_portfolios`). Delivered by plan 11-09 (deviation 1) — no call sites remain; residual mentions are docstring history only. Suite green.
+- [~] Refresh stale prose in `tests/integration/test_early_durable_halt_refusal.py:91` and `tests/integration/test_paper_restart_restore.py:6,15`. `test_early_durable_halt_refusal.py` refreshed (11-09). `test_paper_restart_restore.py:6,15` still references the deleted `_link_venue_account_to_portfolios` / `_venue_account` in its D-23 docstring — a **cosmetic** residual only (the executable test passes; the string is prose). Out of plan 11-11's file scope; carried as doc hygiene.
+- [x] New cases on the existing reconciliation-coordinator unit tests (D-20 per-symbol baseline, D-21 evaluate-all, D-22 quarantine). Delivered by plans 11-09/11-10; suite green.
+- [x] Framework install: **none needed** — pytest is present.
+
+> `wave_0_complete: true` — every FUNCTIONAL Wave 0 coverage deliverable is present and the full
+> suite is green (2813 passed / 6 skipped). The one residual (`[~]`) is a cosmetic docstring in a
+> sibling test file, not a coverage gap.
 
 ---
 
