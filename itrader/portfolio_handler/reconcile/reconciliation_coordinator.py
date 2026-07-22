@@ -328,8 +328,13 @@ class ReconciliationCoordinator:
             # NEVER auto-adopt exposure of unknown origin — latch HALT BEFORE trading
             # (D-04/D-05) with the FIXED literal reason (V7). One halt for the whole
             # scan: halt is engine-wide and latched, so a per-residual call would be N
-            # writes of the same state. Plan 11-10 replaces this terminal action with the
-            # per-portfolio quarantine, which is why the SCAN had to become complete
-            # first — the action changes, the collection does not.
+            # writes of the same state. The global latched halt is RETAINED as the
+            # safety arm this milestone. The per-portfolio quarantine that would have
+            # replaced this terminal action for the isolated (one-account) case was
+            # DEFERRED — see `.planning/todos/pending/per-portfolio-quarantine-mechanism.md`
+            # (no requirement demands it, it is blocked on an operator-auth concept the
+            # codebase lacks, and its admission-gate wiring was out of scope). The SCAN
+            # was still made complete (it returns a per-portfolio residual list) so that
+            # deferred quarantine can act per-portfolio without re-plumbing the scan.
             self._halt(HaltReason.BASELINE_RESIDUAL.value)
         return residuals

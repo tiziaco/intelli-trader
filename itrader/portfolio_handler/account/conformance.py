@@ -1,8 +1,12 @@
 """Static account-contract conformance harness (D-02 / F/U-4).
 
-``live_trading_system._link_venue_account_to_portfolios`` assigns a ``VenueAccount``
-onto ``Portfolio.account`` — the ABC-vs-concretion wiring the live settlement path
-relies on. That module sits in the ``D-live`` ``[[tool.mypy.overrides]]`` ignore block,
+``live_trading_system._attach_venue_accounts`` assigns a ``VenueAccount`` onto
+``Portfolio.account`` — the ABC-vs-concretion wiring the live settlement path relies
+on. It mints one account per ``account_id`` via
+``lifecycle.bundle.account_factory(portfolio)`` and assigns it to each portfolio whose
+``account_id`` names that lifecycle (11-09's per-portfolio attach, which replaced the
+earlier single-call linker that 11-09 deleted). That module sits in the
+``D-live`` ``[[tool.mypy.overrides]]`` ignore block,
 so ``mypy --strict`` never type-checks the assignment there. F/U-4 chooses the typed
 conformance module over lifting the whole ``live_trading_system`` ignore (which pulls a
 large deferred-D-live surface into strict scope): this module re-states the same wiring
@@ -48,7 +52,7 @@ def _assert_live_wiring(
     margin: SimulatedMarginAccount,
     venue: VenueAccount,
 ) -> None:
-    """Mirror ``live_trading_system._link_venue_account_to_portfolios`` (D-02).
+    """Mirror ``live_trading_system._attach_venue_accounts`` (D-02).
 
     Every leaf is assignable to the ABC-typed ``Portfolio.account`` field. If the field
     were re-narrowed back to a concretion, ``portfolio.account = venue`` would fail
