@@ -46,6 +46,8 @@ from itrader.execution_handler.execution_handler import (
     ExecutionHandler,
 )
 
+from tests.support.venue_wiring import backtest_venue_bundles
+
 _VENUE = "okxlike"
 _PF_A = 101
 _PF_B = 202
@@ -98,7 +100,7 @@ def routing_env():
     composition root cannot produce this shape until plan 11-07.
     """
     queue = Queue()
-    handler = ExecutionHandler(queue)
+    handler = ExecutionHandler(queue, venue_bundles=backtest_venue_bundles(queue))
     exchange_a = _RecordingExchange("a")
     exchange_b = _RecordingExchange("b")
     handler.exchanges = {

@@ -13,12 +13,15 @@ from itrader.events_handler.events import FillEvent, OrderEvent
 from itrader.core.enums import FillStatus, OrderType, Side
 from itrader.core.exceptions.portfolio import PortfolioNotFoundError
 
+from tests.support.venue_wiring import backtest_venue_bundles
+
 
 @pytest.fixture
 def env():
     """ExecutionHandler with its queue plus a market BUY order event."""
     queue = Queue()
-    execution_handler = ExecutionHandler(queue)
+    execution_handler = ExecutionHandler(
+        queue, venue_bundles=backtest_venue_bundles(queue))
     order_event = OrderEvent(
         time=datetime(2024, 1, 1),
         ticker="BTCUSDT",
@@ -76,14 +79,17 @@ def test_execution_handler_implements_both_hooks(env):
 
 
 def test_no_config_construction_admits_btcusd(env):
-    """TEMPORARY BTCUSD backward-compat fallback (D-13, Trap 1; Wave 4 removes it).
+    """The default fallback config admits BTCUSD (D-13, Trap 1; D-17).
 
-    With NO ``exchange_config`` supplied, ``ExecutionHandler(global_queue)`` must
-    still seed the COMPLETE default-preset ∪ {BTCUSD} set at construction so the
+    With NO run-derived config supplied, the shared test wiring falls back to
+    ``default_exchange_config()`` — the preset ∪ {BTCUSD} — so the
     direct-construction oracle/integration path (which lost the removed hardcoded
     ``register_symbol('BTCUSD')`` line) stays byte-exact. Seeding the complete set
     at construction is replacement-safe: a later ``update_config`` re-derivation
     can never silently wipe BTCUSD.
+
+    11.1-07: the union now happens in ``default_exchange_config()`` and reaches the
+    exchange through ``PaperVenuePlugin``, not through a handler-side fallback.
     """
     _queue, execution_handler, _order_event = env
     exchange = execution_handler.exchanges[('paper', DEFAULT_ACCOUNT_ID)]

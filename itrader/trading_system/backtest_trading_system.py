@@ -54,6 +54,15 @@ from itrader.trading_system.backtest_runner import BacktestRunner
 from itrader.trading_system.compose import Engine, compose_engine
 from itrader.trading_system.engine_context import EngineContext
 from itrader.trading_system.system_spec import SystemSpec
+# 11.1-07 (D-04): the backtest joins the SAME venue path live uses. All four names are
+# import-INERT — the registry runs no runtime imports, PaperVenuePlugin lazy-imports its
+# SimulatedExchange inside build_bundle, ConnectorProvider is inert as of 11.1-01, and
+# bundles.py is TYPE_CHECKING-only — so they belong at module top, not in a lazy body.
+# tests/integration/test_okx_inertness.py is the check that this stays true.
+from itrader.connectors.provider import ConnectorProvider
+from itrader.venues.bundles import VenueBundles
+from itrader.venues.paper_plugin import PaperVenuePlugin
+from itrader.venues.registry import ExecutionVenueRegistry
 
 from itrader.logger import get_itrader_logger
 
@@ -185,11 +194,24 @@ class BacktestTradingSystem(object):
 				store=store,
 				sql_engine=None,
 			)
-			# 06.1-01 (D-04): spec-free compose — pass exchange_config/results_store
-			# explicitly (the legacy arm has no results store). exchange_config is the
-			# seeded ExchangeConfig riding on spec.exchange.
+			# 11.1-07 (D-04/D-17): the LEGACY arm joins the same venue path live uses —
+			# a real ExecutionVenueRegistry holding a PaperVenuePlugin built from THIS
+			# run's seeded ExchangeConfig (never a default preset: the preset omits the
+			# golden BTCUSD ticker and the exchange would refuse it), plus a REAL, EMPTY
+			# ConnectorProvider. Empty is the representation of "this mode has no venue
+			# sessions" — never None (D-04 rejects a nullable seam here).
+			#
+			# BOTH arms are migrated deliberately: the byte-exact oracle drives THIS
+			# legacy arm, so migrating only the factory below would leave the oracle
+			# proving nothing about the change (RESEARCH F-5).
+			exec_registry = ExecutionVenueRegistry()
+			exec_registry.register('paper', PaperVenuePlugin(spec.exchange))
+			connectors = ConnectorProvider({})
+			venue_bundles = VenueBundles(exec_registry, connectors, ctx)
+			# 06.1-01 (D-04): spec-free compose — pass venue_bundles/results_store
+			# explicitly (the legacy arm has no results store).
 			self.engine = compose_engine(
-				ctx, exchange_config=spec.exchange, results_store=None)
+				ctx, venue_bundles=venue_bundles, results_store=None)
 			self.runner = BacktestRunner(self.engine)
 
 		self.logger.info('Trading system initialised')
@@ -513,13 +535,22 @@ def build_backtest_system(spec: SystemSpec) -> BacktestTradingSystem:
 		store=store,
 		sql_engine=None,
 	)
-	# 06.1-01 (D-04): spec-free compose — pass exchange_config (the seeded
-	# ExchangeConfig on spec.exchange) + the OPTIONAL results_store explicitly. The
-	# e2e ScenarioSpec is the SystemSpec alias and carries results_store; getattr
-	# keeps a duck-typed spec absent-field safe (-> None -> store-free/byte-exact).
+	# 11.1-07 (D-04/D-17): the FACTORY arm registers the paper venue plugin with the
+	# seeded, RUN-DERIVED ExchangeConfig (spec.exchange, complete symbol set already
+	# folded in above) and passes a REAL, EMPTY ConnectorProvider — the backtest has
+	# no venue sessions, and an empty collection is that fact, never None (D-04).
+	# Identical two blocks in both arms; see the legacy arm for why both migrate.
+	exec_registry = ExecutionVenueRegistry()
+	exec_registry.register('paper', PaperVenuePlugin(spec.exchange))
+	connectors = ConnectorProvider({})
+	venue_bundles = VenueBundles(exec_registry, connectors, ctx)
+	# 06.1-01 (D-04): spec-free compose — pass venue_bundles + the OPTIONAL
+	# results_store explicitly. The e2e ScenarioSpec is the SystemSpec alias and
+	# carries results_store; getattr keeps a duck-typed spec absent-field safe
+	# (-> None -> store-free/byte-exact).
 	engine = compose_engine(
 		ctx,
-		exchange_config=spec.exchange,
+		venue_bundles=venue_bundles,
 		results_store=getattr(spec, 'results_store', None))
 	runner = BacktestRunner(engine)
 

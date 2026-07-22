@@ -11,11 +11,18 @@ holder.
 D-14a boundary: ``compose_engine`` must NOT hardcode a run-mode backend string
 (no backtest/live literal). The mode-specific FACTORY (``build_backtest_system``)
 selects the concrete backends (the order-storage + signal-store backends) via
-their respective factories, plus the construction-time
-``ExchangeConfig`` (with the complete symbol set already folded in — D-13/Trap 1)
-and passes them IN. The seam wires the graph from those injected concretes,
-staying run-mode-agnostic (mirrors the injected ``CommissionEstimator`` /
-``PortfolioReadModel`` DI rationale).
+their respective factories and passes them IN. The seam wires the graph from those
+injected concretes, staying run-mode-agnostic (mirrors the injected
+``CommissionEstimator`` / ``PortfolioReadModel`` DI rationale).
+
+11.1-07 (D-04/D-08/D-17) moves the VENUE backends up to that same boundary, one
+level higher than the retired exchange-config parameter. The factory now builds an
+``ExecutionVenueRegistry``, registers the concrete plugin(s) with their RUN-DERIVED
+``ExchangeConfig`` (a concrete ``PaperVenuePlugin`` is mode-specific, so registering
+it here would be exactly the hardcoded-backend D-14a forbids), builds a real —
+possibly EMPTY — ``ConnectorProvider``, and hands in a built ``VenueBundles``. This
+seam therefore no longer takes an ``ExchangeConfig`` at all: it does not build an
+exchange, so it has no use for one.
 
 D-15: ``FeeModelCommissionEstimator`` promotes the inline ``_estimate_commission``
 closure to a typed adapter conforming to the ``core`` ``CommissionEstimator``
@@ -52,6 +59,9 @@ from itrader.strategy_handler.strategies_handler import StrategiesHandler
 from itrader.trading_system.engine_context import EngineContext
 from itrader.trading_system.simulation.time_generator import TimeGenerator
 from itrader.universe import Universe
+# Import-inert (TYPE_CHECKING-only internals) and deliberately NOT taken from the
+# ``itrader.venues`` barrel — see the module docstring of ``venues/bundles.py``.
+from itrader.venues.bundles import VenueBundles
 
 
 class FeeModelCommissionEstimator:
@@ -121,7 +131,7 @@ class Engine:
 
 def compose_engine(
 	ctx: "EngineContext", *,
-	exchange_config: Optional[Any] = None,
+	venue_bundles: "VenueBundles",
 	results_store: Optional["ResultsStore"] = None,
 	alert_sink: Optional[Any] = None,
 	system_store: Optional[Any] = None,
@@ -137,8 +147,10 @@ def compose_engine(
 	built the store/feed) and no longer constructs a ``CsvPriceStore`` /
 	``BacktestBarFeed`` itself. The only two remaining inputs are HOW/WHERE to
 	execute + persist, so they become explicit keyword params, NOT a spec read:
-	``exchange_config`` (the already-seeded ``ExchangeConfig``, ``None`` for live's
-	default) and ``results_store`` (the OPTIONAL sink, ``None`` on the oracle path).
+	``venue_bundles`` (the built ``(venue, account_id)`` bundle memo — 11.1-07 raised
+	this from the retired exchange-config parameter, because the venue PLUGIN now
+	builds the exchange) and ``results_store`` (the OPTIONAL sink, ``None`` on the
+	oracle path).
 	The WHAT-to-run description (strategies / portfolios / dates / ticker) stays
 	FACTORY-LOCAL and never crosses this shared seam — backtest keeps its
 	``SystemSpec``, live keeps a tiny venue-spec object.
@@ -172,10 +184,17 @@ def compose_engine(
 
 		It is an explicit keyword rather than a read of ``ctx.environment`` so a live
 		system built with a test environment string still routes by account.
-	exchange_config : Optional[Any]
-		The already-seeded ``ExchangeConfig`` threaded into the ``ExecutionHandler``
-		(the complete symbol set folded in by the factory, D-13/Trap 1). ``None`` yields
-		the ``ExecutionHandler`` default (live's behavior today — no change).
+	venue_bundles : VenueBundles
+		The REQUIRED, already-built ``(venue, account_id)`` bundle memo (D-08). The
+		FACTORY constructs the registry, registers the concrete plugin(s) with their
+		RUN-DERIVED ``ExchangeConfig`` (D-17), builds the ``ConnectorProvider`` — a
+		REAL, EMPTY one on the backtest path, never ``None`` (D-04) — and hands the
+		memo in. ``ExecutionHandler`` then RESOLVES its exchange instead of minting
+		one, and (from plan 11.1-09) ``PortfolioHandler`` holds the SAME instance, so
+		both arms see one exchange and one account factory per venue+account.
+
+		Deliberately NOT re-surfaced on the ``Engine`` holder: the handlers hold it,
+		and a second read path is how two callers end up with divergent views.
 	results_store : Optional[ResultsStore]
 		The OPTIONAL results sink forwarded onto the ``Engine`` holder (RESULT-01/D-04).
 		``None`` on the oracle path keeps it store-free AND SQL-import-inert (GATE-01).
@@ -227,15 +246,14 @@ def compose_engine(
 	# D-27/MPORT-07: the read-model is injected ONLY on the account-routing (live)
 	# arm — see the route_orders_by_account docstring above for why the backtest
 	# arm must stay on the unconditional default account.
-	# D-07: the determinism seam now rides on ``ctx`` — the handler RECEIVES the one
-	# shared seeded RNG instead of deriving it from the config singleton. It has to,
-	# because from plan 11.1-07 the VENUE PLUGIN (not this handler) builds the
-	# stochastic exchange, and a plugin cannot reach a handler-private attribute. Pass
-	# the ctx object itself, never a fresh equal-seeded one: identity is the contract.
+	# D-06/D-08 (11.1-07): the handler RESOLVES its exchange through the injected
+	# VenueBundles instead of minting one. The determinism seam rides on ``ctx.rng``
+	# and reaches the exchange through the PLUGIN (which the memo calls), so the
+	# handler no longer carries an rng of its own — the ctx object itself is what
+	# flows, never a fresh equal-seeded one: identity is the contract.
 	execution_handler = ExecutionHandler(
-		ctx.bus, exchange_config=exchange_config,
-		portfolio_read_model=portfolio_handler if route_orders_by_account else None,
-		rng=ctx.rng)
+		ctx.bus, venue_bundles=venue_bundles,
+		portfolio_read_model=portfolio_handler if route_orders_by_account else None)
 
 	# Commission estimator for the admission cash-reservation gate (D-04/D-15):
 	# the typed FeeModelCommissionEstimator adapter holds the exchange ref and
