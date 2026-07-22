@@ -58,21 +58,15 @@ def _margin_config(max_leverage: str = "10") -> PortfolioConfig:
 # ---------------------------------------------------------------------------
 
 
-class _MockPortfolio:
-    """Minimal portfolio stub for the isolated margin-account guard test."""
-
-    def __init__(self):
-        self.portfolio_id = 12345
-
-
 @pytest.fixture
 def cm():
-    """A SimulatedMarginAccount seeded with $10000 on a mock portfolio.
+    """A SimulatedMarginAccount seeded with $10000.
 
     The margin leaf — ``assert_lock_fits_buying_power`` / ``lock_margin`` live
-    on the margin superset after the 01-02 split.
+    on the margin superset after the 01-02 split. D-01 (11.1-03): the portfolio
+    stub this fixture used to build is gone; the leaf takes no portfolio.
     """
-    return SimulatedMarginAccount(_MockPortfolio(), 10000.0)
+    return SimulatedMarginAccount(10000.0)
 
 
 @pytest.fixture
