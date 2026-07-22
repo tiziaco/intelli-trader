@@ -53,7 +53,7 @@ class _StubUniverse:
 
 def _portfolio(cash: Decimal = Decimal("100000")) -> Portfolio:
     return Portfolio(
-        name="carry-pf", exchange="simulated",
+        name="carry-pf", exchange="paper",
         cash=cash, time=datetime(2024, 1, 1), config=_margin_config(),
     )
 

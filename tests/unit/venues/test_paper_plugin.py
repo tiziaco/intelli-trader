@@ -35,7 +35,7 @@ class _ExplodingConnectorProvider:
 
 
 class _FakeSimulatedExchange:
-    """A stand-in for the compose-built 'simulated' SimulatedExchange (reused AS-IS)."""
+    """A stand-in for the compose-built paper SimulatedExchange (reused AS-IS)."""
 
 
 def _fake_ctx() -> SimpleNamespace:

@@ -526,7 +526,7 @@ def handler_env():
     """OrderHandler wired to a PortfolioHandler with one funded portfolio."""
     queue = Queue()
     ptf_handler = PortfolioHandler(queue)
-    ptf_handler.add_portfolio("test_ptf", "simulated", 1000)
+    ptf_handler.add_portfolio("test_ptf", "paper", 1000)
     storage = InMemoryOrderStorage()
     order_handler = OrderHandler(queue, ptf_handler, storage)
     yield SimpleNamespace(

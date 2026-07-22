@@ -44,7 +44,7 @@ def _margin_config(max_leverage: str = "10") -> PortfolioConfig:
 def margin_portfolio():
     """A $150000 portfolio with enable_margin=True (lock-and-settle on)."""
     return Portfolio(
-        "margin_pf", "simulated", 150000, datetime.now(), config=_margin_config()
+        "margin_pf", "paper", 150000, datetime.now(), config=_margin_config()
     )
 
 

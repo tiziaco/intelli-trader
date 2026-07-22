@@ -131,7 +131,7 @@ def test_restart_layering_reapplies_every_scope_from_its_own_store(wiring):
     )
     wiring.system_store.upsert("config.universe.poll_cadence_s", {"value": 30.0}, _NOW)
     # (venue) persist a simulated-venue fee override into VenueStore.
-    wiring.venue_store.upsert("simulated", {"fee_model": "zero"}, True, _NOW)
+    wiring.venue_store.upsert("paper", {"fee_model": "zero"}, True, _NOW)
     # (order) persist an override via the ORDER store's OWN save_config (NOT SystemStore).
     wiring.order_store.save_config({"market_execution": "next_bar"}, _NOW)
     # (portfolio) persist an override via the Portfolio's OWN bound state_storage — BEFORE any

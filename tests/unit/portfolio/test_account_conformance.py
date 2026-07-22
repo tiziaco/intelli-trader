@@ -105,12 +105,12 @@ def venue_connectors():
 
 
 def _build_cash_leaf(_venue_connectors):
-    portfolio = Portfolio("cash_pf", "simulated", Decimal("150000"), datetime.now())
+    portfolio = Portfolio("cash_pf", "paper", Decimal("150000"), datetime.now())
     return portfolio, portfolio.account
 
 
 def _build_margin_leaf(_venue_connectors):
-    portfolio = Portfolio("margin_pf", "simulated", Decimal("150000"),
+    portfolio = Portfolio("margin_pf", "paper", Decimal("150000"),
                           datetime.now(), config=_margin_config())
     return portfolio, portfolio.account
 

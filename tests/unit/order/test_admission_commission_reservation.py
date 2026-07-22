@@ -90,7 +90,7 @@ def _make_order() -> Order:
         action=Side.BUY,
         price=40000.0,
         quantity=0.5,
-        exchange="csv",
+        exchange="paper",
         strategy_id=1,
         portfolio_id=1,
     )

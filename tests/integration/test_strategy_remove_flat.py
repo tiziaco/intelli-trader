@@ -80,13 +80,13 @@ class _RemoveHarness:
         provision_schema(self.store.backend)
         system, _ = build_paper_replay_system()
         self.system = system
-        simulated = system.execution_handler.exchanges[("simulated", DEFAULT_ACCOUNT_ID)]
+        simulated = system.execution_handler.exchanges[("paper", DEFAULT_ACCOUNT_ID)]
         simulated.register_symbol(_HELD)
         system.feed.bind(system.global_queue, [_HELD])
         # D-27: LIVE (paper) system — the portfolio must name its venue account
         # or on_order refuses it (no default-account fallback).
         self.portfolio_id = system.portfolio_handler.add_portfolio(
-            name="rm_pf", exchange="simulated", cash=1_000_000,
+            name="rm_pf", exchange="paper", cash=1_000_000,
             account_id=DEFAULT_ACCOUNT_ID)
 
         instrument = Instrument(

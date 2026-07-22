@@ -220,18 +220,25 @@ def test_identity_dedup_does_not_collapse_distinct_per_account_exchanges(
     assert len(exchange_b.bars) == 1
 
 
-def test_alias_dedup_still_collapses_two_keys_onto_one_object(
+def test_dedup_still_collapses_two_keys_onto_one_object(
         routing_env, make_bar):
     """The complement of the case above, and the reason the dedup must stay
-    identity-based: driving the shared simulated exchange twice per bar would
-    double-match its resting-order book and silently change every backtest
-    number."""
+    identity-based: driving one shared exchange twice per bar would double-match
+    its resting-order book and silently change every backtest number.
+
+    D-05 retired venue ALIASING (two venue names, one object), so the two keys
+    here are two ACCOUNTS on the paper venue — the shape that still exists. They
+    MUST be distinct keys: writing the same key twice would collapse the literal
+    to a single entry and the test would pass without the dedup running at all.
+    """
     handler, _exchange_a, _exchange_b = routing_env
     shared = _RecordingExchange("shared")
     handler.exchanges = {
-        ("simulated", DEFAULT_ACCOUNT_ID): shared,
-        ("csv", DEFAULT_ACCOUNT_ID): shared,
+        ("paper", "acct-1"): shared,
+        ("paper", "acct-2"): shared,
     }
+    # Guard the premise: two DISTINCT keys really did survive into the registry.
+    assert len(handler.exchanges) == 2
     handler.on_market_data(
         make_bar(open_=1, high=2, low=1, close=2, time=datetime(2024, 1, 2)))
     assert len(shared.bars) == 1

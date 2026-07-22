@@ -33,7 +33,7 @@ from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 
 
 _NAME = "identity_pf"
-_EXCHANGE = "simulated"
+_EXCHANGE = "paper"
 _CASH = 100000
 
 
@@ -116,15 +116,15 @@ def test_account_id_defaults_to_none():
 
 def test_exchange_is_derived_from_venue_name():
     """D-07: venue_name WINS — exchange is derived, never a second source of truth."""
-    portfolio = _portfolio(exchange="csv", venue_name="okx")
+    portfolio = _portfolio(exchange="paper", venue_name="okx")
     assert portfolio.venue_name == "okx"
     assert portfolio.exchange == "okx"
 
 
 def test_exchange_falls_back_to_the_legacy_parameter():
     """The legacy `exchange` input is used as-is when no venue_name is supplied."""
-    portfolio = _portfolio(exchange="csv")
-    assert portfolio.exchange == "csv"
+    portfolio = _portfolio(exchange="paper")
+    assert portfolio.exchange == "paper"
     assert portfolio.venue_name is None
 
 
@@ -135,11 +135,11 @@ def test_exchange_falls_back_to_the_legacy_parameter():
 
 def test_legacy_add_portfolio_shape_is_unchanged(env):
     """The backtest composition-root call shape still works and mints a fresh id."""
-    portfolio_id = env.handler.add_portfolio(name=_NAME, exchange="csv", cash=_CASH)
+    portfolio_id = env.handler.add_portfolio(name=_NAME, exchange="paper", cash=_CASH)
     portfolio = env.handler.get_portfolio(portfolio_id)
     assert isinstance(portfolio_id, uuid.UUID)
     assert portfolio_id.version == 7
-    assert portfolio.exchange == "csv"
+    assert portfolio.exchange == "paper"
     assert portfolio.account_id is None
     assert portfolio.venue_name is None
 

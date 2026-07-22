@@ -44,7 +44,7 @@ def _btcusd_spec() -> SystemSpec:
 def test_btcusd_spec_seeds_default_preset_union_btcusd():
     """A BTCUSD-only spec seeds default preset ∪ {BTCUSD} exactly (Trap 1)."""
     system = build_backtest_system(_btcusd_spec())
-    exchange = system.execution_handler.exchanges[("simulated", DEFAULT_ACCOUNT_ID)]
+    exchange = system.execution_handler.exchanges[("paper", DEFAULT_ACCOUNT_ID)]
     expected = _DEFAULT_PRESET | {"BTCUSD"}
     assert exchange._supported_symbols == expected
 
@@ -63,7 +63,7 @@ def test_spec_tickers_are_unioned_upper_cased():
         portfolios=[],
     )
     system = build_backtest_system(spec)
-    exchange = system.execution_handler.exchanges[("simulated", DEFAULT_ACCOUNT_ID)]
+    exchange = system.execution_handler.exchanges[("paper", DEFAULT_ACCOUNT_ID)]
     expected = _DEFAULT_PRESET | {"BTCUSD", "ETHUSD"}
     assert exchange._supported_symbols == expected
 
@@ -77,7 +77,7 @@ def test_seeded_set_is_replacement_safe_against_update_config():
     intact — never silently dropping BTCUSD.
     """
     system = build_backtest_system(_btcusd_spec())
-    exchange = system.execution_handler.exchanges[("simulated", DEFAULT_ACCOUNT_ID)]
+    exchange = system.execution_handler.exchanges[("paper", DEFAULT_ACCOUNT_ID)]
     expected = _DEFAULT_PRESET | {"BTCUSD"}
     # A reconfigure that re-runs the limits re-derivation path off config.limits.
     exchange.update_config(

@@ -2,7 +2,7 @@
 """Runnable paper-path worker for the live-paper engine (RUN-01, D-08).
 
 A standalone bootstrap that constructs ``LiveTradingSystem``, wires the golden
-SMA_MACD strategy + a single ``'simulated'``-exchange portfolio, and runs the
+SMA_MACD strategy + a single ``'paper'``-venue portfolio, and runs the
 live-paper engine. The composition root is cleanly separable at a process
 boundary (D-07 — option (b) architected as (c) with N=1); importing this module
 has no side effects beyond the ``itrader`` package singletons.

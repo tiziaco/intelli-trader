@@ -63,7 +63,7 @@ def traced_run(tmp_path_factory):
     from itrader.trading_system.backtest_trading_system import BacktestTradingSystem
 
     system = BacktestTradingSystem(
-        exchange="csv",
+        exchange="paper",
         start_date=module.START_DATE,
         end_date=module.END_DATE,
     )
@@ -78,7 +78,7 @@ def traced_run(tmp_path_factory):
     system.strategies_handler.add_strategy(strategy)
     portfolio_id = system.portfolio_handler.add_portfolio(
         name="oracle_pf",
-        exchange="csv",
+        exchange="paper",
         cash=module.CASH,
     )
     strategy.subscribe_portfolio(portfolio_id)

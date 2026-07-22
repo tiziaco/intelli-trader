@@ -123,7 +123,7 @@ class _AddHarness:
         # Start EMPTY — the poll adds _COLD once the add verb registers a strategy on it.
         self.universe = Universe(members=[], instrument_map={_COLD: instrument})
         self.portfolio_id = system.portfolio_handler.add_portfolio(
-            name="add_pf", exchange="simulated", cash=1_000_000)
+            name="add_pf", exchange="paper", cash=1_000_000)
         # B2 (11-03): the subscription child FKs onto ``portfolios`` with ON DELETE CASCADE.
         # ``add_portfolio`` builds the in-memory runtime portfolio; the durable DEFINITION
         # row is a separate concern that nothing writes until 11-08 wires
