@@ -98,13 +98,33 @@ class PaperVenuePlugin:
         """
         return None
 
-    def new_account(self, portfolio_ref: Any, config: Any) -> Account:
-        """Mint a FRESH compute account for one portfolio (D-10, 11-07).
+    def new_account(self, config: Any) -> Account:
+        """Mint a FRESH compute account from its config — the SOLE factory (D-03).
 
-        The leaf-selection body is the pre-11-07 ``account_factory`` VERBATIM: the
-        margin superset when the portfolio's rules enable margin, else the
+        The leaf-selection body is the pre-11-07 ``account_factory`` VERBATIM in
+        BRANCH ORDER: the margin superset when ``enable_margin``, else the
         verbatim-critical spot cash leaf that is the SMA_MACD byte-exact oracle path
-        (D-04). It is copied, not restructured.
+        (D-04). It is copied, not restructured — reordering the arms is what
+        ``test_paper_new_account_selects_the_margin_leaf_when_enabled`` exists to
+        catch.
+
+        D-03 (11.1-09): this is now the ONLY margin-vs-cash selection in the tree.
+        The duplicate branch in ``Portfolio._init_managers`` is deleted; a
+        ``Portfolio`` receives the account this method built (D-02) and selects
+        nothing. The three values the branch needs — ``initial_cash``,
+        ``enable_margin`` and the shared ``state_storage`` seam — used to be read off
+        a ``portfolio_ref`` argument; they now ride on ``config``, put there by
+        ``PortfolioHandler.add_portfolio``, which holds the ``PortfolioConfig`` and
+        builds the seam. That is what lets an account be built BEFORE the portfolio
+        that owns it exists.
+
+        ``state_storage`` is forwarded rather than defaulted for a correctness
+        reason, not a tidiness one: the leaf routes reserved cash, locked margin and
+        the cash-operation audit trail through it, and the live restart path
+        (``state_storage.rehydrate(account)``) repopulates those caches on the
+        PORTFOLIO's instance. A leaf left on its own private backend loses every
+        reservation across a restart — and stays byte-exact in backtest, where
+        nothing else reads those containers, so no test would go red.
 
         No ``account_id`` is required or consulted here, and that asymmetry with the
         venue arm is deliberate: D-11 scopes VENUE accounts, whose balances and
@@ -120,14 +140,8 @@ class PaperVenuePlugin:
         )
 
         initial_cash = getattr(config, "initial_cash", 0.0)
-        # D-01 (11.1-03): the leaves no longer take a portfolio back-reference.
-        # `portfolio_ref` is still READ here — for the margin branch below, and to
-        # forward the portfolio's shared state-storage seam so a minted leaf lands
-        # on the same backend its sibling managers use (behaviour-identical to the
-        # getattr the constructor used to do internally). Dropping `portfolio_ref`
-        # from the signature entirely is D-03, in plan 11.1-09.
-        state_storage = getattr(portfolio_ref, "state_storage", None)
-        if portfolio_ref.config.trading_rules.enable_margin:
+        state_storage = getattr(config, "state_storage", None)
+        if getattr(config, "enable_margin", False):
             return SimulatedMarginAccount(
                 initial_cash=initial_cash, state_storage=state_storage)
         return SimulatedCashAccount(
@@ -155,11 +169,29 @@ class PaperVenuePlugin:
         exchange = SimulatedExchange(
             ctx.bus, config=self._exchange_config, rng=ctx.rng)
 
-        def account_factory(portfolio: Any, initial_cash: Any = 0.0) -> Account:
+        def account_factory(
+            *,
+            initial_cash: Any = 0.0,
+            enable_margin: bool = False,
+            account_id: str | None = None,
+            state_storage: Any = None,
+        ) -> Account:
             # 11-07: a thin adapter DELEGATING to the typed `new_account`, so the
             # bundle field and the Protocol method can never mint different accounts.
-            return self.new_account(
-                portfolio, VenueAccountConfig(initial_cash=initial_cash))
+            # 11.1-09 (D-03): KEYWORD-ONLY and explicit. The `(*args, **kwargs)`
+            # catch-all 11-07 removed is NOT reinstated — an arg-swallowing arm
+            # type-checks clean against a STRUCTURAL Protocol while silently
+            # returning one shared unscoped account, a defect the type system cannot
+            # see. `account_id` is accepted and carried for signature symmetry with
+            # the venue arm (both bundles are called uniformly by
+            # `PortfolioHandler.add_portfolio`); the paper arm's `new_account`
+            # deliberately never consults it — see its docstring.
+            return self.new_account(VenueAccountConfig(
+                account_id=account_id,
+                initial_cash=initial_cash,
+                enable_margin=enable_margin,
+                state_storage=state_storage,
+            ))
 
         # connector=None — the `connectors` argument is DELIBERATELY UNREAD. Paper has
         # no venue session and holds no credentials; the parameter exists only to

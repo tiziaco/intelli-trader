@@ -63,7 +63,7 @@ class _FakePlugin:
     def build_bundle(self, ctx: Any, spec: Any, connectors: Any) -> Any:  # pragma: no cover
         return None
 
-    def new_account(self, portfolio_ref: Any, config: Any) -> Any:  # pragma: no cover
+    def new_account(self, config: Any) -> Any:  # pragma: no cover
         # 11-07 (D-10) widened the VenuePlugin Protocol. This fake is not
         # ``isinstance``-checked today (the guard duck-types ``credential_model`` /
         # ``fetch_venue_uid``), so declaring this member is future-proofing rather

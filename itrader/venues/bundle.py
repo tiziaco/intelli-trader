@@ -55,11 +55,13 @@ class VenueAccountConfig:
     A small frozen value object carrying exactly what the TWO shipped arms need to
     mint one account — nothing speculative:
 
-    * ``account_id`` — the account the BUNDLE was built for. It is the fallback used
-      ONLY when ``new_account`` is called with no portfolio (the facade's
-      ``account_factory()`` call site). It is deliberately NOT a fallback for a
-      portfolio that names no account: silently minting a named-bundle account for
-      an unnamed portfolio is precisely the conflation D-11 exists to prevent.
+    * ``account_id`` — the account this account is to be minted UNDER. D-03 (plan
+      11.1-09) made it the ONLY source: ``new_account`` no longer takes a
+      ``portfolio_ref``, so the caller that knows which account a portfolio names
+      (``PortfolioHandler.add_portfolio``) puts it HERE, and the venue arm reads it
+      from here and from nowhere else. There is still NO fallback for an absent id —
+      minting an unnamed account under whichever account a bundle happens to be for
+      is precisely the conflation D-11 exists to prevent, so the venue arm RAISES.
     * ``connectors`` / ``spec`` — the shared ``ConnectorProvider`` memo and the venue
       spec, so ``new_account`` resolves the connector for ITS OWN
       ``(venue, account_id)`` pair (D-12). Because the memo is pair-keyed, the
@@ -67,10 +69,29 @@ class VenueAccountConfig:
     * ``quote_currency`` / ``market_type`` / ``symbol`` — the venue-truth channel
       knobs the venue arm threads onto its ``VenueAccount`` (D-03).
     * ``initial_cash`` — the compute arm's opening balance (the paper/simulated leaf).
+    * ``enable_margin`` — D-03: selects the COMPUTE arm's leaf kind, the margin
+      superset (``SimulatedMarginAccount``) versus the spot cash leaf
+      (``SimulatedCashAccount``). It is sourced from the owning
+      ``PortfolioConfig.trading_rules``, which ``PortfolioHandler.add_portfolio``
+      already holds — it used to be read off a ``portfolio_ref`` the plugin was
+      handed, which is what made account-kind selection reachable from two places.
+      It is consumed ONLY by the paper arm; the venue arm never reads it and always
+      builds a ``VenueAccount`` (venue-cached truth has no margin-vs-cash choice to
+      make), which is why ``PortfolioConfig`` — not the account row — is its owner.
+    * ``state_storage`` — D-01/D-03: the shared ``PortfolioStateStorage`` seam the
+      compute leaf routes its reserved cash, locked margin and cash-operation audit
+      trail through. It MUST be the SAME instance the owning portfolio's three other
+      managers hold: the live restart path calls ``state_storage.rehydrate(account)``
+      and repopulates the reservation / locked-margin caches on THAT object, so a
+      leaf on a private backend would silently lose every reservation across a
+      restart while a backtest (where nothing else reads those containers) stayed
+      byte-exact. Before 11.1-09 the plugin sniffed it off the ``portfolio_ref``;
+      now that the account is built BEFORE its portfolio exists, the composition
+      root builds the seam and passes it here. Venue-truth accounts ignore it.
 
-    Typed ``Any`` for ``connectors`` / ``spec`` for the same import-inertness reason
-    the rest of this module is: naming the concrete types would drag the venue
-    substrate onto the backtest import graph.
+    Typed ``Any`` for ``connectors`` / ``spec`` / ``state_storage`` for the same
+    import-inertness reason the rest of this module is: naming the concrete types
+    would drag the venue substrate onto the backtest import graph.
 
     It lives HERE and not in ``paper_plugin.py`` because that module has a
     test-enforced single-class gate (``test_paper_plugin.py`` asserts the module
@@ -85,6 +106,8 @@ class VenueAccountConfig:
     market_type: Literal["spot", "derivative"] = "derivative"
     symbol: str | None = None
     initial_cash: Any = 0.0
+    enable_margin: bool = False
+    state_storage: Any = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,7 +116,13 @@ class VenueBundle:
 
     Carries ONLY the execution concerns: the ``exchange`` (an
     ``AbstractExchange`` — simulated for paper, ``OkxExchange`` for OKX) and the
-    per-portfolio ``account_factory`` (builds the balance/margin ``Account`` leaf).
+    ``account_factory`` (builds the balance/margin ``Account`` leaf). Both arms sign
+    that factory KEYWORD-ONLY — ``(*, initial_cash, enable_margin, account_id,
+    state_storage)`` — and both delegate straight to ``VenuePlugin.new_account``, so
+    the field and the Protocol method can never mint different accounts (D-03). The
+    11-07 removal of the ``(*args, **kwargs)`` catch-all is NOT reverted: an
+    arg-swallowing arm type-checks clean against a STRUCTURAL Protocol while silently
+    returning one shared unscoped account.
     Both are mandatory. The Optional live arm — ``connector``, the shared
     ``LiveConnector`` session — defaults to ``None``; paper carries none and is the
     ``None``-guarded case the lifecycle handles (D-10).
@@ -152,15 +181,30 @@ class VenuePlugin(Protocol):
         """Build the execution ``VenueBundle`` (concretions lazy-imported inside)."""
         ...
 
-    def new_account(self, portfolio_ref: Any, config: VenueAccountConfig) -> Account:
-        """Mint the ``Account`` leaf for ONE portfolio (D-10, 11-07).
+    def new_account(self, config: VenueAccountConfig) -> Account:
+        """Mint ONE ``Account`` leaf from its config — the SOLE factory (D-03, 11.1-09).
 
         Promotes the untyped ``VenueBundle.account_factory`` field to a real typed
         member so account construction is a declared part of the venue seam rather
         than a closure a plugin happens to return. The venue-truth arm returns an
-        account scoped to the portfolio's ``account_id``, built over the connector
-        memoized for that ``(venue, account_id)`` pair (D-12); the compute arm
-        returns a fresh simulated leaf per portfolio.
+        account scoped to ``config.account_id``, built over the connector memoized
+        for that ``(venue, account_id)`` pair (D-12); the compute arm returns a fresh
+        simulated leaf of the kind ``config.enable_margin`` selects.
+
+        **D-03: this is the ONE place a venue's account kind is selected.** Until
+        11.1-09 the same margin-vs-cash branch also lived in
+        ``Portfolio._init_managers``, so a domain object was participating in its own
+        wiring and two copies of one selection rule could drift. ``Portfolio`` now
+        RECEIVES a built account (D-02) and selects nothing.
+
+        **The ``portfolio_ref`` parameter is GONE (D-03).** D-01 removed the account
+        leaf's back-reference to its portfolio, and everything the plugins still read
+        off a portfolio — the account id, the margin flag, the state-storage seam —
+        now rides on ``config``, supplied by the caller that legitimately holds it
+        (``PortfolioHandler.add_portfolio``). Note the premise "D-01 removed the need"
+        was only true for the compute arm: the venue arm read ``portfolio_ref`` for
+        D-11 account IDENTITY, which D-01 does not touch, and that read moved to
+        ``config.account_id`` rather than being dropped.
 
         **This method is NOT the guard, and that correction is recorded here so it
         is not re-litigated.** A catch-all ``(*args, **kwargs)`` signature is the
@@ -170,8 +214,8 @@ class VenuePlugin(Protocol):
         D-11: ``VenueAccount.account_id`` is a REQUIRED keyword argument with no
         default, so no arm can produce an unscoped account without naming one.
 
-        Fails LOUD when no account can be named for ``portfolio_ref`` — there is no
-        legitimate "default" venue account to fall back to (T-11-32).
+        Fails LOUD when the config names no account — there is no legitimate
+        "default" venue account to fall back to (T-11-32).
         """
         ...
 
