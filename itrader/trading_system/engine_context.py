@@ -19,8 +19,15 @@ Design invariants (D-05, LR-14 — **consciously amended by D-01**):
   (D-02). Field types still only TIGHTEN downstream (``config: Any`` narrows to the
   concrete ``ITraderConfig`` in P9), never widen.
 * **Field order — required before defaulted.** ``bus`` / ``config`` / ``environment`` /
-  ``feed`` (all required) precede ``store`` / ``sql_engine`` (both default ``None``) so
-  the frozen dataclass does not raise "non-default argument follows default argument".
+  ``feed`` / ``rng`` (all required) precede ``store`` / ``sql_engine`` (both default
+  ``None``) so the frozen dataclass does not raise "non-default argument follows
+  default argument".
+* **The determinism RNG rides here (D-07).** ``rng`` is a REQUIRED field, inserted
+  before the defaulted ones per the ordering rule above. It is deliberately NOT
+  defaulted: a default would mint a SECOND ``random.Random`` on a wiring omission, and
+  a second instance is not an error state — it is a silently different, unreproducible
+  run that no existing test names. ``random`` is stdlib, so the field costs the import
+  graph nothing (GATE-01 unaffected) and needs no ``TYPE_CHECKING`` guard.
 * **Mode-injected backends.** ``feed`` is the required per-mode read-model
   (``BacktestBarFeed`` in backtest, ``LiveBarFeed`` in live). ``store`` is the canonical
   price store — REAL in backtest (``CsvPriceStore``), ``None`` in live (``LiveBarFeed``
@@ -37,6 +44,7 @@ Design invariants (D-05, LR-14 — **consciously amended by D-01**):
 Indentation: TABS (``trading_system/`` package convention).
 """
 
+import random
 from dataclasses import dataclass
 from typing import Any, Optional, TYPE_CHECKING
 
@@ -79,6 +87,15 @@ class EngineContext:
 		reads ``ctx.feed`` uniformly rather than constructing a ``BacktestBarFeed`` itself,
 		so the seam is store/feed-agnostic. Annotated against the BASE ``BarFeed`` via a
 		TYPE_CHECKING forward-ref (D-03) — no concretion is pulled onto the import graph.
+	rng : random.Random
+		The ONE shared seeded ``random.Random`` for the run (D-07). Constructed ONCE by
+		the mode factory from ``config.rng_seed`` (default 42) and injected here so every
+		component the wiring seam builds — the ``SimulatedExchange``, its slippage model,
+		and from D-06 the venue plugin that builds them — draws from a SINGLE instance.
+		REQUIRED and never defaulted: two ``random.Random(42)`` objects look identical and
+		diverge the moment either is drawn from, so a defaulted field would turn a wiring
+		omission into a silently non-reproducible run. ``random`` is stdlib — annotated
+		concretely (no TYPE_CHECKING guard) at zero import-graph cost (GATE-01).
 	store : Optional[PriceStore]
 		The canonical price store — REAL in backtest (``CsvPriceStore``), ``None`` in
 		live (``LiveBarFeed`` reads no store, D-02). The IDENTICAL real/None idiom as
@@ -97,5 +114,6 @@ class EngineContext:
 	config: Any
 	environment: str
 	feed: "BarFeed"
+	rng: random.Random
 	store: Optional["PriceStore"] = None
 	sql_engine: Optional["SqlEngine"] = None

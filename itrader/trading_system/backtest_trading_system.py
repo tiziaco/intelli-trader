@@ -24,6 +24,7 @@ Indentation: TABS (``trading_system/`` package convention).
 """
 
 import dataclasses
+import random
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -158,6 +159,14 @@ class BacktestTradingSystem(object):
 				start_date=spec.start or None,
 				end_date=spec.end or None)
 			feed = BacktestBarFeed(store, to_timedelta(spec.timeframe))
+			# 11.1-04 (D-07): the ONE seeded determinism RNG is built HERE, at the wiring
+			# seam, and injected on ctx — it is no longer derived inside ExecutionHandler.
+			# Same resolution ExecutionHandler._resolve_rng_seed performed (int off the
+			# process-wide config.rng_seed, default 42), so the seed and the instance count
+			# are unmoved and the run stays byte-exact. Exactly ONE per run: the exchange
+			# and its slippage model (and from D-06 the venue plugin that builds them) all
+			# draw from this object.
+			rng = random.Random(int(config.rng_seed))
 			# The handler now OWNS its bus (FifoEventBus — byte-exact FIFO, D-07) and
 			# its storage (from environment='backtest'); config is carried, sql_engine
 			# is None (SQL-import-inert, GATE-01). feed rides required on ctx, store real.
@@ -166,6 +175,7 @@ class BacktestTradingSystem(object):
 				config=config,
 				environment='backtest',
 				feed=feed,
+				rng=rng,
 				store=store,
 				sql_engine=None,
 			)
@@ -482,11 +492,18 @@ def build_backtest_system(spec: SystemSpec) -> BacktestTradingSystem:
 		start_date=spec.start or None,
 		end_date=spec.end or None)
 	feed = BacktestBarFeed(store, to_timedelta(spec.timeframe))
+	# 11.1-04 (D-07): the ONE seeded determinism RNG, built here at the wiring seam and
+	# injected on ctx (identical two lines as the legacy arm above — BOTH arms migrate,
+	# because the oracle drives the legacy arm and would otherwise pass while proving
+	# nothing about this one). Same seed resolution as the retired
+	# ExecutionHandler._resolve_rng_seed: int(config.rng_seed), default 42.
+	rng = random.Random(int(config.rng_seed))
 	ctx = EngineContext(
 		bus=FifoEventBus(),
 		config=config,
 		environment='backtest',
 		feed=feed,
+		rng=rng,
 		store=store,
 		sql_engine=None,
 	)

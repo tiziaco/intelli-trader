@@ -227,9 +227,15 @@ def compose_engine(
 	# D-27/MPORT-07: the read-model is injected ONLY on the account-routing (live)
 	# arm — see the route_orders_by_account docstring above for why the backtest
 	# arm must stay on the unconditional default account.
+	# D-07: the determinism seam now rides on ``ctx`` — the handler RECEIVES the one
+	# shared seeded RNG instead of deriving it from the config singleton. It has to,
+	# because from plan 11.1-07 the VENUE PLUGIN (not this handler) builds the
+	# stochastic exchange, and a plugin cannot reach a handler-private attribute. Pass
+	# the ctx object itself, never a fresh equal-seeded one: identity is the contract.
 	execution_handler = ExecutionHandler(
 		ctx.bus, exchange_config=exchange_config,
-		portfolio_read_model=portfolio_handler if route_orders_by_account else None)
+		portfolio_read_model=portfolio_handler if route_orders_by_account else None,
+		rng=ctx.rng)
 
 	# Commission estimator for the admission cash-reservation gate (D-04/D-15):
 	# the typed FeeModelCommissionEstimator adapter holds the exchange ref and

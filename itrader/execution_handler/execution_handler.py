@@ -53,7 +53,8 @@ class ExecutionHandler(AbstractExecutionHandler):
 
 	def __init__(self, global_queue: "EventBus",
 				exchange_config: Optional[ExchangeConfig] = None,
-				portfolio_read_model: Optional["PortfolioReadModel"] = None) -> None:
+				portfolio_read_model: Optional["PortfolioReadModel"] = None,
+				rng: Optional[random.Random] = None) -> None:
 		"""
 		Parameters
 		----------
@@ -93,6 +94,23 @@ class ExecutionHandler(AbstractExecutionHandler):
 			``ExecutionHandler(global_queue)`` until Wave 4) keep BTCUSD
 			admitted byte-exactly. Wave 4 (04-05) removes the None fallback once
 			every site migrates to the spec-driven factory.
+		rng: `random.Random`, optional
+			The ONE shared seeded RNG for the run, taken off ``EngineContext.rng``
+			by ``compose_engine`` (D-07). The exchange AND its slippage model draw
+			from THIS object — supplying two different instances across a run (or
+			letting a second one be minted downstream) breaks reproducibility
+			silently, because two ``random.Random(42)`` objects look identical
+			until either is drawn from and the call ORDER diverges. Every
+			engine-wired run therefore injects it.
+
+			When ``None``, the handler falls back to deriving its own from
+			``_resolve_rng_seed()`` — the pre-D-07 behaviour. This is deliberate
+			backward-compat for the direct-construction sites (a number of
+			unit/integration tests build ``ExecutionHandler(global_queue)`` with no
+			``ctx`` at all), mirroring the ``_default_backcompat_config`` fallback
+			below. Removing it would turn this plan into a test-wide migration for
+			no correctness gain: those sites have no second component sharing the
+			RNG, so a locally-derived instance is observationally identical.
 		"""
 		# Initialize logger first
 		self.logger = get_itrader_logger().bind(component="ExecutionHandler")
@@ -101,20 +119,35 @@ class ExecutionHandler(AbstractExecutionHandler):
 		self._exchange_config = exchange_config
 		self._portfolio_read_model = portfolio_read_model
 
-		# Determinism seam (D-11): construct a SINGLE seeded random.Random at engine
-		# wiring and inject it into every stochastic component (SimulatedExchange +
-		# its slippage model). The seed comes from the documented system config key
-		# `performance.rng_seed` (default 42); a YAML override in settings/system.yaml
-		# wins when present. One shared Random — never seeded per-call or duplicated —
-		# so a backtest run is reproducible (#5/PERF2).
-		self._rng_seed: int = self._resolve_rng_seed()
-		self._rng: random.Random = random.Random(self._rng_seed)
+		# Determinism seam (D-11, moved to the wiring seam by D-07): ONE seeded
+		# random.Random per run, shared by every stochastic component (SimulatedExchange
+		# + its slippage model). Never seeded per-call, never duplicated — that is what
+		# makes a run reproducible (#5/PERF2).
+		#
+		# D-07: the engine-wired path now INJECTS it off ``EngineContext.rng``, because
+		# from plan 11.1-07 the venue plugin — not this handler — builds the stochastic
+		# exchange and cannot reach a private attribute here. The ``None`` arm keeps the
+		# pre-D-07 derivation for direct-construction sites (see the ``rng`` docstring).
+		self._rng_seed: Optional[int]
+		self._rng: random.Random
+		if rng is not None:
+			self._rng_seed = None
+			self._rng = rng
+		else:
+			self._rng_seed = self._resolve_rng_seed()
+			self._rng = random.Random(self._rng_seed)
 
 		# Initialize exchanges (requires logger + rng). Keyed on the
 		# (venue, account_id) PAIR — see DEFAULT_ACCOUNT_ID (D-27/MPORT-07).
 		self.exchanges: dict[tuple[str, str], Optional[AbstractExchange]] = self.init_exchanges()
 
-		self.logger.info('Execution Handler initialized (rng_seed=%s)', self._rng_seed)
+		# D-07/T-11.1-14: report the injected case DISTINCTLY. Logging `rng_seed=None`
+		# after injection would read as "no seed / non-deterministic" when the opposite
+		# is true — the run is seeded upstream at the wiring seam.
+		if self._rng_seed is None:
+			self.logger.info('Execution Handler initialized (rng=injected from EngineContext)')
+		else:
+			self.logger.info('Execution Handler initialized (rng=derived, rng_seed=%s)', self._rng_seed)
 
 	def _resolve_rng_seed(self) -> int:
 		"""Resolve the determinism seed from the process-wide config singleton (D-16/W4-06).
