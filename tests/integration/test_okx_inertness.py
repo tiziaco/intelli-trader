@@ -185,12 +185,16 @@ from itrader.trading_system.engine_context import EngineContext
 from itrader.price_handler.store.csv_store import CsvPriceStore
 from itrader.price_handler.feed.bar_feed import BacktestBarFeed
 from itrader.outils.time_parser import to_timedelta
+import random
 _bus = FifoEventBus()
 _store = CsvPriceStore()
 _feed = BacktestBarFeed(_store, to_timedelta("1d"))
+# 11.1-04 (D-07): the ctx now carries a REQUIRED ``rng``. ``random`` is stdlib, so the
+# field adds nothing to the import graph and the register-vs-build assertion below is
+# unaffected — the gate stays green at 4 passed.
 _ctx = EngineContext(
     bus=_bus, config=_cfg, environment="backtest",
-    feed=_feed, store=_store, sql_engine=None)
+    feed=_feed, rng=random.Random(42), store=_store, sql_engine=None)
 _heavy = [name for name in ("sqlalchemy", "ccxt") if name in sys.modules]
 assert not _heavy, (
     "P2 register-vs-build inertness violation: constructing FifoEventBus/"

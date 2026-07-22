@@ -1,3 +1,4 @@
+import random
 import threading
 from datetime import datetime, UTC
 from decimal import Decimal
@@ -1866,11 +1867,17 @@ def build_live_system(
         failure_settings=_system_config.safety.failure_rate,
     )
 
+    # 11.1-04 (D-07): the ONE seeded determinism RNG for the live run, built here at the
+    # wiring seam and injected on ctx rather than derived inside ExecutionHandler. Same
+    # resolution the retired ExecutionHandler._resolve_rng_seed performed —
+    # int(config.rng_seed), default 42, off the frozen ITraderConfig base.
+    rng = random.Random(int(_system_config.rng_seed))
+
     ctx = EngineContext(
         bus=global_queue,
         config=_system_config,
         environment=environment,
-        feed=feed, store=None,
+        feed=feed, rng=rng, store=None,
         sql_engine=system_db_backend,
     )
     engine = compose_engine(

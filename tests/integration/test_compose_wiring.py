@@ -17,6 +17,8 @@ mirroring the register-vs-build block in ``test_okx_inertness.py`` so no databas
 needed. 4-space indentation (tests house style).
 """
 
+import random
+
 import pytest
 
 from itrader import config as _config
@@ -39,6 +41,9 @@ def ctx() -> EngineContext:
         config=_config,
         environment="backtest",
         feed=BacktestBarFeed(store, to_timedelta("1d")),
+        # D-07: the ONE shared seeded RNG the wiring seam hands to every stochastic
+        # component. Held by the fixture so a test can assert IDENTITY against it.
+        rng=random.Random(42),
         store=store,
         sql_engine=None,
     )
