@@ -92,9 +92,18 @@ class PaperVenuePlugin:
         )
 
         initial_cash = getattr(config, "initial_cash", 0.0)
+        # D-01 (11.1-03): the leaves no longer take a portfolio back-reference.
+        # `portfolio_ref` is still READ here — for the margin branch below, and to
+        # forward the portfolio's shared state-storage seam so a minted leaf lands
+        # on the same backend its sibling managers use (behaviour-identical to the
+        # getattr the constructor used to do internally). Dropping `portfolio_ref`
+        # from the signature entirely is D-03, in plan 11.1-09.
+        state_storage = getattr(portfolio_ref, "state_storage", None)
         if portfolio_ref.config.trading_rules.enable_margin:
-            return SimulatedMarginAccount(portfolio_ref, initial_cash=initial_cash)
-        return SimulatedCashAccount(portfolio_ref, initial_cash=initial_cash)
+            return SimulatedMarginAccount(
+                initial_cash=initial_cash, state_storage=state_storage)
+        return SimulatedCashAccount(
+            initial_cash=initial_cash, state_storage=state_storage)
 
     def build_bundle(self, ctx: Any, spec: Any, connectors: Any) -> VenueBundle:
         """Build the paper ``VenueBundle`` over the injected simulated exchange (connector=None)."""

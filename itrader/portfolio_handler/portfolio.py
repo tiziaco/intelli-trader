@@ -173,10 +173,19 @@ class Portfolio(object):
 		# ABC (the field IS the settlement contract, not a concretion) so the live
 		# VenueAccount leaf wires in cleanly; margin-only call sites narrow to
 		# SimulatedMarginAccount via _require_margin_account (isinstance guard).
+		# D-01 (11.1-03): the leaf no longer receives `self` — the Account carries
+		# NO back-reference to its Portfolio. The one thing it actually wanted
+		# from the portfolio, the shared state-storage seam, is now passed
+		# explicitly (it is built immediately above, so the account and the three
+		# managers below all land on the SAME backend, exactly as before). Plan
+		# 11.1-09 (D-02) deletes this whole block once PortfolioHandler sources
+		# the account from `VenuePlugin.new_account` and hands it in built.
 		self.account: Account = (
-			SimulatedMarginAccount(self, initial_cash=initial_cash)
+			SimulatedMarginAccount(
+				initial_cash=initial_cash, state_storage=self.state_storage)
 			if self.config.trading_rules.enable_margin
-			else SimulatedCashAccount(self, initial_cash=initial_cash)
+			else SimulatedCashAccount(
+				initial_cash=initial_cash, state_storage=self.state_storage)
 		)
 		self.transaction_manager = TransactionManager(self)
 		self.position_manager = PositionManager(self)
