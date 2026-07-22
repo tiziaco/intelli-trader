@@ -410,7 +410,39 @@ the code does not yet trust it.*
   converted (`portfolio_rehydrate.py:124`, `live_trading_system.py:1341/1591/1964`). Folded here because
   ACCT-01 and ACCT-05 rewrite two of those call sites anyway — the handler already exposes
   `get_active_portfolios()`, and every consumer reached for the private field only because no "all
-  portfolios" / "is registered" accessor existed.
+  portfolios" / "is registered" accessor existed. **Co-located (11-REVIEW WR-02)**: the portfolio arm of
+  `_layer_persisted_overrides` wraps its whole `for` loop in ONE `try/except _degrade_clean`, so a single
+  poisoned `config_json` skips every portfolio after it in iteration order with one warning naming only the
+  first failure — despite the docstring claiming per-scope isolation. The guard moves INSIDE the loop.
+  Folded here because WR-02 and this requirement edit the SAME statement (`live_trading_system.py:1341`).
+- [ ] **ACCT-09** *(closes 11-REVIEW WR-10)*: `ExecutionHandler.on_order`'s fail-closed paths emit a
+  `FillEvent(REFUSED)` — the established rejection-as-event convention, which also reconciles the order
+  mirror instead of leaving it PENDING forever — rather than only calling `logger.error(...)` and
+  returning. Today a misconfigured live engine drops 100% of its orders while `get_status()` reports
+  `RUNNING`, `errors_count: 0` and no halt reason. **Scope note**: ACCT-03 makes the middle branch
+  (`if account_id is None`) unreachable, so this covers TWO paths (unknown portfolio, unregistered
+  `(venue, account)` pair), and the dead branch is removed rather than instrumented — its comment is one of
+  the two phantom-invariant citations ACCT-06 corrects.
+- [ ] **ACCT-10** *(closes 11-REVIEW WR-04)*: Runtime portfolio deactivation PERSISTS. `_persist_definition`
+  hardcodes `enabled=True` and is gated on row absence, and nothing else ever writes `enabled=False`, so
+  `Portfolio.set_state(INACTIVE)` never reaches the store and a portfolio an operator deliberately stopped
+  comes back ACTIVE and trading on the next restart — money-relevant, and silent. Add a
+  `set_enabled(portfolio_id, enabled)` write on `PortfolioDefinitionStore`, called from whatever flips
+  `PortfolioState`. This also makes `rehydrate_portfolios`' present-but-inactive branch
+  (`portfolio_rehydrate.py:141-147`) reachable as designed instead of only via an out-of-band DB write.
+- [ ] **ACCT-11** *(closes 11-REVIEW CR-04 + WR-12)*: The D-09 config move REFUSES rather than silently
+  skipping. `_move_config` copies `portfolio_account_state.config_json` onto a matching `portfolios` row and
+  counts a non-match as a benign "orphan" — but `portfolios` is created empty by the immediately preceding
+  revision and the module docstring itself states nothing wrote `portfolios` rows before this phase, so
+  EVERY source row is an orphan and `moved` is provably `0`. Meanwhile `load_config` (`sql_storage.py:597`)
+  now reads ONLY `portfolios.config_json`, so any such blob is unreadable after `alembic upgrade head` —
+  verbatim the failure the revision docstring calls *"the single highest-regression-risk operation in the
+  phase, and the risk is that it fails SILENTLY"*. **Confirmed greenfield (2026-07-22): no deployment holds
+  real persisted state**, so this is a guard against a state that should never arise, not a data migration —
+  count orphans and raise with remediation instructions. WR-12: `_seed_for_the_move`
+  (`test_p11_migration_chain.py:78-111`) hand-inserts a `portfolios` row at `_REVISION_ONE`, a state
+  unreachable in a real chain, and the negative control varies only the chain head — so add a test whose
+  staging inserts ONLY `portfolio_account_state` rows (the real pre-upgrade shape) and asserts the refusal.
 
 ### Test Migration + Gates (P12 — except TEST-01, pulled forward into P6)
 
