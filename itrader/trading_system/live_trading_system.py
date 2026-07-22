@@ -1833,8 +1833,11 @@ def build_live_system(
     # LiveBarFeed reads no store, D-02), and environment + sql_engine reflect the
     # credential-probe arm so compose's handler-OWNED storage init lands the identical
     # durable path (Postgres arm -> CachedSqlOrderStorage over the SQL spine; in-memory
-    # arm -> InMemoryOrderStorage). Live keeps exchange_config=None (the ExecutionHandler
-    # default today — byte-preserving) and results_store=None. compose_engine reuses the
+    # arm -> InMemoryOrderStorage). 11.1-07: the former ``exchange_config=None`` argument
+    # is GONE — compose no longer builds an exchange. Live now hands it a built
+    # ``VenueBundles`` whose paper plugin holds ``default_exchange_config()``, which is
+    # the SAME default-preset config the old ``None`` resolved to, so live behaviour is
+    # preserved. ``results_store`` stays None. compose_engine reuses the
     # FeeModelCommissionEstimator admission adapter, retiring the re-inlined commission
     # closure. compose_engine is a PURE import, taken lazily here to mirror the module's
     # lazy-import discipline (inertness gate). 06.1-04 (D-13): EngineContext is now
@@ -1867,6 +1870,84 @@ def build_live_system(
         failure_settings=_system_config.safety.failure_rate,
     )
 
+    # ------------------------------------------------------------------
+    # VENUE REGISTRATION (hoisted here by 11.1-07, D-08).
+    #
+    # WHY IT MOVED: compose_engine now receives a BUILT ``VenueBundles``, so the
+    # registry it reads has to exist BEFORE compose runs. The move is safe because
+    # registration is INERT — it stores plugin objects and runs no ``build*()``, so it
+    # pulls no ccxt and changes no import-time behaviour — and because every input it
+    # reads (``system_db_backend``, ``credential_resolver``, ``data_plugins``) is
+    # already resolved above this point. The one thing that USED to force it below
+    # compose was the reach-in into ``execution_handler.exchanges``; that is gone
+    # (D-06 — the plugin builds its own exchange), which is the ordering inversion this
+    # phase exists to enable.
+    #
+    # The whole OKX/paper venue stack stays LAZY-imported here so the BACKTEST import
+    # path stays async/ccxt/credential-free (the hot-path inertness gate).
+    from itrader.connectors.provider import ConnectorProvider
+    from itrader.execution_handler.execution_handler import default_exchange_config
+    from itrader.venues.assemble import assemble_venues
+    from itrader.venues.bundles import VenueBundles
+    from itrader.venues.okx_plugin import (
+        OkxConnectorPlugin,
+        OkxDataPlugin,
+        OkxVenuePlugin,
+    )
+    from itrader.venues.paper_plugin import PaperVenuePlugin
+    from itrader.venues.registry import (
+        DataProviderRegistry,
+        ExecutionVenueRegistry,
+    )
+
+    # (0) 11-04 (D-02/D-04): the credentials boundary's two collaborators.
+    #   - venue_account_store: the durable (venue_name, account_id) home. It supplies
+    #     the account's secret_ref POINTER for credential resolution AND is where the
+    #     D-04 trust-on-first-use venue_uid is recorded/asserted. Gated on the SQL arm
+    #     exactly like system_store above; the import stays LAZY inside the gate
+    #     (storage.venue_store, which it composes, is OKX-inertness _FORBIDDEN).
+    #     11.1-07: the ``system_db_backend is not None`` gate MOVED WITH this block —
+    #     ``system_db_backend`` is resolved well above here, so the SQL gate applies
+    #     exactly as before and the in-memory arm still yields ``None``.
+    #   - credential_resolver: the env-backed CredentialResolver injected into the OKX
+    #     connector plugin. WITHOUT this injection the plugin falls back to a bare
+    #     OkxSettings() reading the ONE global OKX_API_* set, so two account_ids would
+    #     connect with IDENTICAL credentials while the system believes they are
+    #     separate accounts (the D-12 caveat) — the exact misroute D-04 detects.
+    from itrader.config.credential_resolver import EnvCredentialResolver
+
+    if system_db_backend is not None:
+        from itrader.storage.venue_account_store import VenueAccountStore
+        venue_account_store: Optional[Any] = VenueAccountStore(system_db_backend)
+    else:
+        venue_account_store = None
+    credential_resolver = EnvCredentialResolver()
+
+    # (1) Build the two registries + the shared ConnectorProvider and register the
+    # concrete plugins (store-only — no build*() runs, so this pulls no ccxt).
+    exec_registry = ExecutionVenueRegistry()
+    data_registry = DataProviderRegistry()
+    connectors = ConnectorProvider(
+        {'okx': OkxConnectorPlugin(resolver=credential_resolver)})
+    exec_registry.register('okx', OkxVenuePlugin())
+    # 11.1-07 (D-06/D-17): the reach-in into ``execution_handler.exchanges`` is GONE —
+    # the plugin builds its own SimulatedExchange from the config it is given.
+    # ``default_exchange_config()`` preserves today's live behaviour EXACTLY: live
+    # previously passed no exchange config into compose, so its simulated exchange was
+    # built from this same default preset (∪ {BTCUSD}). Seeding a LIVE-derived symbol
+    # set is deliberately out of scope for this phase — doing it here would change live
+    # admission behaviour under cover of a wiring change.
+    exec_registry.register('paper', PaperVenuePlugin(default_exchange_config()))
+    data_registry.register('okx', OkxDataPlugin())
+
+    # TEST-only DATA provider injection (D-21): production registers NO replay/test data
+    # provider (the replay harness left this package for tests/), but a test fixture may
+    # inject one (the relocated TestDataPlugin) so the paper↔replay pairing lives ONLY in
+    # the fixture, never in production. Registered AFTER the production plugins.
+    if data_plugins:
+        for _name, _plugin in data_plugins.items():
+            data_registry.register(_name, _plugin)
+
     # 11.1-04 (D-07): the ONE seeded determinism RNG for the live run, built here at the
     # wiring seam and injected on ctx rather than derived inside ExecutionHandler. Same
     # resolution the retired ExecutionHandler._resolve_rng_seed performed —
@@ -1880,8 +1961,14 @@ def build_live_system(
         feed=feed, rng=rng, store=None,
         sql_engine=system_db_backend,
     )
+    # 11.1-07 (D-08): the ONE bundle memo, built AFTER ctx (it needs one) and BEFORE
+    # compose. The SAME instance the venue-assembly loop below shares, so the execution
+    # arm and the per-account assembly can never hold two exchanges for one
+    # (venue, account_id) — two OkxExchange objects per account would double-spawn that
+    # account's fill/order streams.
+    venue_bundles = VenueBundles(exec_registry, connectors, ctx)
     engine = compose_engine(
-        ctx, exchange_config=None, results_store=None,
+        ctx, venue_bundles=venue_bundles, results_store=None,
         alert_sink=alert_sink, system_store=system_store, error_policy=error_policy,
         strategy_catalog=strategy_catalog,
         # D-27/MPORT-07: LIVE resolves each order's venue account from its
@@ -1976,9 +2063,10 @@ def build_live_system(
             )
 
     # ------------------------------------------------------------------
-    # Venue wiring (Plan 02-05, D-04 / CONN-04 — relocated P5 D-06 assemble_venue call).
-    # The whole OKX/paper venue stack is LAZY-imported here so the BACKTEST import path
-    # stays async/ccxt/credential-free (the hot-path inertness gate).
+    # Venue ASSEMBLY (Plan 02-05, D-04 / CONN-04 — relocated P5 D-06 assemble_venue call).
+    # 11.1-07: only the ASSEMBLY stays here. Plugin REGISTRATION (the registries, the
+    # ConnectorProvider and the credential collaborators) moved ABOVE compose_engine —
+    # see the hoisted block there for why.
     # 11-09: ONE VenueLifecycle PER ACCOUNT, keyed by account id and PRIMARY FIRST. The
     # three former locals (venue_lifecycle / okx_connector / okx_exchange) that were
     # hand-unpacked out of the primary bundle inside the assembly loop are gone — every
@@ -1988,64 +2076,6 @@ def build_live_system(
     # the venue is unregistered. Declared here so the post-facade wiring below sees it
     # on every path.
     provider: Optional[Any] = None
-
-    from itrader.connectors.provider import ConnectorProvider
-    from itrader.venues.assemble import assemble_venues
-    from itrader.venues.okx_plugin import (
-        OkxConnectorPlugin,
-        OkxDataPlugin,
-        OkxVenuePlugin,
-    )
-    from itrader.venues.paper_plugin import PaperVenuePlugin
-    from itrader.venues.registry import (
-        DataProviderRegistry,
-        ExecutionVenueRegistry,
-    )
-
-    # (0) 11-04 (D-02/D-04): the credentials boundary's two collaborators.
-    #   - venue_account_store: the durable (venue_name, account_id) home. It supplies
-    #     the account's secret_ref POINTER for credential resolution AND is where the
-    #     D-04 trust-on-first-use venue_uid is recorded/asserted. Gated on the SQL arm
-    #     exactly like system_store above; the import stays LAZY inside the gate
-    #     (storage.venue_store, which it composes, is OKX-inertness _FORBIDDEN).
-    #   - credential_resolver: the env-backed CredentialResolver injected into the OKX
-    #     connector plugin. WITHOUT this injection the plugin falls back to a bare
-    #     OkxSettings() reading the ONE global OKX_API_* set, so two account_ids would
-    #     connect with IDENTICAL credentials while the system believes they are
-    #     separate accounts (the D-12 caveat) — the exact misroute D-04 detects.
-    from itrader.config.credential_resolver import EnvCredentialResolver
-
-    if system_db_backend is not None:
-        from itrader.storage.venue_account_store import VenueAccountStore
-        venue_account_store: Optional[Any] = VenueAccountStore(system_db_backend)
-    else:
-        venue_account_store = None
-    credential_resolver = EnvCredentialResolver()
-
-    # (1) Build the two registries + the shared ConnectorProvider and register the
-    # concrete plugins (store-only — no build*() runs, so this pulls no ccxt).
-    exec_registry = ExecutionVenueRegistry()
-    data_registry = DataProviderRegistry()
-    connectors = ConnectorProvider(
-        {'okx': OkxConnectorPlugin(resolver=credential_resolver)})
-    exec_registry.register('okx', OkxVenuePlugin())
-    # D-05: the reach-in now names the SAME key the plugin is registered under —
-    # ``('paper', DEFAULT_ACCOUNT_ID)`` — because the venue and the exchange
-    # registry finally agree on one name. (Plan 11.1-07 deletes this reach-in
-    # entirely when PaperVenuePlugin builds its own SimulatedExchange.)
-    exec_registry.register(
-        'paper',
-        PaperVenuePlugin(
-            execution_handler.exchanges[('paper', DEFAULT_ACCOUNT_ID)]))
-    data_registry.register('okx', OkxDataPlugin())
-
-    # TEST-only DATA provider injection (D-21): production registers NO replay/test data
-    # provider (the replay harness left this package for tests/), but a test fixture may
-    # inject one (the relocated TestDataPlugin) so the paper↔replay pairing lives ONLY in
-    # the fixture, never in production. Registered AFTER the production plugins.
-    if data_plugins:
-        for _name, _plugin in data_plugins.items():
-            data_registry.register(_name, _plugin)
 
     # (2) The shared mode-injection EngineContext built above (06.1-02) is REUSED for
     # venue assembly — the venue plugins read ctx.bus / ctx.config.stream (they never read
