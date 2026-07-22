@@ -350,6 +350,114 @@ def test_okx_connector_plugin_propagates_a_resolution_failure(monkeypatch: Any) 
         plugin.build(spec)
 
 
+def test_okx_connector_plugin_refuses_a_partial_per_account_credential_prefix(
+    monkeypatch: Any,
+) -> None:
+    """CR-05: an INCOMPLETE per-account prefix is REFUSED, never env-completed.
+
+    ``OkxSettings`` is a ``pydantic_settings.BaseSettings``, so every field the resolved
+    mapping does not supply is silently completed from the ambient ``OKX_API_*``
+    environment. Feeding it a partial mapping therefore builds a connector whose secret
+    and passphrase belong to WHICHEVER account the process environment holds, while the
+    system believes it authenticated account B. That is the exact credential bleed
+    ``EnvCredentialResolver``'s fail-loud contract (T-11-18) exists to prevent,
+    reintroduced one layer down at FIELD granularity instead of REFERENCE granularity.
+
+    The D-04 UID guard does NOT catch it: the ambient secret belongs to a real account
+    whose UID is perfectly stable, so trust-on-first-use records it as this account's.
+
+    The other ``OKX_ACCT_B_*`` names are deleted defensively so a developer's real shell
+    cannot green this test, and every value here is monkeypatched — nothing is sourced
+    from the repo's ``.env``.
+    """
+    from itrader.config.credential_resolver import EnvCredentialResolver
+    from itrader.core.exceptions import CredentialResolutionError
+    from itrader.venues.okx_plugin import OkxConnectorPlugin
+
+    monkeypatch.setenv("OKX_ACCT_B_API_KEY", "acct-b-key")
+    for name in ("OKX_ACCT_B_API_SECRET", "OKX_ACCT_B_API_PASSPHRASE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("OKX_API_KEY", "AMBIENT-KEY-VALUE")
+    monkeypatch.setenv("OKX_API_SECRET", "AMBIENT-SECRET-VALUE")
+    monkeypatch.setenv("OKX_API_PASSPHRASE", "AMBIENT-PASSPHRASE-VALUE")
+
+    plugin = OkxConnectorPlugin(resolver=EnvCredentialResolver())
+    spec = SimpleNamespace(account_id="acct-b", secret_ref="env:OKX_ACCT_B")
+
+    with pytest.raises(CredentialResolutionError) as caught:
+        plugin.build(spec)
+
+    message = str(caught.value)
+    # The message names the MISSING FIELD NAMES so an operator can act without
+    # opening the source...
+    assert "api_secret" in message
+    assert "api_passphrase" in message
+    assert "env:OKX_ACCT_B" in message
+    # ...and NEVER a credential value. CredentialResolutionError is a redaction
+    # boundary: it has no slot that could carry one, and nothing on this path may
+    # build a message from one.
+    for secret in (
+        "acct-b-key", "AMBIENT-KEY-VALUE", "AMBIENT-SECRET-VALUE",
+        "AMBIENT-PASSPHRASE-VALUE",
+    ):
+        assert secret not in message
+
+
+def test_a_complete_per_account_prefix_beats_the_ambient_environment(
+    monkeypatch: Any,
+) -> None:
+    """The premise the CR-05 gate rests on: init kwargs OUTRANK the env source.
+
+    Gated rather than assumed. The fix deliberately does NOT suppress the settings'
+    env source — doing so would also strip ``sandbox`` and ``region``, the non-secret
+    connection knobs that belong in the account row's ``config_json``, and silently
+    flipping a configured EEA production account to the ``global``/sandbox defaults is
+    a worse failure than the one being fixed (OKX answers 50119 on the wrong regional
+    host). The gate is what makes suppression unnecessary: once every REQUIRED — i.e.
+    every credential — field is present in the resolved mapping, no credential can be
+    env-completed.
+
+    Also proves the fix did not break the happy path.
+    """
+    from itrader.config.credential_resolver import EnvCredentialResolver
+    from itrader.venues.okx_plugin import OkxConnectorPlugin
+
+    monkeypatch.setenv("OKX_ACCT_B_API_KEY", "acct-b-key")
+    monkeypatch.setenv("OKX_ACCT_B_API_SECRET", "acct-b-secret")
+    monkeypatch.setenv("OKX_ACCT_B_API_PASSPHRASE", "acct-b-passphrase")
+    monkeypatch.setenv("OKX_API_KEY", "AMBIENT-KEY-VALUE")
+    monkeypatch.setenv("OKX_API_SECRET", "AMBIENT-SECRET-VALUE")
+    monkeypatch.setenv("OKX_API_PASSPHRASE", "AMBIENT-PASSPHRASE-VALUE")
+
+    plugin = OkxConnectorPlugin(resolver=EnvCredentialResolver())
+    connector = plugin.build(
+        SimpleNamespace(account_id="acct-b", secret_ref="env:OKX_ACCT_B"))
+
+    settings = connector._settings
+    assert settings.api_key.get_secret_value() == "acct-b-key"
+    assert settings.api_secret.get_secret_value() == "acct-b-secret"
+    assert settings.api_passphrase.get_secret_value() == "acct-b-passphrase"
+
+
+def test_the_credential_gate_covers_every_required_okx_settings_field() -> None:
+    """The gate is DERIVED from the model, so it cannot drift when a field is added.
+
+    A hardcoded triple would silently stop covering a fourth credential field the day
+    one is introduced — and the failure mode would be the CR-05 bleed again, on the
+    new field only, behind a green suite.
+    """
+    from itrader.config.okx_settings import OkxSettings
+
+    required = {
+        name for name, field in OkxSettings.model_fields.items()
+        if field.is_required()
+    }
+    # The auth triple, and NOT ``sandbox`` / ``region`` — those carry defaults and are
+    # non-secret connection knobs the resolver could not carry anyway (it wraps every
+    # value in SecretStr and ``region`` is a Literal).
+    assert required == {"api_key", "api_secret", "api_passphrase"}
+
+
 def test_okx_connector_plugin_is_runtime_checkable_connector_plugin() -> None:
     """OkxConnectorPlugin satisfies the ConnectorPlugin Protocol structurally."""
     from itrader.connectors.provider import ConnectorPlugin

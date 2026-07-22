@@ -61,6 +61,15 @@ class OkxConnectorPlugin:
     account and reconciliation succeeds cleanly against it. The injected
     ``CredentialResolver`` + the spec's ``secret_ref`` POINTER are what make the
     isolation real.
+
+    CR-05 — a supplied ``secret_ref`` must resolve to the COMPLETE credential set; an
+    INCOMPLETE prefix is REFUSED, never completed. ``OkxSettings`` is a
+    ``pydantic_settings.BaseSettings``, so every field a partial resolved mapping omits
+    is silently filled from the ambient global ``OKX_API_*`` set — authenticating
+    account B's bundle as whichever account the process environment happens to hold,
+    with a perfectly stable UID that D-04's trust-on-first-use then records as this
+    account's. This is the FIELD-granularity twin of the REFERENCE-granularity T-11-18
+    rule the resolver already enforces.
     """
 
     def __init__(self, resolver: "CredentialResolver | None" = None) -> None:
@@ -94,6 +103,49 @@ class OkxConnectorPlugin:
         # connect, not quietly authenticate as whichever account the ambient process
         # environment happens to hold (T-11-18).
         resolved = self._resolver.resolve(secret_ref)
+
+        # CR-05 — COMPLETENESS GATE. OkxSettings is a pydantic_settings.BaseSettings, so
+        # any REQUIRED field this mapping omits is silently completed from the ambient
+        # global OKX_API_* environment: account B's bundle would then authenticate as
+        # whichever account the process env holds, and D-04's UID guard would NOT catch
+        # it (the ambient secret belongs to a real account whose UID is stable and gets
+        # trust-on-first-use recorded as this account's).
+        #
+        # The required set is DERIVED from the model by CLASS access — never instance
+        # access, which pydantic deprecates and `filterwarnings=["error"]` would turn
+        # into a failure — so the gate cannot drift from the model when a credential
+        # field is added. Required == credential today (the auth triple); `sandbox` and
+        # `region` carry defaults and are correctly excluded.
+        #
+        # WHY NOT suppress the settings' env source instead (no settings_customise_sources
+        # override, no model_construct, no parallel non-BaseSettings DTO): init kwargs are
+        # ALREADY the highest-priority pydantic-settings source, so once this gate
+        # guarantees every required field arrives in `resolved`, no credential can be
+        # env-completed — suppression buys nothing. It would also strip `sandbox` and
+        # `region`, the non-secret connection knobs `credential_resolver.py`'s own
+        # docstring assigns to the account row's `config_json` rather than a credential
+        # prefix (and which the resolver could not carry anyway: it wraps every value in
+        # SecretStr and `region` is a Literal). Silently flipping a configured EEA
+        # production account to the `global`/sandbox defaults is a worse failure than the
+        # one being fixed — OKX answers 50119 on the wrong regional host.
+        from itrader.core.exceptions import CredentialResolutionError
+
+        required = {
+            name
+            for name, field in OkxSettings.model_fields.items()
+            if field.is_required()
+        }
+        missing = required - set(resolved)
+        if missing:
+            # Field NAMES only. CredentialResolutionError is a redaction boundary with no
+            # slot that could carry a VALUE, and nothing here builds a message from one.
+            raise CredentialResolutionError(
+                secret_ref,
+                f"resolved {sorted(set(resolved) & required)} but is missing the "
+                f"required credential field(s) {sorted(missing)} — refusing to complete "
+                "the credential set from the ambient process environment",
+            )
+
         # The resolved mapping is Mapping[str, SecretStr] keyed by the model's field
         # names; OkxSettings opts into populate_by_name so it is feedable verbatim.
         # It lives in memory for the lifetime of this connector and is written nowhere.
