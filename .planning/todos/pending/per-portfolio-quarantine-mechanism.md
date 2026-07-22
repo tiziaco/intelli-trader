@@ -50,14 +50,25 @@ gentler per-portfolio path.
 2. **The admission gate** — a one-clause guard in `AdmissionManager.process_signal`
    (`admission_manager.py:~176-235`, mirroring `_enforce_leaving_symbol_admission`) that REFUSES a
    new-entry order from a quarantined portfolio.
-3. **THE WIRING GAP (the hard part).** `AdmissionManager` is constructed inside
-   `OrderManager`/`OrderHandler` at `compose_engine` time (`live_trading_system.py:~1776`), but
-   `SafetyController` is built ~400 lines later (`~:2177`). The quarantine predicate has no path to
-   the gate today. Building this needs EITHER moving `SafetyController` construction before
-   `compose_engine` and injecting a narrow read through `compose.py` → `order_handler.py` →
-   `order_manager.py` → `admission_manager.py` (constructor injection, honours no-lazy-init), OR a
-   minimal shared holder created before both. `compose.py`, `order_handler.py`, `order_manager.py`
-   are the files a real build touches — none was in 11-10's scope, which is why it was deferred.
+3. **THE WIRING GAP — SEAM ALREADY DESIGNED (2026-07-22, verified against the code).** Do NOT try
+   to move `SafetyController` earlier: it is built at `~:2177` because its
+   `dispatch_fn=lambda ev: event_handler._dispatch(ev)` needs the `event_handler` that
+   `compose_engine` (`~:1776`) produces — moving it is a dead end. The seam that works:
+   create a shared `quarantined: set[PortfolioId] = set()` BEFORE `compose_engine`, right next to
+   `global_queue = PriorityEventBus()` (`~:1671`) — this is the exact pattern `global_queue` already
+   uses. Then:
+     - pass a READ PREDICATE (`lambda pid: pid in quarantined`) into `compose_engine(...,
+       quarantine_read=...)` → `OrderHandler` → `OrderManager` → `AdmissionManager` as a REAL
+       constructor arg (`compose_engine` already takes optional kwargs like `system_store`/
+       `error_policy`, so this is idiomatic);
+     - pass the SET ITSELF into `SafetyController(..., quarantine=quarantined)` as its write-target
+       (its `quarantine_portfolio`/`release` methods mutate it).
+   Single source of truth: ONE set, `SafetyController` writes, `AdmissionManager` reads through the
+   predicate. No reordering, NO new class, and NO None-then-assign (both constructors receive a real
+   object — the owner explicitly rejected the late-bind/None pattern). Files a real build touches:
+   `compose.py`, `order_handler.py`, `order_manager.py`, `admission_manager.py`,
+   `safety_controller.py`, `live_trading_system.py` — none was in 11-10's scope, which is why it was
+   deferred.
    **Prove it end-to-end**: drive a real `build_live_system`, quarantine a portfolio, enqueue a
    SignalEvent for it, assert NO OrderEvent is emitted (a unit test on a hand-built AdmissionManager
    proves nothing — that is the inert-deliverable trap this phase hit repeatedly).
