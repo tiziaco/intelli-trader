@@ -35,6 +35,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
+from itrader.core.exceptions import ValidationError
 from itrader.logger import get_itrader_logger
 from itrader.venues.registry import DEFAULT_ACCOUNT_ID
 
@@ -240,8 +241,6 @@ class OkxVenuePlugin:
         and is copied verbatim; only the interpolated source word changed, because
         the config is now where the id is expected from.
         """
-        from itrader.core.exceptions import ValidationError
-
         account_id = getattr(config, "account_id", None)
         source = "venue account config"
         if not account_id:
@@ -338,8 +337,35 @@ class OkxVenuePlugin:
             # D-11: an OMITTED `account_id` falls back to the BUNDLE's own id — the
             # documented facade call site, which mints THIS bundle's account. That is
             # NOT the cross-fallback D-11 forbids: no portfolio is involved, so there
-            # is no unnamed caller being attached to someone else's balance. A
-            # SUPPLIED id always wins and is never widened.
+            # is no unnamed caller being attached to someone else's balance. That
+            # fallback is PRESERVED exactly as it was.
+            #
+            # WR-03 — a SUPPLIED id must MATCH the bundle's own or it is REFUSED. The
+            # `replace(...)` below moves the id but NOT `account_config.spec`, which is
+            # the spec (and therefore the `secret_ref`) the BUNDLE was built for — the
+            # two cannot be moved independently. Minting another id from this bundle
+            # would hand `new_account` a mismatched pair, and
+            # `connectors.get("okx", <other id>, <this bundle's spec>)` would memoize a
+            # session under the OTHER account's key while authenticated from THIS
+            # account's credentials: an order routed to a different REAL venue balance,
+            # with every lookup above it still looking correct (D-11/D-12). Refusing a
+            # mismatch does NOT widen anything — D-11's rule that the closure must never
+            # prefer its own id over a supplied one is untouched, because a supplied id
+            # that disagrees now yields no account at all rather than the wrong one.
+            if account_id is not None and account_id != account_config.account_id:
+                raise ValidationError(
+                    "account_id",
+                    str(account_id),
+                    f"Refusing to mint OKX venue account '{account_id}' from the "
+                    f"bundle built for '{account_config.account_id}': the bundle "
+                    f"carries '{account_config.account_id}'s resolved credentials on "
+                    "its spec, and the spec does not travel with a substituted "
+                    f"account_id — the connector would be memoized under "
+                    f"('okx', '{account_id}') while authenticated from "
+                    f"'{account_config.account_id}'s secret_ref, attaching this id to "
+                    "a DIFFERENT real venue balance. Build a bundle for this account "
+                    "instead (D-11/D-12).",
+                )
             return self.new_account(replace(
                 account_config,
                 account_id=account_id or account_config.account_id,

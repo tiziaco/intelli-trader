@@ -573,13 +573,52 @@ def test_account_factory_with_no_account_id_mints_the_bundles_own_account() -> N
     assert bundle.account_factory().account_id == "acct-a"
 
 
-def test_account_factory_never_widens_a_supplied_account_id() -> None:
-    """A SUPPLIED id always wins over the bundle's own — the D-11 direction of travel.
+def test_account_factory_refuses_a_supplied_id_the_bundle_was_not_built_for() -> None:
+    """WR-03: a MISMATCHED supplied id is refused, not minted (D-11/D-12).
 
     ``_attach_venue_accounts`` looks a lifecycle up BY the portfolio's account id and
-    then mints under it. If the closure preferred its bundle-level id, a portfolio
-    would silently receive an account for a DIFFERENT real venue balance while every
-    lookup above it still looked correct.
+    then mints under it, so the id the closure receives must be honoured — if the
+    closure preferred its bundle-level id, a portfolio would silently receive an
+    account for a DIFFERENT real venue balance while every lookup above it still
+    looked correct. That D-11 concern is why this closure may not widen a supplied id.
+
+    But the id cannot travel ALONE. ``replace(...)`` overrides ``account_id`` and
+    leaves ``account_config.spec`` — the spec (and ``secret_ref``) the BUNDLE was
+    built for — so a mismatched pair reaches
+    ``connectors.get("okx", <other id>, <this bundle's spec>)``, memoizing a session
+    under the other account's key while authenticated from THIS account's
+    credentials. Refusing is NOT widening: a disagreeing id now yields NO account
+    rather than the wrong one, so D-11's rule survives intact and D-12's per-account
+    credential isolation stops resting on caller discipline.
+    """
+    from itrader.core.exceptions import ValidationError
+    from itrader.venues.okx_plugin import OkxVenuePlugin
+
+    connectors = _FakeConnectorProvider()
+    spec = _fake_spec(account_id="acct-a")
+
+    bundle = OkxVenuePlugin().build_bundle(_fake_ctx(), spec, connectors)
+
+    with pytest.raises(ValidationError) as excinfo:
+        bundle.account_factory(account_id="acct-b")
+
+    # BOTH ids must be named: the message has to say which id was refused AND which
+    # account's credentials the bundle actually carries, or an operator cannot tell
+    # which of the two wirings is wrong.
+    message = str(excinfo.value)
+    assert "acct-b" in message
+    assert "acct-a" in message
+    # The refusal precedes the mint: no connector was ever keyed under the foreign id.
+    assert ("okx", "acct-b") not in connectors._memo
+
+
+def test_account_factory_accepts_a_supplied_id_matching_the_bundles_own() -> None:
+    """The supplied-id path still mints — the WR-03 guard refuses only a MISMATCH.
+
+    ``_attach_venue_accounts`` passes the id EXPLICITLY (never omitted), and the
+    lifecycle it passes was looked up by that same id, so this is the real live call
+    shape. If the guard rejected it too, every live portfolio would lose its venue
+    account.
     """
     from itrader.venues.okx_plugin import OkxVenuePlugin
 
@@ -588,7 +627,7 @@ def test_account_factory_never_widens_a_supplied_account_id() -> None:
 
     bundle = OkxVenuePlugin().build_bundle(_fake_ctx(), spec, connectors)
 
-    assert bundle.account_factory(account_id="acct-b").account_id == "acct-b"
+    assert bundle.account_factory(account_id="acct-a").account_id == "acct-a"
 
 
 def test_bundle_account_factory_delegates_to_new_account() -> None:
@@ -597,6 +636,11 @@ def test_bundle_account_factory_delegates_to_new_account() -> None:
     ``account_factory`` is retained (the facade and ``assemble_venue`` call it) but
     is now a thin adapter over ``new_account``, so there is exactly ONE minting
     implementation rather than two that can drift apart.
+
+    WR-03: the delegation is proven on a MATCHING id. It used to be proven by minting
+    ``acct-b`` from an ``acct-a`` bundle, which the guard now refuses — the property
+    under test (one minting implementation, the connector coming from the shared
+    ``(venue, account_id)`` memo) is unchanged, only the id it is demonstrated with.
     """
     from itrader.venues.okx_plugin import OkxVenuePlugin
 
@@ -606,9 +650,9 @@ def test_bundle_account_factory_delegates_to_new_account() -> None:
 
     bundle = OkxVenuePlugin().build_bundle(ctx, spec, connectors)
 
-    from_factory = bundle.account_factory(account_id="acct-b")
-    assert from_factory.account_id == "acct-b"
-    assert from_factory._connector is connectors.get("okx", "acct-b", spec)
+    from_factory = bundle.account_factory(account_id="acct-a")
+    assert from_factory.account_id == "acct-a"
+    assert from_factory._connector is connectors.get("okx", "acct-a", spec)
 
 
 def test_okx_account_factory_is_keyword_only_and_has_no_catch_all() -> None:
