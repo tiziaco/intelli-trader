@@ -33,7 +33,7 @@ Indentation: 4-SPACE (``venues/`` package convention). ``mypy --strict`` applies
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from itrader.core.exceptions import ValidationError
 from itrader.logger import get_itrader_logger
@@ -45,6 +45,38 @@ if TYPE_CHECKING:
     from itrader.portfolio_handler.account.base import Account
     from itrader.price_handler.providers.live_provider import LiveDataProvider
     from itrader.venues.bundle import VenueBundle
+
+#: The OKX VENUE-level market type (11.2-06, D-38) — the value ``build_bundle`` used
+#: to hardcode inline. It stays "spot" and is deliberately NOT delegated to
+#: ``VenueAccountConfig``'s own ``"derivative"`` default: ``VenueAccount`` derives
+#: ``_cash_stream_nets_holds = market_type != "spot"``, so falling through to that
+#: default would invert CASH ACCOUNTING for every OKX account whose row names no
+#: market type. The hardcode was removed to make the ACCOUNT-level key live, not to
+#: change what an account that names nothing gets.
+_OKX_DEFAULT_MARKET_TYPE: Literal["spot", "derivative"] = "spot"
+
+#: The account-level, NON-SECRET connection knobs ``OkxSettings`` accepts (D-38).
+#: ``market_type`` is NOT here — it is a bundle/account knob, not a session one, and
+#: ``OkxSettings`` has no such field.
+_OKX_CONNECTION_KNOBS = ("sandbox", "region")
+
+
+def _connection_overrides(spec: Any) -> dict[str, Any]:
+    """The account's own non-secret connection knobs, or ``{}`` (11.2-06, D-38).
+
+    Only knobs the account ACTUALLY names are returned. A ``None`` must never be
+    forwarded to ``OkxSettings``: the precedence rule is "a key the account does not
+    name leaves the venue default in force", and passing ``sandbox=None`` through
+    would break it in the worst direction — ``None`` is not a valid bool, so it would
+    either fail validation or coerce a configured PRODUCTION account onto the demo
+    host. Absence is not an override.
+    """
+    overrides: dict[str, Any] = {}
+    for name in _OKX_CONNECTION_KNOBS:
+        value = getattr(spec, name, None)
+        if value is not None:
+            overrides[name] = value
+    return overrides
 
 
 class OkxConnectorPlugin:
@@ -90,6 +122,16 @@ class OkxConnectorPlugin:
         from itrader.connectors.okx import OkxConnector
 
         secret_ref = getattr(spec, "secret_ref", None)
+        # 11.2-06 (D-38): the account's OWN non-secret connection knobs, merged onto the
+        # spec from its ``venue_accounts.config_json`` by ``VenueAccountManager``. They
+        # decide WHICH HOST this session reaches — ``region`` selects the regional entity
+        # (an EEA key answers 50119 on the global host) and ``sandbox`` selects demo vs
+        # PRODUCTION. Supplied as INIT kwargs, which are pydantic-settings' HIGHEST
+        # priority source, so an account that pins them is not silently overridden by the
+        # ambient ``OKX_SANDBOX`` / ``OKX_REGION`` environment. This is the same
+        # init-kwargs-outrank-env premise the CR-05 gate below rests on, and the CR-05
+        # required set is unaffected: both knobs carry defaults, so neither is REQUIRED.
+        connection = _connection_overrides(spec)
         if self._resolver is None or secret_ref is None:
             # LEGACY single-account path: no pointer means the pre-MPORT-06 deployment
             # with one global OKX_API_* set. This is NOT the T-11-18 fail-open case —
@@ -97,10 +139,13 @@ class OkxConnectorPlugin:
             # NOTHING, and the resolver RAISES there (never returns an empty mapping).
             # An account with no pointer at all simply has no per-account credentials.
             #
-            # OkxSettings fields are env-populated (validation_alias OKX_API_*), so a
-            # bare OkxSettings() is the correct runtime construction; mypy sees the
-            # fields as required named args (matches connectors/okx.py:81 convention).
-            return OkxConnector(OkxSettings())  # type: ignore[call-arg]
+            # OkxSettings fields are env-populated (validation_alias OKX_API_*), so the
+            # credentials are still sourced from the environment here; only the D-38
+            # connection knobs (never a credential) are supplied as kwargs. The former
+            # ``# type: ignore[call-arg]`` is gone because the ``**`` splat of a
+            # ``dict[str, Any]`` already makes mypy stop treating the alias-bound fields
+            # as missing named arguments — the suppression became unused, not unneeded.
+            return OkxConnector(OkxSettings(**connection))
 
         # A resolution failure PROPAGATES: an operator typo in secret_ref must stop the
         # connect, not quietly authenticate as whichever account the ambient process
@@ -152,7 +197,14 @@ class OkxConnectorPlugin:
         # The resolved mapping is Mapping[str, SecretStr] keyed by the model's field
         # names; OkxSettings opts into populate_by_name so it is feedable verbatim.
         # It lives in memory for the lifetime of this connector and is written nowhere.
-        return OkxConnector(OkxSettings(**resolved))  # type: ignore[arg-type]
+        #
+        # 11.2-06 (D-38): the two mappings are merged into ONE dict rather than splatted
+        # as two ``**`` arguments. A resolver whose prefix happened to expose a
+        # ``*_SANDBOX`` / ``*_REGION`` var would put that key in BOTH mappings, and two
+        # splats collide with a bare ``TypeError: got multiple values``. Merging makes
+        # the precedence explicit instead: the account row's own ``config_json`` wins,
+        # which is the same account-overrides-everything-else rule D-38 states.
+        return OkxConnector(OkxSettings(**{**resolved, **connection}))
 
 
 class OkxVenuePlugin:
@@ -305,6 +357,19 @@ class OkxVenuePlugin:
 
         exchange = OkxExchange(ctx.bus, connector)
 
+        # 11.2-06 (D-38): the market type now FLOWS FROM THE ACCOUNT — its own
+        # ``venue_accounts.config_json``, merged onto the spec by
+        # ``VenueAccountManager.bring_online`` — instead of being hardcoded here. This
+        # line is BEHAVIOURAL, not cosmetic: ``VenueAccount.__init__`` derives
+        # ``_cash_stream_nets_holds = market_type != "spot"``, which decides whether the
+        # leaf's cash channel nets a venue-side hold into ``_venue_balance``. On a spot
+        # leaf the local pending overlay is the SOLE tracker of a resting order's hold
+        # and must be held until terminal release; a derivative leaf may drop it on ack.
+        # Getting this value wrong therefore OVER- or UNDER-states buying power.
+        # An account naming nothing keeps the venue-level ``"spot"`` this call site used
+        # to hardcode — never ``VenueAccountConfig``'s ``"derivative"`` default.
+        market_type = getattr(spec, "market_type", None) or _OKX_DEFAULT_MARKET_TYPE
+
         # 11-07 (D-10): the per-account knobs `new_account` mints from. The bundle's
         # own `account_id` is carried so the facade's no-portfolio `account_factory()`
         # call site mints THIS bundle's account rather than an unscoped one.
@@ -313,7 +378,7 @@ class OkxVenuePlugin:
             connectors=connectors,
             spec=spec,
             quote_currency=quote,
-            market_type="spot",
+            market_type=market_type,
             symbol=symbol,
         )
 
