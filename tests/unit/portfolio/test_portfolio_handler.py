@@ -22,6 +22,7 @@ from itrader.outils.dict_merge import recursive_merge
 from tests.support.venue_wiring import (
     backtest_portfolio_handler,
     compute_account,
+    in_memory_state_storage,
 )
 
 
@@ -743,7 +744,7 @@ def _fake_position(ticker, net_quantity, current_price):
 def test_margin_math_runs_with_no_portfolio_object_in_existence():
     """D-01/VENUE-01: the margin leaf needs no Portfolio — not to construct, and
     not to compute. Built from cash alone, handed positions and an id directly."""
-    account = SimulatedMarginAccount(10000)
+    account = SimulatedMarginAccount(10000, state_storage=in_memory_state_storage())
     account.set_universe(_fake_universe({
         "AAA": Decimal("0.01"),
         "BBB": Decimal("0.02"),
@@ -767,7 +768,7 @@ def test_margin_math_runs_with_no_portfolio_object_in_existence():
     # stays unreachable when there is nothing to price. Proved on a SECOND,
     # deliberately unwired account so the assertion cannot free-ride on the
     # set_universe call above.
-    unwired = SimulatedMarginAccount(10000)
+    unwired = SimulatedMarginAccount(10000, state_storage=in_memory_state_storage())
     assert unwired._universe is None
     assert unwired.maintenance_margin({}, "pf-no-portfolio") == Decimal("0")
 
@@ -779,7 +780,8 @@ def test_margin_math_runs_with_no_portfolio_object_in_existence():
 def test_margin_math_with_no_portfolio_still_fails_loud_on_unwired_universe():
     """D-01 must NOT weaken the WR-02 detective control: positions present but no
     Universe still raises a context-rich StateError carrying the portfolio id."""
-    account = SimulatedMarginAccount(10000)  # set_universe deliberately not called
+    account = SimulatedMarginAccount(  # set_universe deliberately not called
+        10000, state_storage=in_memory_state_storage())
     positions = {"AAA": _fake_position("AAA", Decimal("2"), Decimal("100"))}
 
     with pytest.raises(StateError) as exc_info:

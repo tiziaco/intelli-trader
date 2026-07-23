@@ -41,7 +41,7 @@ from itrader.core.exceptions import InsufficientFundsError
 from itrader.portfolio_handler.account import SimulatedMarginAccount
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.transaction import Transaction
-from tests.support.venue_wiring import compute_account
+from tests.support.venue_wiring import compute_account, in_memory_state_storage
 
 
 def _margin_config(max_leverage: str = "10") -> PortfolioConfig:
@@ -66,8 +66,10 @@ def cm():
     The margin leaf — ``assert_lock_fits_buying_power`` / ``lock_margin`` live
     on the margin superset after the 01-02 split. D-01 (11.1-03): the portfolio
     stub this fixture used to build is gone; the leaf takes no portfolio.
+
+    11.1-REVIEW WR-04: the seam is named — it no longer has a default.
     """
-    return SimulatedMarginAccount(10000.0)
+    return SimulatedMarginAccount(10000.0, state_storage=in_memory_state_storage())
 
 
 @pytest.fixture

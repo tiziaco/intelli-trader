@@ -305,3 +305,73 @@ def test_the_handler_opens_the_ledger_at_exactly_the_requested_cash() -> None:
         venue_name="paper"))
 
     assert portfolio.account.balance == Decimal("1234.56")
+
+
+# ---------------------------------------------------------------------------
+# 11.1-REVIEW WR-04 — the persistence seam has no default
+# ---------------------------------------------------------------------------
+
+
+def test_a_cash_leaf_cannot_be_built_without_naming_its_persistence_seam() -> None:
+    """Omitting ``state_storage`` is a ``TypeError``, not a private in-memory backend.
+
+    Pins 11.1-REVIEW **WR-04**. The deleted default was
+    ``PortfolioStateStorageFactory.create("backtest")``: a leaf that fell back to it
+    kept its reserved cash, locked margin and cash-operation audit trail on a backend
+    NOBODY else held. In backtest nothing else reads those containers, so the oracle
+    and the whole suite stayed green; in live the restart path
+    (``state_storage.rehydrate(account)``) repopulated the PORTFOLIO's instance and
+    the account silently lost every reservation. The account reported itself live
+    while persisting nothing.
+
+    A required keyword-only argument turns that into a construction-time refusal, so
+    a new portfolio-creation path (ACCT-05) structurally cannot reach the defect.
+    """
+    with pytest.raises(TypeError):
+        SimulatedCashAccount(Decimal("1000"))  # type: ignore[call-arg]
+
+
+def test_a_margin_leaf_cannot_be_built_without_naming_its_persistence_seam() -> None:
+    """The margin superset carries the same refusal (11.1-REVIEW WR-04).
+
+    Asserted separately from the cash leaf because ``SimulatedMarginAccount`` declares
+    its OWN ``__init__`` rather than inheriting one — narrowing only the superclass
+    would leave this arm defaulted, and the margin leaf is the one that also keeps
+    position-keyed margin locks on the seam.
+    """
+    with pytest.raises(TypeError):
+        SimulatedMarginAccount(Decimal("1000"))  # type: ignore[call-arg]
+
+
+def test_neither_leaf_declares_a_default_for_its_persistence_seam() -> None:
+    """Asserted on the SIGNATURE, so the refusal cannot be "fixed" back into a default.
+
+    The behavioural tests above would still pass under a re-defaulted
+    ``state_storage: ... = None`` paired with an explicit ``raise`` in the body — but
+    that shape reintroduces exactly what this phase removes: an Optional production
+    collaborator whose absence is a runtime discovery rather than a call-site one.
+    ``inspect`` is the durable form of the property (the same convention
+    ``test_paper_plugin.py`` uses on the ``account_factory`` closure).
+    """
+    for leaf in (SimulatedCashAccount, SimulatedMarginAccount):
+        parameter = inspect.signature(leaf.__init__).parameters["state_storage"]
+        assert parameter.kind is inspect.Parameter.KEYWORD_ONLY, (
+            f"{leaf.__name__}.state_storage must be keyword-only: {parameter!r}")
+        assert parameter.default is inspect.Parameter.empty, (
+            f"{leaf.__name__}.state_storage must carry NO default "
+            f"(11.1-REVIEW WR-04): {parameter!r}")
+
+
+def test_a_named_seam_is_the_one_the_leaf_routes_through() -> None:
+    """The positive half: naming a seam binds THAT instance, unchanged behaviour.
+
+    Guards against "fixing" the refusal by reintroducing a default under another
+    name — the leaf must still adopt exactly the object it was handed.
+    """
+    from itrader.portfolio_handler.storage import PortfolioStateStorageFactory
+
+    seam = PortfolioStateStorageFactory.create("backtest")
+    account = SimulatedCashAccount(Decimal("1000"), state_storage=seam)
+
+    assert account.state_storage is seam
+    assert account.balance == Decimal("1000.00")
