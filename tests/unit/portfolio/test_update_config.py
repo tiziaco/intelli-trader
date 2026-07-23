@@ -18,6 +18,7 @@ from itrader.outils.dict_merge import recursive_merge
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.core.exceptions.base import ConfigurationError
+from itrader.core.exceptions.portfolio import ImmutableConfigKeyError
 from tests.support.venue_wiring import (
     backtest_portfolio_handler,
     compute_account,
@@ -131,6 +132,57 @@ def test_max_leverage_below_floor_raises_configuration_error(handler):
     """max_leverage < 1 is rejected at validation (ge=1 floor, Plan 01)."""
     with pytest.raises(ConfigurationError):
         handler.update_config({"trading_rules": {"max_leverage": Decimal("0")}})
+
+
+# --- Portfolio.update_config immutable-key backstop (11.1-REVIEW CR-02) ------
+
+def test_portfolio_update_config_refuses_nested_enable_margin(portfolio):
+    """A nested ``enable_margin`` payload is REFUSED by the domain backstop (11.1-REVIEW CR-02).
+
+    ``ConfigRouter`` is the queue-facing gate, but any caller reaching ``Portfolio`` directly
+    bypasses it entirely — this is the backstop, and the two layers share ONE immutable-key set so
+    they cannot drift apart. Walking the payload at any DEPTH is required because ``recursive_merge``
+    accepts nested blobs, so a top-level-only check would be bypassable by nesting.
+    """
+    with pytest.raises(ImmutableConfigKeyError):
+        portfolio.update_config({"trading_rules": {"enable_margin": True}})
+
+
+def test_portfolio_update_config_refuses_top_level_enable_margin(portfolio):
+    """An UNNESTED ``enable_margin`` key raises the typed refusal, not the generic unknown-key error.
+
+    ``extra="forbid"`` would already reject this shape as a ``ConfigurationError``; the guard must
+    fire FIRST so the operator gets the remediation-bearing message instead of a pydantic dump.
+    """
+    with pytest.raises(ImmutableConfigKeyError):
+        portfolio.update_config({"enable_margin": True})
+
+
+def test_portfolio_update_config_refusal_leaves_config_untouched(portfolio):
+    """The guard raises BEFORE recursive_merge, so the atomic-swap property is preserved.
+
+    Nothing is partially applied: the config object is the SAME instance afterwards, never a
+    half-merged replacement.
+    """
+    before = portfolio.config
+    with pytest.raises(ImmutableConfigKeyError):
+        portfolio.update_config(
+            {"limits": {"max_positions": 42}, "trading_rules": {"enable_margin": True}}
+        )
+    assert portfolio.config is before
+    assert portfolio.config.limits.max_positions != 42
+    assert portfolio.config.trading_rules.enable_margin is False
+
+
+def test_portfolio_update_config_refuses_equal_value_enable_margin(portfolio):
+    """The guard is on the key's PRESENCE, not on whether the value differs.
+
+    An operator must not be able to discover the boundary by accident — a no-op-looking update
+    that "works" would teach them the knob is live.
+    """
+    current = portfolio.config.trading_rules.enable_margin
+    with pytest.raises(ImmutableConfigKeyError):
+        portfolio.update_config({"trading_rules": {"enable_margin": current}})
 
 
 def test_max_leverage_update_preserves_sibling_trading_rules(handler):
