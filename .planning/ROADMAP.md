@@ -641,6 +641,7 @@ measured per file, never generalized per package (`live_trading_system.py` is 4-
 
   9. `ExecutionHandler.on_order`'s fail-closed paths emit a `FillEvent(REFUSED)` instead of only logging (code-review **WR-10**), so a misconfigured live engine no longer drops 100% of its orders while `get_status()` reports `RUNNING` / `errors_count: 0`. Criterion 3 makes the `account_id is None` branch unreachable, so this covers two paths and deletes the third (ACCT-09).
   10. Runtime portfolio deactivation persists (code-review **WR-04**) — `PortfolioDefinitionStore.set_enabled(portfolio_id, enabled)` is written and called from whatever flips `PortfolioState`, so a portfolio an operator stops does not come back ACTIVE and trading on the next restart, and rehydrate's present-but-inactive branch becomes reachable as designed (ACCT-10).
+
 *(Criterion 11 — the D-09 config-move guard, ACCT-11 — was split out to **Phase 11.3** on 2026-07-23. The
 remaining ten criteria keep their numbering: it was last in the list, so nothing renumbers.)*
 
@@ -672,10 +673,10 @@ change is wrong regardless of how the rest of the dependency graph falls out.
 Plans:
 **Wave 1** — D-39's W1 foundations (all four are independent; the `state_storage` kwarg is the ordering constraint)
 
-- [ ] 11.2-01-PLAN.md — 11.1-REVIEW WR-04+WR-08: `state_storage` becomes a required kwarg on both simulated account leaves and on the paper `account_factory` closure; the `create("backtest")` fallback and the `getattr(config, "initial_cash", 0.0)` float default are deleted (ACCT-05 ordering constraint)
-- [ ] 11.2-02-PLAN.md — D-32 schema: `portfolios.is_deleted` + a partial unique index `WHERE NOT is_deleted`, in the registrar **and** a new Alembic revision; includes a partial-index spike and a one-way `checkpoint:decision` (ACCT-10)
-- [ ] 11.2-03-PLAN.md — 11.1-REVIEW WR-01: `fee_model_provider` becomes `(venue, account_id)`-aware across four files, and the false comment in the live root is replaced with the truth
-- [ ] 11.2-04-PLAN.md — 11.1-REVIEW CR-02: reject the `enable_margin` runtime flip at the `ConfigRouter` allowlist **and** in `Portfolio.update_config`
+- [x] 11.2-01-PLAN.md — 11.1-REVIEW WR-04+WR-08: `state_storage` becomes a required kwarg on both simulated account leaves and on the paper `account_factory` closure; the `create("backtest")` fallback and the `getattr(config, "initial_cash", 0.0)` float default are deleted (ACCT-05 ordering constraint)
+- [x] 11.2-02-PLAN.md — D-32 schema: `portfolios.is_deleted` + a partial unique index `WHERE NOT is_deleted`, in the registrar **and** a new Alembic revision; includes a partial-index spike and a one-way `checkpoint:decision` (ACCT-10)
+- [x] 11.2-03-PLAN.md — 11.1-REVIEW WR-01: `fee_model_provider` becomes `(venue, account_id)`-aware across four files, and the false comment in the live root is replaced with the truth
+- [x] 11.2-04-PLAN.md — 11.1-REVIEW CR-02: reject the `enable_margin` runtime flip at the `ConfigRouter` allowlist **and** in `Portfolio.update_config`
 
 **Wave 2** *(blocked on Wave 1)* — the tracer
 
