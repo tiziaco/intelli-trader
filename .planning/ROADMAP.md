@@ -667,6 +667,47 @@ change is wrong regardless of how the rest of the dependency graph falls out.
 
 **Sizing note (split TAKEN 2026-07-23)**: this phase reached 11 requirements even after the D-16 split, and the three folded 11.1-review findings pushed it to roughly 14 requirements-worth of work. The cut this note previously *proposed* has now been **taken**: ACCT-11 (the D-09 migration guard) moved to **Phase 11.3** — thematically separate from account identity, with no dependency on ACCT-01..10. The phase now carries **ACCT-01..ACCT-10 plus the three folded 11.1-review findings** (11.1-REVIEW CR-02, WR-04+WR-08, WR-01), which is ~13 requirements-worth. If it needs cutting again, the next cleanest seam is the read-model/plumbing group — ACCT-08 (`all_portfolios()`/`has_portfolio()` + the four `_portfolios` reach-ins) and ACCT-06 (the two phantom-invariant docstrings) — both of which are corrections rather than behaviour changes and depend on the rest only for their call sites.
 
+**Plans**: 14 plans
+
+Plans:
+**Wave 1** — D-39's W1 foundations (all four are independent; the `state_storage` kwarg is the ordering constraint)
+
+- [ ] 11.2-01-PLAN.md — 11.1-REVIEW WR-04+WR-08: `state_storage` becomes a required kwarg on both simulated account leaves and on the paper `account_factory` closure; the `create("backtest")` fallback and the `getattr(config, "initial_cash", 0.0)` float default are deleted (ACCT-05 ordering constraint)
+- [ ] 11.2-02-PLAN.md — D-32 schema: `portfolios.is_deleted` + a partial unique index `WHERE NOT is_deleted`, in the registrar **and** a new Alembic revision; includes a partial-index spike and a one-way `checkpoint:decision` (ACCT-10)
+- [ ] 11.2-03-PLAN.md — 11.1-REVIEW WR-01: `fee_model_provider` becomes `(venue, account_id)`-aware across four files, and the false comment in the live root is replaced with the truth
+- [ ] 11.2-04-PLAN.md — 11.1-REVIEW CR-02: reject the `enable_margin` runtime flip at the `ConfigRouter` allowlist **and** in `Portfolio.update_config`
+
+**Wave 2** *(blocked on Wave 1)* — the tracer
+
+- [ ] 11.2-05-PLAN.md — **TRACER**: one durable `venue_accounts` row travels end-to-end — `read_enabled_for` → `VenueAccountManager.bring_online` (with the relocated `secret_ref` read) → registered exchange → `VenueBundles.account_for` → account leaf; plus `provision` (create-only, D-11) (ACCT-01, ACCT-02, ACCT-03; D-21/D-26/D-27/D-28/D-34)
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 11.2-06-PLAN.md — D-38 account `config_json` precedence merge with a raising three-key allowlist, the `market_type` hardcode cleared, and D-40's per-pair UID-guard outcome+reason (ACCT-02)
+- [ ] 11.2-07-PLAN.md — D-20 boot reorder + ACCT-01/ACCT-02 handoff: six helpers and the spec `portfolios` field deleted, D-36 removes "primary account" and moves the feed binding out, plus the 10-file test blast-radius rewrite and a deleted-symbol static gate (ACCT-01, ACCT-02)
+
+**Wave 4** *(blocked on Wave 3)*
+
+- [ ] 11.2-08-PLAN.md — D-23 one storage site for `(venue_name, account_id)` + D-24 `PortfolioFactory` owns the definition→runtime-graph mapping, wired at all three composition roots (ACCT-05)
+
+**Wave 5** *(blocked on Wave 4)*
+
+- [ ] 11.2-09-PLAN.md — D-25 `create`/`materialize` split, rehydrate materializes only, ACCT-07's early return and the absence gate deleted, and the mandatory WR-11 fixture rewrite (ACCT-03, ACCT-05, ACCT-07)
+
+**Wave 6** *(blocked on Wave 5; the two run in parallel)*
+
+- [ ] 11.2-10-PLAN.md — ACCT-04: all **eight** live-path `or DEFAULT_ACCOUNT_ID` sites dispositioned explicitly, plus a two-halved static gate covering the deletions and the KEPT backtest identity (ACCT-04)
+- [ ] 11.2-11-PLAN.md — ACCT-10 lifecycle persistence: targeted `set_enabled`/`set_deleted`, `deactivate_portfolio`/`activate_portfolio` (D-30), `delete_portfolio` writes `is_deleted` (D-32), and D-33's account-disable refusal (ACCT-10)
+
+**Wave 7** *(blocked on Wave 6; the two run in parallel)*
+
+- [ ] 11.2-12-PLAN.md — ACCT-08 `all_portfolios()`/`has_portfolio()`, the surviving `_portfolios` reach-in converted, and WR-02's degrade guard moved inside **both** `_layer_persisted_overrides` loops (ACCT-08)
+- [ ] 11.2-13-PLAN.md — ACCT-09 `FillEvent(REFUSED)` on both surviving fail-closed paths with two new `ExecutionErrorCode` members (D-42), the unreachable branch deleted, and ACCT-06's **three** phantom-invariant docstrings corrected (ACCT-06, ACCT-09)
+
+**Wave 8** *(blocked on Wave 7)*
+
+- [ ] 11.2-14-PLAN.md — D-29's six-step fresh-deployment gate, existing scripts become the `provision` callers, D-37's residue, and the full phase gate incl. all three static gates (ACCT-01..ACCT-04)
+
 *Cross-cutting constraints (apply to every plan): the backtest path is untouched — SMA_MACD oracle byte-exact
 `134 / 46189.87730727451`; GATE-01 import inertness preserved (`test_okx_inertness.py` green, no new eager
 async/ccxt/SQL on the backtest import path); money stays `Decimal`; single UUIDv7 `idgen` scheme; indentation
