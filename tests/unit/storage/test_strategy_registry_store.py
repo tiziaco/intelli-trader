@@ -68,9 +68,9 @@ def _seed_portfolios(store: StrategyRegistryStore) -> None:
     with store.engine.begin() as connection:
         if connection.execute(portfolios.select().limit(1)).first() is not None:
             return
-        # D-14 pins (venue_name, account_id) UNIQUE across portfolios, so each seeded
-        # portfolio needs its OWN venue account — and ``portfolios`` has an unconditional
-        # composite FK onto it, so the accounts must be inserted FIRST.
+        # D-14/D-32 pin (venue_name, account_id) UNIQUE across LIVE portfolios, so each
+        # seeded portfolio needs its OWN venue account — and ``portfolios`` has an
+        # unconditional composite FK onto it, so the accounts must be inserted FIRST.
         connection.execute(insert(accounts), [
             {
                 "venue_name": "paper", "account_id": name, "secret_ref": None,
@@ -82,7 +82,10 @@ def _seed_portfolios(store: StrategyRegistryStore) -> None:
             {
                 "portfolio_id": portfolio_id, "name": name, "venue_name": "paper",
                 "account_id": name, "initial_cash": Decimal("10000"),
-                "enabled": True, "config_json": None, "updated_at": _AT1,
+                # D-32 — `is_deleted` is NOT NULL with NO server_default (the registrar
+                # declares none), so an omitted key fails the insert. Seeded rows are LIVE.
+                "enabled": True, "is_deleted": False,
+                "config_json": None, "updated_at": _AT1,
             }
             for portfolio_id, name in seeded
         ])

@@ -80,5 +80,9 @@ def seed_portfolio_definitions(
             connection.execute(portfolios.insert(), [{
                 "portfolio_id": portfolio_id, "name": account_id, "venue_name": "paper",
                 "account_id": account_id, "initial_cash": Decimal("10000"),
-                "enabled": True, "config_json": None, "updated_at": _SEED_AT,
+                # D-32 — both lifecycle flags are written explicitly: `is_deleted` is NOT NULL
+                # with NO server_default (the registrar declares none), so an omitted key
+                # fails the insert rather than defaulting. Seeded rows are LIVE.
+                "enabled": True, "is_deleted": False,
+                "config_json": None, "updated_at": _SEED_AT,
             }])
