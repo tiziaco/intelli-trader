@@ -30,6 +30,7 @@ from .portfolio import (
     ReconciliationError,
     DuplicateVenueAccountError,
     DuplicateVenueAccountProvisionError,
+    UnknownVenueAccountConfigKeyError,
     VenueAccountNotProvisionedError
 )
 
@@ -88,6 +89,7 @@ __all__ = [
     'ReconciliationError',
     'DuplicateVenueAccountError',
     'DuplicateVenueAccountProvisionError',
+    'UnknownVenueAccountConfigKeyError',
     'VenueAccountNotProvisionedError',
 
     # Order exceptions

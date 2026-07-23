@@ -297,6 +297,58 @@ class VenueAccountNotProvisionedError(PortfolioError):
         )
 
 
+class UnknownVenueAccountConfigKeyError(PortfolioError):
+    """A ``venue_accounts.config_json`` key is not on the mergeable allowlist (11.2-06, D-38).
+
+    The typed refusal ``VenueAccountManager.bring_online`` raises BEFORE it merges an
+    account's own config onto its ``VenueSpec``, and it is the security control D-38
+    names — not a tidiness check.
+
+    **Why an unrecognised key must RAISE rather than be dropped.** The three mergeable
+    keys are the ones that decide where an account's money goes. ``sandbox`` and
+    ``region`` select the OKX host an authenticated session reaches (an EEA-issued key
+    answers 50119 on the global host; ``sandbox`` is demo-vs-PRODUCTION), and
+    ``market_type`` reaches ``VenueAccount``, where
+    ``_cash_stream_nets_holds = market_type != "spot"`` changes how cash is netted. A
+    dropped ``sandox`` typo therefore does not degrade to a harmless default: it leaves
+    the account on whatever the ambient process environment says, so an operator who
+    believes they pinned an account to demo routes a live order to the production host —
+    and nothing anywhere reports a problem. Logging-and-ignoring is the same defect with
+    a log line nobody reads.
+
+    It is a SEPARATE type from the generic ``ValidationError`` the VALUE checks raise,
+    because the two need different operator actions: an unknown KEY means "this key does
+    not exist / you typed it wrong / it belongs somewhere else", while a bad VALUE means
+    "this key exists but you gave it something illegal".
+
+    Carries the pair and both key sets as structured fields and builds its message in
+    ``__init__`` (the project's exception convention). The message names the offending
+    keys AND the complete legal set, so an operator never has to open the source to
+    learn what they may write.
+    """
+
+    def __init__(
+        self,
+        venue_name: str,
+        account_id: str,
+        unknown_keys: list[str],
+        legal_keys: list[str],
+    ):
+        self.venue_name = venue_name
+        self.account_id = account_id
+        self.unknown_keys = unknown_keys
+        self.legal_keys = legal_keys
+        super().__init__(
+            f"Venue account ({venue_name!r}, {account_id!r}) carries unrecognised "
+            f"config_json key(s) {unknown_keys}. Refusing to bring it online (D-38): "
+            f"the mergeable keys are exactly {legal_keys}, and silently dropping an "
+            f"unrecognised one is how a 'sandox' typo leaves an account on the ambient "
+            f"environment's host — routing a live order to production while the "
+            f"operator believes the account is pinned to demo. Correct the key, or "
+            f"remove it from the account's config_json."
+        )
+
+
 class DuplicateVenueAccountProvisionError(PortfolioError):
     """``provision`` named a ``(venue_name, account_id)`` that already exists (ACCT-02/D-11).
 

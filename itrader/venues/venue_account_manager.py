@@ -62,9 +62,12 @@ from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from itrader.core.exceptions import (
     DuplicateVenueAccountProvisionError,
+    UnknownVenueAccountConfigKeyError,
+    ValidationError,
     VenueAccountNotProvisionedError,
 )
 from itrader.logger import get_itrader_logger
+from itrader.outils.dict_merge import recursive_merge
 from itrader.venues.assemble import assemble_venue
 
 if TYPE_CHECKING:
@@ -78,6 +81,45 @@ if TYPE_CHECKING:
 
 #: The one table name the D-34 fresh-deployment probe tests for. Narrow BY DESIGN.
 _ACCOUNTS_TABLE = "venue_accounts"
+
+#: The EXHAUSTIVE set of ``venue_accounts.config_json`` keys ``bring_online`` merges
+#: onto an account's ``VenueSpec`` (11.2-06, D-38/D-12).
+#:
+#: **An EXPLICIT ALLOWLIST, and an unrecognised key RAISES.** These three keys are the
+#: ones that decide where an account's money goes. ``sandbox`` and ``region`` select the
+#: HOST an authenticated session reaches — ``region`` picks the regional entity (an
+#: EEA-issued key answers 50119 on the global host) and ``sandbox`` picks demo vs
+#: PRODUCTION — and ``market_type`` reaches ``VenueAccount``, where
+#: ``_cash_stream_nets_holds = market_type != "spot"`` changes how cash is netted. So a
+#: silently-dropped ``sandox`` typo does not degrade to a harmless default: it leaves the
+#: account on whatever the ambient process environment says, routing a live order to the
+#: production host while the operator believes the account is pinned to demo. The raise
+#: IS the control (T-11.2-06-01); accepting a key that changes nothing would be worse
+#: still (T-11.2-06-02), which is why the ``market_type='spot'`` hardcode in
+#: ``okx_plugin.build_bundle`` was cleared in the same plan.
+#:
+#: PRECEDENCE is one-directional: the ACCOUNT overrides the venue, and a key the account
+#: does not name leaves the venue/bundle default in force. A venue value is never
+#: restored over an explicit account value.
+_MERGEABLE_CONFIG_KEYS = frozenset({"sandbox", "region", "market_type"})
+
+#: The VENUE-LEVEL baseline the account's own config is merged ONTO. Every value is
+#: ``None`` — "this account names no override" — because ``VenueSpec`` deliberately
+#: carries no concrete defaults: the real defaults live with each venue's own plugin and
+#: settings model, and restating them here would be a second home for them that drifts.
+_VENUE_LEVEL_CONFIG: dict[str, Any] = {
+    "sandbox": None,
+    "region": None,
+    "market_type": None,
+}
+
+#: The shared market-type vocabulary (``VenueAccountConfig.market_type``). Validated
+#: HERE, unlike ``region``, because a bad value fails SILENTLY rather than loudly:
+#: ``"spott"`` is not ``"spot"``, so ``_cash_stream_nets_holds`` flips and the account's
+#: CASH ACCOUNTING changes with nothing raising. ``region``'s vocabulary belongs to the
+#: VENUE (``OkxSettings.region`` is a ``Literal`` that fails loud at build time), so it
+#: is deliberately NOT restated here — a second copy would drift from the venue's own.
+_LEGAL_MARKET_TYPES = ("spot", "derivative")
 
 
 @dataclass(frozen=True)
@@ -305,8 +347,10 @@ class VenueAccountManager:
 
         Four steps:
 
-        1. Build this account's ``VenueSpec``, carrying the ``secret_ref`` read off ITS OWN
-           row. This is the relocated ``_read_account_secret_ref`` logic and it is the
+        1. Build this account's ``VenueSpec``, carrying the ``secret_ref`` AND the
+           allowlisted ``config_json`` overrides read off ITS OWN row (D-38 — see
+           ``_merge_account_config``). This is the relocated
+           ``_read_account_secret_ref`` logic and it is the
            highest-consequence line in the method: without it every NAMED account silently
            reverts to the ambient ``OKX_API_*`` credentials, so two accounts authenticate
            as one — the fail-open composite ACCT-02/WR-05 exists to close. A NULL
@@ -334,15 +378,20 @@ class VenueAccountManager:
         account_id = str(row["account_id"])
         # (1) The account's OWN credential pointer, off its OWN row (ACCT-02 / D-02).
         secret_ref = row.get("secret_ref")
+        # 11.2-06 (D-38): the account's own ``config_json`` overrides, validated and
+        # merged onto the venue-level baseline BEFORE the spec is built. It happens HERE
+        # — the account-domain owner, one place — matching where every other account
+        # decision landed, and it happens BEFORE any assembly so a refused config brings
+        # NOTHING online (a refusal that had already registered the exchange would leave
+        # the pair routable with a config the engine declined to understand).
+        overrides = self._merge_account_config(
+            venue_name, account_id, row.get("config"))
         spec = build_venue_spec(
             venue_name,
             account_id=account_id,
             secret_ref=str(secret_ref) if secret_ref else None,
+            **overrides,
         )
-        # SEAM (plan 06): D-38's config-precedence merge belongs HERE, between reading the
-        # row's ``config`` and building the spec — the account-domain owner, one place.
-        # D-40's per-pair venue-UID guard-outcome flag belongs on the record built below.
-        # Both are deliberately NOT implemented in this plan.
 
         # (2) The existing per-account assembly primitive. ``provider`` is left at its
         # default: D-36 deletes "primary account" as a concept and moves feed binding out
@@ -366,6 +415,102 @@ class VenueAccountManager:
         self.logger.info(
             "Brought venue account (%s, %s) online", venue_name, account_id)
         return record
+
+    def _merge_account_config(
+        self,
+        venue_name: str,
+        account_id: str,
+        config: Optional[Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        """Validate and merge one account's ``config_json`` overrides (11.2-06, D-38/D-12).
+
+        The account-level half of D-12's precedence rule, and the ONLY reader
+        ``venue_accounts.config_json`` has. Three steps, in this order:
+
+        1. **REFUSE any key outside the allowlist.** See ``_MERGEABLE_CONFIG_KEYS`` for
+           why a silently-dropped ``sandox`` typo is a live-order misroute rather than a
+           harmless default. Validation happens BEFORE the merge, so a refused config
+           produces no spec and therefore nothing online.
+        2. **REFUSE an out-of-vocabulary value** for the keys whose bad value would fail
+           SILENTLY (``_assert_config_values``).
+        3. **MERGE, account over venue.** Through the shared
+           ``outils/dict_merge.py::recursive_merge`` helper — never a hand-rolled merge.
+           The overlay is flat today, but the helper is the tree's ONE merge mechanism
+           and re-deriving a second one per caller is exactly the drift it was promoted
+           to prevent.
+
+        ``None`` (an out-of-band writer left ``config_json`` NULL) and ``{}``
+        (``provision``'s normalization) are INDISTINGUISHABLE here: both mean "this
+        account names no overrides", both leave every venue default in force, and
+        neither raises. Making one of them an error would make a valid row un-bringable
+        depending on which writer created it.
+
+        Returns the keyword overrides for ``build_venue_spec``, every unnamed key
+        carrying ``None`` — the spec's own "no override" value.
+        """
+        account_config = dict(config) if config else {}
+        unknown = set(account_config) - _MERGEABLE_CONFIG_KEYS
+        if unknown:
+            raise UnknownVenueAccountConfigKeyError(
+                venue_name, account_id,
+                sorted(unknown), sorted(_MERGEABLE_CONFIG_KEYS))
+        self._assert_config_values(venue_name, account_id, account_config)
+        # Account OVER venue, one direction only.
+        return recursive_merge(_VENUE_LEVEL_CONFIG, account_config)
+
+    def _assert_config_values(
+        self,
+        venue_name: str,
+        account_id: str,
+        account_config: dict[str, Any],
+    ) -> None:
+        """Refuse an allowlisted key whose VALUE would fail silently (11.2-06, D-38).
+
+        The allowlist stops a key the engine does not understand; this stops a key it
+        understands carrying something it cannot act on correctly. Only the two keys
+        whose bad value is SILENT are checked here — a loud failure downstream is a
+        better guard than a duplicated one:
+
+        * ``market_type`` — ``VenueAccount`` derives
+          ``_cash_stream_nets_holds = market_type != "spot"``, so ``"spott"`` sails
+          through AS a derivative and changes the account's CASH ACCOUNTING with nothing
+          raising anywhere.
+        * ``sandbox`` — a JSON column holds the STRING ``"false"`` happily, and every
+          truthiness test in Python then reads it as ``True``, flipping an account
+          between the demo and the PRODUCTION host.
+
+        ``region`` is deliberately NOT checked: its vocabulary belongs to the venue
+        (``OkxSettings.region`` is a ``Literal`` that raises a pydantic
+        ``ValidationError`` on anything else), and restating an OKX-specific entity list
+        in the venue-agnostic account domain is a copy that drifts the day a venue adds
+        a region.
+        """
+        market_type = account_config.get("market_type")
+        if market_type is not None and market_type not in _LEGAL_MARKET_TYPES:
+            raise ValidationError(
+                "market_type",
+                str(market_type),
+                f"Venue account ({venue_name!r}, {account_id!r}) names an unknown "
+                f"market_type; the legal values are {list(_LEGAL_MARKET_TYPES)}. "
+                f"Refusing to bring it online: an unrecognised value would be treated "
+                f"as a derivative by VenueAccount's "
+                f"`_cash_stream_nets_holds = market_type != 'spot'`, silently changing "
+                f"this account's cash accounting (D-38).",
+            )
+
+        sandbox = account_config.get("sandbox")
+        # ``isinstance(True, int)`` is True, so the check is on ``bool`` specifically —
+        # a JSON ``1``/``0`` is not a boolean and must not be coerced into one here.
+        if sandbox is not None and not isinstance(sandbox, bool):
+            raise ValidationError(
+                "sandbox",
+                str(sandbox),
+                f"Venue account ({venue_name!r}, {account_id!r}) names a non-boolean "
+                f"sandbox. Refusing to bring it online: a JSON string such as "
+                f"'false' is TRUTHY, so the account would connect to the opposite "
+                f"host from the one configured — demo instead of production, or "
+                f"production instead of demo (D-38).",
+            )
 
     # ------------------------------------------------------------------ resolution
 
