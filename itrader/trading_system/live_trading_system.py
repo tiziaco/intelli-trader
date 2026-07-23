@@ -3,7 +3,7 @@ import threading
 from datetime import datetime, UTC
 from decimal import Decimal
 from typing import (
-    Optional, Dict, List, Any, Callable, Iterable, Mapping, TYPE_CHECKING)
+    Optional, Dict, List, Any, Callable, Mapping, TYPE_CHECKING)
 
 from itrader.core.enums import HaltReason, SystemStatus
 from itrader.core.exceptions import StateError, ValidationError
@@ -1956,6 +1956,12 @@ def build_live_system(
         safety=safety,
         lifecycles=venue_lifecycles,
         venue_accounts=lambda: list(venue_accounts.values()),
+        # 11.2-07 (D-36): the ONE feed data provider now lives on the FeedConnectionBinder,
+        # not on a "primary" lifecycle. Read it LIVE through the binder so the all-streams
+        # health gate covers the candle arm and tracks a runtime re-borrow. None on the
+        # in-memory arm (no binder) — treated as no data arm to gate on.
+        feed_provider=(
+            lambda: feed_binder.feed_provider if feed_binder is not None else None),
     )
     # SAFE-06: pre-trade risk backstop (rate + notional caps). Off the WALL clock (the
     # live determinism seam) + the static config.safety.throttle caps.

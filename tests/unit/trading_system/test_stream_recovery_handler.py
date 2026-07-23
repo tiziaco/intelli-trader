@@ -144,14 +144,21 @@ def test_resume_stays_paused_while_exchange_arm_down() -> None:
 
 
 def test_resume_stays_paused_while_data_arm_down() -> None:
-    """Symmetric: a still-down candle arm keeps the pause in place — NO resume."""
+    """Symmetric: a still-down candle arm keeps the pause in place — NO resume.
+
+    11.2-07 (D-36): the ONE feed data provider now lives on the FeedConnectionBinder and is
+    read through the injected ``feed_provider`` callable (not off a lifecycle), so the
+    candle arm's health is supplied that way.
+    """
     order_log: list[str] = []
     safety = _FakeSafety(paused=True)
+    down_provider = _FakeProvider(healthy=False)
     handler = StreamRecoveryHandler(
         safety=safety,
         lifecycles=_lifecycles(
-            (_FakeExchange(healthy=True, order_log=order_log), _FakeProvider(healthy=False))),
+            (_FakeExchange(healthy=True, order_log=order_log), None)),
         venue_accounts=lambda: [_FakeAccount(order_log=order_log)],
+        feed_provider=lambda: down_provider,
     )
 
     handler.on_reconnect()

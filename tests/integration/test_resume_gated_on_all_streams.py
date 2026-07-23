@@ -26,43 +26,39 @@ from unittest.mock import MagicMock
 import pandas as pd
 
 from itrader.core.exceptions import StateError
+import pytest
+
 from itrader.price_handler.feed.live_bar_feed import LiveBarFeed
 from itrader.trading_system.live_trading_system import LiveTradingSystem
-
-
-def _set_okx_env(monkeypatch) -> None:
-    """Set a dummy OKX credential triple so the OKX arm constructs fully offline."""
-    monkeypatch.setenv("OKX_API_KEY", "test-key")
-    monkeypatch.setenv("OKX_API_SECRET", "test-secret")
-    monkeypatch.setenv("OKX_API_PASSPHRASE", "test-pass")
+from tests.support.live_okx import the_feed_provider, the_okx_lifecycle
 
 
 def _exchange(system: LiveTradingSystem):
-    """The primary account's execution arm (11-09: read through its lifecycle)."""
-    return system._primary_lifecycle.bundle.exchange
+    """The (single, store-derived) OKX execution arm — read through its lifecycle."""
+    return the_okx_lifecycle(system).bundle.exchange
 
 
 def _provider(system: LiveTradingSystem):
-    """The one feed data provider — the primary account's (11-09)."""
-    return system._primary_lifecycle.provider
+    """The one feed data provider — the connection the binder borrowed (11.2-07/D-36)."""
+    return the_feed_provider(system)
 
 
-def _paused_offline_okx_system(monkeypatch) -> LiveTradingSystem:
+@pytest.fixture
+def paused_okx_system(provisioned_okx):
     """A paused OKX live system with both blocking resume legs stubbed offline.
 
     P7 (§11c): the reconnect-resume I/O + the all-streams-healthy gate live on the
     injected StreamRecoveryHandler; the ``STREAM_STATE(up)`` route drives its
     ``on_reconnect``. The tests drive that handler directly. The venue-account snapshot
-    leg is stubbed on the HANDLER (it captured the real account at build); the missed-fill
-    catch-up leg is stubbed on the real exchange object the handler shares.
+    leg is stubbed on the HANDLER; the missed-fill catch-up leg is stubbed on the real
+    exchange object the handler shares.
+
+    11.2-07: the OKX account is STORE-DERIVED, so ``provisioned_okx`` gives the boot one
+    durable row to bring online (offline there would be none).
     """
-    _set_okx_env(monkeypatch)
     system = LiveTradingSystem.for_exchange("okx")
-    # 11-09: the venue arms are read through the PRIMARY account's lifecycle (the six
-    # facade scalars are deleted), and the handler holds the per-account lifecycle map
-    # plus a CALLABLE over the accounts the portfolios hold.
-    lifecycle = system._primary_lifecycle
-    assert lifecycle is not None and lifecycle.bundle.connector is not None
+    lifecycle = the_okx_lifecycle(system)
+    assert lifecycle.bundle.connector is not None
     # Neutralize the two blocking venue-I/O legs the resume runs before the gate
     # (missed-fill catch-up + REST snapshot) so the resume path runs socket-free.
     lifecycle.bundle.exchange.catch_up_missed_fills = MagicMock(  # type: ignore[method-assign]
@@ -70,16 +66,19 @@ def _paused_offline_okx_system(monkeypatch) -> LiveTradingSystem:
     system._stream_recovery._venue_accounts = lambda: [
         MagicMock(name="venue_account")]
     system.pause_submission("paused-on-disconnect")
-    return system
+    try:
+        yield system
+    finally:
+        system.stop()
 
 
-def test_resume_stays_paused_while_fill_arm_down(monkeypatch) -> None:
+def test_resume_stays_paused_while_fill_arm_down(paused_okx_system) -> None:
     """A candle-stream reconnect while the fill stream is down must NOT resume (D-28).
 
     The all-streams-healthy gate (StreamRecoveryHandler._all_venue_streams_healthy) keeps
     the pause in place until EVERY wired arm reports up.
     """
-    system = _paused_offline_okx_system(monkeypatch)
+    system = paused_okx_system
 
     # FILL/exchange arm still down; DATA/candle arm reconnected.
     _exchange(system)._supervisor._streams_down = {"fills"}
@@ -98,9 +97,9 @@ def test_resume_stays_paused_while_fill_arm_down(monkeypatch) -> None:
     assert system._safety.is_submission_paused() is False
 
 
-def test_resume_stays_paused_while_data_arm_down(monkeypatch) -> None:
+def test_resume_stays_paused_while_data_arm_down(paused_okx_system) -> None:
     """Symmetric: an order-stream reconnect while the candle stream is down must NOT resume."""
-    system = _paused_offline_okx_system(monkeypatch)
+    system = paused_okx_system
 
     # DATA/candle arm still down; FILL/exchange arm reconnected.
     _exchange(system)._supervisor._streams_down = set()
@@ -114,9 +113,9 @@ def test_resume_stays_paused_while_data_arm_down(monkeypatch) -> None:
     assert system._safety.is_submission_paused() is False
 
 
-def test_resume_when_both_arms_healthy(monkeypatch) -> None:
+def test_resume_when_both_arms_healthy(paused_okx_system) -> None:
     """Both arms healthy on the first drain → resume immediately (no false gate)."""
-    system = _paused_offline_okx_system(monkeypatch)
+    system = paused_okx_system
 
     _exchange(system)._supervisor._streams_down = set()
     _provider(system)._supervisor._streams_down = set()
@@ -125,7 +124,7 @@ def test_resume_when_both_arms_healthy(monkeypatch) -> None:
     assert system._safety.is_submission_paused() is False
 
 
-def test_an_unwired_venue_never_blocks_resume(monkeypatch) -> None:
+def test_an_unwired_venue_never_blocks_resume(paused_okx_system) -> None:
     """An UNWIRED venue is treated as healthy — it never blocks resume (absent ⇒ healthy).
 
     11-09: "an arm is absent" is now expressed as an EMPTY lifecycle map, which is what a
@@ -135,7 +134,7 @@ def test_an_unwired_venue_never_blocks_resume(monkeypatch) -> None:
     one of several accounts' arms is down while the rest are healthy, is gated in
     ``tests/unit/trading_system/test_stream_recovery_handler.py``.
     """
-    system = _paused_offline_okx_system(monkeypatch)
+    system = paused_okx_system
 
     system._stream_recovery._lifecycles = {}
     _provider(system)._supervisor._streams_down = set()

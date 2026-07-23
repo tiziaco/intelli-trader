@@ -101,12 +101,20 @@ class StreamRecoveryHandler:
         safety: Any,
         lifecycles: Optional[Mapping[str, Any]] = None,
         venue_accounts: Optional[Callable[[], Iterable[Any]]] = None,
+        feed_provider: Optional[Callable[[], Any]] = None,
     ) -> None:
         self.logger = get_itrader_logger().bind(component="StreamRecoveryHandler")
         self._safety = safety
         self._lifecycles: Dict[str, Any] = dict(lifecycles) if lifecycles else {}
         self._venue_accounts: Callable[[], Iterable[Any]] = (
             venue_accounts if venue_accounts is not None else list)
+        # 11.2-07 (D-36): the ONE feed data provider now lives on the FeedConnectionBinder
+        # (the "primary lifecycle" that used to carry it is deleted), and the binder can
+        # RE-BORROW it at runtime — so this is a CALLABLE read live, never a build-time
+        # capture. ``None`` (or a callable returning None) means no data arm is bound, which
+        # the health gate treats as "no candle stream to be down".
+        self._feed_provider: Callable[[], Any] = (
+            feed_provider if feed_provider is not None else (lambda: None))
 
     # ---- venue arms read THROUGH the lifecycles (no stored scalar aliases) ---------
 
@@ -123,11 +131,13 @@ class StreamRecoveryHandler:
         ]
 
     def _data_provider(self) -> Optional[Any]:
-        """The ONE feed data provider — the PRIMARY (first-inserted) account's, or None."""
-        for lifecycle in self._lifecycles.values():
-            if lifecycle.bundle.connector is not None:
-                return lifecycle.provider
-        return None
+        """The ONE feed data provider the binder currently holds, or None (11.2-07/D-36).
+
+        Read LIVE through the injected ``feed_provider`` callable — the FeedConnectionBinder
+        owns the borrowed connection and may re-borrow it, so a build-time capture would go
+        stale. ``None`` means no data arm is bound (a zero-account boot, or an unwired venue).
+        """
+        return self._feed_provider()
 
     def on_reconnect(self) -> None:
         """Resume after a venue stream reconnected — engine-thread I/O (SAFE-04/D-19).
