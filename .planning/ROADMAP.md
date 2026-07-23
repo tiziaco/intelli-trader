@@ -612,6 +612,20 @@ measured per file, never generalized per package (`live_trading_system.py` is 4-
 **Depends on**: Phase 11.1
 **Requirements**: ACCT-01, ACCT-02, ACCT-03, ACCT-04, ACCT-05, ACCT-06, ACCT-07, ACCT-08, ACCT-09, ACCT-10, ACCT-11
 **Pre-locked decisions** (settled in the 11.1 discussion — recorded in `11.1-CONTEXT.md` under "Carried Forward to Phase 11.2"; do **not** re-litigate): D-09 a live boot with zero accounts starts empty (the normal fresh-deployment state); D-10 provisioning is a **facade operation**, not a config update — `provision_venue_account(...)` mirroring `add_portfolio`, with the `venue_account:{venue}/{id}` router scope narrowed to mutating an existing row; D-11 provisioning is create-only and refuses duplicates, and `PortfolioDefinitionStore` classifies `IntegrityError` on the error path into typed domain errors rather than pre-checking; D-12 `venue_accounts.config_json` stays and is wired for `sandbox`/`region`/`market_type` with account-overrides-venue precedence defined and tested; D-13 a `VenueAccountManager` in `venues/` owns the store and the account-domain jobs (a **Manager**, not a Handler — there are no venue event types); D-15 a `venue_uid_guard_active` status flag covering all six of the D-04 guard's inertness paths, in-memory, with alert-sink rerouting deferred.
+> **⚠ REVIEW-ID NAMESPACE WARNING — read before resolving any finding ID in this phase.** Every bare
+> `CR-NN` / `WR-NN` in the success criteria below, in **Folded-in review findings**, and in
+> **Explicitly NOT in this phase** resolves against
+> `.planning/phases/11-multi-portfolio-live/11-REVIEW.md` — **not** against
+> `.planning/phases/11.1-account-provisioning-mandatory-account-identity/11.1-REVIEW.md`, which reuses
+> the same IDs for entirely different findings. The collisions are real and load-bearing: this phase's
+> **CR-02** is the account-less-portfolio raise, whereas 11.1-REVIEW's CR-02 is the `enable_margin`
+> runtime flip; this phase's **WR-01** is the `_persist_definition`/`save_config` disagreement, whereas
+> 11.1-REVIEW's WR-01 is the venue-blind fee-model provider. Findings carried in from the 11.1 review are
+> listed separately below under **Folded in from the Phase 11.1 review** and are always written
+> `11.1-REVIEW CR-NN` / `11.1-REVIEW WR-NN`. Planning this phase from unqualified IDs will resolve the
+> wrong set. Same failure mode as the `VENUE-*` requirement-ID collision recorded in
+> `.planning/todos/pending/venue-requirement-id-collision-v18.md`.
+
 **Success Criteria** (what must be TRUE):
 
   1. The account set for a live boot is derived from the durable store — `VenueAccountStore.read_enabled_for(venue_name)` — not from the spec. The spec-derived halves of `_account_ids_for_spec` and the `spec.portfolios` field are **deleted**; `assemble_venues` receives the account set as an argument and `live_trading_system.py` computes no account identity of its own. The CR-01 venue filter added by quick task `260722-g6w` becomes redundant and is removed with it, because the store query is already venue-scoped (ACCT-01).
@@ -627,10 +641,28 @@ measured per file, never generalized per package (`live_trading_system.py` is 4-
   10. Runtime portfolio deactivation persists (code-review **WR-04**) — `PortfolioDefinitionStore.set_enabled(portfolio_id, enabled)` is written and called from whatever flips `PortfolioState`, so a portfolio an operator stops does not come back ACTIVE and trading on the next restart, and rehydrate's present-but-inactive branch becomes reachable as designed (ACCT-10).
   11. The D-09 config move refuses rather than silently skipping (code-review **CR-04**), with a migration test whose staging inserts only `portfolio_account_state` rows — the real pre-upgrade shape, which the existing test cannot produce (**WR-12**). Confirmed greenfield 2026-07-22: no deployment holds real persisted state, so this is a guard against a state that should never arise, not a data migration (ACCT-11).
 
-**Folded-in review findings**: CR-02 (→3), CR-03 (→5), CR-04 (→11), WR-01 (→7), WR-02 (→8, same statement), WR-03 (→4), WR-04 (→10), WR-05 (→2), WR-09 (→8), WR-10 (→9), WR-11 (→3, mandatory: the flagship multi-portfolio fixture becomes illegal under criterion 3 and must be corrected for the phase to go green), WR-12 (→11).
+**Folded-in review findings** *(all from `.planning/phases/11-multi-portfolio-live/11-REVIEW.md` — see the namespace warning above)*: CR-02 (→3), CR-03 (→5), CR-04 (→11), WR-01 (→7), WR-02 (→8, same statement), WR-03 (→4), WR-04 (→10), WR-05 (→2), WR-09 (→8), WR-10 (→9), WR-11 (→3, mandatory: the flagship multi-portfolio fixture becomes illegal under criterion 3 and must be corrected for the phase to go green), WR-12 (→11).
 **Formerly deferred to the 11.1 discussion, now SETTLED**: WR-06 lands here as D-15 (a `venue_uid_guard_active` flag covering all six inertness paths, in-memory; alert-sink rerouting deferred with rationale — the degraded paths fire on every reconnect, so a level-triggered alert is alert fatigue; revisit edge-triggered only). WR-07 moved to **Phase 11.1** and is closed there structurally by D-14 (one data provider, built explicitly for the feed).
-**Explicitly NOT in this phase**: WR-08 only (`stop()` drives just the first venue lifecycle) — genuinely independent of account identity and handled as a standalone quick task. CR-01 and CR-05 were closed ahead of this phase by quick task `260722-g6w`.
-**Sizing note**: at 11 requirements this is still a large phase even after the D-16 split. If it needs splitting again, ACCT-11 (the D-09 migration guard) is the cleanest cut — it is thematically separate from account identity and has no dependency on ACCT-01..10.
+**Explicitly NOT in this phase** *(IDs from `11-REVIEW.md`)*: WR-08 only (`stop()` drives just the first venue lifecycle) — genuinely independent of account identity and handled as a standalone quick task. CR-01 and CR-05 were closed ahead of this phase by quick task `260722-g6w`.
+
+**Folded in from the Phase 11.1 review** *(added 2026-07-23; IDs resolve against
+`.planning/phases/11.1-account-provisioning-mandatory-account-identity/11.1-REVIEW.md`, **not** `11-REVIEW.md`)*.
+Seven of that review's twelve findings were closed in code by quick tasks `260723-dc4` / `260723-dq7`. These three
+were **decided by the owner and queued here** — the decisions are **locked, do not re-litigate**. Full rationale
+lives in `11.1-REVIEW.md`'s `## Resolution (2026-07-23)` section and in the linked todo files:
+
+  - **11.1-REVIEW CR-02 → reject the flip.** Drop `enable_margin` from the reachable routable key set in `ConfigRouter` and raise in `Portfolio.update_config`. It is read at CONSTRUCTION by five collaborators (`AdmissionManager._enable_margin`, `EnhancedOrderValidator.enable_margin`, `ManagedStrategies.enable_margin`/SHORT-01, the account leaf kind, and `Portfolio.process_transaction` at fill time) while `ConfigRouter._apply_portfolio` calls only `portfolio.update_config` — so a runtime flip already desynchronizes four of the five today. Making it genuinely mutable means propagating to all five; rejecting is the smaller change and matches the phase's fail-loud posture. Todo: `.planning/todos/pending/enable-margin-runtime-flip-vs-fixed-account-kind.md`.
+  - **11.1-REVIEW WR-04 + WR-08 → required keyword** (ONE decision, two sites). `state_storage` becomes a required kwarg on `SimulatedCashAccount`/`SimulatedMarginAccount`, the `PortfolioStateStorageFactory.create("backtest")` fallback is **deleted**, and `PaperVenuePlugin.new_account` fails loud + reads `config.initial_cash`/`config.enable_margin` directly instead of through `getattr` defaults (the `getattr(config, "initial_cash", 0.0)` default silently substitutes a **float** for missing cash, bypassing `to_money`). This is a **down-payment on the `ReservationLedger` narrow-port refactor deferred to Phase 12**, not throwaway work — the port would be a required constructor argument regardless (`.planning/todos/pending/account-reservation-ledger-narrow-port.md`).
+  - **11.1-REVIEW WR-01 → venue-aware provider + correct the false comment.** `fee_model_provider` takes `(venue, account_id)`; the comment at `live_trading_system.py:1990-1995` is replaced with the truth — the provider never looks at the OKX exchange at all, it returns the paper exchange's fee model. Oracle-safe: both arms yield zero today. Todo: `.planning/todos/pending/fee-model-provider-venue-blind.md`.
+
+**⚠ ORDERING CONSTRAINT (binds the wave structure)**: the **11.1-REVIEW WR-04 + WR-08** required-kwarg change
+must land **BEFORE criterion 5 (ACCT-05)**. ACCT-05 *adds* portfolio-creation paths; landing the required kwarg
+first means those new paths structurally **cannot** forget the `state_storage` seam. Landing it after means adding
+paths through the trap and then closing it behind them — every such path produces a portfolio that reports itself
+live while persisting nothing, with a fully green backtest. Any wave plan that schedules ACCT-05 before the kwarg
+change is wrong regardless of how the rest of the dependency graph falls out.
+
+**Sizing note**: at 11 requirements this is still a large phase even after the D-16 split — and the three folded 11.1-review findings above push it to roughly **14 requirements-worth of work**, which strengthens rather than weakens the case for splitting. If it needs splitting again, ACCT-11 (the D-09 migration guard) is the cleanest cut — it is thematically separate from account identity and has no dependency on ACCT-01..10.
 
 *Cross-cutting constraints (apply to every plan): the backtest path is untouched — SMA_MACD oracle byte-exact
 `134 / 46189.87730727451`; GATE-01 import inertness preserved (`test_okx_inertness.py` green, no new eager
