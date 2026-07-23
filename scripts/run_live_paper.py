@@ -96,6 +96,48 @@ def _compose(system: LiveTradingSystem) -> int:
     return portfolio_id
 
 
+def _refuse_inert_replay(trade_count: int) -> None:
+    """Fail the replay run LOUD when it produced no trades (CR-01 residual).
+
+    The replay path drives the COMMITTED golden CSV through the offline parity
+    harness, so the dataset is fixed and a non-zero trade count is a property of
+    the composition, not of the market. Zero trades therefore never means "no
+    opportunity" — it means the composition submitted nothing.
+
+    That is exactly how CR-01 shipped green: a portfolio that names no venue
+    account has EVERY order refused at ``ExecutionHandler.on_order`` (there is no
+    default-account fallback), yet the run still printed "Paper replay complete"
+    and exited 0 with an empty trade log. Nothing else went red.
+
+    Scoped to the replay path only. A flat session IS a legitimate outcome for
+    the ``--mode okx`` live smoke, which exercises the daemon-thread lifecycle
+    and is not a parity gate; this is the offline parity harness, where it is not.
+
+    Deliberately asserts only that the run was NOT inert — never an exact count.
+    Pinning the golden number here would duplicate the oracle
+    (``tests/integration/test_backtest_oracle.py``) and couple this bootstrap
+    script to it.
+
+    Raises
+    ------
+    RuntimeError
+        If ``trade_count`` is zero. ``RuntimeError`` because this is a
+        run-outcome guard in a bootstrap script, not a domain validation — it
+        keeps the script import-free of the domain exception types.
+    """
+    if trade_count != 0:
+        return
+
+    raise RuntimeError(
+        "Paper replay produced ZERO trades. The replay path drives the committed "
+        "golden CSV, so the composition submitted nothing — the run is inert, not "
+        "flat. Known shape (CR-01): a portfolio that names no venue account has "
+        "every order refused at ExecutionHandler.on_order. Unlike the --mode okx "
+        "live smoke, a flat session is not a legitimate outcome for this offline "
+        "parity harness."
+    )
+
+
 def _run_replay(logger) -> None:
     """Offline, synchronous paper run (D-03) — the CI-safe default worker path.
 
@@ -104,6 +146,8 @@ def _run_replay(logger) -> None:
     feed, D-21), drives the golden dataset through the real replay -> feed -> queue seam
     via ``TestRunner`` (fail-fast BY DEFAULT, D-19), then reads result state and prints a
     short summary (trade count + final equity).
+
+    Exits NON-ZERO on an inert run (``_refuse_inert_replay``) — see CR-01.
     """
     # The offline replay harness is TEST infrastructure now (tests/support). Put the repo
     # root on sys.path so this demo worker can import it standalone (sys.path[0] is the
@@ -139,6 +183,11 @@ def _run_replay(logger) -> None:
         final_equity=final_equity,
     )
     print(f"Paper replay complete — trades: {trade_count}, final equity: {final_equity}")
+
+    # AFTER the diagnostics above, so an inert run still emits its summary before
+    # the process dies. The uncaught raise IS the non-zero exit — no sys.exit
+    # alongside it, and main() must never swallow it.
+    _refuse_inert_replay(trade_count)
 
 
 def _run_okx_smoke(logger) -> None:
