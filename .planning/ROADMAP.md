@@ -680,7 +680,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1)* — the tracer
 
-- [ ] 11.2-05-PLAN.md — **TRACER**: one durable `venue_accounts` row travels end-to-end — `read_enabled_for` → `VenueAccountManager.bring_online` (with the relocated `secret_ref` read) → registered exchange → `VenueBundles.account_for` → account leaf; plus `provision` (create-only, D-11) (ACCT-01, ACCT-02, ACCT-03; D-21/D-26/D-27/D-28/D-34)
+- [x] 11.2-05-PLAN.md — **TRACER**: one durable `venue_accounts` row travels end-to-end — `read_enabled_for` → `VenueAccountManager.bring_online` (with the relocated `secret_ref` read) → registered exchange → `VenueBundles.account_for` → account leaf; plus `provision` (create-only, D-11) (ACCT-01, ACCT-02, ACCT-03; D-21/D-26/D-27/D-28/D-34)
 
 **Wave 3** *(blocked on Wave 2)*
 
