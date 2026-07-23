@@ -34,7 +34,7 @@ from itrader import config, idgen
 from itrader.config import ExchangeConfig, OrderConfig
 from itrader.core.exceptions import ConfigurationError
 from itrader.events_handler.bus import FifoEventBus
-from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
+from itrader.execution_handler.execution_handler import COMPUTE_VENUE, DEFAULT_ACCOUNT_ID
 from itrader.outils.time_parser import to_timedelta
 from itrader.price_handler.feed.bar_feed import BacktestBarFeed
 from itrader.price_handler.store.csv_store import CsvPriceStore
@@ -430,7 +430,7 @@ class BacktestTradingSystem(object):
 			# Curated run settings (D-11, credential-free): the fee/slippage models are
 			# read off the LIVE paper exchange; market_execution off the order handler.
 			exchange = self.execution_handler.exchanges.get(
-				('paper', DEFAULT_ACCOUNT_ID))  # D-27/D-05 pair key
+				(COMPUTE_VENUE, DEFAULT_ACCOUNT_ID))  # D-27/D-05 pair key
 			order_config = OrderConfig(market_execution=self.order_handler.market_execution)
 			settings = curate_run_settings(
 				exchange,

@@ -7,7 +7,7 @@ from typing import (
 
 from itrader.core.enums import HaltReason, SystemStatus
 from itrader.core.exceptions import StateError, ValidationError
-from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
+from itrader.execution_handler.execution_handler import COMPUTE_VENUE, DEFAULT_ACCOUNT_ID
 from itrader.outils.time_parser import to_timedelta
 from itrader.trading_system.alert_sink import LogAlertSink
 from itrader.trading_system.venue_spec import build_venue_spec
@@ -632,11 +632,16 @@ class LiveTradingSystem:
             # ``_okx_exchange`` alias. Venue metadata (validate_symbol / resolve_precision)
             # is a VENUE property, not an account property — every account on one venue
             # shares it — so the primary's exchange is the right (and unchanged) source.
+            # The non-streaming fallback is a SUBSCRIPT, not a soft `.get`: a None here
+            # reaches SessionInitializer and degrades validate_symbol / resolve_precision
+            # with no exception raised anywhere near the defect. It cannot fire on a wired
+            # engine — ExecutionHandler.init_exchanges always resolves the compute-venue
+            # arm under the default account.
             streaming = self._streaming_lifecycles()
             venue_exchange = (
                 streaming[0].bundle.exchange if streaming
-                else self.execution_handler.exchanges.get(
-                    ('paper', DEFAULT_ACCOUNT_ID)))  # D-27/D-05 pair key
+                else self.execution_handler.exchanges[
+                    (COMPUTE_VENUE, DEFAULT_ACCOUNT_ID)])  # D-27/D-05 pair key
 
             # RUN-06/D-11 live-plane config: poll timeframe + remove_policy READ FROM the
             # LIVE universe sub-model (NOT the frozen determinism base — P9 D-09 keeps the

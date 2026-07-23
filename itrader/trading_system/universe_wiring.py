@@ -38,7 +38,7 @@ the TAB-indented donor block).
 """
 
 from itrader.core.exceptions import ConfigurationError
-from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
+from itrader.execution_handler.execution_handler import COMPUTE_VENUE, DEFAULT_ACCOUNT_ID
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.trading_system.compose import Engine
 from itrader.universe import Universe, derive_instruments, derive_membership
@@ -102,12 +102,12 @@ def wire_universe(engine: Engine) -> Universe:
 	# engine whose paper venue is not a SimulatedExchange is a wiring bug, not
 	# an optional configuration.
 	paper_exchange = engine.execution_handler.exchanges[
-		('paper', DEFAULT_ACCOUNT_ID)]
+		(COMPUTE_VENUE, DEFAULT_ACCOUNT_ID)]
 	if not isinstance(paper_exchange, SimulatedExchange):
 		raise ConfigurationError(
 			reason=(
 				"Universe injection target is not a SimulatedExchange: the "
-				f"('paper', '{DEFAULT_ACCOUNT_ID}') venue resolved to "
+				f"('{COMPUTE_VENUE}', '{DEFAULT_ACCOUNT_ID}') venue resolved to "
 				f"{type(paper_exchange).__name__}. The paper venue backs the "
 				"simulated fill engine; a different object here means the "
 				"engine was wired wrong, and skipping the injection would "
