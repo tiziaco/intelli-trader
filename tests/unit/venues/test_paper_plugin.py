@@ -206,7 +206,10 @@ def test_paper_account_factory_mints_a_compute_account() -> None:
     plugin = PaperVenuePlugin(_seeded_config())
     bundle = plugin.build_bundle(_fake_ctx(), _fake_spec(), _ExplodingConnectorProvider())
 
-    account = bundle.account_factory(initial_cash=1000.0)
+    # WR-08: every knob is named — the closure carries no defaults.
+    account = bundle.account_factory(
+        initial_cash=1000.0, enable_margin=False, account_id=None,
+        state_storage=_fake_storage())
     assert isinstance(account, Account)
     assert isinstance(account, SimulatedCashAccount)
 
@@ -261,7 +264,8 @@ def test_paper_new_account_mints_a_fresh_leaf_per_portfolio() -> None:
     from itrader.venues.paper_plugin import PaperVenuePlugin
 
     plugin = PaperVenuePlugin(_seeded_config())
-    config = VenueAccountConfig(initial_cash=1000.0)
+    config = VenueAccountConfig(
+        initial_cash=1000.0, state_storage=_fake_storage())
 
     account_a = plugin.new_account(config)
     account_b = plugin.new_account(config)
@@ -290,8 +294,10 @@ def test_paper_new_account_selects_the_margin_leaf_when_enabled() -> None:
     # D-03 (11.1-09): the flag rides on the CONFIG, sourced from the owning
     # PortfolioConfig.trading_rules by PortfolioHandler.add_portfolio — it is no
     # longer read off a portfolio the plugin was handed.
-    margin_config = VenueAccountConfig(initial_cash=1000.0, enable_margin=True)
-    cash_config = VenueAccountConfig(initial_cash=1000.0, enable_margin=False)
+    margin_config = VenueAccountConfig(
+        initial_cash=1000.0, enable_margin=True, state_storage=_fake_storage())
+    cash_config = VenueAccountConfig(
+        initial_cash=1000.0, enable_margin=False, state_storage=_fake_storage())
 
     assert isinstance(plugin.new_account(margin_config), SimulatedMarginAccount)
     assert isinstance(plugin.new_account(cash_config), SimulatedCashAccount)
@@ -331,7 +337,9 @@ def test_paper_account_factory_delegates_to_new_account() -> None:
     plugin = PaperVenuePlugin(_seeded_config())
     bundle = plugin.build_bundle(_fake_ctx(), _fake_spec(), _ExplodingConnectorProvider())
 
-    account = bundle.account_factory(initial_cash=2500.0)
+    account = bundle.account_factory(
+        initial_cash=2500.0, enable_margin=False, account_id=None,
+        state_storage=_fake_storage())
 
     assert isinstance(account, SimulatedCashAccount)
 
@@ -364,8 +372,10 @@ def test_paper_account_factory_carries_every_knob_through_to_the_leaf() -> None:
     """The closure forwards ALL of its arguments — a dropped one is silent (D-03).
 
     ``enable_margin`` selects the leaf KIND and ``state_storage`` selects the
-    persistence backend; both default, so a closure that accepted them and forgot to
-    pass them on would mint a plausible-looking wrong account with nothing red.
+    persistence backend, so a closure that accepted them and forgot to pass them on
+    would mint a plausible-looking wrong account with nothing red. (WR-08 removed the
+    defaults that made a dropped argument indistinguishable from an unset one; this
+    still pins the FORWARDING, which no signature assertion can prove.)
     """
     from itrader.portfolio_handler.account import SimulatedMarginAccount
     from itrader.venues.paper_plugin import PaperVenuePlugin
@@ -375,7 +385,8 @@ def test_paper_account_factory_carries_every_knob_through_to_the_leaf() -> None:
     seam = _fake_storage()
 
     account = bundle.account_factory(
-        initial_cash=4200.0, enable_margin=True, state_storage=seam)
+        initial_cash=4200.0, enable_margin=True, account_id=None,
+        state_storage=seam)
 
     assert isinstance(account, SimulatedMarginAccount)
     assert account._storage is seam

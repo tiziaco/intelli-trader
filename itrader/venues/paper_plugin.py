@@ -52,6 +52,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from itrader.core.exceptions import ConfigurationError
+
 if TYPE_CHECKING:
     from itrader.config.exchange import ExchangeConfig
     from itrader.portfolio_handler.account.base import Account
@@ -132,16 +134,43 @@ class PaperVenuePlugin:
         simulated leaf computes its own truth from its own portfolio, so there is
         nothing to conflate and nothing for an account id to protect — requiring one
         would push a venue concept onto the oracle path for no safety gain.
+
+        11.1-REVIEW **WR-08**: the three knobs are read as plain ATTRIBUTES, never
+        through a defaulted ``getattr``. A defaulted read is how a missing seam
+        became a private in-memory backend and a missing balance became a zero float
+        literal — two silent substitutions in a factory whose whole job is to be the
+        single honest place an account is minted. Cash enters the Decimal domain
+        HERE, at the boundary, via ``to_money``.
         """
         # D-04: the compute-account concretions are lazy-imported inside the body.
+        from itrader.core.money import to_money
         from itrader.portfolio_handler.account import (
             SimulatedCashAccount,
             SimulatedMarginAccount,
         )
 
-        initial_cash = getattr(config, "initial_cash", 0.0)
         state_storage = config.state_storage
-        if getattr(config, "enable_margin", False):
+        if state_storage is None:
+            # WR-04 backstop. ``VenueAccountConfig.state_storage`` still defaults to
+            # ``None`` because the OKX arm legitimately supplies none (venue-cached
+            # truth takes no wiring seam), so a plain attribute read CAN hand this
+            # arm a ``None``. Forwarding it would rebuild the exact
+            # live-but-unpersisted leaf the leaf's required keyword removes — and it
+            # would do so one hop away from the type checker, since the config field
+            # is typed ``Any``. ``PortfolioStateStorageFactory`` stays the ONLY
+            # producer of a seam; this factory refuses rather than minting one.
+            raise ConfigurationError(
+                "state_storage", None,
+                "a paper compute account cannot be minted without the "
+                "PortfolioStateStorage seam its owning portfolio's other managers "
+                "hold: a leaf on a private backend loses every reservation across a "
+                "live restart while backtest stays byte-exact (11.1-REVIEW WR-04)",
+            )
+        # D-12 money policy: the ONE entry into the Decimal domain on this path. The
+        # leaf quantizes at its own ledger boundary; ``to_money`` is idempotent for a
+        # Decimal, so this is value-inert for every caller that already passes one.
+        initial_cash = to_money(config.initial_cash)
+        if config.enable_margin:
             return SimulatedMarginAccount(
                 initial_cash=initial_cash, state_storage=state_storage)
         return SimulatedCashAccount(
@@ -171,10 +200,10 @@ class PaperVenuePlugin:
 
         def account_factory(
             *,
-            initial_cash: Any = 0.0,
-            enable_margin: bool = False,
-            account_id: str | None = None,
-            state_storage: Any = None,
+            initial_cash: Any,
+            enable_margin: bool,
+            account_id: str | None,
+            state_storage: Any,
         ) -> Account:
             # 11-07: a thin adapter DELEGATING to the typed `new_account`, so the
             # bundle field and the Protocol method can never mint different accounts.
@@ -186,6 +215,16 @@ class PaperVenuePlugin:
             # the venue arm (both bundles are called uniformly by
             # `PortfolioHandler.add_portfolio`); the paper arm's `new_account`
             # deliberately never consults it — see its docstring.
+            #
+            # 11.1-REVIEW WR-08: NO parameter carries a default, and that is the
+            # load-bearing half of this change. THIS closure — not the account
+            # constructors — is the seam `PortfolioHandler._new_compute_account`
+            # calls, so it is the layer that has to fail loud. Narrowing only the
+            # constructors would close the trap one layer BELOW where portfolios are
+            # built: a caller omitting `state_storage` here would still sail through,
+            # because `= None` would supply the argument the constructor demands. A
+            # defaulted cash/margin knob is the same class of defect one field over —
+            # a plausible-looking account nobody chose, opened at a float zero.
             return self.new_account(VenueAccountConfig(
                 account_id=account_id,
                 initial_cash=initial_cash,
