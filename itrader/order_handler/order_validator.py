@@ -116,13 +116,24 @@ class EnhancedOrderValidator:
         # with exchange="paper"/venue_name="paper" (D-19), so signals carry that venue
         # and the validator must admit it or the offline run refuses every order and
         # produces zero trades. It replaces the retired "csv"/"simulated" synonyms.
+        # "okx" is the live execution venue the live composition root registers
+        # (`exec_registry.register('okx', OkxVenuePlugin())`).
         #
         # This is a DEFAULT-DENY allowlist on the admission path (ASVS V5): a venue
         # that is not a member is refused with a typed UNSUPPORTED_EXCHANGE ERROR.
         # It must NEVER be widened to accept-all and the membership check must never
         # be removed to make a rename pass — that converts a rename bug into a
         # permanently open gate. Repoint it; do not weaken it.
-        self.supported_exchanges = {"NYSE", "NASDAQ", "BINANCE", "OANDA", "default", "paper"}
+        #
+        # This set is NOT — and must not be read as — a complete inventory of the
+        # venues the system knows about: nothing derives it from the venue registry,
+        # so the two can silently disagree. A REGISTERED execution venue HAS to be a
+        # member here. If it is not, PHASE 2 of validate_order_pipeline refuses EVERY
+        # order for that venue with a typed UNSUPPORTED_EXCHANGE ERROR, short-circuits
+        # before sizing, and the run submits nothing while nothing else goes red
+        # (CR-03: "okx" was a registered live venue and was missing from this set).
+        # Register a venue, admit it here in the SAME commit.
+        self.supported_exchanges = {"NYSE", "NASDAQ", "BINANCE", "OANDA", "default", "paper", "okx"}
     
     def validate_order_pipeline(self, order: Order) -> ValidationResult:
         """

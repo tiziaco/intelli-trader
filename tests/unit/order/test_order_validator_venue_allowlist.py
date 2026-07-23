@@ -96,6 +96,28 @@ def test_backtest_venue_names_are_admitted(venue):
     assert messages == []
 
 
+def test_live_okx_venue_is_admitted():
+    """The registered live OKX venue passes the allowlist with zero messages.
+
+    CR-03: ``exec_registry.register('okx', OkxVenuePlugin())`` makes ``okx`` a
+    real execution venue, and a live portfolio on it carries
+    ``Portfolio.exchange == "okx"`` — but the allowlist is not derived from the
+    registry, so the two silently disagreed. This goes red if ``okx`` is ever
+    dropped from ``supported_exchanges`` again.
+
+    The failure it guards is total and quiet: PHASE 2 of
+    ``validate_order_pipeline`` refuses EVERY live OKX order with a typed
+    UNSUPPORTED_EXCHANGE ERROR and short-circuits before sizing, so the session
+    submits nothing — a zero-trade live run with no exception, no exchange
+    error and nothing else red.
+    """
+    validator = _validator_reporting_venue("okx")
+
+    messages = validator._validate_exchange_support(_make_order())
+
+    assert messages == []
+
+
 def test_unknown_venue_is_refused_with_the_typed_error_code():
     """An unknown venue produces exactly one ERROR carrying UNSUPPORTED_EXCHANGE.
 
