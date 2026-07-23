@@ -3,9 +3,9 @@
 ``live_trading_system._attach_venue_accounts`` assigns a ``VenueAccount`` onto
 ``Portfolio.account`` — the ABC-vs-concretion wiring the live settlement path relies
 on. It mints one account per ``account_id`` via
-``lifecycle.bundle.account_factory(portfolio)`` and assigns it to each portfolio whose
-``account_id`` names that lifecycle (11-09's per-portfolio attach, which replaced the
-earlier single-call linker that 11-09 deleted). That module sits in the
+``lifecycle.bundle.account_factory(account_id=account_id)`` and assigns it to each
+portfolio whose ``account_id`` names that lifecycle (11-09's per-portfolio attach, which
+replaced the earlier single-call linker that 11-09 deleted). That module sits in the
 ``D-live`` ``[[tool.mypy.overrides]]`` ignore block,
 so ``mypy --strict`` never type-checks the assignment there. F/U-4 chooses the typed
 conformance module over lifting the whole ``live_trading_system`` ignore (which pulls a

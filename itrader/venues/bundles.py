@@ -44,7 +44,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from itrader.logger import get_itrader_logger
 from itrader.venues.registry import DEFAULT_ACCOUNT_ID
 
 if TYPE_CHECKING:
@@ -73,7 +72,6 @@ class VenueBundles:
         self._connectors = connectors
         self._ctx = ctx
         self._memo: dict[tuple[str, str], VenueBundle] = {}
-        self.logger = get_itrader_logger().bind(component="VenueBundles")
 
     def get(self, venue: str, account_id: str, spec: Any) -> VenueBundle:
         """Return the shared bundle for ``(venue, account_id)``; build it once on first call.

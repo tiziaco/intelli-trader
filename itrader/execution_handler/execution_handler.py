@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 from .base import AbstractExecutionHandler
 from .exchanges.base import AbstractExchange
 from itrader.events_handler.bus import EventBus
-from itrader.events_handler.events import BarEvent, FillEvent, OrderEvent
+from itrader.events_handler.events import BarEvent, OrderEvent
 # Still needed by update_config / validate_config, which isinstance-NARROW against
 # the simulated exchange. Nothing in this module constructs one any more (D-06).
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange

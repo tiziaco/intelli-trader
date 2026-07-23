@@ -1,5 +1,5 @@
 from decimal import Decimal
-from typing import Any, Callable, List, Dict, Optional
+from typing import Any, List, Dict, Optional
 
 from itrader.core.commission_estimator import FeeModelProvider
 from itrader.core.portfolio_read_model import PortfolioReadModel
@@ -11,7 +11,7 @@ from ..core.ids import OrderId, PortfolioId
 from .order_validator import EnhancedOrderValidator
 from .order_manager import OrderManager
 from ..events_handler.bus import EventBus
-from ..events_handler.events import SignalEvent, OrderEvent, OrderAckEvent, FillEvent, PortfolioUpdateEvent
+from ..events_handler.events import SignalEvent, OrderEvent, OrderAckEvent, FillEvent
 from .storage import OrderStorageFactory
 from ..universe import Universe
 

@@ -176,8 +176,8 @@ def assemble_venues(
     account instead of its pieces makes the multi-account shape fall out with no new
     concept: ``lifecycles[account_id].bundle.exchange`` replaces ``_okx_exchange``,
     ``.bundle.connector`` replaces ``_okx_connector``, ``.provider`` replaces
-    ``_okx_data_provider``, and ``.bundle.account_factory(portfolio)`` replaces the
-    single unscoped ``_venue_account``.
+    ``_okx_data_provider``, and ``.bundle.account_factory(account_id=account_id)``
+    replaces the single unscoped ``_venue_account``.
 
     Parameters
     ----------

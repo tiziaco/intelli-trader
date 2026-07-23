@@ -13,7 +13,7 @@ and order storage/execution systems.
 """
 
 from decimal import Decimal
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 import pydantic
 

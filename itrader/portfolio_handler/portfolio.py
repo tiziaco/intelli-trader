@@ -1,5 +1,5 @@
 from datetime import datetime, UTC
-from typing import Optional, Dict, List, Any, Mapping, TYPE_CHECKING
+from typing import Optional, Dict, Any, Mapping, TYPE_CHECKING
 from decimal import Decimal, ROUND_HALF_UP
 
 from itrader.portfolio_handler.transaction import Transaction
