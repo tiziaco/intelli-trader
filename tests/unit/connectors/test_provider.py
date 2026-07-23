@@ -100,6 +100,87 @@ def test_get_unregistered_venue_fails_loud() -> None:
         provider.get("nope", "default", spec=object())
 
 
+# --------------------------------------------------------------------------- #
+# 11.2-06 (D-38): the memo cannot silently hand back a session built for a
+# DIFFERENT connection identity
+# --------------------------------------------------------------------------- #
+def test_a_second_get_with_a_conflicting_session_identity_refuses() -> None:
+    """A same-pair ``get`` whose spec names DIFFERENT routing REFUSES (D-38).
+
+    ``get`` is build-once-then-memoize on ``(venue, account_id)`` and the spec is read
+    ONLY on the miss. Once D-38 lets an account's own ``config_json`` carry ``sandbox``
+    / ``region`` — the knobs that decide whether a session reaches the DEMO or the
+    PRODUCTION host — a silent memo hit means the second caller believes it is talking
+    to the host it asked for while actually holding a session authenticated and routed
+    somewhere else. Failing loud is the only safe answer: the memo cannot rebind an
+    already-authenticated session, and answering with the stale one is the misroute the
+    whole phase exists to prevent.
+    """
+    from itrader.core.exceptions import ValidationError
+
+    provider, plugin = _make_provider()
+
+    class _Spec:
+        def __init__(self, sandbox: bool) -> None:
+            self.secret_ref = "env:A"
+            self.sandbox = sandbox
+            self.region = "global"
+
+    provider.get("okx", "acct-a", spec=_Spec(sandbox=True))
+
+    with pytest.raises(ValidationError) as excinfo:
+        provider.get("okx", "acct-a", spec=_Spec(sandbox=False))
+
+    # The message must name the PAIR so an operator knows which account is doubly wired.
+    assert "acct-a" in str(excinfo.value)
+    # The refusal precedes any rebuild: the stale session was never replaced either.
+    assert plugin.build_calls == 1
+
+
+def test_a_second_get_with_an_equal_session_identity_still_memoizes() -> None:
+    """The steady state is UNCHANGED: an equal identity is a plain memo hit.
+
+    Both the execution ``build_bundle`` and the data ``build_provider`` call ``get`` for
+    the same pair with the same spec — the D-03 one-session invariant. A guard that
+    refused there would break every venue bring-up, so the equality case is pinned
+    beside the refusal.
+    """
+    provider, plugin = _make_provider()
+
+    class _Spec:
+        secret_ref = "env:A"
+        sandbox = True
+        region = "eea"
+
+    first = provider.get("okx", "acct-a", spec=_Spec())
+    second = provider.get("okx", "acct-a", spec=_Spec())  # a DIFFERENT object, equal fields
+
+    assert first is second
+    assert plugin.build_calls == 1
+
+
+def test_two_accounts_with_different_routing_each_build_their_own_connector() -> None:
+    """Two ACCOUNTS are two memo keys — different routing is legal across them (D-38).
+
+    The guard above must not over-reach: per-account ``sandbox`` / ``region`` is the
+    whole point of D-38, so one account on the demo host and another on production is a
+    supported deployment. Only a same-PAIR conflict is a defect.
+    """
+    provider, plugin = _make_provider()
+
+    class _Spec:
+        def __init__(self, sandbox: bool) -> None:
+            self.secret_ref = "env:A"
+            self.sandbox = sandbox
+            self.region = "global"
+
+    a = provider.get("okx", "acct-a", spec=_Spec(sandbox=True))
+    b = provider.get("okx", "acct-b", spec=_Spec(sandbox=False))
+
+    assert a is not b
+    assert plugin.build_calls == 2
+
+
 def test_close_all_isolates_a_raising_disconnect_and_clears_the_memo() -> None:
     provider = ConnectorProvider(
         {"boom": _RaisingConnectorPlugin(), "okx": _FakeConnectorPlugin()}

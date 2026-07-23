@@ -26,7 +26,10 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from itrader.logger import get_itrader_logger
-from itrader.venues.venue_uid_guard import assert_venue_uid
+from itrader.venues.venue_uid_guard import (
+    VenueUidGuardOutcome,
+    assert_venue_uid,
+)
 
 if TYPE_CHECKING:
     from itrader.connectors.provider import ConnectorProvider
@@ -34,6 +37,21 @@ if TYPE_CHECKING:
     from itrader.venues.bundle import VenueBundle
 
 _logger = get_itrader_logger().bind(component="VenueLifecycle")
+
+# 11.2-06 (D-40): the LIFECYCLE-LEVEL inert reasons — states that keep the D-04 guard
+# from running at all, so they live HERE rather than among the guard's own six (which
+# describe why the guard ran and produced no protection). Kept separate so an operator
+# reading a lifecycle reason knows the guard was never reached, not that it reached and
+# degraded.
+#: ``start()`` has not run yet — the connect on which the guard arms has not happened.
+GUARD_REASON_NOT_STARTED = "lifecycle-not-started"
+#: A paper bundle carries no connector, so ``start()`` never connects and the
+#: post-connect guard never runs. Benign — paper has no venue identity to protect.
+GUARD_REASON_PAPER_NO_CONNECTOR = "lifecycle-paper-no-connector"
+#: A guard collaborator (store / alert sink / plugin) was not wired — e.g. a deployment
+#: with no SQL arm — so the guard was deliberately skipped. This is how a security guard
+#: ships inert, which is why the skip is surfaced rather than silent.
+GUARD_REASON_COLLABORATORS_ABSENT = "lifecycle-guard-collaborators-absent"
 
 
 class VenueLifecycle:
@@ -87,6 +105,12 @@ class VenueLifecycle:
         self._account_id = account_id
         self._account_store = account_store
         self._alert_sink = alert_sink
+        # 11.2-06 (D-40): the guard's outcome for THIS lifecycle's most recent start().
+        # Seeded "not started" so a status read BEFORE start() reports the guard as not
+        # yet armed (never a stale armed value), and updated to the guard's own outcome —
+        # or a lifecycle-level inert reason — once start() runs.
+        self._venue_uid_guard_outcome: VenueUidGuardOutcome = (
+            VenueUidGuardOutcome.inert_with(GUARD_REASON_NOT_STARTED))
 
     @property
     def bundle(self) -> VenueBundle:
@@ -104,6 +128,17 @@ class VenueLifecycle:
         ``is not None``.
         """
         return self._provider
+
+    @property
+    def venue_uid_guard_outcome(self) -> VenueUidGuardOutcome:
+        """The D-04 guard's outcome for this lifecycle's most recent ``start()`` (D-40).
+
+        Read-only, and the single source of truth for the per-pair
+        ``venue_uid_guard_active`` surface ``VenueAccountManager`` exposes. Before
+        ``start()`` it reports ``GUARD_REASON_NOT_STARTED`` — never a stale armed value,
+        because arming is a CONNECT-time event and ``bring_online`` does not connect.
+        """
+        return self._venue_uid_guard_outcome
 
     def start(self) -> None:
         """Bring the venue up in the fixed order, None-guarding absent members (D-10).
@@ -124,15 +159,23 @@ class VenueLifecycle:
         """
         if self._bundle.connector is not None:
             self._bundle.connector.connect()
-            self._assert_venue_uid(self._bundle.connector)
+            self._venue_uid_guard_outcome = self._assert_venue_uid(
+                self._bundle.connector)
+        else:
+            # A paper bundle never connects, so the post-connect guard never runs. This
+            # is a benign inert state, but it is RECORDED rather than left as the initial
+            # "not started" — a status read after start() must reflect that the guard was
+            # reached-and-skipped for a real reason (D-40).
+            self._venue_uid_guard_outcome = VenueUidGuardOutcome.inert_with(
+                GUARD_REASON_PAPER_NO_CONNECTOR)
 
-    def _assert_venue_uid(self, connector: Any) -> None:
-        """Run the D-04 trust-on-first-use UID guard for this venue account.
+    def _assert_venue_uid(self, connector: Any) -> VenueUidGuardOutcome:
+        """Run the D-04 trust-on-first-use UID guard for this venue account (D-40).
 
         Skipped only when a collaborator is genuinely absent (e.g. a deployment with
         no SQL arm, so there is no ``VenueAccountStore`` to record into). The skip is
-        LOGGED — a silently-skipped security guard is indistinguishable from a passing
-        one, which is precisely how this mitigation would ship inert.
+        LOGGED and REPORTED — a silently-skipped security guard is indistinguishable
+        from a passing one, which is precisely how this mitigation would ship inert.
         """
         if self._account_store is None or self._alert_sink is None or self._plugin is None:
             _logger.warning(
@@ -141,9 +184,9 @@ class VenueLifecycle:
                 venue_name=self._venue_name,
                 account_id=self._account_id,
             )
-            return
+            return VenueUidGuardOutcome.inert_with(GUARD_REASON_COLLABORATORS_ABSENT)
 
-        assert_venue_uid(
+        return assert_venue_uid(
             plugin=self._plugin,
             connector=connector,
             venue_name=self._venue_name or "",

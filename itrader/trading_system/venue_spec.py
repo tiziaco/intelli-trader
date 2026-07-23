@@ -29,7 +29,7 @@ Indentation: TABS (``trading_system/`` package convention; mirrors the sibling
 """
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Literal, Optional
 
 
 @dataclass(frozen=True)
@@ -45,6 +45,13 @@ class VenueSpec:
 
 	It feeds ``assemble_venue`` ONLY — never ``compose_engine`` (spec-free since
 	D-04).
+
+	Beside that selection trio it CARRIES (does not select on) the per-account
+	values read off the account's own ``venue_accounts`` row: ``secret_ref`` (D-02)
+	and, since 11.2-06, the three allowlisted ``config_json`` knobs ``sandbox`` /
+	``region`` / ``market_type`` (D-38). Those are read by the venue PLUGINS the
+	trio selects, not by ``assemble_venue`` itself — the spec is simply the one
+	object already travelling from the row to both of them.
 	"""
 
 	execution_venue: str
@@ -57,6 +64,34 @@ class VenueSpec:
 	# connect with DIFFERENT keys instead of the one global ``OKX_API_*`` set (the
 	# D-12 caveat). ``None`` = the pre-MPORT-06 single-account deployment.
 	secret_ref: Optional[str] = None
+	# 11.2-06 (D-38/D-12): the three ACCOUNT-LEVEL, NON-SECRET knobs an account's own
+	# ``venue_accounts.config_json`` may carry. ``VenueAccountManager.bring_online``
+	# merges them onto the spec through an explicit allowlist; they are carried HERE
+	# because the spec is the one object that already travels from that row to both
+	# consumers — ``ConnectorProvider.get(venue, account_id, spec)`` ->
+	# ``OkxConnectorPlugin.build`` (``sandbox`` / ``region``) and
+	# ``VenuePlugin.build_bundle`` (``market_type``).
+	#
+	# ``None`` on any of them means "this account names no override", leaving the
+	# venue/bundle default in force. That is deliberately NOT a concrete default: a
+	# real value here would be a SECOND home for each venue's own default and the two
+	# would drift, and absence must stay distinguishable from an explicit value or the
+	# merge would invent overrides the operator never wrote.
+	#
+	# ``sandbox`` and ``region`` decide WHICH HOST a live order reaches (an EEA key
+	# answers 50119 on the global host); ``market_type`` reaches ``VenueAccount``,
+	# where ``_cash_stream_nets_holds = market_type != "spot"`` changes CASH
+	# ACCOUNTING. Both are why an unrecognised ``config_json`` key RAISES upstream
+	# rather than being dropped.
+	sandbox: Optional[bool] = None
+	# Left an unconstrained ``str`` ON PURPOSE: the legal region vocabulary is the
+	# VENUE's (``OkxSettings.region`` is a ``Literal["global", "eea"]`` that fails loud
+	# on anything else), and pinning it here would bake OKX's entity list into a
+	# venue-agnostic value object. ``market_type`` is the opposite case — its
+	# vocabulary is shared across venues (``VenueAccountConfig``) and a wrong value
+	# silently inverts cash accounting rather than failing loud — so it IS constrained.
+	region: Optional[str] = None
+	market_type: Optional[Literal["spot", "derivative"]] = None
 
 
 def build_venue_spec(
@@ -65,6 +100,9 @@ def build_venue_spec(
 	data_provider: Optional[str] = None,
 	account_id: Optional[str] = None,
 	secret_ref: Optional[str] = None,
+	sandbox: Optional[bool] = None,
+	region: Optional[str] = None,
+	market_type: Optional[Literal["spot", "derivative"]] = None,
 ) -> VenueSpec:
 	"""Build the live ``VenueSpec``, applying the default-provider map (D-11).
 
@@ -88,6 +126,13 @@ def build_venue_spec(
 	secret_ref :
 		The account's credential POINTER off its ``venue_accounts`` row (D-02).
 		``None`` = no per-account credentials (paper, or a pre-MPORT-06 deployment).
+	sandbox, region, market_type :
+		11.2-06 (D-38): the account-level ``config_json`` overrides, threaded through
+		this builder rather than assigned onto the spec afterwards. Threading them
+		HERE is what keeps the SEAM-03 identity invariant true — a spec re-built from
+		its own fields must still compare EQUAL, and a knob the builder dropped would
+		silently make the two live entry points produce specs that route to two
+		different hosts. ``None`` on any of them = no override (the default stands).
 	"""
 	resolved_provider = data_provider or {
 		'okx': 'okx', 'paper': 'okx'}.get(execution_venue, 'okx')
@@ -96,4 +141,7 @@ def build_venue_spec(
 		data_provider=resolved_provider,
 		account_id=account_id,
 		secret_ref=secret_ref,
+		sandbox=sandbox,
+		region=region,
+		market_type=market_type,
 	)
