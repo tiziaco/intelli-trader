@@ -28,13 +28,7 @@ from unittest.mock import MagicMock
 
 from itrader.core.enums import SystemStatus
 from itrader.trading_system.live_trading_system import LiveTradingSystem
-
-
-def _set_okx_env(monkeypatch) -> None:
-    """Dummy OKX credential triple so the okx arm's ``OkxSettings()`` constructs offline."""
-    monkeypatch.setenv("OKX_API_KEY", "test-key")
-    monkeypatch.setenv("OKX_API_SECRET", "test-secret")
-    monkeypatch.setenv("OKX_API_PASSPHRASE", "test-pass")
+from tests.support.live_okx import the_feed_provider, the_okx_lifecycle
 
 
 class _UnresolvedHaltStore:
@@ -66,9 +60,8 @@ class _UnresolvedHaltStore:
         pass
 
 
-def test_durably_halted_start_refuses_before_any_venue_io(monkeypatch) -> None:
+def test_durably_halted_start_refuses_before_any_venue_io(provisioned_okx) -> None:
     """A durably-halted ``start()`` refuses at the TOP with zero venue I/O (D-20/WR-01)."""
-    _set_okx_env(monkeypatch)
     system = LiveTradingSystem.for_exchange("okx")
     # P7 (§11b): the durable halt store + check_durable_halt_on_start live on the injected
     # SafetyController now — inject the always-unresolved double there.
@@ -77,14 +70,13 @@ def test_durably_halted_start_refuses_before_any_venue_io(monkeypatch) -> None:
     # Spy/stub EVERY call start() could make before the refusal. On the fixed (top-gate)
     # code none of these run; on the pre-fix (late-gate) code they all run before refusing.
     system._initialize_live_session = MagicMock(name="_initialize_live_session")
-    # 11-09: the venue arms are reached through the PRIMARY account's lifecycle now (the
-    # six facade scalars are gone). The venue ACCOUNT is no longer a facade field at all
-    # — accounts live on portfolios — so the snapshot/start_streaming assertions below
-    # are made against the coordinator that would have driven them.
-    lifecycle = system._primary_lifecycle
+    # 11.2-07 (D-36): the venue arms are reached through the single assembled OKX lifecycle
+    # and the binder's bound provider (``_primary_lifecycle`` / ``.provider`` are deleted).
+    # The venue ACCOUNT is not a facade field — accounts live on portfolios.
+    lifecycle = the_okx_lifecycle(system)
     lifecycle.bundle.connector.connect = MagicMock(name="connector.connect")
     system.feed.warmup = MagicMock(name="feed.warmup")
-    lifecycle.provider.start_stream = MagicMock(name="provider.start_stream")
+    the_feed_provider(system).start_stream = MagicMock(name="provider.start_stream")
     lifecycle.bundle.exchange.connect = MagicMock(
         name="exchange.connect", return_value=SimpleNamespace(success=True))
     # WR-01/WR-03: the venue-link + baseline-guard logic no longer lives on the facade —
@@ -108,7 +100,7 @@ def test_durably_halted_start_refuses_before_any_venue_io(monkeypatch) -> None:
         system._initialize_live_session.assert_not_called()
         lifecycle.bundle.connector.connect.assert_not_called()
         system.feed.warmup.assert_not_called()
-        lifecycle.provider.start_stream.assert_not_called()
+        the_feed_provider(system).start_stream.assert_not_called()
         lifecycle.bundle.exchange.connect.assert_not_called()
         # The top-gate refuses BEFORE reconcile: the coordinator is never even built, so
         # its run_startup_reconcile (venue link + baseline guard) never runs (WR-03).
@@ -117,23 +109,23 @@ def test_durably_halted_start_refuses_before_any_venue_io(monkeypatch) -> None:
         system.stop()
 
 
-def test_healthy_start_still_runs_session_init_when_no_durable_halt(monkeypatch) -> None:
+def test_healthy_start_still_runs_session_init_when_no_durable_halt(provisioned_okx) -> None:
     """The top-gate is a no-op with NO durable halt — session init + venue I/O still run.
 
     Control arm: with no unresolved durable record the moved gate falls through, so a normal
     start() proceeds through ``_initialize_live_session`` and the venue handshake exactly as
     before. Proves the D-20 move did not accidentally short-circuit a healthy start.
     """
-    _set_okx_env(monkeypatch)
     system = LiveTradingSystem.for_exchange("okx")
-    # No durable store -> the gate is skipped entirely (in-memory fallback).
+    # No durable store -> the gate is skipped entirely.
     system._safety._halt_record_store = None
 
-    # 11-09: reached through the primary lifecycle (the facade scalars are deleted).
-    lifecycle = system._primary_lifecycle
+    # 11.2-07 (D-36): reached through the single assembled OKX lifecycle + the binder's
+    # bound provider (the facade scalars + ``_primary_lifecycle`` are deleted).
+    lifecycle = the_okx_lifecycle(system)
     lifecycle.bundle.connector.connect = MagicMock(name="connector.connect")
     system.feed.warmup = MagicMock(name="feed.warmup")
-    lifecycle.provider.start_stream = MagicMock(name="provider.start_stream")
+    the_feed_provider(system).start_stream = MagicMock(name="provider.start_stream")
     lifecycle.bundle.exchange.connect = MagicMock(
         name="exchange.connect", return_value=SimpleNamespace(success=True))
     # The venue-account snapshot is now per PORTFOLIO. This system has no portfolios, so

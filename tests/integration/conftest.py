@@ -94,6 +94,79 @@ def pg_database_env(pg_container_url, monkeypatch):
     return pg_container_url
 
 
+# --- Store-derived OKX boot helpers (11.2-07, ACCT-01/D-20) ------------------
+#
+# Since 11.2-07 the live account set is STORE-DERIVED: an OKX boot assembles a venue
+# account only if a durable ``venue_accounts`` row exists. Offline (no Postgres) there
+# are no rows, so ``for_exchange('okx')`` comes up with an EMPTY venue map. The old
+# tests that read an offline-assembled OKX lifecycle therefore need a Postgres spine with
+# a provisioned row — these fixtures/helpers centralize that setup.
+
+
+@pytest.fixture
+def okx_creds(monkeypatch):
+    """A stubbed OKX credential triple — enough to construct connectors offline.
+
+    ``OkxConnector`` construction is I/O-free (``connect()`` is deferred to ``start()``),
+    so the whole composition root drives with no socket.
+    """
+    monkeypatch.setenv("OKX_API_KEY", "test-key")
+    monkeypatch.setenv("OKX_API_SECRET", "test-secret")
+    monkeypatch.setenv("OKX_API_PASSPHRASE", "test-pass")
+
+
+def _purge_venue_tables(engine) -> None:
+    metadata = engine.metadata
+    with engine.engine.begin() as connection:
+        connection.execute(metadata.tables["portfolios"].delete())
+        connection.execute(metadata.tables["venue_accounts"].delete())
+
+
+@pytest.fixture
+def provisioned_okx(pg_database_env, okx_creds):
+    """A Postgres spine carrying ONE enabled ``('okx', 'default')`` venue account.
+
+    The store-derived boot (``build_live_system`` on the Postgres arm) then brings that one
+    account online, so ``for_exchange('okx')`` assembles exactly one OKX lifecycle + exchange
+    — the offline single-account shape the pre-11.2-07 tests assumed for free. Yields the
+    provisioning engine (same database ``build_live_system`` builds its own engine on).
+    """
+    from datetime import UTC, datetime
+
+    from itrader.config.sql import SqlDriver, SqlSettings
+    from itrader.storage import SqlEngine
+    from itrader.storage.halt_record_store import HaltRecordStore
+    from itrader.storage.portfolio_definition_store import PortfolioDefinitionStore
+    from itrader.storage.strategy_registry_store import StrategyRegistryStore
+    from itrader.storage.system_stats_store import SystemStatsStore
+    from itrader.storage.system_store import SystemStore
+    from itrader.storage.venue_account_store import VenueAccountStore
+    from itrader.storage.venue_store import VenueStore
+    from tests.support.schema import provision_schema
+
+    engine = SqlEngine(SqlSettings(driver=SqlDriver.POSTGRESQL_PSYCOPG2))
+    # Register EVERY durable table a live start() reads, so provision_schema creates them
+    # on the shared database ``build_live_system`` builds its own engine on (start() reads
+    # halt_records / system_store / system_stats — an absent table ERRORS the boot).
+    PortfolioDefinitionStore(engine)
+    store = VenueAccountStore(engine)
+    HaltRecordStore(engine)
+    SystemStore(engine)
+    SystemStatsStore(engine)
+    StrategyRegistryStore(engine)
+    VenueStore(engine)
+    provision_schema(engine)
+    _purge_venue_tables(engine)
+    store.upsert(
+        "okx", "default", secret_ref=None, venue_uid=None, enabled=True,
+        config={}, at=datetime(2026, 1, 1, tzinfo=UTC))
+    try:
+        yield engine
+    finally:
+        _purge_venue_tables(engine)
+        engine.dispose()
+
+
 @pytest.fixture
 def backtest_engine():
     """Factory that builds a CSV-fed backtest ``BacktestTradingSystem``.

@@ -117,9 +117,13 @@ def wiring():
     bundles = VenueBundles(registry, connectors, ctx)
 
     execution_handler = SimpleNamespace(exchanges={})
+    # The paper accounts here carry connector=None (no streaming connection), so the D-36
+    # feed binder never has a connection to borrow; a no-op binder satisfies the manager's
+    # required-collaborator contract. Feed binding is covered in test_feed_binder.py.
     manager = VenueAccountManager(
         store, bundles, connectors, execution_handler,
         alert_sink=LogAlertSink(),
+        feed_binder=SimpleNamespace(feed_provider=None, rebind=lambda available: None),
     )
     try:
         yield SimpleNamespace(

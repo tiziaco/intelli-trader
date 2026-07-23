@@ -5,18 +5,16 @@
 real accounts and is perfectly legitimate; the same string on the same venue names ONE real
 account, and two portfolios pointing at it is the T-11-38 collision.
 
-**Why this runs over the UNION of both sources.** Rehydrated rows are already covered by the
-database's ``UniqueConstraint('venue_name', 'account_id')`` (plan 11-01), so an application
-check over only those proves nothing the DB has not already proven. The check's real job is a
-duplicate inside a COMPOSITION-SUPPLIED spec — portfolios the database has never seen, and
-cannot reject until they are written. Checking one source leaves the other open, which is why
-the union is the contract rather than an implementation detail:
+**Why this runs over the persisted rows (11.2-07, ACCT-01/D-20).** The account set is now
+STORE-DERIVED: the live boot no longer computes account identity from the spec, so the
+spec-derived arm this check used to carry — a ``spec_portfolios`` list paired with the booted
+``venue_name`` — is GONE. The only source of portfolio pairs left is the persisted definition
+rows, and this layer stands over the database's ``UniqueConstraint('venue_name',
+'account_id')`` (plan 11-01) as belt-and-braces:
 
-* spec x spec — two spec portfolios naming one account. Only this check catches it.
-* spec x persisted — a new spec portfolio colliding with an existing durable row. The DB
-  would eventually reject the write, but only as a raw integrity error, and only after the
-  engine had already assembled around the collision.
-* persisted x persisted — belt and braces over the DB constraint.
+* persisted x persisted — the DB constraint binds out-of-band writers this code never sees;
+  this layer turns the DB's raw ``IntegrityError`` into a readable, actionable refusal
+  BEFORE the engine assembles around the collision.
 
 **D-14 — the two-layer overlap is deliberate, not redundant.** It matches the justified-
 overlap posture the conventions document already pins for the order validators: the DB layer
@@ -48,10 +46,14 @@ __all__ = ["assert_distinct_accounts"]
 def assert_distinct_accounts(
     *,
     persisted: Iterable[Mapping[str, Any]],
-    spec_portfolios: Iterable[Any],
-    venue_name: str,
 ) -> None:
     """Raise unless every portfolio names a DISTINCT ``(venue_name, account_id)`` pair.
+
+    11.2-07 (ACCT-01/D-20): the account set is now STORE-DERIVED. The spec-derived arm —
+    a ``spec_portfolios`` list paired with the booted ``venue_name`` — is GONE: the live
+    boot no longer computes account identity from the spec, so the only source of
+    portfolio pairs left is the persisted definition rows, each carrying its OWN
+    ``venue_name``. The ``venue_name`` argument left with the spec arm it served.
 
     Parameters
     ----------
@@ -59,12 +61,6 @@ def assert_distinct_accounts(
         The definition rows from ``PortfolioDefinitionStore.read_all()``. Each carries its
         OWN ``venue_name``, because a durable portfolio may live on a venue other than the
         one this boot is assembling.
-    spec_portfolios:
-        The composition-supplied ``PortfolioSpec``s. These carry only ``account_id`` — a
-        spec describes portfolios on the venue being built — so they are paired with the
-        ``venue_name`` argument.
-    venue_name:
-        The venue the spec portfolios belong to (``spec.execution_venue``).
 
     Raises
     ------
@@ -81,6 +77,11 @@ def assert_distinct_accounts(
 
     Zero and one portfolio both pass vacuously; that is the MPORT-03 empty edge, and it is
     today's behaviour for every live boot in the suite.
+
+    The persisted x persisted layer stands over the database's own
+    ``UniqueConstraint('venue_name', 'account_id')`` as belt-and-braces: the DB binds
+    out-of-band writers this code never sees, and this layer turns a raw ``IntegrityError``
+    into a readable, actionable refusal before the engine assembles around the collision.
     """
     seen: dict[tuple[str, str], str] = {}
 
@@ -90,14 +91,6 @@ def assert_distinct_accounts(
             venue_name=row["venue_name"],
             account_id=row["account_id"],
             label=_persisted_label(row),
-        )
-
-    for portfolio_spec in spec_portfolios:
-        _claim(
-            seen,
-            venue_name=venue_name,
-            account_id=getattr(portfolio_spec, "account_id", None),
-            label=_spec_label(portfolio_spec),
         )
 
 
@@ -127,9 +120,3 @@ def _persisted_label(row: Mapping[str, Any]) -> str:
     portfolios would not tell an operator which durable row to fix.
     """
     return f"{row['name']} (persisted {row['portfolio_id']})"
-
-
-def _spec_label(portfolio_spec: Any) -> str:
-    """A human handle for a composition-supplied portfolio."""
-    name = getattr(portfolio_spec, "name", None) or "<unnamed>"
-    return f"{name} (spec)"

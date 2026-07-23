@@ -33,6 +33,7 @@ from itrader.trading_system.live_trading_system import LiveTradingSystem
 from itrader.trading_system.safety.stream_recovery_handler import (
     StreamRecoveryHandler,
 )
+from tests.support.live_okx import the_okx_lifecycle
 
 
 def _set_okx_env(monkeypatch) -> None:
@@ -42,18 +43,17 @@ def _set_okx_env(monkeypatch) -> None:
     monkeypatch.setenv("OKX_API_PASSPHRASE", "test-pass")
 
 
-def test_resume_drain_recovers_fill_settled_during_disconnect(monkeypatch) -> None:
+def test_resume_drain_recovers_fill_settled_during_disconnect(provisioned_okx) -> None:
     """StreamRecoveryHandler.on_reconnect re-fetches an outage-window fill, before snapshot (D-25).
 
     P7 (§11c): the reconnect-resume I/O lives on the injected StreamRecoveryHandler,
     reached by the STREAM_STATE(up) route. It calls ``catch_up_missed_fills`` BEFORE the
     fresh REST snapshot, so the settled trade routes through ``_handle_trade`` on resume.
     """
-    _set_okx_env(monkeypatch)
     system = LiveTradingSystem.for_exchange("okx")
 
-    # 11-09: the execution arm is read through the primary account's lifecycle.
-    exchange = system._primary_lifecycle.bundle.exchange
+    # 11.2-07 (D-36): the single store-derived OKX execution arm, read through its lifecycle.
+    exchange = the_okx_lifecycle(system).bundle.exchange
 
     # A trade settled on the venue while the fill stream was down.
     settled_trade = {"id": "trade-during-outage"}

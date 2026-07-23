@@ -543,20 +543,36 @@ def test_build_live_system_threads_the_store_and_sink_into_assemble_venue() -> N
 
     ``assemble_venue`` accepts ``account_store`` / ``alert_sink`` as OPTIONAL kwargs so
     existing call sites keep working — which means the guard silently no-ops if the
-    ONE production caller forgets them. Asserted by source inspection because building
-    the live system requires credentials and a database.
+    production caller forgets them. Asserted by source inspection because building the
+    live system requires credentials and a database.
+
+    11.2-07 (D-20): the assembly call MOVED off ``build_live_system`` into
+    ``VenueAccountManager.bring_online`` (the store-derived boot hands each row to the
+    manager). So the store + sink now travel: ``build_live_system`` constructs the manager
+    with the ``VenueAccountStore`` and ``alert_sink=alert_sink``, and ``bring_online``
+    threads both into ``assemble_venue``. Both hops are asserted — a break in either
+    leaves the D-04 guard inert behind a green suite.
     """
     import inspect
 
     from itrader.trading_system import live_trading_system as _lts
+    from itrader.venues.venue_account_manager import VenueAccountManager
 
-    source = inspect.getsource(_lts.build_live_system)
-
-    assert "account_store=" in source, (
-        "build_live_system must pass account_store= to assemble_venue, or the D-04 "
-        "UID guard never runs in production (it would be dead code behind a green suite)"
+    boot_source = inspect.getsource(_lts.build_live_system)
+    assert "VenueAccountManager(" in boot_source, (
+        "build_live_system must build the VenueAccountManager that owns assembly (D-20)"
     )
-    assert "alert_sink=alert_sink" in source, (
-        "build_live_system must pass alert_sink= to assemble_venue, or a UID mismatch "
-        "has no egress channel"
+    assert "alert_sink=alert_sink" in boot_source, (
+        "build_live_system must pass alert_sink= to the manager, or a UID mismatch has "
+        "no egress channel"
+    )
+
+    bring_online_source = inspect.getsource(VenueAccountManager.bring_online)
+    assert "account_store=self._store" in bring_online_source, (
+        "VenueAccountManager.bring_online must pass account_store= to assemble_venue, or "
+        "the D-04 UID guard never runs in production (dead code behind a green suite)"
+    )
+    assert "alert_sink=self._alert_sink" in bring_online_source, (
+        "VenueAccountManager.bring_online must pass alert_sink= to assemble_venue, or a "
+        "UID mismatch has no egress channel"
     )

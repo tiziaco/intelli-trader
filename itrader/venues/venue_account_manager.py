@@ -164,6 +164,14 @@ class VenueAccountManager:
         trust-on-first-use venue-identity guard can alert. Required, not optional: an
         account brought online with nowhere to escalate a venue-identity mismatch is a
         silently-disarmed guard.
+    feed_binder :
+        11.2-07 (D-36): the ``FeedConnectionBinder`` this manager DRIVES. "Primary
+        account" is deleted as a concept — the ONE feed borrows the first available
+        venue CONNECTION and re-borrows when that account is retired or disabled.
+        ``bring_online`` and ``rebind_feed`` re-evaluate the binding through it; the
+        binder owns the provider build, the feed wiring and the re-borrow rule. Required,
+        not optional: a manager that could bring an account online without a feed to
+        connect it to would silently ship a live boot that receives no bars.
     """
 
     def __init__(
@@ -174,12 +182,14 @@ class VenueAccountManager:
         execution_handler: Any,
         *,
         alert_sink: Any,
+        feed_binder: Any,
     ) -> None:
         self._store = store
         self._bundles = bundles
         self._connectors = connectors
         self._execution_handler = execution_handler
         self._alert_sink = alert_sink
+        self._feed_binder = feed_binder
         # Keyed on the PAIR, the same key the exchange registry, the connector memo and
         # the bundle memo all use. A second memo on any other key is how those registries
         # end up disagreeing about an account (the defect D-08 exists to prevent), so this
@@ -441,7 +451,53 @@ class VenueAccountManager:
         self._online[(venue_name, account_id)] = record
         self.logger.info(
             "Brought venue account (%s, %s) online", venue_name, account_id)
+        # (5) 11.2-07 (D-36): re-evaluate the ONE feed's borrowed connection. A runtime
+        # provision-then-bring_online binds the feed with no restart (D-09); a boot's
+        # per-row bring_online binds on the first streaming account and no-ops on the
+        # rest. The feed is bound to a CONNECTION, so this is not privileging an account.
+        self.rebind_feed()
         return record
+
+    def rebind_feed(self) -> None:
+        """Re-point the ONE live feed at a valid venue connection (11.2-07, D-36).
+
+        Delegates to the ``FeedConnectionBinder`` with THIS process's currently-available
+        streaming connections. Called from ``bring_online`` (so a runtime provision binds
+        without a restart) and once by the boot after its bring-up loop (so a zero-account
+        boot logs the unbound-feed warning). Idempotent — a valid, unchanged binding is a
+        no-op.
+        """
+        self._feed_binder.rebind(self._streaming_available())
+
+    def _streaming_available(self) -> list[tuple[str, str, "VenueSpec"]]:
+        """The online accounts whose connection the feed may borrow, in bring-up order.
+
+        A candidate is an online pair whose execution bundle carries a live CONNECTOR
+        (paper carries ``connector=None`` and is not a streaming connection) AND whose
+        durable row is still ENABLED — a disabled account is retired, so the feed must
+        re-borrow off it. Insertion order is preserved (``dict`` order = bring-up order =
+        the store's ``account_id`` ASC), so the borrowed connection is reproducible.
+        """
+        available: list[tuple[str, str, "VenueSpec"]] = []
+        for (venue_name, account_id), record in self._online.items():
+            if record.bundle.connector is None:
+                continue
+            row = self._store.get(venue_name, account_id)
+            if row is None or not row["enabled"]:
+                continue
+            available.append((venue_name, account_id, record.spec))
+        return available
+
+    @property
+    def feed_provider(self) -> Any:
+        """The provider currently bound to the ONE feed, or ``None`` (D-36 passthrough).
+
+        Read by the composition root's facade-dependent halt-signal wiring and by the
+        live session's warmup/subscribe step, so the account domain stays the single
+        answer to "which connection is the feed on". Both readers None-guard it (a
+        zero-account boot leaves it None).
+        """
+        return self._feed_binder.feed_provider
 
     def _merge_account_config(
         self,

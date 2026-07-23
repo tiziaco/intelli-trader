@@ -24,7 +24,6 @@ on the failure path — the state the engine is left in matters more than the ex
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
-from types import SimpleNamespace
 
 import pytest
 from sqlalchemy.exc import IntegrityError
@@ -60,26 +59,23 @@ def _persisted(name: str, venue_name: str, account_id: str) -> dict:
     }
 
 
-def _spec_portfolio(name: str, account_id):
-    """A ``PortfolioSpec``-shaped handle (the invariant duck-types both sides)."""
-    return SimpleNamespace(name=name, cash=10_000, account_id=account_id)
-
-
 # --------------------------------------------------------------------------- #
-# Layer 1 — the application check, over the UNION
+# Layer 1 — the application check, over the PERSISTED rows (11.2-07, ACCT-01/D-20)
+#
+# The account set is now STORE-DERIVED, so the spec-derived arm (``spec_portfolios`` +
+# ``venue_name``) is GONE and the check reads ONLY the persisted definition rows. The
+# spec-side collision cases it used to catch cannot occur any more — the live boot no
+# longer derives account identity from the spec. What remains is the persisted x persisted
+# belt-and-braces over the database's own UNIQUE constraint.
 # --------------------------------------------------------------------------- #
 def test_zero_portfolios_passes_vacuously() -> None:
     """The MPORT-03 empty edge — a clean boot with nothing persisted must not raise."""
-    assert_distinct_accounts(persisted=[], spec_portfolios=[], venue_name=_VENUE)
+    assert_distinct_accounts(persisted=[])
 
 
 def test_one_portfolio_passes() -> None:
     """A single portfolio cannot collide with anything."""
-    assert_distinct_accounts(
-        persisted=[],
-        spec_portfolios=[_spec_portfolio("solo", "acct-a")],
-        venue_name=_VENUE,
-    )
+    assert_distinct_accounts(persisted=[_persisted("solo", _VENUE, "acct-a")])
 
 
 def test_the_same_account_id_on_two_different_venues_passes() -> None:
@@ -89,39 +85,33 @@ def test_the_same_account_id_on_two_different_venues_passes() -> None:
     venue-scoped strings, and "main" on OKX has nothing to do with "main" on Binance.
     """
     assert_distinct_accounts(
-        persisted=[_persisted("pf-a", "okx", "main")],
-        spec_portfolios=[_spec_portfolio("pf-b", "main")],
-        venue_name="binance",
-    )
+        persisted=[
+            _persisted("pf-a", "okx", "main"),
+            _persisted("pf-b", "binance", "main"),
+        ])
 
 
 def test_the_same_venue_with_different_account_ids_passes() -> None:
     """Same-venue portfolios SEPARATE when their accounts differ (MPORT-03 adjacency)."""
     assert_distinct_accounts(
-        persisted=[],
-        spec_portfolios=[
-            _spec_portfolio("pf-a", "acct-a"),
-            _spec_portfolio("pf-b", "acct-b"),
-        ],
-        venue_name=_VENUE,
-    )
+        persisted=[
+            _persisted("pf-a", _VENUE, "acct-a"),
+            _persisted("pf-b", _VENUE, "acct-b"),
+        ])
 
 
-def test_two_spec_portfolios_sharing_a_pair_raise() -> None:
-    """The case ONLY the application check can catch — neither row exists in the DB yet.
+def test_two_persisted_rows_sharing_a_pair_raise() -> None:
+    """Belt and braces over the DB constraint (rows could predate it, or arrive by hand).
 
     The error must name both portfolios, the colliding pair, the consequence and the
     remediation: an operator reading it should not have to open the source to act.
     """
     with pytest.raises(DuplicateVenueAccountError) as caught:
         assert_distinct_accounts(
-            persisted=[],
-            spec_portfolios=[
-                _spec_portfolio("pf-a", "shared"),
-                _spec_portfolio("pf-b", "shared"),
-            ],
-            venue_name=_VENUE,
-        )
+            persisted=[
+                _persisted("pf-a", _VENUE, "shared"),
+                _persisted("pf-b", _VENUE, "shared"),
+            ])
 
     error = caught.value
     assert error.venue_name == _VENUE
@@ -132,47 +122,16 @@ def test_two_spec_portfolios_sharing_a_pair_raise() -> None:
     assert "own account_id" in message     # the remediation
 
 
-def test_a_spec_portfolio_colliding_with_a_persisted_one_raises() -> None:
-    """The cross-source case — the DB has not seen the spec portfolio yet.
-
-    Without the union this passes: the persisted row is unique among persisted rows, and
-    the spec portfolio is unique among spec portfolios.
-    """
-    with pytest.raises(DuplicateVenueAccountError, match="shared"):
-        assert_distinct_accounts(
-            persisted=[_persisted("durable-pf", _VENUE, "shared")],
-            spec_portfolios=[_spec_portfolio("new-pf", "shared")],
-            venue_name=_VENUE,
-        )
-
-
-def test_two_persisted_rows_sharing_a_pair_raise() -> None:
-    """Belt and braces over the DB constraint (rows could predate it, or arrive by hand)."""
-    with pytest.raises(DuplicateVenueAccountError, match="shared"):
-        assert_distinct_accounts(
-            persisted=[
-                _persisted("pf-a", _VENUE, "shared"),
-                _persisted("pf-b", _VENUE, "shared"),
-            ],
-            spec_portfolios=[],
-            venue_name=_VENUE,
-        )
-
-
-def test_portfolios_naming_no_account_never_collide() -> None:
+def test_persisted_rows_naming_no_account_never_collide() -> None:
     """An unset ``account_id`` is "no venue account", not a shared ``None`` key.
 
-    Grouping several unnamed portfolios under one key would refuse to start on the legacy
-    single-account shape, which has always been valid.
+    Persisted rows carry a NOT NULL ``account_id`` in production, but the ``_claim``
+    None-guard remains — grouping several unnamed rows under one ``None`` key would refuse
+    to start on a configuration the guard is meant to allow.
     """
-    assert_distinct_accounts(
-        persisted=[],
-        spec_portfolios=[
-            _spec_portfolio("pf-a", None),
-            _spec_portfolio("pf-b", None),
-        ],
-        venue_name=_VENUE,
-    )
+    a = _persisted("pf-a", _VENUE, "x"); a["account_id"] = None
+    b = _persisted("pf-b", _VENUE, "y"); b["account_id"] = None
+    assert_distinct_accounts(persisted=[a, b])
 
 
 # --------------------------------------------------------------------------- #
@@ -308,52 +267,14 @@ def _okx_entries(system):
     }
 
 
-# --- (a) two spec portfolios sharing a pair -> the boot REFUSES ------------- #
-def test_two_spec_portfolios_on_one_account_refuse_to_boot(live_db, okx_env) -> None:
-    """(a) The real ``build_live_system`` RAISES and returns no system."""
-    with pytest.raises(DuplicateVenueAccountError, match="shared"):
-        build_live_system(_spec(["shared", "shared"]))
-
-
-# --- (b) a spec portfolio colliding with a PERSISTED row -> REFUSES -------- #
-def test_a_spec_portfolio_colliding_with_a_persisted_row_refuses_to_boot(
-    live_db, okx_env
-) -> None:
-    """(b) The cross-source collision, at the boot.
-
-    This is the case the DB constraint cannot pre-empt: the spec portfolio has never
-    been written, so the unique index has nothing to reject until it is — by which
-    point the engine would already have assembled around the collision.
-    """
-    _seed_definition(live_db, name="durable-pf", account_id="shared")
-
-    with pytest.raises(DuplicateVenueAccountError, match="shared"):
-        build_live_system(_spec(["shared"]))
-
-
-# --- (e) nothing was minted on the failure path ---------------------------- #
-def test_a_refused_boot_mints_no_account_and_registers_no_exchange(
-    live_db, okx_env
-) -> None:
-    """(e) D-15 asserted as a NEGATIVE — the refusal lands BEFORE any account exists.
-
-    ``pytest.raises`` alone would pass against an implementation that minted every
-    account first and only then noticed the collision, which is exactly the outcome
-    D-15 forbids: by then a colliding pair has satisfied 11-07's required-account_id
-    guard and two portfolios are wired to one real balance.
-    """
-    accounts = VenueAccountStore(live_db)
-    assert accounts.get(_VENUE, "shared") is None
-
-    with pytest.raises(DuplicateVenueAccountError):
-        build_live_system(_spec(["shared", "shared"]))
-
-    # No venue_accounts row was minted for the colliding account...
-    assert accounts.get(_VENUE, "shared") is None, (
-        "an account was minted before the collision was detected — the invariant "
-        "must run BEFORE _build_account_specs, not after")
-    # ...and no portfolio was created either.
-    assert PortfolioDefinitionStore(live_db).read_all() == []
+# --- spec-side collision gates DELETED (11.2-07, ACCT-01/D-20) --------------- #
+# The former gates (a)/(b)/(e) drove ``build_live_system(_spec(["shared", "shared"]))``
+# and asserted the boot REFUSED a spec-side duplicate. The account set is now
+# STORE-DERIVED: the live boot no longer computes account identity from the spec, so a
+# spec-side collision cannot exist to refuse. The persisted x persisted duplicate is
+# prevented by the database UNIQUE constraint (``test_the_database_rejects_an_out_of_band_
+# duplicate_pair`` above) and belt-and-braced by the Layer-1 pure-function check
+# (``test_two_persisted_rows_sharing_a_pair_raise``).
 
 
 # --- (c) same venue, DIFFERENT account ids -> BOOTS ------------------------ #
@@ -383,30 +304,26 @@ def test_two_persisted_portfolios_on_one_venue_both_rehydrate(live_db, okx_env) 
         system.stop(timeout=5.0)
 
 
-def test_two_spec_portfolios_on_one_venue_assemble_two_accounts(
-    live_db, okx_env
-) -> None:
-    """(c) MPORT-03 adjacency, spec side — two accounts on one venue both assemble.
-
-    The complement of the test above: the persisted side proves both portfolios come
-    back, this side proves the invariant does not block the two-account assembly plan
-    11-07 landed. Together they cover "same venue, different accounts" end to end.
-    """
-    system = build_live_system(_spec(["acct-a", "acct-b"]))
-    try:
-        assert set(_okx_entries(system)) == {(_VENUE, "acct-a"), (_VENUE, "acct-b")}
-    finally:
-        system.stop(timeout=5.0)
+# The spec-side two-account assembly gate (``build_live_system(_spec(["acct-a",
+# "acct-b"]))`` -> two exchanges) is DELETED: the account set is store-derived now, so the
+# multi-account boot is gated store-first in ``test_multi_account_composition.py`` (two
+# provisioned rows -> two exchanges).
 
 
 # --- (d) same account id, DIFFERENT venues -> BOOTS ------------------------ #
 def test_the_same_account_id_on_two_venues_boots(live_db, okx_env) -> None:
     """(d) Identity is the PAIR — a persisted row on another venue does not collide.
 
-    The persisted portfolio lives on ``binance``; the spec builds ``okx``. Both name
-    the account id "main", and that is two different real accounts.
+    The persisted portfolio lives on ``binance``; the OKX boot brings up its own ``main``
+    account (11.2-07: store-derived, so it is provisioned as a durable row rather than
+    named in the spec). Both name the account id "main", and that is two different real
+    accounts on two venues.
     """
     other = PortfolioId(uuid.uuid4())
+    # The OKX 'main' account is provisioned so the store-derived boot assembles it.
+    VenueAccountStore(live_db).upsert(
+        _VENUE, "main", secret_ref=None, venue_uid=None, enabled=True,
+        config={}, at=_AT)
     VenueAccountStore(live_db).upsert(
         "binance", "main", secret_ref=None, venue_uid=None, enabled=True,
         config={}, at=_AT)
@@ -414,9 +331,9 @@ def test_the_same_account_id_on_two_venues_boots(live_db, okx_env) -> None:
         other, name="pf-binance", venue_name="binance", account_id="main",
         initial_cash=Decimal("10000.00"), enabled=True, config=None, at=_AT)
 
-    system = build_live_system(_spec(["main"]))
+    system = build_live_system(_spec([]))
     try:
-        # The binance portfolio rehydrated; the okx spec account assembled.
+        # The binance portfolio rehydrated; the okx durable account assembled.
         assert other in system.portfolio_handler._portfolios
         assert set(_okx_entries(system)) == {(_VENUE, "main")}
     finally:
@@ -442,6 +359,10 @@ def test_a_binance_portfolio_does_not_receive_the_okx_venue_account(
     from itrader.portfolio_handler.account import VenueAccount
 
     other = PortfolioId(uuid.uuid4())
+    # The OKX 'main' account is provisioned so the store-derived boot assembles it.
+    VenueAccountStore(live_db).upsert(
+        _VENUE, "main", secret_ref=None, venue_uid=None, enabled=True,
+        config={}, at=_AT)
     VenueAccountStore(live_db).upsert(
         "binance", "main", secret_ref=None, venue_uid=None, enabled=True,
         config={}, at=_AT)
@@ -449,16 +370,18 @@ def test_a_binance_portfolio_does_not_receive_the_okx_venue_account(
         other, name="pf-binance", venue_name="binance", account_id="main",
         initial_cash=Decimal("10000.00"), enabled=True, config=None, at=_AT)
 
-    system = build_live_system(_spec(["main"]))
+    system = build_live_system(_spec([]))
     try:
         portfolio = system.portfolio_handler.get_portfolio(other)
         assert portfolio.venue_name == "binance"
-        # It keeps its construction-time compute leaf: this boot assembled NOTHING on
-        # binance, so there is nothing correct to give it, and giving it the OKX
-        # account is the cross-venue conflation D-14/D-15 exist to prevent.
+        # It keeps its construction-time compute leaf. 11.2-07: this boot attaches NO
+        # venue-truth account to any portfolio (the ``account_for`` wiring is plan 11.2-08's
+        # COMP-07 work), so EVERY live portfolio currently sits on a compute leaf — a
+        # deliberate transient window. The binance portfolio must never receive the OKX
+        # "main" account regardless (the cross-venue conflation CR-01/D-14 prevent).
         assert not isinstance(portfolio.account, VenueAccount)
         assert portfolio.account.is_venue_truth is False
-        # Unchanged: the OKX spec account still assembles and registers.
+        # The OKX durable account still assembles and registers.
         assert set(_okx_entries(system)) == {(_VENUE, "main")}
     finally:
         system.stop(timeout=5.0)
@@ -497,16 +420,16 @@ def test_a_persisted_portfolio_rehydrates_before_start_with_its_id(
         assert portfolio.portfolio_id == persisted
         assert portfolio.name == "pf-durable"
         assert portfolio.account_id == "acct-a"
-        # 11-09: the stored ``initial_cash`` is asserted at the STORE, not through
-        # ``portfolio.cash``. The portfolio now holds a venue-truth ``VenueAccount``
-        # (attached at composition by account_id, MPORT-05), and ``cash`` delegates to
-        # ``account.balance`` — which is venue truth and fails LOUD until the first
-        # snapshot rather than returning a stale persisted number (D-15: surface
-        # unsnapshotted loud, never 0). Reading a persisted figure through a live venue
-        # account would be reporting a balance the venue never confirmed.
+        # The stored ``initial_cash`` is asserted at the STORE (a definition, not a balance).
         assert PortfolioDefinitionStore(live_db).read_all()[0]["initial_cash"] == (
             Decimal("10000.00"))
-        assert portfolio.account.is_venue_truth is True
+        # 11.2-07 (transient window): the rehydrated portfolio currently holds its
+        # construction-time COMPUTE leaf (``is_venue_truth=False``). The venue-truth
+        # ``VenueAccount`` attach (``PortfolioFactory -> VenueAccountManager.account_for``)
+        # is plan 11.2-08's COMP-07 work, and the ACCT-03 raise is plan 11.2-09's — so this
+        # assertion FLIPS back to ``is True`` once those land. Until then a live portfolio
+        # on a compute leaf is the deliberate, owner-sanctioned interim state.
+        assert portfolio.account.is_venue_truth is False
     finally:
         system.stop(timeout=5.0)
 

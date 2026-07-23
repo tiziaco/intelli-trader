@@ -73,6 +73,22 @@ _AT = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 _VENUE = COMPUTE_VENUE
 
 
+class _NoopFeedBinder:
+    """A do-nothing D-36 feed binder for the ACCT-01/02/03 paper tests.
+
+    Feed binding is exercised in ``test_feed_binder.py``; here the paper accounts under
+    test carry ``connector=None`` (no streaming connection), so ``rebind`` never has a
+    connection to borrow. The manager still DRIVES the binder on every ``bring_online``,
+    so this satisfies its required-collaborator contract without pulling a real provider
+    build into tests that are about the account domain, not the feed.
+    """
+
+    feed_provider = None
+
+    def rebind(self, available: Any) -> None:  # noqa: D401 - trivial no-op
+        return None
+
+
 class _RecordingBundles:
     """A REAL ``VenueBundles`` with only ``account_for`` instrumented.
 
@@ -129,6 +145,7 @@ def _make_manager(
         ConnectorProvider({}),
         execution_handler,
         alert_sink=LogAlertSink(),
+        feed_binder=_NoopFeedBinder(),
     )
     return manager, store, execution_handler
 

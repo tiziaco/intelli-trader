@@ -245,15 +245,14 @@ def test_assemble_venue_takes_no_data_registry() -> None:
     """
     import inspect
 
-    from itrader.venues.assemble import assemble_venue, assemble_venues
+    from itrader.venues.assemble import assemble_venue
 
-    for func in (assemble_venue, assemble_venues):
-        parameters = inspect.signature(func).parameters
-        assert "data_registry" not in parameters, (
-            f"{func.__name__} must not take a data registry (D-14): assembly builds no "
-            "provider, so a per-account credential-bearing provider cannot be built and "
-            "discarded (WR-07)"
-        )
+    parameters = inspect.signature(assemble_venue).parameters
+    assert "data_registry" not in parameters, (
+        "assemble_venue must not take a data registry (D-14): assembly builds no "
+        "provider, so a per-account credential-bearing provider cannot be built and "
+        "discarded (WR-07)"
+    )
 
 
 def test_assemble_venue_builds_no_data_provider(monkeypatch: Any) -> None:
@@ -269,48 +268,6 @@ def test_assemble_venue_builds_no_data_provider(monkeypatch: Any) -> None:
 
     assert build_calls == []
     assert lifecycle.provider is None
-
-
-def test_assemble_venues_over_two_accounts_builds_no_providers(monkeypatch: Any) -> None:
-    """D-14/WR-07: ZERO ``build_provider`` calls across a TWO-account assembly.
-
-    The two-account case is the one WR-07 describes: N accounts produced N providers
-    and N-1 were discarded. The count is asserted, not the wiring — a test that only
-    checked "the primary's provider reached the feed" passes while N-1 credential-
-    bearing objects are constructed behind it.
-    """
-    from itrader.venues.assemble import assemble_venues
-
-    build_calls = _count_okx_provider_builds(monkeypatch)
-    connectors = _FakeConnectorProvider()
-    bundles = _okx_bundles(connectors)
-    specs = [_spec("okx", "okx", "acct-a"), _spec("okx", "okx", "acct-b")]
-
-    lifecycles = assemble_venues(specs, connectors, bundles)
-
-    assert build_calls == []
-    assert [lc.provider for lc in lifecycles.values()] == [None, None]
-
-
-def test_assemble_venues_hands_the_one_provider_to_the_primary_only() -> None:
-    """D-14: the ONE provider goes to the FIRST spec's lifecycle and to no other.
-
-    ONE feed means ONE provider. The primary is the first spec (the ordering contract
-    ``assemble_venues`` documents), so a map that lost insertion order would silently
-    re-point the market-data source between restarts.
-    """
-    from itrader.venues.assemble import assemble_venues
-
-    connectors = _FakeConnectorProvider()
-    bundles = _okx_bundles(connectors)
-    provider = object()
-    specs = [_spec("okx", "okx", "acct-a"), _spec("okx", "okx", "acct-b")]
-
-    lifecycles = assemble_venues(
-        specs, connectors, bundles, primary_provider=provider)  # type: ignore[arg-type]
-
-    assert lifecycles["acct-a"].provider is provider
-    assert lifecycles["acct-b"].provider is None
 
 
 def test_assemble_paper_returns_connectorless_bundle_and_no_provider() -> None:
@@ -365,103 +322,3 @@ def test_an_unregistered_venue_memoizes_nothing() -> None:
         assemble_venue(_spec("binance", "okx", "acct-a"), connectors, bundles)
 
     assert bundles._memo == {}
-
-
-# --------------------------------------------------------------------------- #
-# assemble_venues — the PLURAL form (11-09)
-#
-# Driven here, with NO LiveTradingSystem, for exactly the reason the singular form is:
-# the assembly logic is authored ONCE in venues/assemble.py, and a plural form that
-# could only be exercised through the live composition root would put it back in the
-# facade in everything but name.
-# --------------------------------------------------------------------------- #
-
-
-def test_assemble_venues_returns_one_lifecycle_per_account() -> None:
-    """Two account specs -> two lifecycles, keyed by account id, over two connectors.
-
-    The DISTINCT-connector assertion is the load-bearing half. Two entries in a map
-    prove only that the loop ran twice; two accounts sharing one authenticated session
-    would satisfy that while routing account B's orders through account A's credentials.
-    """
-    from itrader.venues.assemble import assemble_venues
-    from itrader.venues.lifecycle import VenueLifecycle
-
-    connectors = _FakeConnectorProvider()
-    bundles = _okx_bundles(connectors)
-    specs = [_spec("okx", "okx", "acct-a"), _spec("okx", "okx", "acct-b")]
-
-    lifecycles = assemble_venues(specs, connectors, bundles)
-
-    assert set(lifecycles) == {"acct-a", "acct-b"}
-    assert all(isinstance(v, VenueLifecycle) for v in lifecycles.values())
-    assert (lifecycles["acct-a"].bundle.connector
-            is not lifecycles["acct-b"].bundle.connector)
-    # D-08: two accounts are two bundles — the memo must not over-collapse.
-    assert lifecycles["acct-a"].bundle is not lifecycles["acct-b"].bundle
-
-
-def test_assemble_venues_preserves_spec_order_so_the_primary_is_deterministic() -> None:
-    """Insertion order IS the primary contract — the first spec is the primary.
-
-    The facade binds ONE data provider to the ONE feed and the composition root builds
-    it for the first spec, so an order-losing implementation (a set, or a sorted key)
-    would silently re-point the feed at a different account's stream between boots.
-    """
-    from itrader.venues.assemble import assemble_venues
-
-    connectors = _FakeConnectorProvider()
-    specs = [_spec("okx", "okx", "z-last"), _spec("okx", "okx", "a-first")]
-
-    lifecycles = assemble_venues(specs, connectors, _okx_bundles(connectors))
-
-    assert list(lifecycles) == ["z-last", "a-first"]
-
-
-def test_assemble_venues_normalizes_an_unnamed_account_to_default() -> None:
-    """``account_id=None`` keys under "default" — the same key the plugins memoize on.
-
-    The venue plugins, ``ExecutionHandler.exchanges``, ``VenueBundles`` and the UID
-    guard all apply ``account_id or "default"``. Keying differently here would make the
-    lifecycle map disagree with the exchange registry for exactly the unnamed
-    single-account run that is the most common deployment.
-    """
-    from itrader.venues.assemble import assemble_venues
-
-    connectors = _FakeConnectorProvider()
-    bundles = _okx_bundles(connectors)
-
-    lifecycles = assemble_venues(
-        [_spec("okx", "okx", None)], connectors, bundles)
-
-    assert list(lifecycles) == ["default"]
-    # The SAME normalization reached the shared memo — one account key, tree-wide.
-    assert list(bundles._memo) == [("okx", "default")]
-
-
-def test_assemble_venues_on_an_empty_spec_list_is_a_clean_empty_map() -> None:
-    """No specs -> no lifecycles, no bundles, and no exception (VENUE-07 empty edge).
-
-    A live boot with ZERO accounts is the normal fresh-deployment state (D-09), not a
-    misconfiguration, so assembly must degrade to an empty map rather than raise.
-    """
-    from itrader.venues.assemble import assemble_venues
-
-    connectors = _FakeConnectorProvider()
-    bundles = _okx_bundles(connectors)
-
-    assert assemble_venues([], connectors, bundles) == {}
-    assert bundles._memo == {}
-
-
-def test_assemble_venues_propagates_an_unregistered_venue_loudly() -> None:
-    """One bad spec fails the whole assembly (D-01) — no partial, half-wired venue map."""
-    import pytest
-
-    from itrader.venues.assemble import assemble_venues
-
-    connectors = _FakeConnectorProvider()
-    specs = [_spec("okx", "okx", "acct-a"), _spec("binance", "okx", "acct-b")]
-
-    with pytest.raises(KeyError):
-        assemble_venues(specs, connectors, _okx_bundles(connectors))
