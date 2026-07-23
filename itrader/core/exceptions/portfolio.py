@@ -296,3 +296,42 @@ class VenueAccountNotProvisionedError(PortfolioError):
             f"VenueReconciler and the unexplained-residual HALT."
         )
 
+
+class DuplicateVenueAccountProvisionError(PortfolioError):
+    """``provision`` named a ``(venue_name, account_id)`` that already exists (ACCT-02/D-11).
+
+    Provisioning is CREATE-ONLY. The database's composite primary key on
+    ``(venue_name, account_id)`` is the arbiter, and its ``IntegrityError`` is what this
+    exception classifies — there is deliberately NO pre-check ``SELECT``, because a
+    pre-check is TOCTOU and, decisively, does not bind the out-of-band writers a durable
+    table always has. The same argument is already recorded for the sibling
+    ``portfolio_definition_store``.
+
+    It is a SEPARATE type from ``DuplicateVenueAccountError``, which reports two
+    PORTFOLIOS colliding on one account and carries both portfolio labels. A provision
+    refusal has no portfolios in it — the collision is between an existing row and a new
+    write — so reusing that type would mean inventing two portfolio names that do not
+    exist. Same table, different collision.
+
+    Refusing rather than overwriting is the point. A silent restatement is how a re-run
+    provisioning script replaces the operator's ``secret_ref`` and ``config``, and how the
+    engine-written ``venue_uid`` (D-04 trust-on-first-use) gets reset to NULL — which
+    disarms the venue-identity guard for that account. Repointing an existing account is
+    its own targeted verb, never a side effect of create.
+
+    Carries the colliding pair as structured fields and builds its message in ``__init__``
+    (the project's exception convention), naming the consequence and the remediation.
+    """
+
+    def __init__(self, venue_name: str, account_id: str):
+        self.venue_name = venue_name
+        self.account_id = account_id
+        super().__init__(
+            f"Venue account ({venue_name!r}, {account_id!r}) is already provisioned. "
+            f"Refusing to provision it again (D-11): provisioning is create-only, and "
+            f"overwriting would silently replace the operator's secret_ref and config "
+            f"and clear the engine-written venue_uid, disarming the trust-on-first-use "
+            f"venue-identity guard for this account. Use a different account_id, or "
+            f"update the existing account through its own targeted verb."
+        )
+

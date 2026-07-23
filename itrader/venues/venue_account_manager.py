@@ -57,9 +57,13 @@ Indentation: 4-SPACE (``venues/`` package convention). ``mypy --strict`` applies
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Mapping
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
-from itrader.core.exceptions import VenueAccountNotProvisionedError
+from itrader.core.exceptions import (
+    DuplicateVenueAccountProvisionError,
+    VenueAccountNotProvisionedError,
+)
 from itrader.logger import get_itrader_logger
 from itrader.venues.assemble import assemble_venue
 
@@ -196,6 +200,100 @@ class VenueAccountManager:
         return self._online[key]
 
     # ------------------------------------------------------------------ writes
+
+    def provision(
+        self,
+        venue_name: str,
+        account_id: str,
+        *,
+        secret_ref: Optional[str] = None,
+        config: Optional[dict[str, Any]] = None,
+    ) -> Mapping[str, Any]:
+        """CREATE one durable ``venue_accounts`` row and return it (ACCT-02, D-11/D-26).
+
+        Provisioning lives HERE and only here. It is reached as
+        ``system.venue_accounts.provision(...)``, mirroring how scripts already reach
+        ``system.portfolio_handler.add_portfolio(...)``; there is no
+        ``LiveTradingSystem.provision_venue_account`` and this milestone adds no lines to
+        that file (D-26/D-35).
+
+        Create-only. A second ``provision`` of the same pair raises
+        ``DuplicateVenueAccountProvisionError`` and writes NOTHING — the database's
+        composite primary key is the arbiter and its ``IntegrityError`` is classified on
+        the ERROR path. There is deliberately no pre-check ``SELECT``: a pre-check is
+        TOCTOU and, decisively, does not bind the out-of-band writers a durable table
+        always has. The same argument is already recorded for the sibling
+        ``portfolio_definition_store``.
+
+        It does NOT bring the account online. ``provision`` (the durable write) and
+        ``bring_online`` (the runtime build) are two verbs by design (D-27): a caller that
+        wants the account usable in this process performs both, explicitly, with no restart
+        between them. The split is also what makes an interrupted provision safe — an
+        enabled row with no runtime is exactly what the next boot brings online, through
+        that same single path.
+
+        The secret-key denylist is NOT re-implemented here. ``VenueAccountStore`` already
+        runs the single recursive guard (REUSED from ``venue_store``) as the first
+        statement of its write, before any transaction opens, so a ``config`` carrying a
+        secret-looking key persists nothing. A second denylist in this class would be a
+        drifting duplicate of the one control, which the store module forbids by name —
+        membership is EXACT, so ``"credential"`` is denied while ``"credentials"`` passes
+        by one letter.
+
+        ``secret_ref`` is a POINTER at wherever the credential lives (``env:<PREFIX>``),
+        never a credential itself.
+        """
+        # The write timestamp is minted at the CALL SITE: the store is clock-free by
+        # decision (D-07) and takes a caller-supplied ``at``. This is the same idiom every
+        # other durable-write caller in the tree uses.
+        self._create_row(
+            venue_name,
+            account_id,
+            secret_ref=secret_ref,
+            config=dict(config) if config is not None else {},
+            at=datetime.now(UTC),
+        )
+        row = self._store.get(venue_name, account_id)
+        if row is None:  # pragma: no cover - a committed INSERT is always readable back
+            raise VenueAccountNotProvisionedError(
+                venue_name, account_id,
+                VenueAccountNotProvisionedError.NOT_PROVISIONED)
+        self.logger.info(
+            "Provisioned venue account (%s, %s)", venue_name, account_id)
+        return row
+
+    def _create_row(
+        self,
+        venue_name: str,
+        account_id: str,
+        *,
+        secret_ref: Optional[str],
+        config: dict[str, Any],
+        at: datetime,
+    ) -> None:
+        """Delegate the create-only write and CLASSIFY the database's duplicate refusal.
+
+        The classification sits on the ERROR path rather than in front of the write, which
+        is the whole of D-11: the uniqueness decision belongs to the database, the one
+        participant that sees every writer.
+        """
+        # GATE-01: the SQLAlchemy exception type is LAZY-imported in-body, like every other
+        # SQL name this module touches.
+        from sqlalchemy.exc import IntegrityError
+
+        try:
+            self._store.create(
+                venue_name,
+                account_id,
+                secret_ref=secret_ref,
+                venue_uid=None,
+                enabled=True,
+                config=config,
+                at=at,
+            )
+        except IntegrityError as exc:
+            raise DuplicateVenueAccountProvisionError(
+                venue_name, account_id) from exc
 
     def bring_online(self, row: Mapping[str, Any]) -> OnlineVenueAccount:
         """Turn ONE durable account row into a live, routable venue account (D-27).

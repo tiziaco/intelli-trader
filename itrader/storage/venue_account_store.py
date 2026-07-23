@@ -158,6 +158,56 @@ class VenueAccountStore:
                 ],
             )
 
+    def create(
+        self,
+        venue_name: str,
+        account_id: str,
+        *,
+        secret_ref: Optional[str],
+        venue_uid: Optional[str],
+        enabled: bool,
+        config: dict[str, Any],
+        at: datetime,
+    ) -> None:
+        """CREATE one account row; the DATABASE refuses a duplicate pair (11.2-05, D-11).
+
+        The create-only sibling of ``upsert``, and it exists because ``upsert`` CANNOT
+        express this contract: ``upsert`` is a DELETE-then-INSERT on the composite key, so
+        a second write always succeeds and silently CLOBBERS the operator's ``secret_ref``
+        and ``config_json`` while resetting the engine-written ``venue_uid`` to NULL —
+        disarming the D-04 trust-on-first-use venue-identity guard for that account. A
+        provisioning verb built on ``upsert`` would therefore overwrite rather than refuse,
+        and a caller trying to classify a duplicate would wait forever for an
+        ``IntegrityError`` that never arrives.
+
+        A plain ``INSERT``: the composite primary key ``(venue_name, account_id)`` is the
+        arbiter, so a duplicate raises ``IntegrityError`` out of the driver. Refusing here
+        rather than in front of the write is deliberate (D-11) — a pre-check ``SELECT`` is
+        TOCTOU and, decisively, does not bind the out-of-band writers a durable table
+        always has. Classification of that error into a typed refusal belongs to the
+        CALLER (``VenueAccountManager``); this store stays a store.
+
+        The REUSED recursive secret-denylist guard (D-02) fires FIRST — the same single
+        control ``upsert`` runs, never a second denylist that could drift — so a rejected
+        write persists NOTHING.
+        """
+        _assert_no_secret_keys(config)
+        with self.engine.begin() as connection:
+            connection.execute(
+                insert(self.venue_accounts),
+                [
+                    {
+                        "venue_name": venue_name,
+                        "account_id": account_id,
+                        "secret_ref": secret_ref,
+                        "venue_uid": venue_uid,
+                        "enabled": enabled,
+                        "config_json": config,
+                        "updated_at": at,
+                    }
+                ],
+            )
+
     def record_venue_uid(
         self,
         venue_name: str,
