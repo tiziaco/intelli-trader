@@ -45,16 +45,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from itrader.logger import get_itrader_logger
+from itrader.venues.registry import DEFAULT_ACCOUNT_ID
 
 if TYPE_CHECKING:
     from itrader.venues.bundle import VenueBundle, VenuePlugin
     from itrader.venues.registry import ExecutionVenueRegistry
-
-# The ``spec.account_id or "default"`` normalization the venue plugins apply inside
-# ``build_bundle`` (and ``venue_uid_guard`` mirrors). Declared locally rather than
-# imported from ``execution_handler`` so this module keeps its zero-dependency
-# import-inertness posture.
-_DEFAULT_ACCOUNT_ID = "default"
 
 
 class VenueBundles:
@@ -86,7 +81,7 @@ class VenueBundles:
         Fails loud with ``KeyError`` when ``venue`` has no registered plugin.
 
         ``account_id`` is REQUIRED, not defaulted: callers apply
-        ``spec.account_id or _DEFAULT_ACCOUNT_ID`` before calling, the same rule
+        ``spec.account_id or DEFAULT_ACCOUNT_ID`` before calling, the same rule
         ``assemble_venue`` follows. Normalizing in two places is how the exchange
         registry and the connector memo end up disagreeing about an unnamed account.
         """

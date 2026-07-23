@@ -38,6 +38,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from itrader.logger import get_itrader_logger
+from itrader.venues.registry import DEFAULT_ACCOUNT_ID
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -47,12 +48,6 @@ if TYPE_CHECKING:
 # payload, so an operator alert-rule can match on them and no exception text can smuggle
 # unvetted content into the egress channel.
 VENUE_UID_MISMATCH_REASON = "venue-uid-mismatch"
-
-# The account_id the plugins normalize a None spec.account_id to (``spec.account_id or
-# "default"``, applied INSIDE build_bundle — a normalization the lifecycle never sees).
-# The guard MUST apply the same one: writing a NULL PK half produces a row that silently
-# never matches on any later connect, permanently disabling the guard for that account.
-_DEFAULT_ACCOUNT_ID = "default"
 
 _logger = get_itrader_logger().bind(component="VenueUidGuard")
 
@@ -92,7 +87,11 @@ def assert_venue_uid(
     None
         Always. This function never raises into the caller and never halts.
     """
-    resolved_account_id = account_id or _DEFAULT_ACCOUNT_ID
+    # The plugins normalize a None spec.account_id to DEFAULT_ACCOUNT_ID INSIDE
+    # build_bundle — a normalization the lifecycle never sees. The guard MUST apply the
+    # same one: writing a NULL PK half produces a row that silently never matches on any
+    # later connect, permanently disabling the guard for that account.
+    resolved_account_id = account_id or DEFAULT_ACCOUNT_ID
 
     uid = _fetch_uid(plugin, connector, venue_name, resolved_account_id)
     if uid is None:

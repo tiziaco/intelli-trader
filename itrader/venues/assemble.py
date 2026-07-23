@@ -69,6 +69,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from itrader.venues.lifecycle import VenueLifecycle
+from itrader.venues.registry import DEFAULT_ACCOUNT_ID
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -77,12 +78,6 @@ if TYPE_CHECKING:
     from itrader.price_handler.providers.live_provider import LiveDataProvider
     from itrader.venues.bundle import VenueBundle
     from itrader.venues.bundles import VenueBundles
-
-# The ``spec.account_id or "default"`` normalization the venue plugins apply inside
-# ``build_bundle`` (and ``venue_uid_guard`` mirrors). Declared locally rather than
-# imported from ``execution_handler`` so this module keeps its zero-dependency
-# import-inertness posture.
-_DEFAULT_ACCOUNT_ID = "default"
 
 
 def assemble_venue(
@@ -135,7 +130,7 @@ def assemble_venue(
     # site, because ``VenueBundles.get`` takes ``account_id`` as a REQUIRED argument
     # (11.1-05) — normalizing in two places is how the exchange registry and the
     # connector memo end up disagreeing about an unnamed account.
-    account_id = getattr(spec, "account_id", None) or _DEFAULT_ACCOUNT_ID
+    account_id = getattr(spec, "account_id", None) or DEFAULT_ACCOUNT_ID
     # D-01: fail loud on an unregistered venue (the registry get behind the memo
     # raises KeyError). Resolved BEFORE the bundle so a mis-specified venue never
     # reaches a build.
@@ -229,5 +224,5 @@ def assemble_venues(
             account_store=account_store,
             alert_sink=alert_sink,
         )
-        lifecycles[getattr(spec, "account_id", None) or _DEFAULT_ACCOUNT_ID] = lifecycle
+        lifecycles[getattr(spec, "account_id", None) or DEFAULT_ACCOUNT_ID] = lifecycle
     return lifecycles

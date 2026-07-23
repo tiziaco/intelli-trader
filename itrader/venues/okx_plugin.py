@@ -36,6 +36,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from itrader.logger import get_itrader_logger
+from itrader.venues.registry import DEFAULT_ACCOUNT_ID
 
 if TYPE_CHECKING:
     from itrader.config.credential_resolver import CredentialResolver
@@ -300,7 +301,7 @@ class OkxVenuePlugin:
 
         # D-03/D-07: the SAME memoized connector for ("okx", account_id) the data
         # arm borrows; account_id=None resolves to the "default" logical account.
-        account_id = spec.account_id or "default"
+        account_id = spec.account_id or DEFAULT_ACCOUNT_ID
         connector = connectors.get("okx", account_id, spec)
 
         exchange = OkxExchange(ctx.bus, connector)
@@ -373,7 +374,7 @@ class OkxDataPlugin:
         stream = ctx.config.stream
 
         # D-03: SAME memoized connector key as OkxVenuePlugin.build_bundle.
-        account_id = spec.account_id or "default"
+        account_id = spec.account_id or DEFAULT_ACCOUNT_ID
         connector = connectors.get("okx", account_id, spec)
 
         return OkxDataProvider(
