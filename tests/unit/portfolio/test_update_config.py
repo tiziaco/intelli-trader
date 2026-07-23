@@ -185,6 +185,20 @@ def test_portfolio_update_config_refuses_equal_value_enable_margin(portfolio):
         portfolio.update_config({"trading_rules": {"enable_margin": current}})
 
 
+def test_portfolio_update_config_still_applies_other_trading_rules_fields(portfolio):
+    """The backstop is KEY-scoped: sibling ``trading_rules`` fields still merge and swap.
+
+    Guards against the over-broad fix — refusing the whole section would silently freeze
+    max_leverage, min_trade_amount and every other field the owner never asked to lock.
+    """
+    portfolio.update_config(
+        {"trading_rules": {"allow_short_selling": True, "min_trade_amount": Decimal("250")}}
+    )
+    assert portfolio.config.trading_rules.allow_short_selling is True
+    assert portfolio.config.trading_rules.min_trade_amount == Decimal("250")
+    assert portfolio.config.trading_rules.enable_margin is False
+
+
 def test_max_leverage_update_preserves_sibling_trading_rules(handler):
     """A single max_leverage update preserves sibling TradingRules fields (WR-04)."""
     original_enable_margin = handler.config_data.trading_rules.enable_margin

@@ -708,3 +708,48 @@ def test_immutable_enable_margin_refused_before_portfolio_resolution() -> None:
 
     assert b.portfolio_store.save_count == 0
     assert b.bus.warnings[0].details["reason"] == "immutable-key"
+
+
+def test_immutable_refusal_is_key_scoped_other_trading_rules_still_apply() -> None:
+    """The refusal is KEY-scoped, never SECTION-scoped — ``trading_rules`` stays routable.
+
+    Banning the whole section would freeze every other field in it, a scope change the owner did
+    not authorize. These sibling fields must keep applying end-to-end (persist + push).
+    """
+    b = _Bundle()
+
+    b.apply(f"portfolio:{b.known_id}", "allow_short_selling", True)
+    b.apply(f"portfolio:{b.known_id}", "max_leverage", "3")
+
+    assert b.portfolio.config.trading_rules.allow_short_selling is True
+    assert str(b.portfolio.config.trading_rules.max_leverage) == "3"
+    assert b.portfolio_store.save_count == 2
+    assert b.bus.warnings == []
+
+
+def test_immutable_refusal_leaves_limits_and_risk_sections_routable() -> None:
+    """Both sibling mutable sections stay fully routable after the tightening."""
+    b = _Bundle()
+
+    b.apply(f"portfolio:{b.known_id}", "max_positions", 12)  # limits
+    b.apply(f"portfolio:{b.known_id}", "max_risk_per_trade", 0.03)  # risk_management
+
+    assert b.portfolio.config.limits.max_positions == 12
+    assert b.portfolio.config.risk_management.max_risk_per_trade == 0.03
+    assert b.bus.warnings == []
+
+
+def test_immutable_tightening_did_not_remove_trading_rules_from_mutable_sections() -> None:
+    """Structural pin: the section tuple is UNCHANGED by the CR-02 tightening.
+
+    Dropping ``trading_rules`` from ``_PORTFOLIO_MUTABLE_SECTIONS`` would be the over-broad fix —
+    it would refuse ``enable_margin`` while silently freezing max_leverage, min_trade_amount and
+    every other sibling. This asserts the denylist did the work, not a section removal.
+    """
+    from itrader.trading_system.config_router import (
+        _PORTFOLIO_MUTABLE_SECTIONS,
+        IMMUTABLE_PORTFOLIO_CONFIG_KEYS,
+    )
+
+    assert _PORTFOLIO_MUTABLE_SECTIONS == ("limits", "risk_management", "trading_rules")
+    assert IMMUTABLE_PORTFOLIO_CONFIG_KEYS == frozenset({"enable_margin"})
