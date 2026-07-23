@@ -380,3 +380,145 @@ def test_paper_account_factory_carries_every_knob_through_to_the_leaf() -> None:
     assert isinstance(account, SimulatedMarginAccount)
     assert account._storage is seam
     assert account.balance == Decimal("4200.00")
+
+
+# --------------------------------------------------------------------------- #
+# 11.1-REVIEW WR-08 — the seam PortfolioHandler actually calls has no defaults
+# --------------------------------------------------------------------------- #
+def test_paper_account_factory_has_no_defaulted_parameter() -> None:
+    """Every ``account_factory`` parameter is required (11.1-REVIEW **WR-08**).
+
+    This closure — NOT the account constructors — is the seam
+    ``PortfolioHandler._new_compute_account`` calls, so it is the layer that has to
+    fail loud. Narrowing only the constructors would close the trap one layer BELOW
+    where portfolios are actually built: a caller omitting ``state_storage`` here
+    would still sail through, because the closure's own ``= None`` would supply the
+    argument the constructor now demands.
+
+    Asserted on the SIGNATURE rather than through one call so a future "convenience"
+    default on ANY of the four fails here, not in production.
+    """
+    import inspect
+
+    from itrader.venues.paper_plugin import PaperVenuePlugin
+
+    bundle = PaperVenuePlugin(_seeded_config()).build_bundle(
+        _fake_ctx(), _fake_spec(), _ExplodingConnectorProvider())
+    parameters = inspect.signature(bundle.account_factory).parameters
+
+    defaulted = [
+        name for name, parameter in parameters.items()
+        if parameter.default is not inspect.Parameter.empty
+    ]
+    assert not defaulted, (
+        "account_factory must carry NO defaults — a defaulted cash / margin / "
+        f"account-id / persistence seam is WR-08's defect: {defaulted!r}"
+    )
+
+
+def test_paper_account_factory_refuses_an_omitted_state_storage() -> None:
+    """Omitting the persistence seam at the seam is a ``TypeError`` (WR-04 + WR-08).
+
+    The whole point of landing this before ACCT-05's new portfolio-creation paths:
+    a path that forgets the seam cannot compile a call, instead of quietly producing
+    a portfolio that reports itself live while persisting nothing.
+    """
+    import pytest
+
+    from itrader.venues.paper_plugin import PaperVenuePlugin
+
+    bundle = PaperVenuePlugin(_seeded_config()).build_bundle(
+        _fake_ctx(), _fake_spec(), _ExplodingConnectorProvider())
+
+    with pytest.raises(TypeError):
+        bundle.account_factory(
+            initial_cash=1000.0, enable_margin=False, account_id=None)
+
+
+def test_paper_account_factory_refuses_an_omitted_cash_or_margin_or_id() -> None:
+    """The other three knobs are required too (WR-08).
+
+    ``initial_cash`` defaulting to ``0.0`` was BOTH a silent-zero-ledger hazard and a
+    float entering the money domain; ``enable_margin`` defaulting to ``False`` picks
+    an account KIND for a caller that never chose one.
+    """
+    import pytest
+
+    from itrader.venues.paper_plugin import PaperVenuePlugin
+
+    bundle = PaperVenuePlugin(_seeded_config()).build_bundle(
+        _fake_ctx(), _fake_spec(), _ExplodingConnectorProvider())
+    seam = _fake_storage()
+
+    with pytest.raises(TypeError):
+        bundle.account_factory(
+            enable_margin=False, account_id=None, state_storage=seam)
+    with pytest.raises(TypeError):
+        bundle.account_factory(
+            initial_cash=1000.0, account_id=None, state_storage=seam)
+    with pytest.raises(TypeError):
+        bundle.account_factory(
+            initial_cash=1000.0, enable_margin=False, state_storage=seam)
+
+
+def test_paper_new_account_enters_the_decimal_domain_before_the_leaf(
+    monkeypatch: Any,
+) -> None:
+    """Cash reaches the leaf as a ``Decimal`` produced by ``to_money`` (WR-08).
+
+    Asserted on the value the CONSTRUCTOR receives, not on ``account.balance``:
+    ``Account.quantize_cash`` already routes through ``to_money`` internally, so a
+    balance assertion is Decimal either way and would be a false-green gate. What
+    this pins is the BOUNDARY — the project's money policy says a raw ``int`` /
+    ``float`` / ``str`` from a config object must not travel past the composition
+    seam into a money field, and the deleted ``getattr(config, "initial_cash", 0.0)``
+    was feeding exactly that (a float literal) whenever the knob was absent.
+    """
+    import itrader.portfolio_handler.account as account_module
+    from itrader.venues.bundle import VenueAccountConfig
+    from itrader.venues.paper_plugin import PaperVenuePlugin
+
+    captured: list[Any] = []
+    real_cash_account = account_module.SimulatedCashAccount
+
+    class _RecordingCashAccount(real_cash_account):  # type: ignore[valid-type,misc]
+        def __init__(self, initial_cash: Any = 0.0, *, state_storage: Any) -> None:
+            captured.append(initial_cash)
+            super().__init__(initial_cash, state_storage=state_storage)
+
+    monkeypatch.setattr(
+        account_module, "SimulatedCashAccount", _RecordingCashAccount)
+
+    plugin = PaperVenuePlugin(_seeded_config())
+    for cash in (1000, "2500.75", 4200.0):
+        plugin.new_account(VenueAccountConfig(
+            initial_cash=cash, state_storage=_fake_storage()))
+
+    assert captured, "the recording leaf was never constructed"
+    assert all(type(value) is Decimal for value in captured), (
+        f"cash must enter the Decimal domain via to_money at the seam: {captured!r}"
+    )
+
+
+def test_paper_new_account_refuses_a_config_naming_no_seam() -> None:
+    """A config carrying ``state_storage=None`` is REFUSED, not silently accepted.
+
+    The backstop for WR-04's defect one layer up. ``VenueAccountConfig`` still
+    declares ``state_storage: Any = None`` (its other constructor — the OKX arm —
+    legitimately never supplies one, since venue-cached truth takes no wiring seam),
+    so a plain attribute read can still yield ``None``. Passing that ``None`` into a
+    leaf whose argument is typed non-Optional would rebuild the exact
+    live-but-unpersisted account the required keyword removes, one hop away from the
+    type checker. ``new_account`` is the SOLE account factory (D-03), so the refusal
+    belongs here.
+    """
+    import pytest
+
+    from itrader.core.exceptions import ConfigurationError
+    from itrader.venues.bundle import VenueAccountConfig
+    from itrader.venues.paper_plugin import PaperVenuePlugin
+
+    plugin = PaperVenuePlugin(_seeded_config())
+
+    with pytest.raises(ConfigurationError):
+        plugin.new_account(VenueAccountConfig(initial_cash=1000.0))
