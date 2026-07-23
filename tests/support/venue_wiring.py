@@ -57,6 +57,23 @@ def backtest_venue_bundles(
     return VenueBundles(registry, ConnectorProvider({}), ctx)
 
 
+def in_memory_state_storage() -> Any:
+    """A throwaway in-memory ``PortfolioStateStorage`` for a leaf-focused test.
+
+    11.1-REVIEW **WR-04**: ``SimulatedCashAccount`` / ``SimulatedMarginAccount`` now
+    REQUIRE their persistence seam, because a leaf that quietly minted its own lost
+    every reservation across a live restart while backtest — which reads those
+    containers nowhere else — stayed byte-exact. Tests that build a leaf in isolation
+    genuinely have no portfolio seam to share, so they say ``state_storage=`` out
+    loud and get this. The default is gone from production; the convenience lives
+    here, where "in-memory is fine" is a test's own statement rather than a
+    production constructor's assumption.
+    """
+    from itrader.portfolio_handler.storage import PortfolioStateStorageFactory
+
+    return PortfolioStateStorageFactory.create("backtest")
+
+
 def compute_account(
     initial_cash: Any = 0.0,
     *,
@@ -77,19 +94,30 @@ def compute_account(
     the first time that rule changed. Going through the plugin means every site
     follows automatically.
 
-    ``state_storage`` is normally omitted: the leaf then builds a private in-memory
+    ``state_storage`` may be omitted: THIS RECIPE then mints a plain in-memory
     backend, and ``Portfolio`` ADOPTS that instance as its own seam, so the account
     and the three managers still share exactly one backend (the invariant the live
     restart path depends on). Pass one explicitly only to model a portfolio wired to
     a specific durable store.
+
+    11.1-REVIEW **WR-04**: the in-memory choice lives HERE, in test wiring, and no
+    longer inside ``SimulatedCashAccount.__init__``. That relocation is the whole
+    point of the change — a production leaf that named no seam used to fabricate one
+    silently and lose every reservation across a live restart, invisibly to backtest.
+    Tests genuinely do want a throwaway backend, so they say so; production must
+    name the seam the portfolio's other managers hold.
     """
     from itrader.venues.bundle import VenueAccountConfig
 
+    seam = (
+        state_storage if state_storage is not None
+        else in_memory_state_storage()
+    )
     return PaperVenuePlugin(default_exchange_config()).new_account(
         VenueAccountConfig(
             initial_cash=initial_cash,
             enable_margin=enable_margin,
-            state_storage=state_storage,
+            state_storage=seam,
         )
     )
 

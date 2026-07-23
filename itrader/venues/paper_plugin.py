@@ -140,7 +140,7 @@ class PaperVenuePlugin:
         )
 
         initial_cash = getattr(config, "initial_cash", 0.0)
-        state_storage = getattr(config, "state_storage", None)
+        state_storage = config.state_storage
         if getattr(config, "enable_margin", False):
             return SimulatedMarginAccount(
                 initial_cash=initial_cash, state_storage=state_storage)

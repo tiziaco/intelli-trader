@@ -111,7 +111,7 @@ class SimulatedCashAccount(Account):
         self,
         initial_cash: float | Decimal = 0.0,
         *,
-        state_storage: "PortfolioStateStorage | None" = None,
+        state_storage: "PortfolioStateStorage",
     ) -> None:
         """Construct a spot cash leaf from cash alone (D-01, 11.1-03).
 
@@ -127,9 +127,21 @@ class SimulatedCashAccount(Account):
             its siblings stay on one backend. Keyword-only ON PURPOSE: the old
             signature took a ``portfolio`` FIRST positional, so a stale
             ``Account(portfolio, cash)`` call now fails loud with a ``TypeError``
-            instead of silently binding a portfolio into this slot. Omitted
-            (standalone construction, e.g. a focused unit test) falls back to a
-            private in-memory backend.
+            instead of silently binding a portfolio into this slot.
+
+            REQUIRED, with no default — 11.1-REVIEW **WR-04**. The deleted
+            fallback (an in-memory backend this constructor minted for itself off
+            ``PortfolioStateStorageFactory``) put a leaf that named no seam on a
+            private backend NOBODY else held. That is not a tidiness defect: the live restart path
+            (``state_storage.rehydrate(account)``) repopulates the reservation
+            and locked-margin caches on the PORTFOLIO's instance, so such a leaf
+            silently loses every reservation across a restart — an account that
+            reports itself live while persisting nothing. Backtest reads those
+            containers nowhere else, so the byte-exact oracle and the entire
+            suite stay green while it happens. A required keyword makes the
+            omission a construction-time ``TypeError`` instead, which is why this
+            narrowing lands BEFORE the ACCT-05 portfolio-creation paths rather
+            than behind them.
         """
         # D-19: lock removed — single-writer contract, see Portfolio docstring.
         self.logger = get_itrader_logger().bind(component="SimulatedCashAccount")
@@ -156,15 +168,16 @@ class SimulatedCashAccount(Account):
         # from the portfolio's ``_environment``/``_sql_engine``, then assign it
         # BACK onto ``portfolio.state_storage`` so siblings do not end up on
         # disjoint backends (the old WR-02 note) — is no longer needed: there is
-        # exactly one seam and the caller names it. The remaining fallback is for
-        # STANDALONE construction only (a focused unit test with no portfolio at
-        # all), and it is deliberately plain in-memory: with no portfolio to read
-        # an environment from, guessing 'live' is not an option, and a caller that
-        # wants a durable backend must now say so by passing one.
+        # exactly one seam and the caller names it.
+        #
+        # 11.1-REVIEW WR-04: the standalone-construction fallback that used to sit
+        # HERE is DELETED, not relocated. `PortfolioStateStorageFactory` is the
+        # ONLY producer of a seam and the account never mints one — a leaf that
+        # fabricated its own backend is precisely the live-but-unpersisted shape
+        # this argument's required-ness now prevents. Test sites that want a
+        # throwaway backend say so through `tests/support/venue_wiring`, where the
+        # in-memory choice is visible rather than implicit.
         from itrader.portfolio_handler.base import PortfolioStateStorage
-        from itrader.portfolio_handler.storage import PortfolioStateStorageFactory
-        if state_storage is None:
-            state_storage = PortfolioStateStorageFactory.create("backtest")
         self._storage: PortfolioStateStorage = state_storage
 
         # Configuration
@@ -692,7 +705,7 @@ class SimulatedMarginAccount(SimulatedCashAccount):
         self,
         initial_cash: float | Decimal = 0.0,
         *,
-        state_storage: "PortfolioStateStorage | None" = None,
+        state_storage: "PortfolioStateStorage",
     ) -> None:
         """Construct a margin leaf from cash alone (D-01, 11.1-03).
 
@@ -701,9 +714,13 @@ class SimulatedMarginAccount(SimulatedCashAccount):
         initial_cash:
             The opening cash balance (see ``SimulatedCashAccount.__init__``).
         state_storage:
-            The shared ``PortfolioStateStorage`` seam, keyword-only. Same
-            contract as the cash superclass — the margin leaf additionally keeps
-            its position-keyed margin locks there.
+            The shared ``PortfolioStateStorage`` seam, keyword-only and REQUIRED
+            (11.1-REVIEW **WR-04** — same contract and same rationale as the cash
+            superclass). This arm carries the narrowing independently because it
+            declares its own ``__init__``: leaving the default here would keep the
+            defect alive on the leaf that ALSO parks position-keyed margin locks
+            on the seam, so a restart would drop locked margin as well as
+            reservations.
         """
         super().__init__(initial_cash, state_storage=state_storage)
         # The Universe read-model used to resolve per-symbol Instruments for the
