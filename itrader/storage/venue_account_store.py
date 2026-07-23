@@ -215,6 +215,45 @@ class VenueAccountStore:
             rows = connection.execute(statement).mappings().all()
         return [self._row_to_dict(row) for row in rows]
 
+    def read_enabled_for(self, venue_name: str) -> list[Mapping[str, Any]]:
+        """Every ENABLED account row for one venue — the bring-up read (ACCT-01).
+
+        The venue-scoped, enabled-only sibling of ``read_all``, sharing its projection
+        and its ordering guarantee. It is what turns boot into
+        ``for row in read_enabled_for(venue): bring_online(row)`` (D-27), so the account
+        SET a venue comes up with is derived from durable rows rather than re-derived
+        from a spec.
+
+        Venue scoping is not a convenience filter: ``account_id`` alone can never derive
+        its venue (D-01), so an unscoped read would hand one venue another venue's
+        accounts and assemble them against the wrong plugin.
+
+        ORDERING CONTRACT: ``venue_name`` ASC then ``account_id`` ASC — identical to
+        ``read_all``, so bring-up order is deterministic and reproducible across runs and
+        dialects rather than driver-dependent (an unordered SELECT has no guaranteed row
+        order). The ``venue_name`` key is redundant under the equality filter and is kept
+        anyway so the two reads cannot drift apart.
+
+        NO degrade policy lives here (D-34). A missing ``venue_accounts`` table is the
+        fresh-deployment state and is handled ONE layer up in ``VenueAccountManager``,
+        where the whole policy is unit-testable without booting a system; this method
+        propagates every fault to that owner.
+        """
+        statement = (
+            self._select_columns()
+            .where(
+                self.venue_accounts.c.venue_name == venue_name,
+                self.venue_accounts.c.enabled.is_(True),
+            )
+            .order_by(
+                self.venue_accounts.c.venue_name.asc(),
+                self.venue_accounts.c.account_id.asc(),
+            )
+        )
+        with self.engine.connect() as connection:
+            rows = connection.execute(statement).mappings().all()
+        return [self._row_to_dict(row) for row in rows]
+
     def _select_columns(self) -> Any:
         """The shared column projection every read uses (one place to keep them in sync)."""
         return select(

@@ -47,6 +47,7 @@ from typing import TYPE_CHECKING, Any
 from itrader.venues.registry import DEFAULT_ACCOUNT_ID
 
 if TYPE_CHECKING:
+    from itrader.portfolio_handler.account.base import Account
     from itrader.venues.bundle import VenueBundle, VenuePlugin
     from itrader.venues.registry import ExecutionVenueRegistry
 
@@ -89,6 +90,48 @@ class VenueBundles:
                 self._ctx, spec, self._connectors
             )
         return self._memo[key]
+
+    def account_for(
+        self,
+        venue: str,
+        account_id: str,
+        *,
+        spec: Any = None,
+        **portfolio_args: Any,
+    ) -> Account:
+        """Construct THIS ``(venue, account_id)``'s account leaf (11.2-05, D-21).
+
+        The mode-agnostic construction primitive: it resolves the shared bundle through
+        ``get`` above and calls that bundle's ``account_factory``. Both backtest arms
+        already build a ``VenueBundles``, so this needs no mode branch — which is exactly
+        why the layer split in D-21 puts CONSTRUCTION here and AUTHORITY
+        (does this account exist, and is it enabled?) in ``VenueAccountManager``. A
+        manager-only design would need a ``VenueAccountManager(store=None)`` on the
+        backtest arm, the ``Optional``-collaborator shape this milestone is deleting.
+
+        ``account_id`` is REQUIRED and UNCOERCED, exactly like ``get``: callers apply
+        ``spec.account_id or DEFAULT_ACCOUNT_ID`` before calling. Normalizing in two
+        places is how the exchange registry and the connector memo end up disagreeing
+        about an unnamed account.
+
+        It is also FORWARDED to the factory as ``account_id=``, because under D-21 the
+        pair IS the account's identity — the memo key and the account the leaf is minted
+        for are the same thing, and letting them be supplied separately is how they drift.
+        Callers therefore MUST NOT repeat ``account_id`` inside ``portfolio_args`` (Python
+        raises ``TypeError`` for the duplicate, which is the intended loud failure).
+
+        ``spec`` is the build-time spec ``get`` forwards to the plugin on a memo MISS. The
+        expected case is a memo HIT — the bundle was built by
+        ``VenueAccountManager.bring_online`` — where it is unread; it stays available so a
+        first-touch construction on a spec-reading plugin is not forced through ``None``.
+
+        Fails loud exactly like ``get``: ``KeyError`` on an unregistered venue, never a
+        soft ``.get(...) or default`` that answers with some other venue's account.
+        """
+        bundle = self.get(venue, account_id, spec)
+        account: Account = bundle.account_factory(
+            account_id=account_id, **portfolio_args)
+        return account
 
     def plugin_for(self, venue: str) -> VenuePlugin:
         """Return the plugin registered for ``venue`` — METADATA only, never to build.

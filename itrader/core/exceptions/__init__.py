@@ -28,7 +28,8 @@ from .portfolio import (
     PortfolioValidationError,
     ImmutableConfigKeyError,
     ReconciliationError,
-    DuplicateVenueAccountError
+    DuplicateVenueAccountError,
+    VenueAccountNotProvisionedError
 )
 
 # Order exceptions
@@ -85,6 +86,7 @@ __all__ = [
     'ImmutableConfigKeyError',
     'ReconciliationError',
     'DuplicateVenueAccountError',
+    'VenueAccountNotProvisionedError',
 
     # Order exceptions
     'OrderError',
