@@ -82,6 +82,67 @@ def test_for_exchange_and_build_live_system_produce_identical_specs(venue: str) 
 
 
 @pytest.mark.parametrize('venue', _VENUE_SET)
+def test_the_account_level_connection_knobs_default_to_absent(venue: str) -> None:
+    """11.2-06 (D-38): ``sandbox`` / ``region`` / ``market_type`` default to ``None``.
+
+    ``None`` means "this account names no override" — the venue/bundle default stays in
+    force. It is deliberately NOT ``False`` / ``"global"`` / ``"spot"``: a concrete
+    default here would be a SECOND home for each venue's own default, and the two would
+    drift. Absence must be distinguishable from an explicit value, because that is what
+    lets ``VenueAccountManager`` merge an account's ``config_json`` without inventing
+    overrides the operator never wrote.
+    """
+    spec = build_venue_spec(venue)
+
+    assert spec.sandbox is None
+    assert spec.region is None
+    assert spec.market_type is None
+
+
+@pytest.mark.parametrize('venue', _VENUE_SET)
+def test_the_account_level_connection_knobs_survive_the_builder(venue: str) -> None:
+    """11.2-06 (D-38): the three allowlisted ``config_json`` keys reach the spec.
+
+    They exist for ONE reason: to be read by a real consumer. ``sandbox`` / ``region``
+    select the OKX host the session reaches (an EEA key answers 50119 on the global
+    host), and ``market_type`` reaches ``VenueAccount``, where
+    ``_cash_stream_nets_holds = market_type != "spot"`` changes CASH ACCOUNTING. A spec
+    that dropped them would leave the account-level allowlist accepting keys that change
+    nothing — worse than rejecting them (T-11.2-06-02).
+    """
+    spec = build_venue_spec(
+        venue, sandbox=False, region='eea', market_type='derivative')
+
+    assert spec.sandbox is False
+    assert spec.region == 'eea'
+    assert spec.market_type == 'derivative'
+
+
+@pytest.mark.parametrize('venue', _VENUE_SET)
+def test_the_connection_knobs_survive_the_seam_03_round_trip(venue: str) -> None:
+    """SEAM-03: a spec re-built from its own fields is still EQUAL (D-11).
+
+    The identity invariant is what stops the twice-written spec from drifting. Adding
+    fields to ``VenueSpec`` without threading them through ``build_venue_spec`` would
+    break it silently — the round-trip would quietly drop the knobs and the two entry
+    points would produce specs that route to two different hosts.
+    """
+    first = build_venue_spec(
+        venue, account_id='acct-7', sandbox=True, region='eea',
+        market_type='derivative')
+    second = build_venue_spec(
+        venue,
+        data_provider=first.data_provider,
+        account_id=first.account_id,
+        sandbox=first.sandbox,
+        region=first.region,
+        market_type=first.market_type,
+    )
+
+    assert first == second
+
+
+@pytest.mark.parametrize('venue', _VENUE_SET)
 def test_identity_holds_under_explicit_provider_override(venue: str) -> None:
     """The identity also holds when for_exchange carries an explicit data_provider (D-11).
 

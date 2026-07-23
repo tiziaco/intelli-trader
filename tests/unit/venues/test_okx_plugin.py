@@ -168,6 +168,168 @@ def test_okx_plugins_honor_explicit_account_id() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# 11.2-06 (D-38): the account-level knobs reach a REAL consumer
+# --------------------------------------------------------------------------- #
+def test_build_bundle_carries_the_specs_market_type_to_the_minted_account() -> None:
+    """D-38: a ``"derivative"`` spec mints a ``"derivative"`` account, not ``"spot"``.
+
+    THE test for the D-38 blocker. ``build_bundle`` used to HARDCODE
+    ``market_type="spot"``, so an account-level ``market_type`` key would have been
+    accepted by the allowlist and then changed nothing — an inert key is worse than a
+    rejected one (T-11.2-06-02). This is not cosmetic: ``VenueAccount`` derives
+    ``_cash_stream_nets_holds = market_type != "spot"``, which decides whether the
+    leaf's cash channel nets a venue-side hold — i.e. it changes CASH ACCOUNTING.
+    """
+    from itrader.venues.okx_plugin import OkxVenuePlugin
+
+    connectors = _FakeConnectorProvider()
+    spec = SimpleNamespace(account_id="acct-a", market_type="derivative")
+
+    bundle = OkxVenuePlugin().build_bundle(_fake_ctx(), spec, connectors)
+    account = bundle.account_factory()
+
+    assert account._market_type == "derivative"
+    # The cash-accounting consequence, asserted directly rather than inferred.
+    assert account._cash_stream_nets_holds is True
+
+
+def test_build_bundle_defaults_market_type_to_spot_when_the_spec_names_none() -> None:
+    """D-38: the OKX VENUE-level default stays ``"spot"`` — it is NOT bundle.py's default.
+
+    The deleted hardcode encoded a real venue default. Falling through to
+    ``VenueAccountConfig``'s own ``"derivative"`` default instead would invert
+    ``_cash_stream_nets_holds`` for EVERY OKX account that names no market type — money
+    arithmetic changing under a green suite. Pinned so the removal cannot regress into
+    that.
+    """
+    from itrader.venues.okx_plugin import OkxVenuePlugin
+
+    connectors = _FakeConnectorProvider()
+    spec = _fake_spec(account_id="acct-a")  # carries no market_type at all
+
+    bundle = OkxVenuePlugin().build_bundle(_fake_ctx(), spec, connectors)
+    account = bundle.account_factory()
+
+    assert account._market_type == "spot"
+    assert account._cash_stream_nets_holds is False
+
+
+def test_new_account_still_reads_the_configs_own_market_type() -> None:
+    """The SIBLING call site (``market_type=config.market_type``) is UNCHANGED.
+
+    ``build_bundle`` (the producer) and ``new_account`` (the consumer) are not two
+    copies of one rule — the first fills the config, the second reads it. Only the
+    hardcode in the producer was removed; the consumer's parameterized read must keep
+    honouring whatever the config carries.
+    """
+    from itrader.venues.okx_plugin import OkxVenuePlugin
+    from itrader.venues.bundle import VenueAccountConfig
+
+    connectors = _FakeConnectorProvider()
+    spec = _fake_spec(account_id="acct-a")
+
+    account = OkxVenuePlugin().new_account(VenueAccountConfig(
+        account_id="acct-a",
+        connectors=connectors,
+        spec=spec,
+        quote_currency="USDC",
+        market_type="derivative",
+        symbol="BTC/USDC",
+    ))
+
+    assert account._market_type == "derivative"
+
+
+def test_okx_connector_plugin_applies_the_accounts_sandbox_and_region(
+    monkeypatch: Any,
+) -> None:
+    """D-38: the account's own ``sandbox`` / ``region`` decide WHICH HOST it reaches.
+
+    These are the routing keys, and the reason the allowlist raises on a typo: an
+    account pinned to ``eea`` that silently fell back to the ambient ``global``
+    environment would send live orders to a host that answers 50119 — or, with
+    ``sandbox`` inverted, to the PRODUCTION host with real money on it. They are passed
+    as init kwargs, pydantic-settings' highest-priority source, so the ambient
+    ``OKX_SANDBOX`` / ``OKX_REGION`` cannot outrank the account's own row.
+    """
+    from itrader.venues.okx_plugin import OkxConnectorPlugin
+
+    monkeypatch.setenv("OKX_API_KEY", "ambient-key")
+    monkeypatch.setenv("OKX_API_SECRET", "ambient-secret")
+    monkeypatch.setenv("OKX_API_PASSPHRASE", "ambient-passphrase")
+    # The ambient environment says global/sandbox; the ACCOUNT says eea/production.
+    monkeypatch.setenv("OKX_REGION", "global")
+    monkeypatch.setenv("OKX_SANDBOX", "true")
+
+    connector = OkxConnectorPlugin().build(SimpleNamespace(
+        account_id="acct-a", secret_ref=None, sandbox=False, region="eea"))
+
+    assert connector._settings.sandbox is False
+    assert connector._settings.region == "eea"
+    # The routing consequence, not just the field: region+sandbox derive BOTH hosts.
+    assert connector._settings.rest_hostname == "eea.okx.com"
+    assert connector._settings.ws_hostname == "wseea.okx.com"
+
+
+def test_okx_connector_plugin_applies_the_knobs_on_the_resolved_credential_path(
+    monkeypatch: Any,
+) -> None:
+    """The knobs reach the RESOLVED path too — not just the legacy ambient one.
+
+    A per-account ``secret_ref`` is exactly the deployment that has per-account rows,
+    so wiring the knobs only into the credential-less arm would leave them inert for
+    every account that actually has a row. The CR-05 completeness gate is untouched:
+    ``sandbox`` / ``region`` carry defaults and are therefore never in the REQUIRED set.
+    """
+    from pydantic import SecretStr
+
+    from itrader.venues.okx_plugin import OkxConnectorPlugin
+
+    monkeypatch.setenv("OKX_REGION", "global")
+    monkeypatch.setenv("OKX_SANDBOX", "true")
+
+    class _Resolver:
+        def resolve(self, secret_ref: str | None) -> dict[str, SecretStr]:
+            return {
+                "api_key": SecretStr("k"),
+                "api_secret": SecretStr("s"),
+                "api_passphrase": SecretStr("p"),
+            }
+
+    connector = OkxConnectorPlugin(resolver=_Resolver()).build(SimpleNamespace(
+        account_id="acct-a", secret_ref="env:A", sandbox=False, region="eea"))
+
+    assert connector._settings.sandbox is False
+    assert connector._settings.region == "eea"
+    assert connector._settings.api_key.get_secret_value() == "k"
+
+
+def test_a_spec_naming_no_knobs_leaves_the_environment_in_force(
+    monkeypatch: Any,
+) -> None:
+    """ABSENCE is not an override — the settings' own env/default resolution stands.
+
+    The whole precedence rule is "account overrides venue, and a key the account does
+    not name leaves the venue default in force". Passing ``sandbox=None`` through to
+    ``OkxSettings`` would violate it in the worst direction: ``None`` is not a valid
+    bool, so it would either fail validation or coerce a configured production account
+    to the sandbox host.
+    """
+    from itrader.venues.okx_plugin import OkxConnectorPlugin
+
+    monkeypatch.setenv("OKX_API_KEY", "ambient-key")
+    monkeypatch.setenv("OKX_API_SECRET", "ambient-secret")
+    monkeypatch.setenv("OKX_API_PASSPHRASE", "ambient-passphrase")
+    monkeypatch.setenv("OKX_REGION", "eea")
+    monkeypatch.setenv("OKX_SANDBOX", "false")
+
+    connector = OkxConnectorPlugin().build(SimpleNamespace(account_id="acct-a"))
+
+    assert connector._settings.region == "eea"
+    assert connector._settings.sandbox is False
+
+
+# --------------------------------------------------------------------------- #
 # 11-04 (D-03): the plugin is self-describing for credentials + venue UID
 # --------------------------------------------------------------------------- #
 def test_okx_venue_plugin_exposes_its_credential_model() -> None:
