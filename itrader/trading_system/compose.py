@@ -51,7 +51,6 @@ from itrader.events_handler.error_policy import FailFastPolicy
 from itrader.events_handler.full_event_handler import EventHandler
 from itrader.execution_handler.execution_handler import (
 	COMPUTE_VENUE,
-	DEFAULT_ACCOUNT_ID,
 	ExecutionHandler,
 )
 from itrader.order_handler.order_handler import OrderHandler
@@ -248,21 +247,23 @@ def compose_engine(
 		ctx.bus, venue_bundles=venue_bundles,
 		portfolio_read_model=portfolio_handler if route_orders_by_account else None)
 
-	# Fee-model PROVIDER for the admission cash-reservation gate (D-04/D-18).
+	# Fee-model PROVIDER for the admission cash-reservation gate (D-04/D-18/D-39).
 	# D-18 narrowed this seam to WIRING only: hand the order domain the venue's
 	# CURRENT fee model and let AdmissionManager own the admission convention.
 	# The golden run pins fees 0, so the reservation equals price x quantity
 	# exactly (value-preserving).
-	# D-27/D-05: pair-keyed registry; the paper venue is single-account and is
-	# now the ONLY key ``init_exchanges`` returns.
-	admission_exchange = execution_handler.exchanges.get(
-		(COMPUTE_VENUE, DEFAULT_ACCOUNT_ID))
+	def fee_model_provider(venue: str, account_id: str) -> "Optional[FeeModel]":
+		"""The CURRENT fee model of the exchange serving ``(venue, account_id)``.
 
-	def fee_model_provider() -> "Optional[FeeModel]":
-		"""The venue's CURRENT fee model, or None if it exposes none (D-18).
+		D-39 / 11.1-REVIEW **WR-01**: this used to be a ZERO-ARG closure over
+		``exchanges.get((COMPUTE_VENUE, DEFAULT_ACCOUNT_ID))`` resolved ONCE, right
+		here, at wiring time — so EVERY order's admission reservation was priced
+		against the PAPER compute exchange whatever venue would actually fill it.
+		The closure now captures only the pair-keyed REGISTRY and takes the order's
+		own pair as arguments; the lookup happens INSIDE the call.
 
-		The closure captures the EXCHANGE and reads ``fee_model`` INSIDE the call
-		— it must NEVER capture ``exchange.fee_model`` itself.
+		Both the lookup and the ``fee_model`` read must stay inside the call — the
+		closure must NEVER capture an exchange or, worse, ``exchange.fee_model``.
 		``SimulatedExchange.update_config`` REBINDS that attribute at
 		``exchanges/simulated.py:775``, immediately after the atomic config swap at
 		``:770``, so the object is REPLACED rather than mutated; a captured
@@ -271,11 +272,14 @@ def compose_engine(
 
 		``getattr(..., None)`` is the explicit "this venue exposes no fee model"
 		contract that replaced the deleted adapter's
-		``isinstance(exchange, SimulatedExchange)`` guard — it also covers the
-		``None`` exchange. AdmissionManager degrades a ``None`` to ``Decimal("0")``.
+		``isinstance(exchange, SimulatedExchange)`` guard. It ALSO covers the
+		unregistered pair, whose ``.get`` yields ``None`` — a MISS must return
+		``None``, never raise (the order domain owns the degrade). AdmissionManager
+		turns either ``None`` into a LOUD ``Decimal("0")``.
 		"""
 		return cast("Optional[FeeModel]",
-			getattr(admission_exchange, "fee_model", None))
+			getattr(execution_handler.exchanges.get((venue, account_id)),
+				"fee_model", None))
 
 	# Plan 02-03 (D-09/D-14): thread the portfolio's margin settings into the
 	# order domain at construction so the admission leverage cap (D-04) and the

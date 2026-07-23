@@ -171,7 +171,7 @@ def test_the_wired_fee_model_provider_is_late_bound(
     exchange = engine.execution_handler.exchanges[("paper", DEFAULT_ACCOUNT_ID)]
 
     assert provider is not None
-    before = provider()
+    before = provider("paper", DEFAULT_ACCOUNT_ID)
     # It IS the wired exchange's model, not some independently built one.
     assert before is exchange.fee_model
 
@@ -180,6 +180,6 @@ def test_the_wired_fee_model_provider_is_late_bound(
     exchange.update_config(
         {"fee_model": {"model_type": FeeModelType.PERCENT.value, "fee_rate": "0.001"}})
 
-    after = provider()
+    after = provider("paper", DEFAULT_ACCOUNT_ID)
     assert after is exchange.fee_model
     assert after is not before

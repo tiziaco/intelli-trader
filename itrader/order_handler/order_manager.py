@@ -91,14 +91,18 @@ class OrderManager:
 			Narrow portfolio read boundary for position-aware operations
 			(D-16: the concrete handler conforms structurally)
 		fee_model_provider : FeeModelProvider, optional
-			Returns the venue's CURRENT fee model as ``() -> FeeModel | None``,
-			feeding the admission reservation amount (Plan 05-06, D-04/D-18).
+			Returns the CURRENT fee model of the exchange serving an order's
+			``(venue, account_id)`` pair —
+			``(venue, account_id) -> FeeModel | None`` — feeding the admission
+			reservation amount (Plan 05-06, D-04/D-18/D-39).
 			INJECTED at wiring time as a typed read-model seam — order_manager
 			never imports across the execution boundary (RESEARCH Pattern 1).
 			D-18 narrowed this from the old ``(quantity, price) -> Decimal``
 			estimator: the ``side="buy", order_type="market"`` admission
 			convention is admission POLICY and now lives in ``AdmissionManager``,
-			leaving only the WIRING half here. ``None`` (or a provider returning
+			leaving only the WIRING half here. D-39/WR-01 then made the seam
+			PAIR-KEYED: as a zero-arg provider it could only ever answer for the
+			one exchange the wiring captured. ``None`` (or a provider returning
 			``None``) means a zero estimate, which reproduces the pre-reservation
 			funds-check math exactly (the golden run pins fees 0).
 		"""

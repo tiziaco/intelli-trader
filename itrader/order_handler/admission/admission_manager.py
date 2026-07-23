@@ -20,9 +20,10 @@ vanish.
 
 The collaborator receives its dep subset by injection (D-09): `order_storage`,
 `logger`, `order_validator`, `sizing_resolver`, `portfolio_handler` (read-model),
-`fee_model_provider` (D-18: the wiring seam hands over the venue's CURRENT fee
-model; the admission CONVENTION for reading it lives here, in
-`_estimate_commission`, because it is admission policy — not wiring),
+`fee_model_provider` (D-18/D-39: the wiring seam hands over the CURRENT fee model
+of the exchange serving an order's `(venue, account_id)` pair; the admission
+CONVENTION for reading it lives here, in `_estimate_commission`, because it is
+admission policy — not wiring),
 the coordinator-owned `BracketBook` (`self._brackets`, the
 single owner of the pending-bracket map, D-05), and the coordinator-owned
 `BracketManager` (the bracket-assembly seam — admission reaches assembly through it,
@@ -49,6 +50,11 @@ from ...core.portfolio_read_model import PortfolioReadModel, PositionView
 from ...core.sizing import TradingDirection, LeveredFraction
 from ...events_handler.events import SignalEvent
 from ...universe import Universe
+# D-39/WR-01: the single-account key half, taken from the IMPORT-INERT venue
+# substrate (``venues/registry.py`` has TYPE_CHECKING-only internals) — the same
+# module ``PortfolioHandler`` and ``ExecutionHandler`` both read it from. A second
+# ``'default'`` literal here is how the arms end up keying on different strings.
+from ...venues.registry import DEFAULT_ACCOUNT_ID
 
 
 class AdmissionManager:
@@ -77,10 +83,11 @@ class AdmissionManager:
 		self.order_validator = order_validator
 		self.sizing_resolver = sizing_resolver
 		self.portfolio_handler = portfolio_handler
-		# D-18: the WIRING seam only — a `() -> FeeModel | None` provider. NEVER
-		# dereference it here at construction: the exchange REPLACES its fee model
-		# on update_config (simulated.py:775), so a captured model would price
-		# reservations at a rate the venue no longer charges.
+		# D-18/D-39: the WIRING seam only — a `(venue, account_id) -> FeeModel |
+		# None` provider. NEVER dereference it here at construction: the exchange
+		# REPLACES its fee model on update_config (simulated.py:775), so a captured
+		# model would price reservations at a rate the venue no longer charges —
+		# and the PAIR is not even known until an order exists (WR-01).
 		self.fee_model_provider = fee_model_provider
 		# D-05: the coordinator-owned single bracket-map owner, injected.
 		self._brackets = brackets
@@ -108,39 +115,94 @@ class AdmissionManager:
 		"""
 		self._universe = universe
 
+	def _resolve_account_id(self, order: Order) -> str:
+		"""Resolve the ACCOUNT half of the fee-model lookup key (D-39/WR-01).
+
+		An order's economic target is the PAIR ``(venue, account_id)`` — the same
+		key ``ExecutionHandler.exchanges`` is keyed on (D-27/MPORT-07).
+		``order.exchange`` carries the venue half (written by
+		``_get_signal_exchange`` from the portfolio's own ``exchange_for``); this
+		reads the account half. Two paths, mirroring
+		``ExecutionHandler._resolve_account_id``:
+
+		* NO read model — there is no portfolio to ask and therefore exactly ONE
+		  account, so the single-account identity is correct and unconditional.
+		* A read model — the portfolio's own account is authoritative.
+		  ``account_for`` is ``Optional[str]`` because ``Portfolio.account_id`` is
+		  optional, and EVERY backtest portfolio leaves it unset
+		  (``backtest_trading_system.py:578-583`` passes no ``account_id``), so the
+		  golden run reaches here with ``None``. An unnamed account IS the
+		  single-account case, so it resolves to the same identity.
+
+		⚠ ``account_for(...) or DEFAULT_ACCOUNT_ID`` is EXPRESSLY FORBIDDEN in
+		``ExecutionHandler._resolve_account_id`` and is correct HERE, and the
+		difference is not cosmetic — do not "unify" the two. There the pair selects
+		an AUTHENTICATED SESSION, so coercing an unnamed account submits real
+		orders through another account's credentials (the MPORT-07 vulnerability),
+		which is why that site refuses instead. Here the pair selects a FEE MODEL
+		for a PRE-TRADE estimate: nothing is submitted, and the single-account
+		identity is load-bearing for the byte-exact oracle. What must never be
+		silent is the OUTCOME — a pair resolving no fee model is logged in
+		``_estimate_commission`` before the estimate degrades.
+		"""
+		if self.portfolio_handler is None:
+			return DEFAULT_ACCOUNT_ID
+		return self.portfolio_handler.account_for(order.portfolio_id) or DEFAULT_ACCOUNT_ID
+
 	def _estimate_commission(self, order: Order) -> Decimal:
 		"""Estimate the commission for an order's admission reservation (D-04/D-18).
 
 		D-18 split the old single-adapter seam in two. The WIRING half — resolving
-		the venue's CURRENT fee model — is the injected ``FeeModelProvider``
+		the CURRENT fee model of the exchange serving the order's
+		``(venue, account_id)`` pair — is the injected ``FeeModelProvider``
 		(``core/commission_estimator.py``). The ADMISSION CONVENTION — that the
 		estimate is taken at ``side='buy', order_type='market'`` (D-04) — is
 		admission policy, so it lives HERE and nowhere else. It was moved verbatim
 		out of the commission-estimate adapter class D-18 deleted from ``compose``.
 
+		D-39 / 11.1-REVIEW **WR-01**: the provider is called with the ORDER's own
+		pair. It used to take no arguments at all and closed over the paper compute
+		exchange resolved at wiring time, so a live order was reserved against the
+		paper venue's economics — and because the golden run pins fees to zero,
+		nothing anywhere went red.
+
 		Two DISTINCT zero paths, deliberately not conflated:
 
-		* no provider wired -> ``Decimal("0")``;
-		* the provider returns ``None``, i.e. this venue exposes NO fee model at
-		  all -> ``Decimal("0")``.
+		* no provider wired -> ``Decimal("0")``, SILENT. This is a construction-time
+		  absence (only test constructions omit it), not a runtime routing fact.
+		* the provider returns ``None`` -> ``Decimal("0")``, but LOUD. Post-WR-01
+		  this covers two runtime facts the provider cannot tell apart: the pair
+		  resolved an exchange that exposes no fee model, OR the pair resolved no
+		  exchange at all. Either way the reservation books NO fee headroom on a
+		  venue that may charge real fees, so it is logged with the pair that
+		  missed. Silence here is exactly how the venue-blind provider survived
+		  review; ``Decimal("0")`` is BOTH the correct golden value and what a dead
+		  seam returns, so the log is the only signal that discriminates.
 
 		Either way the reservation degrades to exactly price x quantity — today's
-		funds-check math. NOTE (KNOWN, DELIBERATELY DEFERRED, T-11.1-48): the live
-		OKX exchange carries no ``fee_model`` attribute, so it takes the second
-		path and reserves NO fee headroom on a venue that charges real fees. D-18
-		makes that visible as an explicit contract in place of the old
-		``isinstance(exchange, SimulatedExchange)`` guard, but does NOT fix it:
-		fixing it changes reservation amounts on the golden path and would move the
-		byte-exact oracle, so it must arrive as its own decision, not as a refactor.
+		funds-check math, which is what keeps the byte-exact oracle intact (the
+		golden pair resolves the paper exchange's ``ZeroFeeModel``, so the LOUD path
+		is oracle-dark). NOTE (KNOWN, DELIBERATELY DEFERRED, T-11.1-48):
+		``OkxExchange`` carries no ``fee_model`` attribute, so a live OKX order
+		takes the second path today. WR-01 fixed the ROUTING of this seam, not that
+		gap: giving OKX a fee model changes reservation amounts and must arrive as
+		its own decision, not as a refactor.
 		"""
 		if self.fee_model_provider is None:
 			return Decimal("0")
-		# The CALL-TIME dereference (D-18, load-bearing). Bound to a LOCAL and
-		# never cached on self: ``update_config`` REPLACES the exchange's fee model
-		# (simulated.py:775, right after the atomic config swap at :770), so a
-		# memoized model would silently quote a retired rate forever.
-		fee_model = self.fee_model_provider()
+		# The CALL-TIME dereference (D-18, load-bearing). The PAIR is resolved per
+		# order and the result is bound to a LOCAL, never cached on self:
+		# ``update_config`` REPLACES the exchange's fee model (simulated.py:775,
+		# right after the atomic config swap at :770), so a memoized model would
+		# silently quote a retired rate forever.
+		venue = order.exchange
+		account_id = self._resolve_account_id(order)
+		fee_model = self.fee_model_provider(venue, account_id)
 		if fee_model is None:
+			self.logger.warning(
+				'No fee model for venue/account (%s, %s) — order %s %s reserves '
+				'NO commission headroom (estimate degraded to 0)',
+				venue, account_id, order.ticker, order.action)
 			return Decimal("0")
 		# WR-04: normalize the fee-model return through the money boundary. A fee
 		# model that returns a float would otherwise import binary-float-repr error

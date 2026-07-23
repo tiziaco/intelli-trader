@@ -4,7 +4,8 @@ Proves:
 - **VENUE-08** — the commission the admission gate reserves is the fee model's
   real output, carried Decimal end-to-end, re-read on every call.
 - **D-18** — the commission seam was DECOMPOSED by plan 11.1-10: ``core/``
-  keeps a fee-model PROVIDER (``() -> FeeModel | None``) and the
+  keeps a fee-model PROVIDER (``(venue, account_id) -> FeeModel | None`` since
+  D-39/WR-01; ``() -> FeeModel | None`` before it) and the
   ``side="buy", order_type="market"`` admission convention moved into
   ``AdmissionManager._estimate_commission``. The value identity, the convention
   and the LATE BINDING of ``exchange.fee_model`` all had to survive that move,
@@ -161,7 +162,7 @@ def test_non_zero_commission_reaches_the_reservation():
     and this assertion goes red.
     """
     fee_model = _FakeFeeModel(Decimal("7.5"))
-    manager = _make_admission(lambda: fee_model)
+    manager = _make_admission(lambda venue, account_id: fee_model)
 
     assert manager._estimate_commission(_make_order()) == Decimal("7.5")
 
@@ -192,7 +193,7 @@ def test_provider_returning_none_degrades_to_zero():
     the LIVE OKX exchange takes today — a KNOWN, deliberately-deferred
     under-reservation (T-11.1-48) that D-18 makes visible without fixing.
     """
-    manager = _make_admission(lambda: None)
+    manager = _make_admission(lambda venue, account_id: None)
 
     assert manager._estimate_commission(_make_order()) == Decimal("0")
 
@@ -205,7 +206,7 @@ def test_float_returning_estimator_is_normalised_to_decimal():
     the reservation amount — or raise a Decimal+float TypeError in the reserve
     path. The fee-model return must go through ``to_money``'s string entry.
     """
-    manager = _make_admission(lambda: _FakeFeeModel(10.1))
+    manager = _make_admission(lambda venue, account_id: _FakeFeeModel(10.1))
 
     result = manager._estimate_commission(_make_order())
 
@@ -223,7 +224,8 @@ def test_admission_convention_is_buy_market():
     """
     fee_model = _FakeFeeModel(Decimal("3.25"))
     exchange = _exchange_with_fee_model(fee_model)
-    manager = _make_admission(lambda: getattr(exchange, "fee_model", None))
+    manager = _make_admission(
+        lambda venue, account_id: getattr(exchange, "fee_model", None))
 
     result = manager._estimate_commission(_make_order())
 
@@ -246,7 +248,8 @@ def test_fee_model_swap_is_observed_on_the_next_call():
     """
     first = _FakeFeeModel(Decimal("1.25"))
     exchange = _exchange_with_fee_model(first)
-    manager = _make_admission(lambda: getattr(exchange, "fee_model", None))
+    manager = _make_admission(
+        lambda venue, account_id: getattr(exchange, "fee_model", None))
 
     # Idempotency: the same model, called twice, yields the same value.
     assert manager._estimate_commission(_make_order()) == Decimal("1.25")
@@ -270,7 +273,7 @@ def test_provider_is_dereferenced_once_per_estimate():
     fee_model = _FakeFeeModel(Decimal("2.5"))
     calls = []
 
-    def counting_provider():
+    def counting_provider(venue, account_id):
         calls.append(1)
         return fee_model
 

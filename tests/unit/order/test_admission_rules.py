@@ -448,7 +448,7 @@ def test_increase_with_insufficient_funds_yields_cash_reservation_rejection(harn
 
     huge_fee_model = _HugeFeeModel()
     harness.order_handler.order_manager.admission_manager.fee_model_provider = (
-        lambda: huge_fee_model
+        lambda venue, account_id: huge_fee_model
     )
 
     signal = harness.create_mock_signal("BUY", allow_increase=True)
