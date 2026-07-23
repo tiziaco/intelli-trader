@@ -1,6 +1,6 @@
 from datetime import datetime, UTC
 from typing import Optional, Dict, Any, Mapping, TYPE_CHECKING
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 
 from itrader.portfolio_handler.transaction import Transaction
 from itrader.portfolio_handler.position import Position
@@ -25,7 +25,6 @@ from itrader.portfolio_handler.storage import (
 	PortfolioStateStorageFactory,
 )
 from itrader.core.ids import PortfolioId
-from itrader.core.money import to_money
 from itrader.core.exceptions.base import ValidationError, StateError, ConfigurationError
 from itrader.core.exceptions.portfolio import PortfolioError, InvalidTransactionError
 
@@ -229,9 +228,15 @@ class Portfolio(object):
 
 		Venue-truth leaves are exempt: their balance comes from the venue, not from
 		wiring, so there is no wiring value to agree with.
+
+		WR-05: the expected value ASKS the account how it rounds cash
+		(``Account.quantize_cash``) instead of re-deriving the scale here. The two
+		sides of this exact-equality check are built by different code across a
+		domain boundary; when each spelled the scale out for itself, a one-sided
+		change made every portfolio construction raise — including the oracle path.
 		"""
 		if not getattr(account := self.account, "is_venue_truth", False):
-			expected = to_money(cash).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+			expected = account.quantize_cash(cash)
 			if account.balance != expected:
 				raise ValidationError(
 					"account",

@@ -136,7 +136,10 @@ class SimulatedCashAccount(Account):
 
         # Cash balance with high precision (D-04 string entry via to_money;
         # quantize to the cash scale at this ledger boundary, D-03 HALF_UP).
-        self._balance = to_money(initial_cash).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        # WR-05: the scale comes from the account's declared precision (the ABC's
+        # single home) — `Portfolio._validate_initial_state` asks the SAME helper,
+        # so the opening-cash equality guard cannot be broken by a one-sided change.
+        self._balance = self.quantize_cash(initial_cash)
 
         # M2-08: reserved cash (working state) + cash operations (audit trail) now
         # live in the injected state-storage seam. This account no longer owns
@@ -167,7 +170,9 @@ class SimulatedCashAccount(Account):
         # Configuration
         self.min_balance = Decimal('0.00')  # Minimum allowed balance
         self.max_balance = Decimal('10000000.00')  # Maximum allowed balance
-        self.precision = Decimal('0.01')  # Precision for rounding
+        # WR-05: `precision` is NOT re-declared here — the cash scale is declared
+        # once on the `Account` ABC and inherited, so `_validate_and_convert_amount`
+        # below and `quantize_cash` above read one value, not two copies of it.
 
         self.logger.info("SimulatedCashAccount initialized",
             initial_balance=str(self._balance),

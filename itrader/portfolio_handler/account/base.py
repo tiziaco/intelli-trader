@@ -22,14 +22,17 @@ Money (D-12): balances, available, and reserved amounts are Decimal end-to-end �
 no float casts inside account math, and quantization happens only at money
 boundaries (ledger writes), never mid-stream. The fill / lock / carry paths
 deliberately skip the 2dp quantize (a quantize there shifts the equity curve and
-fails the byte-exact oracle).
+fails the byte-exact oracle). WR-05: the cash scale itself lives HERE — the
+``Account.precision`` class attribute — and boundary callers obtain their rounded
+value by asking ``Account.quantize_cash`` rather than re-deriving the scale.
 """
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from itrader.core.ids import OrderId
+from itrader.core.money import to_money
 
 
 class Account(ABC):
@@ -49,6 +52,49 @@ class Account(ABC):
     Money (D-12): every amount is Decimal end-to-end — no float casts, no
     mid-stream quantize (rounding happens only at money boundaries).
     """
+
+    #: The cash scale of an account, and its SINGLE home (WR-05).
+    #:
+    #: Declared on the ABC rather than on each leaf because the scale is a
+    #: property of "an account's cash", not of any one leaf: the opening-balance
+    #: ledger write in ``SimulatedCashAccount.__init__`` and the opening-cash
+    #: equality guard in ``Portfolio._validate_initial_state`` sit on OPPOSITE
+    #: sides of a domain boundary and must round identically or every portfolio
+    #: construction raises. They previously spelled ``Decimal('0.01')`` out
+    #: separately, so a one-sided change to either broke the guard — including on
+    #: the byte-exact oracle path.
+    #:
+    #: Change it here and both sides move together. ``VenueAccount`` deliberately
+    #: does NOT override it: its balance is venue truth, and the equality guard
+    #: exempts venue-truth leaves anyway.
+    precision: Decimal = Decimal('0.01')
+
+    def quantize_cash(self, value: "float | Decimal") -> Decimal:
+        """Round ``value`` to this account's declared cash scale (D-03 HALF_UP).
+
+        The one way to ask an account how it rounds cash, so no caller re-derives
+        the scale. Enters the Decimal domain through ``to_money`` (D-04 string
+        entry — never ``Decimal(float)``).
+
+        BOUNDARY QUANTIZE ONLY. Legitimate callers are money boundaries: the
+        opening-balance ledger write and the opening-cash equality guard. It must
+        NEVER be applied mid-stream on the fill / lock / carry paths
+        (``apply_fill_cash_flow``, ``reserve``, ``release``, margin locks, borrow
+        interest), which deliberately carry FULL precision — a quantize there
+        shifts the equity curve and moves the byte-exact SMA_MACD oracle
+        (``134 / 46189.87730727451``).
+
+        Parameters
+        ----------
+        value : float | Decimal
+            The amount to round at a money boundary.
+
+        Returns
+        -------
+        Decimal
+            ``value`` at the account's declared cash scale, ROUND_HALF_UP.
+        """
+        return to_money(value).quantize(self.precision, rounding=ROUND_HALF_UP)
 
     @property
     def is_venue_truth(self) -> bool:
