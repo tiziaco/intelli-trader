@@ -6,6 +6,7 @@ from itrader.portfolio_handler.transaction import Transaction
 from itrader.portfolio_handler.position import Position
 from itrader.events_handler.events import BarEvent
 from itrader.config import PortfolioConfig, get_portfolio_preset
+from itrader.config.portfolio import IMMUTABLE_PORTFOLIO_CONFIG_KEYS
 from itrader.outils.dict_merge import recursive_merge
 
 import pydantic
@@ -26,7 +27,11 @@ from itrader.portfolio_handler.storage import (
 )
 from itrader.core.ids import PortfolioId
 from itrader.core.exceptions.base import ValidationError, StateError, ConfigurationError
-from itrader.core.exceptions.portfolio import PortfolioError, InvalidTransactionError
+from itrader.core.exceptions.portfolio import (
+	PortfolioError,
+	InvalidTransactionError,
+	ImmutableConfigKeyError,
+)
 
 from itrader import idgen
 
@@ -34,6 +39,30 @@ if TYPE_CHECKING:
 	# D-07 (05.2-05): the SqlEngine type is annotation-only here — a runtime
 	# import would pull SQLAlchemy onto the backtest hot path (GATE-01 inertness).
 	from itrader.storage import SqlEngine
+
+
+def _reject_immutable_config_keys(node: Any) -> None:
+	"""Refuse an update payload naming an immutable config key at ANY depth (11.1-REVIEW CR-02).
+
+	Walks the payload rather than checking its top-level keys because ``recursive_merge``
+	accepts nested blobs — a top-level-only check would be bypassable simply by nesting
+	the key inside its section. Mirrors the recursive denylist shape ``VenueStore`` uses
+	for its secret scrub (dicts + lists-of-dicts).
+
+	Raises ``ImmutableConfigKeyError``; returns ``None`` when the payload is clean.
+	"""
+	if isinstance(node, list):
+		for item in node:
+			_reject_immutable_config_keys(item)
+		return
+
+	if not isinstance(node, dict):
+		return
+
+	for key, value in node.items():
+		if key in IMMUTABLE_PORTFOLIO_CONFIG_KEYS:
+			raise ImmutableConfigKeyError(key=str(key))
+		_reject_immutable_config_keys(value)
 
 
 class Portfolio(object):
@@ -317,7 +346,16 @@ class Portfolio(object):
 		``extra="forbid"``) into ``ConfigurationError``. Returns ``None`` and
 		RAISES on failure. WR-04: the deep-merge preserves sibling submodel
 		fields a partial nested update did not intend to change.
+
+		11.1-REVIEW CR-02: an immutable key (``IMMUTABLE_PORTFOLIO_CONFIG_KEYS``)
+		is refused BEFORE the merge, so ``self.config`` is never partially
+		mutated and the atomic-swap property above is preserved exactly. The
+		domain object guards a key ``ConfigRouter`` already refuses on purpose:
+		the router is the QUEUE-FACING gate and cannot see a caller that reaches
+		this method directly, so this is the backstop. Both layers read the SAME
+		key set, so they cannot drift apart.
 		"""
+		_reject_immutable_config_keys(updates)
 		merged = recursive_merge(self.config.model_dump(), updates)
 		try:
 			new_config = PortfolioConfig.model_validate(merged)
