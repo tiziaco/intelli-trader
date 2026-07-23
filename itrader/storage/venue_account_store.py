@@ -158,6 +158,56 @@ class VenueAccountStore:
                 ],
             )
 
+    def create(
+        self,
+        venue_name: str,
+        account_id: str,
+        *,
+        secret_ref: Optional[str],
+        venue_uid: Optional[str],
+        enabled: bool,
+        config: dict[str, Any],
+        at: datetime,
+    ) -> None:
+        """CREATE one account row; the DATABASE refuses a duplicate pair (11.2-05, D-11).
+
+        The create-only sibling of ``upsert``, and it exists because ``upsert`` CANNOT
+        express this contract: ``upsert`` is a DELETE-then-INSERT on the composite key, so
+        a second write always succeeds and silently CLOBBERS the operator's ``secret_ref``
+        and ``config_json`` while resetting the engine-written ``venue_uid`` to NULL —
+        disarming the D-04 trust-on-first-use venue-identity guard for that account. A
+        provisioning verb built on ``upsert`` would therefore overwrite rather than refuse,
+        and a caller trying to classify a duplicate would wait forever for an
+        ``IntegrityError`` that never arrives.
+
+        A plain ``INSERT``: the composite primary key ``(venue_name, account_id)`` is the
+        arbiter, so a duplicate raises ``IntegrityError`` out of the driver. Refusing here
+        rather than in front of the write is deliberate (D-11) — a pre-check ``SELECT`` is
+        TOCTOU and, decisively, does not bind the out-of-band writers a durable table
+        always has. Classification of that error into a typed refusal belongs to the
+        CALLER (``VenueAccountManager``); this store stays a store.
+
+        The REUSED recursive secret-denylist guard (D-02) fires FIRST — the same single
+        control ``upsert`` runs, never a second denylist that could drift — so a rejected
+        write persists NOTHING.
+        """
+        _assert_no_secret_keys(config)
+        with self.engine.begin() as connection:
+            connection.execute(
+                insert(self.venue_accounts),
+                [
+                    {
+                        "venue_name": venue_name,
+                        "account_id": account_id,
+                        "secret_ref": secret_ref,
+                        "venue_uid": venue_uid,
+                        "enabled": enabled,
+                        "config_json": config,
+                        "updated_at": at,
+                    }
+                ],
+            )
+
     def record_venue_uid(
         self,
         venue_name: str,
@@ -210,6 +260,45 @@ class VenueAccountStore:
         statement = self._select_columns().order_by(
             self.venue_accounts.c.venue_name.asc(),
             self.venue_accounts.c.account_id.asc(),
+        )
+        with self.engine.connect() as connection:
+            rows = connection.execute(statement).mappings().all()
+        return [self._row_to_dict(row) for row in rows]
+
+    def read_enabled_for(self, venue_name: str) -> list[Mapping[str, Any]]:
+        """Every ENABLED account row for one venue — the bring-up read (ACCT-01).
+
+        The venue-scoped, enabled-only sibling of ``read_all``, sharing its projection
+        and its ordering guarantee. It is what turns boot into
+        ``for row in read_enabled_for(venue): bring_online(row)`` (D-27), so the account
+        SET a venue comes up with is derived from durable rows rather than re-derived
+        from a spec.
+
+        Venue scoping is not a convenience filter: ``account_id`` alone can never derive
+        its venue (D-01), so an unscoped read would hand one venue another venue's
+        accounts and assemble them against the wrong plugin.
+
+        ORDERING CONTRACT: ``venue_name`` ASC then ``account_id`` ASC — identical to
+        ``read_all``, so bring-up order is deterministic and reproducible across runs and
+        dialects rather than driver-dependent (an unordered SELECT has no guaranteed row
+        order). The ``venue_name`` key is redundant under the equality filter and is kept
+        anyway so the two reads cannot drift apart.
+
+        NO degrade policy lives here (D-34). A missing ``venue_accounts`` table is the
+        fresh-deployment state and is handled ONE layer up in ``VenueAccountManager``,
+        where the whole policy is unit-testable without booting a system; this method
+        propagates every fault to that owner.
+        """
+        statement = (
+            self._select_columns()
+            .where(
+                self.venue_accounts.c.venue_name == venue_name,
+                self.venue_accounts.c.enabled.is_(True),
+            )
+            .order_by(
+                self.venue_accounts.c.venue_name.asc(),
+                self.venue_accounts.c.account_id.asc(),
+            )
         )
         with self.engine.connect() as connection:
             rows = connection.execute(statement).mappings().all()

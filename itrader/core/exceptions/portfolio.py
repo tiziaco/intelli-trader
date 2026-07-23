@@ -220,3 +220,118 @@ class DuplicateVenueAccountError(PortfolioError):
             f"is no safe way to decide which portfolio the account belongs to. Give each "
             f"portfolio its own account_id on this venue, or remove one of them."
         )
+
+
+# Per-CAUSE rationale for VenueAccountNotProvisionedError (ACCT-03 / D-21).
+#
+# The three causes are NOT interchangeable and the message must not blur them: only
+# ``VenueAccountManager`` can tell "there is no such account" from "the account exists
+# but was provisioned after this boot brought its venue online", and an operator's next
+# action is different in each case. Keyed so the remediation is the SPECIFIC one; the
+# fallback keeps a future cause honest if its entry is forgotten.
+_UNPROVISIONED_ACCOUNT_CAUSE: dict[str, str] = {
+    "not_provisioned": (
+        "no venue_accounts row exists for this pair. Provision it first "
+        "(system.venue_accounts.provision(venue, account_id, ...)), then bring it "
+        "online — a provisioned account is usable in the same process, with no restart "
+        "(D-27)"
+    ),
+    "disabled": (
+        "the venue_accounts row exists but carries enabled=False, so it was "
+        "deliberately excluded from this venue's bring-up. Re-enable the account if it "
+        "should trade; a disabled account is never silently brought online"
+    ),
+    "not_online": (
+        "the venue_accounts row exists and is enabled, but this account was never "
+        "brought online in this process — it was provisioned after its venue came up. "
+        "Call bring_online(row) for it (the same single path boot uses in bulk, D-27) "
+        "before resolving an account against it"
+    ),
+}
+
+_UNPROVISIONED_ACCOUNT_FALLBACK = (
+    "this account could not be resolved to a provisioned, enabled, online venue "
+    "account. Provision and bring the account online before resolving against it."
+)
+
+
+class VenueAccountNotProvisionedError(PortfolioError):
+    """A ``(venue_name, account_id)`` names no live, enabled venue account (ACCT-03, D-21).
+
+    The typed refusal ``VenueAccountManager.account_for`` raises instead of returning an
+    account. It is deliberately a REFUSAL and not a fallback: the tempting alternative —
+    handing back the compute leaf a portfolio would otherwise have — produces an account
+    with ``is_venue_truth=False``, which silently disables the venue snapshot, the fill/
+    order streams, ``VenueReconciler`` and the unexplained-residual HALT. The portfolio
+    then trades against COMPUTED balances while believing they are the venue's, and every
+    guard built to catch that divergence is inert. A loud refusal at resolution time is
+    strictly cheaper than a quiet one at settlement time.
+
+    ``account_id`` is matched by EXACT STRING at every layer — no case-folding, trimming
+    or Unicode normalization — so ``' okx-1'`` and ``'okx-1'`` are different accounts and
+    neither silently resolves to the other. This error is what a near-miss produces.
+
+    Carries the pair and the ``cause`` as structured fields and builds its message in
+    ``__init__`` (the project's exception convention). The message names the CONSEQUENCE
+    of the alternative and the cause-SPECIFIC REMEDIATION, because the operator's next
+    action differs per cause (see ``_UNPROVISIONED_ACCOUNT_CAUSE``).
+    """
+
+    #: The three causes ``VenueAccountManager.account_for`` distinguishes (D-21).
+    NOT_PROVISIONED = "not_provisioned"
+    DISABLED = "disabled"
+    NOT_ONLINE = "not_online"
+
+    def __init__(self, venue_name: str, account_id: str, cause: str):
+        self.venue_name = venue_name
+        self.account_id = account_id
+        self.cause = cause
+        rationale = _UNPROVISIONED_ACCOUNT_CAUSE.get(
+            cause, _UNPROVISIONED_ACCOUNT_FALLBACK)
+        super().__init__(
+            f"Venue account ({venue_name!r}, {account_id!r}) is not available: "
+            f"{rationale}. Refusing to resolve an account for it (ACCT-03): returning a "
+            f"compute leaf instead would give the portfolio is_venue_truth=False and "
+            f"silently disable the venue snapshot, the fill/order streams, "
+            f"VenueReconciler and the unexplained-residual HALT."
+        )
+
+
+class DuplicateVenueAccountProvisionError(PortfolioError):
+    """``provision`` named a ``(venue_name, account_id)`` that already exists (ACCT-02/D-11).
+
+    Provisioning is CREATE-ONLY. The database's composite primary key on
+    ``(venue_name, account_id)`` is the arbiter, and its ``IntegrityError`` is what this
+    exception classifies — there is deliberately NO pre-check ``SELECT``, because a
+    pre-check is TOCTOU and, decisively, does not bind the out-of-band writers a durable
+    table always has. The same argument is already recorded for the sibling
+    ``portfolio_definition_store``.
+
+    It is a SEPARATE type from ``DuplicateVenueAccountError``, which reports two
+    PORTFOLIOS colliding on one account and carries both portfolio labels. A provision
+    refusal has no portfolios in it — the collision is between an existing row and a new
+    write — so reusing that type would mean inventing two portfolio names that do not
+    exist. Same table, different collision.
+
+    Refusing rather than overwriting is the point. A silent restatement is how a re-run
+    provisioning script replaces the operator's ``secret_ref`` and ``config``, and how the
+    engine-written ``venue_uid`` (D-04 trust-on-first-use) gets reset to NULL — which
+    disarms the venue-identity guard for that account. Repointing an existing account is
+    its own targeted verb, never a side effect of create.
+
+    Carries the colliding pair as structured fields and builds its message in ``__init__``
+    (the project's exception convention), naming the consequence and the remediation.
+    """
+
+    def __init__(self, venue_name: str, account_id: str):
+        self.venue_name = venue_name
+        self.account_id = account_id
+        super().__init__(
+            f"Venue account ({venue_name!r}, {account_id!r}) is already provisioned. "
+            f"Refusing to provision it again (D-11): provisioning is create-only, and "
+            f"overwriting would silently replace the operator's secret_ref and config "
+            f"and clear the engine-written venue_uid, disarming the trust-on-first-use "
+            f"venue-identity guard for this account. Use a different account_id, or "
+            f"update the existing account through its own targeted verb."
+        )
+
