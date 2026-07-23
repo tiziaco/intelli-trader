@@ -1,3 +1,4 @@
+import random
 import threading
 from datetime import datetime, UTC
 from decimal import Decimal
@@ -6,7 +7,7 @@ from typing import (
 
 from itrader.core.enums import HaltReason, SystemStatus
 from itrader.core.exceptions import StateError, ValidationError
-from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
+from itrader.execution_handler.execution_handler import COMPUTE_VENUE, DEFAULT_ACCOUNT_ID
 from itrader.outils.time_parser import to_timedelta
 from itrader.trading_system.alert_sink import LogAlertSink
 from itrader.trading_system.venue_spec import build_venue_spec
@@ -624,18 +625,23 @@ class LiveTradingSystem:
             engine = self._engine
 
             # The uniformly-resolved venue exchange (D-11): the OKX exchange when
-            # present, else the paper 'simulated' exchange (permissive validate_symbol /
+            # present, else the 'paper' exchange (permissive validate_symbol /
             # resolve_precision defaults). set_venue_metadata is UNCONDITIONAL over this
             # inside SessionInitializer — no OKX guard, zero OKX coupling.
             # 11-09: read through the PRIMARY streaming lifecycle instead of the deleted
             # ``_okx_exchange`` alias. Venue metadata (validate_symbol / resolve_precision)
             # is a VENUE property, not an account property — every account on one venue
             # shares it — so the primary's exchange is the right (and unchanged) source.
+            # The non-streaming fallback is a SUBSCRIPT, not a soft `.get`: a None here
+            # reaches SessionInitializer and degrades validate_symbol / resolve_precision
+            # with no exception raised anywhere near the defect. It cannot fire on a wired
+            # engine — ExecutionHandler.init_exchanges always resolves the compute-venue
+            # arm under the default account.
             streaming = self._streaming_lifecycles()
             venue_exchange = (
                 streaming[0].bundle.exchange if streaming
-                else self.execution_handler.exchanges.get(
-                    ('simulated', DEFAULT_ACCOUNT_ID)))  # D-27 pair key
+                else self.execution_handler.exchanges[
+                    (COMPUTE_VENUE, DEFAULT_ACCOUNT_ID)])  # D-27/D-05 pair key
 
             # RUN-06/D-11 live-plane config: poll timeframe + remove_policy READ FROM the
             # LIVE universe sub-model (NOT the frozen determinism base — P9 D-09 keeps the
@@ -1711,7 +1717,13 @@ def _attach_venue_accounts(
             continue
         account = minted.get(account_id)
         if account is None:
-            account = lifecycle.bundle.account_factory(portfolio)
+            # 11.1-09 (D-03): the factory is KEYWORD-ONLY and no longer takes a
+            # portfolio. The account id this loop already resolved off
+            # ``portfolio.account_id`` is passed EXPLICITLY, so the venue arm mints
+            # under the SAME id the lifecycle was looked up by. It is never omitted
+            # here: an omitted id falls back to the BUNDLE's own, which is correct
+            # only for the facade's no-portfolio call site.
+            account = lifecycle.bundle.account_factory(account_id=account_id)
             minted[account_id] = account
         portfolio.account = account
     if minted:
@@ -1832,9 +1844,13 @@ def build_live_system(
     # LiveBarFeed reads no store, D-02), and environment + sql_engine reflect the
     # credential-probe arm so compose's handler-OWNED storage init lands the identical
     # durable path (Postgres arm -> CachedSqlOrderStorage over the SQL spine; in-memory
-    # arm -> InMemoryOrderStorage). Live keeps exchange_config=None (the ExecutionHandler
-    # default today — byte-preserving) and results_store=None. compose_engine reuses the
-    # FeeModelCommissionEstimator admission adapter, retiring the re-inlined commission
+    # arm -> InMemoryOrderStorage). 11.1-07: the former ``exchange_config=None`` argument
+    # is GONE — compose no longer builds an exchange. Live now hands it a built
+    # ``VenueBundles`` whose paper plugin holds ``default_exchange_config()``, which is
+    # the SAME default-preset config the old ``None`` resolved to, so live behaviour is
+    # preserved. ``results_store`` stays None. compose_engine builds the admission
+    # fee-model provider (11.1-10 / D-18 — the former single-adapter class it replaced
+    # is gone), retiring the re-inlined commission
     # closure. compose_engine is a PURE import, taken lazily here to mirror the module's
     # lazy-import discipline (inertness gate). 06.1-04 (D-13): EngineContext is now
     # hoisted to module top (pure — off the backtest graph after the barrel drop).
@@ -1866,15 +1882,105 @@ def build_live_system(
         failure_settings=_system_config.safety.failure_rate,
     )
 
+    # ------------------------------------------------------------------
+    # VENUE REGISTRATION (hoisted here by 11.1-07, D-08).
+    #
+    # WHY IT MOVED: compose_engine now receives a BUILT ``VenueBundles``, so the
+    # registry it reads has to exist BEFORE compose runs. The move is safe because
+    # registration is INERT — it stores plugin objects and runs no ``build*()``, so it
+    # pulls no ccxt and changes no import-time behaviour — and because every input it
+    # reads (``system_db_backend``, ``credential_resolver``, ``data_plugins``) is
+    # already resolved above this point. The one thing that USED to force it below
+    # compose was the reach-in into ``execution_handler.exchanges``; that is gone
+    # (D-06 — the plugin builds its own exchange), which is the ordering inversion this
+    # phase exists to enable.
+    #
+    # The whole OKX/paper venue stack stays LAZY-imported here so the BACKTEST import
+    # path stays async/ccxt/credential-free (the hot-path inertness gate).
+    from itrader.connectors.provider import ConnectorProvider
+    from itrader.execution_handler.execution_handler import default_exchange_config
+    from itrader.venues.assemble import assemble_venues
+    from itrader.venues.bundles import VenueBundles
+    from itrader.venues.okx_plugin import (
+        OkxConnectorPlugin,
+        OkxDataPlugin,
+        OkxVenuePlugin,
+    )
+    from itrader.venues.paper_plugin import PaperVenuePlugin
+    from itrader.venues.registry import (
+        DataProviderRegistry,
+        ExecutionVenueRegistry,
+    )
+
+    # (0) 11-04 (D-02/D-04): the credentials boundary's two collaborators.
+    #   - venue_account_store: the durable (venue_name, account_id) home. It supplies
+    #     the account's secret_ref POINTER for credential resolution AND is where the
+    #     D-04 trust-on-first-use venue_uid is recorded/asserted. Gated on the SQL arm
+    #     exactly like system_store above; the import stays LAZY inside the gate
+    #     (storage.venue_store, which it composes, is OKX-inertness _FORBIDDEN).
+    #     11.1-07: the ``system_db_backend is not None`` gate MOVED WITH this block —
+    #     ``system_db_backend`` is resolved well above here, so the SQL gate applies
+    #     exactly as before and the in-memory arm still yields ``None``.
+    #   - credential_resolver: the env-backed CredentialResolver injected into the OKX
+    #     connector plugin. WITHOUT this injection the plugin falls back to a bare
+    #     OkxSettings() reading the ONE global OKX_API_* set, so two account_ids would
+    #     connect with IDENTICAL credentials while the system believes they are
+    #     separate accounts (the D-12 caveat) — the exact misroute D-04 detects.
+    from itrader.config.credential_resolver import EnvCredentialResolver
+
+    if system_db_backend is not None:
+        from itrader.storage.venue_account_store import VenueAccountStore
+        venue_account_store: Optional[Any] = VenueAccountStore(system_db_backend)
+    else:
+        venue_account_store = None
+    credential_resolver = EnvCredentialResolver()
+
+    # (1) Build the two registries + the shared ConnectorProvider and register the
+    # concrete plugins (store-only — no build*() runs, so this pulls no ccxt).
+    exec_registry = ExecutionVenueRegistry()
+    data_registry = DataProviderRegistry()
+    connectors = ConnectorProvider(
+        {'okx': OkxConnectorPlugin(resolver=credential_resolver)})
+    exec_registry.register('okx', OkxVenuePlugin())
+    # 11.1-07 (D-06/D-17): the reach-in into ``execution_handler.exchanges`` is GONE —
+    # the plugin builds its own SimulatedExchange from the config it is given.
+    # ``default_exchange_config()`` preserves today's live behaviour EXACTLY: live
+    # previously passed no exchange config into compose, so its simulated exchange was
+    # built from this same default preset (∪ {BTCUSD}). Seeding a LIVE-derived symbol
+    # set is deliberately out of scope for this phase — doing it here would change live
+    # admission behaviour under cover of a wiring change.
+    exec_registry.register('paper', PaperVenuePlugin(default_exchange_config()))
+    data_registry.register('okx', OkxDataPlugin())
+
+    # TEST-only DATA provider injection (D-21): production registers NO replay/test data
+    # provider (the replay harness left this package for tests/), but a test fixture may
+    # inject one (the relocated TestDataPlugin) so the paper↔replay pairing lives ONLY in
+    # the fixture, never in production. Registered AFTER the production plugins.
+    if data_plugins:
+        for _name, _plugin in data_plugins.items():
+            data_registry.register(_name, _plugin)
+
+    # 11.1-04 (D-07): the ONE seeded determinism RNG for the live run, built here at the
+    # wiring seam and injected on ctx rather than derived inside ExecutionHandler. Same
+    # resolution the retired ExecutionHandler._resolve_rng_seed performed —
+    # int(config.rng_seed), default 42, off the frozen ITraderConfig base.
+    rng = random.Random(int(_system_config.rng_seed))
+
     ctx = EngineContext(
         bus=global_queue,
         config=_system_config,
         environment=environment,
-        feed=feed, store=None,
+        feed=feed, rng=rng, store=None,
         sql_engine=system_db_backend,
     )
+    # 11.1-07 (D-08): the ONE bundle memo, built AFTER ctx (it needs one) and BEFORE
+    # compose. The SAME instance the venue-assembly loop below shares, so the execution
+    # arm and the per-account assembly can never hold two exchanges for one
+    # (venue, account_id) — two OkxExchange objects per account would double-spawn that
+    # account's fill/order streams.
+    venue_bundles = VenueBundles(exec_registry, connectors, ctx)
     engine = compose_engine(
-        ctx, exchange_config=None, results_store=None,
+        ctx, venue_bundles=venue_bundles, results_store=None,
         alert_sink=alert_sink, system_store=system_store, error_policy=error_policy,
         strategy_catalog=strategy_catalog,
         # D-27/MPORT-07: LIVE resolves each order's venue account from its
@@ -1884,8 +1990,14 @@ def build_live_system(
         route_orders_by_account=True)
 
     # compose already wired portfolio_handler.set_order_storage(order_handler.storage) and
-    # the FeeModelCommissionEstimator admission gate (D-05), so the former inline commission
-    # closure + the duplicate set_order_storage call are gone. build_live_system only needs
+    # the admission fee-model provider (D-05; 11.1-10 / D-18 narrowed that seam to wiring
+    # only), so the former inline commission
+    # closure + the duplicate set_order_storage call are gone. NOTE (T-11.1-48, KNOWN and
+    # DELIBERATELY DEFERRED): the live OKX exchange exposes no ``fee_model`` attribute, so
+    # the provider yields None here and admission reserves NO fee headroom on a venue that
+    # charges real fees. D-18 made this VISIBLE (an explicit no-fee-model contract replacing
+    # an isinstance guard) without fixing it — a fix changes reservation amounts on the
+    # golden path and must arrive as its own decision, not as a refactor. build_live_system only needs
     # the three handles its remaining venue + post-facade wiring touches; the facade sources
     # the FULL graph (+ storages, store=None) off the engine in __init__ (D-10), so no
     # duplicate locals are threaded through here.
@@ -1969,9 +2081,10 @@ def build_live_system(
             )
 
     # ------------------------------------------------------------------
-    # Venue wiring (Plan 02-05, D-04 / CONN-04 — relocated P5 D-06 assemble_venue call).
-    # The whole OKX/paper venue stack is LAZY-imported here so the BACKTEST import path
-    # stays async/ccxt/credential-free (the hot-path inertness gate).
+    # Venue ASSEMBLY (Plan 02-05, D-04 / CONN-04 — relocated P5 D-06 assemble_venue call).
+    # 11.1-07: only the ASSEMBLY stays here. Plugin REGISTRATION (the registries, the
+    # ConnectorProvider and the credential collaborators) moved ABOVE compose_engine —
+    # see the hoisted block there for why.
     # 11-09: ONE VenueLifecycle PER ACCOUNT, keyed by account id and PRIMARY FIRST. The
     # three former locals (venue_lifecycle / okx_connector / okx_exchange) that were
     # hand-unpacked out of the primary bundle inside the assembly loop are gone — every
@@ -1981,60 +2094,6 @@ def build_live_system(
     # the venue is unregistered. Declared here so the post-facade wiring below sees it
     # on every path.
     provider: Optional[Any] = None
-
-    from itrader.connectors.provider import ConnectorProvider
-    from itrader.venues.assemble import assemble_venues
-    from itrader.venues.okx_plugin import (
-        OkxConnectorPlugin,
-        OkxDataPlugin,
-        OkxVenuePlugin,
-    )
-    from itrader.venues.paper_plugin import PaperVenuePlugin
-    from itrader.venues.registry import (
-        DataProviderRegistry,
-        ExecutionVenueRegistry,
-    )
-
-    # (0) 11-04 (D-02/D-04): the credentials boundary's two collaborators.
-    #   - venue_account_store: the durable (venue_name, account_id) home. It supplies
-    #     the account's secret_ref POINTER for credential resolution AND is where the
-    #     D-04 trust-on-first-use venue_uid is recorded/asserted. Gated on the SQL arm
-    #     exactly like system_store above; the import stays LAZY inside the gate
-    #     (storage.venue_store, which it composes, is OKX-inertness _FORBIDDEN).
-    #   - credential_resolver: the env-backed CredentialResolver injected into the OKX
-    #     connector plugin. WITHOUT this injection the plugin falls back to a bare
-    #     OkxSettings() reading the ONE global OKX_API_* set, so two account_ids would
-    #     connect with IDENTICAL credentials while the system believes they are
-    #     separate accounts (the D-12 caveat) — the exact misroute D-04 detects.
-    from itrader.config.credential_resolver import EnvCredentialResolver
-
-    if system_db_backend is not None:
-        from itrader.storage.venue_account_store import VenueAccountStore
-        venue_account_store: Optional[Any] = VenueAccountStore(system_db_backend)
-    else:
-        venue_account_store = None
-    credential_resolver = EnvCredentialResolver()
-
-    # (1) Build the two registries + the shared ConnectorProvider and register the
-    # concrete plugins (store-only — no build*() runs, so this pulls no ccxt).
-    exec_registry = ExecutionVenueRegistry()
-    data_registry = DataProviderRegistry()
-    connectors = ConnectorProvider(
-        {'okx': OkxConnectorPlugin(resolver=credential_resolver)})
-    exec_registry.register('okx', OkxVenuePlugin())
-    exec_registry.register(
-        'paper',
-        PaperVenuePlugin(
-            execution_handler.exchanges[('simulated', DEFAULT_ACCOUNT_ID)]))
-    data_registry.register('okx', OkxDataPlugin())
-
-    # TEST-only DATA provider injection (D-21): production registers NO replay/test data
-    # provider (the replay harness left this package for tests/), but a test fixture may
-    # inject one (the relocated TestDataPlugin) so the paper↔replay pairing lives ONLY in
-    # the fixture, never in production. Registered AFTER the production plugins.
-    if data_plugins:
-        for _name, _plugin in data_plugins.items():
-            data_registry.register(_name, _plugin)
 
     # (2) The shared mode-injection EngineContext built above (06.1-02) is REUSED for
     # venue assembly — the venue plugins read ctx.bus / ctx.config.stream (they never read
@@ -2068,24 +2127,68 @@ def build_live_system(
     # FIRST (insertion order). The assembly LOGIC stays authored once in
     # ``venues/assemble.py`` and unit-testable with no LiveTradingSystem.
     if exchange in exec_registry:
+        # (3a) THE ONE DATA PROVIDER (11.1-08, D-14). ONE feed means ONE provider, and it
+        # is built HERE, explicitly, for the PRIMARY account — the FIRST element of
+        # `account_specs`, the ordering contract `assemble_venues` documents. A
+        # non-primary account's provider is therefore never CONSTRUCTED at all.
+        #
+        # That is `11-REVIEW.md` WR-07's real fix. `assemble_venue` used to build a data
+        # provider per account and this root discarded all but the first. Each
+        # construction resolves that account's OWN credentials through the
+        # `CredentialResolver`, so a discarded provider is a live credential-bearing
+        # object with no owner, no lifecycle and no halt path. The review's alternative —
+        # wire `set_halt_signal` / `set_stream_state_listener` onto EVERY provider — is
+        # REJECTED: it contradicts the single-feed decision preserved in the
+        # facade-dependent wiring block below, and 11-09 collapsed the primary/secondary
+        # split for the exchange/connector arms precisely so a second account cannot keep
+        # trading after a connector-fatal halt. There is one feed; wiring N providers into
+        # it is meaningless, and doing so makes the defect look intentional.
+        #
+        # The provider is built BEFORE assembly so it can be INJECTED at the primary
+        # lifecycle's construction rather than assigned onto it afterwards — a lifecycle
+        # is never observable half-wired. `DataProviderRegistry.get` fails loud (KeyError)
+        # on an unregistered data_provider, the guard `assemble_venue` used to carry.
+        # D-09/VENUE-07 empty edge: a boot with ZERO account specs builds ZERO providers
+        # and does not raise — a live boot with no accounts is the normal fresh-deployment
+        # state. (The former read of the first lifecycle's own provider raised
+        # StopIteration there.)
+        if account_specs:
+            primary_spec = account_specs[0]
+            provider = data_registry.get(
+                primary_spec.data_provider).build_provider(
+                    ctx, primary_spec, connectors)
+
         # 11-04 (D-04): account_store + alert_sink are what make the trust-on-first-use
         # UID guard RUN. They are optional kwargs, which means omitting them here would
         # ship the only high-severity spoofing mitigation in this phase as dead code
         # behind a fully green suite. tests/unit/venues/test_venue_uid_guard.py asserts
         # they are passed.
+        #
+        # 11.1-08 (D-08): assembly takes the SHARED `venue_bundles` memo instead of the
+        # exec registry, so `lifecycle.bundle` and the registration write below are
+        # provably the same object per (venue, account_id). Before this, assembly called
+        # the registry directly and a live paper boot built a SECOND, unread
+        # SimulatedExchange — inert only because every reader of it was connector-gated.
+        # The same gap would build a second OkxExchange per account the moment anything
+        # asked the memo for ('okx', account_id), and `OkxExchange.connect()` is the sole
+        # spawn site for `_stream_fills`/`_stream_orders`.
         venue_lifecycles = assemble_venues(
-            ctx, account_specs, connectors, exec_registry, data_registry,
+            account_specs, connectors, venue_bundles,
+            primary_provider=provider,
             account_store=venue_account_store, alert_sink=alert_sink)
 
         for account_spec in account_specs:
-            lifecycle = venue_lifecycles[
-                account_spec.account_id or DEFAULT_ACCOUNT_ID]
+            account_id = account_spec.account_id or DEFAULT_ACCOUNT_ID
+            # D-08: read the bundle from the SHARED memo. This is a memo HIT — assembly
+            # above populated the same key through the same object — so it is one build
+            # per (venue, account_id) tree-wide, not a second one here.
+            bundle = venue_bundles.get(exchange, account_id, account_spec)
             # bundle.connector is the STREAMING-venue discriminator (okx present,
             # paper None). A paper (connector=None) bundle has no streaming okx
             # exchange; its data provider is still wired to the feed below (the
             # injected TEST 'replay' provider in tests, or the OKX data provider in
             # production paper — D-21).
-            if lifecycle.bundle.connector is None:
+            if bundle.connector is None:
                 continue
             # D-27/MPORT-07: register under the (venue, account_id) PAIR, using
             # the account this bundle was actually built for. Registering under
@@ -2098,18 +2201,16 @@ def build_live_system(
             # one key. (This is a REGISTRATION-side default for an unnamed
             # account, NOT a resolution-side fallback — on_order must never
             # coerce a None account into the default.)
-            execution_handler.exchanges[
-                (exchange, account_spec.account_id or DEFAULT_ACCOUNT_ID)
-            ] = lifecycle.bundle.exchange
+            execution_handler.exchanges[(exchange, account_id)] = bundle.exchange
 
         # (4) UNIFORM provider->feed wiring (D-10) that needs NO facade method.
-        # ONE feed, so ONE provider: the PRIMARY account's (the first inserted
-        # lifecycle). A second account's data provider would push the same venue's
-        # bars into the same feed a second time.
-        provider = next(iter(venue_lifecycles.values())).provider
-        feed.set_provider(provider)
-        provider.set_bar_sink(feed.update)
-        provider.set_global_queue(global_queue)
+        # ONE feed, so ONE provider: the PRIMARY account's, built at (3a) above. A
+        # second account's data provider would push the same venue's bars into the
+        # same feed a second time — which is why there is no second one to wire.
+        if provider is not None:
+            feed.set_provider(provider)
+            provider.set_bar_sink(feed.update)
+            provider.set_global_queue(global_queue)
 
         # (5) 11-09 (MPORT-05) — THE ATTACH. Each portfolio receives the Account minted
         # from ITS OWN account's bundle, resolved by ``portfolio.account_id``. This is
@@ -2345,6 +2446,14 @@ def build_live_system(
     # partially-halted engine is worse than a single-account one, because the surviving
     # arm looks healthy. The DATA provider stays deliberately single (one feed, the
     # primary's provider), so it is wired outside the loop.
+    #
+    # 11.1-08 (D-14): it is now BUILT outside the loop as well as wired outside it — see
+    # (3a) in the venue-assembly block above. That is what makes this comment's claim
+    # structural rather than aspirational: previously N providers existed and N-1 reached
+    # neither this halt-signal wiring nor the feed (WR-07). The review's proposal to loop
+    # this block over every provider was REJECTED for the reason stated above — there is
+    # ONE feed. The ``is not None`` guard stays: the unregistered-venue arm and a
+    # zero-account boot (D-09) both legitimately yield no provider.
     if provider is not None:
         provider.set_halt_signal(facade._request_connector_halt)
         provider.set_stream_state_listener(

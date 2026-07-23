@@ -30,10 +30,14 @@ from itrader.core.ids import PortfolioId
 from itrader.core.portfolio_read_model import PortfolioReadModel
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
+from tests.support.venue_wiring import (
+    backtest_portfolio_handler,
+    compute_account,
+)
 
 
 _NAME = "identity_pf"
-_EXCHANGE = "simulated"
+_EXCHANGE = "paper"
 _CASH = 100000
 
 
@@ -41,7 +45,7 @@ _CASH = 100000
 def env():
     """A PortfolioHandler (test environment) + its global queue."""
     global_queue = Queue()
-    handler = PortfolioHandler(
+    handler = backtest_portfolio_handler(
         global_queue=global_queue,
         config_dir="settings",
         environment="test",
@@ -60,6 +64,10 @@ def _portfolio(**kwargs) -> Portfolio:
         time=datetime.now(UTC),
     )
     defaults.update(kwargs)
+    # D-02 (11.1-09): the account is SUPPLIED, never minted by the portfolio. It is
+    # built from the SAME cash the portfolio is asked to open at — a mismatch is
+    # refused at construction (T-11.1-42), so the two cannot drift here either.
+    defaults.setdefault("account", compute_account(defaults["cash"]))
     return Portfolio(**defaults)
 
 
@@ -116,15 +124,15 @@ def test_account_id_defaults_to_none():
 
 def test_exchange_is_derived_from_venue_name():
     """D-07: venue_name WINS — exchange is derived, never a second source of truth."""
-    portfolio = _portfolio(exchange="csv", venue_name="okx")
+    portfolio = _portfolio(exchange="paper", venue_name="okx")
     assert portfolio.venue_name == "okx"
     assert portfolio.exchange == "okx"
 
 
 def test_exchange_falls_back_to_the_legacy_parameter():
     """The legacy `exchange` input is used as-is when no venue_name is supplied."""
-    portfolio = _portfolio(exchange="csv")
-    assert portfolio.exchange == "csv"
+    portfolio = _portfolio(exchange="paper")
+    assert portfolio.exchange == "paper"
     assert portfolio.venue_name is None
 
 
@@ -135,11 +143,11 @@ def test_exchange_falls_back_to_the_legacy_parameter():
 
 def test_legacy_add_portfolio_shape_is_unchanged(env):
     """The backtest composition-root call shape still works and mints a fresh id."""
-    portfolio_id = env.handler.add_portfolio(name=_NAME, exchange="csv", cash=_CASH)
+    portfolio_id = env.handler.add_portfolio(name=_NAME, exchange="paper", cash=_CASH)
     portfolio = env.handler.get_portfolio(portfolio_id)
     assert isinstance(portfolio_id, uuid.UUID)
     assert portfolio_id.version == 7
-    assert portfolio.exchange == "csv"
+    assert portfolio.exchange == "paper"
     assert portfolio.account_id is None
     assert portfolio.venue_name is None
 

@@ -1,7 +1,7 @@
 from decimal import Decimal
-from typing import Any, Callable, List, Dict, Optional
+from typing import Any, List, Dict, Optional
 
-from itrader.core.commission_estimator import CommissionEstimator
+from itrader.core.commission_estimator import FeeModelProvider
 from itrader.core.portfolio_read_model import PortfolioReadModel
 from itrader.config import OrderConfig
 from .base import OrderStorage
@@ -11,7 +11,7 @@ from ..core.ids import OrderId, PortfolioId
 from .order_validator import EnhancedOrderValidator
 from .order_manager import OrderManager
 from ..events_handler.bus import EventBus
-from ..events_handler.events import SignalEvent, OrderEvent, OrderAckEvent, FillEvent, PortfolioUpdateEvent
+from ..events_handler.events import SignalEvent, OrderEvent, OrderAckEvent, FillEvent
 from .storage import OrderStorageFactory
 from ..universe import Universe
 
@@ -43,7 +43,7 @@ class OrderHandler:
 	def __init__(self, global_queue: "EventBus", portfolio_handler: PortfolioReadModel,
 	             order_storage: Optional[OrderStorage] = None,
 	             market_execution: "str | MarketExecution | None" = None,
-	             commission_estimator: Optional[CommissionEstimator] = None,
+	             fee_model_provider: Optional[FeeModelProvider] = None,
 	             order_config: Optional[OrderConfig] = None,
 	             enable_margin: bool = False,
 	             portfolio_max_leverage: Decimal = Decimal("1"),
@@ -69,10 +69,13 @@ class OrderHandler:
 			OrderConfig validation now). Options:
 			- "immediate": Execute market orders immediately (live trading)
 			- "next_bar": Queue market orders for next bar execution (realistic backtesting)
-		commission_estimator: CommissionEstimator, optional
-			(quantity, price) -> estimated commission Decimal, forwarded to
-			OrderManager's admission reservation gate (Plan 05-06, D-04/D-15).
-			None -> zero estimate (golden run pins fees 0).
+		fee_model_provider: FeeModelProvider, optional
+			``() -> FeeModel | None`` — the venue's CURRENT fee model, forwarded to
+			OrderManager's admission reservation gate (Plan 05-06, D-04/D-18). The
+			ADMISSION CONVENTION for reading it (``side="buy"``,
+			``order_type="market"``) lives in ``AdmissionManager``, not here and not
+			in the provider. None (or a provider returning None) -> zero estimate
+			(golden run pins fees 0).
 		"""
 		self.global_queue = global_queue
 		self.portfolio_handler = portfolio_handler
@@ -99,7 +102,7 @@ class OrderHandler:
 			self.logger,
 			market_execution,
 			portfolio_handler,  # Pass portfolio_handler for position-aware logic
-			commission_estimator=commission_estimator,
+			fee_model_provider=fee_model_provider,
 			order_config=order_config,
 			enable_margin=enable_margin,
 			portfolio_max_leverage=portfolio_max_leverage,

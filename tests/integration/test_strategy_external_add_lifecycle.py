@@ -185,7 +185,7 @@ class _LifecycleSystem:
         if system._system_db_backend is not None:
             provision_schema(system._system_db_backend)
 
-        simulated = system.execution_handler.exchanges[("simulated", DEFAULT_ACCOUNT_ID)]
+        simulated = system.execution_handler.exchanges[("paper", DEFAULT_ACCOUNT_ID)]
         # Size the feed ring to the strategy warmup so the F-1 warmability gate admits SMA(3)
         # (an unsized ring holds only the newest-bar floor and would reject it).
         system.feed.register_raw_bar_consumer(
@@ -231,7 +231,7 @@ class _LifecycleSystem:
         ).install(system.event_handler)
 
         self.portfolio_id = system.portfolio_handler.add_portfolio(
-            name="ext_pf", exchange="simulated", cash=1_000_000)
+            name="ext_pf", exchange="paper", cash=1_000_000)
         # B2 (11-03): the subscription child FKs onto ``portfolios`` with ON DELETE CASCADE.
         # ``add_portfolio`` builds the in-memory runtime portfolio; the durable DEFINITION
         # row is a separate concern nothing writes until 11-08 wires

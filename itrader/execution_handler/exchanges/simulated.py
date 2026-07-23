@@ -668,7 +668,7 @@ class SimulatedExchange(AbstractExchange):
 		# closing with ``assert_never`` so mypy proves the branch set is
 		# exhaustive over FeeModelType — the runtime warning fallthrough is gone
 		# (mypy is the gate). Oracle-safe: the oracle runs ZeroFeeModel
-		# (exchange="csv", fees 0) and never reaches percent/maker_taker/tiered.
+		# (exchange="paper", fees 0) and never reaches percent/maker_taker/tiered.
 		model_type = config.model_type
 		# T-07-06 (07-02): use ``is not None`` not ``or`` so a LEGITIMATE zero
 		# config value (e.g. a zeroed determinism knob) is honored verbatim

@@ -38,6 +38,7 @@ import pytest
 from itrader.core.enums import PositionSide
 from itrader.core.ids import OrderId, PortfolioId
 from itrader.core.portfolio_read_model import PortfolioReadModel, PositionView
+from tests.support.venue_wiring import backtest_portfolio_handler
 
 pytestmark = pytest.mark.unit
 
@@ -118,7 +119,7 @@ class _ConformingFake:
         return None
 
     def exchange_for(self, portfolio_id: PortfolioId) -> str:
-        return "csv"
+        return "paper"
 
     def account_for(self, portfolio_id: PortfolioId) -> str | None:
         return "acct_a"
@@ -155,7 +156,7 @@ class _MissingReserveFake:
         return None
 
     def exchange_for(self, portfolio_id: PortfolioId) -> str:
-        return "csv"
+        return "paper"
 
     def open_position_count(self, portfolio_id: PortfolioId) -> int:
         return 0
@@ -220,8 +221,8 @@ def handler_with_portfolio():
 
     from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 
-    handler = PortfolioHandler(Queue())
-    portfolio_id = handler.add_portfolio("Conformance", "csv", 100000)
+    handler = backtest_portfolio_handler(Queue())
+    portfolio_id = handler.add_portfolio("Conformance", "paper", 100000)
     return handler, portfolio_id
 
 
@@ -280,7 +281,7 @@ def test_handler_available_cash_and_metadata(handler_with_portfolio):
     """available_cash/exchange_for/open_position_count delegate to the portfolio."""
     handler, portfolio_id = handler_with_portfolio
     assert handler.available_cash(portfolio_id) == Decimal("100000.00")
-    assert handler.exchange_for(portfolio_id) == "csv"
+    assert handler.exchange_for(portfolio_id) == "paper"
     assert handler.open_position_count(portfolio_id) == 0
 
 

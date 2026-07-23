@@ -9,6 +9,7 @@ from itrader.order_handler.order_handler import OrderHandler
 from itrader.events_handler.events import SignalEvent
 from itrader.core.enums import OrderType, Side
 from itrader.core.sizing import FractionOfCash, TradingDirection
+from tests.support.venue_wiring import backtest_portfolio_handler
 
 
 _STRATEGY_ID = 1
@@ -23,7 +24,7 @@ def order_handler():
     the queue on teardown so the strict warning filter never sees a dangling resource.
     """
     q = Queue()
-    ptf_handler = PortfolioHandler(q)
+    ptf_handler = backtest_portfolio_handler(q)
     ptf_handler.add_portfolio("test_ptf", "default", 10000)
     handler = OrderHandler(q, ptf_handler)
 

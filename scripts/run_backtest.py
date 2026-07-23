@@ -66,7 +66,7 @@ def main():
 
     # Construct the CSV-fed engine (D-01/D-02). Fees/slippage are exchange defaults (D-04).
     system = BacktestTradingSystem(
-        exchange="csv",
+        exchange="paper",
         start_date=START_DATE,
         end_date=END_DATE,
     )
@@ -87,9 +87,13 @@ def main():
     system.strategies_handler.add_strategy(strategy)
 
     # Single long-only portfolio with $10k starting cash (D-04).
+    # D-05/D-19: the venue is "paper" (one name for the simulated fill engine)
+    # and venue_name is passed EXPLICITLY, so the oracle portfolio is
+    # structurally identical to a live one at creation.
     portfolio_id = system.portfolio_handler.add_portfolio(
         name="oracle_pf",
-        exchange="csv",
+        exchange="paper",
+        venue_name="paper",
         cash=CASH,
     )
     strategy.subscribe_portfolio(portfolio_id)

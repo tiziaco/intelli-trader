@@ -112,7 +112,7 @@ def _instrument() -> Instrument:
 
 def _build_system():
     system = BacktestTradingSystem(
-        exchange="csv",
+        exchange="paper",
         csv_paths={_TICKER: HERE / "pair_exit_safety" / "bars.csv"},
         start_date="2020-01-01",
         end_date="2020-01-08",
@@ -125,7 +125,7 @@ def _build_system():
     strategy = _CloseOnlyShortStrategy(timeframe="1d", tickers=[_TICKER])
     sh.add_strategy(strategy)
     portfolio_id = system.portfolio_handler.add_portfolio(
-        name="exit_safety_pf", exchange="csv", cash=_CASH,
+        name="exit_safety_pf", exchange="paper", cash=_CASH,
         portfolio_config=_margin_config())
     strategy.subscribe_portfolio(portfolio_id)
 
@@ -143,7 +143,7 @@ def _build_system():
 
     system.runner._initialise_backtest_session()
     universe = Universe(members=[_TICKER], instrument_map={_TICKER: _instrument()})
-    system.execution_handler.exchanges[("simulated", DEFAULT_ACCOUNT_ID)].set_universe(universe)
+    system.execution_handler.exchanges[("paper", DEFAULT_ACCOUNT_ID)].set_universe(universe)
     system.order_handler.set_universe(universe)
     system.portfolio_handler.set_universe(universe)
 

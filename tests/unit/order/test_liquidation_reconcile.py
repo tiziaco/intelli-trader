@@ -28,6 +28,7 @@ from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.portfolio_handler.position import Position
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
+from tests.support.venue_wiring import backtest_portfolio_handler
 
 
 def _margin_config(max_leverage: str = "10") -> PortfolioConfig:
@@ -69,7 +70,7 @@ class _NullBrackets:
 
 def _build() -> tuple[PortfolioHandler, InMemoryOrderStorage, ReconcileManager]:
     """A handler wired with a real order_storage + a ReconcileManager over it."""
-    h = PortfolioHandler(Queue())
+    h = backtest_portfolio_handler(Queue())
     h.set_universe(_StubUniverse(_StubInstrument(_MMR, Decimal("0.001"))))
     storage = InMemoryOrderStorage()
     h.set_order_storage(storage)
@@ -85,7 +86,7 @@ def _build() -> tuple[PortfolioHandler, InMemoryOrderStorage, ReconcileManager]:
 
 
 def _open_long(h: PortfolioHandler) -> tuple[Any, Position]:
-    pid = h.add_portfolio(name="liq", exchange="simulated", cash=1000000.0,
+    pid = h.add_portfolio(name="liq", exchange="paper", cash=1000000.0,
                           portfolio_config=_margin_config())
     portfolio: Portfolio = h.get_portfolio(pid)
     txn = Transaction(
@@ -203,7 +204,7 @@ def test_unregistered_order_no_ops_mirror():
         action=__import__("itrader.core.enums", fromlist=["Side"]).Side.SELL,
         price=_ENTRY,
         quantity=_SIZE,
-        exchange="simulated",
+        exchange="paper",
         strategy_id=StrategyId(uuid_compat.uuid7()),
         portfolio_id=portfolio.portfolio_id,
     )

@@ -38,7 +38,7 @@ the TAB-indented donor block).
 """
 
 from itrader.core.exceptions import ConfigurationError
-from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
+from itrader.execution_handler.execution_handler import COMPUTE_VENUE, DEFAULT_ACCOUNT_ID
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.trading_system.compose import Engine
 from itrader.universe import Universe, derive_instruments, derive_membership
@@ -89,15 +89,30 @@ def wire_universe(engine: Engine) -> Universe:
 	# Inject the Universe into the simulated exchange so the admission gate
 	# resolves min_order_size Instrument-first (BTCUSD undeclared -> venue
 	# fallback 0.001 byte-identical, D-01a/Pitfall 2).
-	# D-27: pair-keyed registry. This lookup MUST be converted with the keying
-	# change — a stale bare-name `.get('simulated')` returns None, the isinstance
-	# guard below SILENTLY fails, and the Universe is never injected into the
-	# exchange. No exception is raised; min_order_size resolution changes and the
-	# money arithmetic moves underneath a green-looking suite.
-	simulated_exchange = engine.execution_handler.exchanges.get(
-		('simulated', DEFAULT_ACCOUNT_ID))
-	if isinstance(simulated_exchange, SimulatedExchange):
-		simulated_exchange.set_universe(universe)
+	# F-4/D-05 — this site WAS the phase's highest silent-corruption hazard, and
+	# it is now FAIL-LOUD. It used to be a soft `.get(...)` plus an isinstance
+	# guard that DECIDED whether the injection happened: a stale key returned
+	# None, the guard skipped, `set_universe` never ran, min_order_size
+	# resolution changed and the money arithmetic moved underneath a green
+	# suite, with no exception raised anywhere near the defect.
+	#
+	# The subscript below raises KeyError on a stale key, matching the fail-loud
+	# lookup idiom in `venues/registry.py`. The isinstance check is retained
+	# ONLY as a mypy narrowing and it RAISES rather than skipping: a wired
+	# engine whose paper venue is not a SimulatedExchange is a wiring bug, not
+	# an optional configuration.
+	paper_exchange = engine.execution_handler.exchanges[
+		(COMPUTE_VENUE, DEFAULT_ACCOUNT_ID)]
+	if not isinstance(paper_exchange, SimulatedExchange):
+		raise ConfigurationError(
+			reason=(
+				"Universe injection target is not a SimulatedExchange: the "
+				f"('{COMPUTE_VENUE}', '{DEFAULT_ACCOUNT_ID}') venue resolved to "
+				f"{type(paper_exchange).__name__}. The paper venue backs the "
+				"simulated fill engine; a different object here means the "
+				"engine was wired wrong, and skipping the injection would "
+				"silently change min_order_size resolution."))
+	paper_exchange.set_universe(universe)
 	# Plan 02-03 (Pitfall 1, BLOCKING): mirror the exchange injection into the
 	# ORDER domain so the admission leverage cap (D-04) can read
 	# Instrument.max_leverage. Same Trap-4 ordering — the Universe was just

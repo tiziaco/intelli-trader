@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: Live System Refactor & Live-Readiness Hardening
-current_phase: 12
-current_phase_name: Test Migration + Gates
+current_phase: 11.2
+current_phase_name: INSERTED — split out of Phase 11.1
 status: planning
-stopped_at: Phase 11 context gathered
-last_updated: "2026-07-22T10:32:17.444Z"
+stopped_at: Phase 11.1 context gathered (structural scope; 11.2 split out)
+last_updated: "2026-07-23T08:33:48.296Z"
 last_activity: 2026-07-22
-last_activity_desc: "Completed quick task 260722-g6w: closed Phase 11 code-review blockers CR-01 + CR-05"
+last_activity_desc: "Split ACCT-11 into Phase 11.3; repaired roadmap checklist (11.2 missing, 11.1 stale) and phase counters"
 progress:
-  total_phases: 12
-  completed_phases: 10
-  total_plans: 43
-  completed_plans: 43
-  percent: 83
+  total_phases: 18
+  completed_phases: 14
+  total_plans: 53
+  completed_plans: 53
+  percent: 78
 ---
 
 # Project State
@@ -26,22 +26,98 @@ See: .planning/PROJECT.md (Current Milestone: v1.8 — Live System Refactor & Li
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct,
 deterministic, cross-validated numbers (oracle **134 / `46189.87730727451`**; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 shipped a live operating mode (paper-first on OKX) without disturbing that oracle.
-**Current focus:** Phase 11 — multi-portfolio-live
+**Current focus:** Phase 11.1 — account-provisioning-mandatory-account-identity
 thin ~200-line facade over focused, venue-parametrized, FastAPI-ready collaborators — **without
 disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI itself is out of scope
-(LR-01). Full scope: core refactor (P1–P8 + P12) + the three ★ feature-adds (P9–P11).
+(LR-01). Full scope: core refactor (P1–P8 + P12 + P13) + the three ★ feature-adds (P9–P11).
 
 ## Current Position
 
-Phase: 11.1 — Account Provisioning + Mandatory Account Identity (INSERTED)
+Phase: 11.2 — Account Provisioning Bootstrap + Review Closures (INSERTED — split out of Phase 11.1)
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-07-22 — Completed quick task 260722-hpz: closed WR-08, the last Phase 11 review finding outside 11.1
-locked seven-wave decomposition. Plan-checker: VERIFICATION PASSED, zero blockers, zero warnings. Gates green —
-7/7 MPORT requirements covered, 30/30 CONTEXT decisions cited by ID in must_haves, 14/14 spec-less probe edges
-authored (8 covered truths + 3 flat-scalar backstop markers + 3 flagged unclassified assumptions). Preceded by
-CONTEXT.md + DISCUSSION-LOG.md (13945336): eleven gray areas discussed, 30 decisions (D-01..D-30) locked, three
-sub-decisions explicitly superseded and reconciled in-file.
+provisioning to Phase 11.2, and WR-06 / WR-07 were settled in-file as D-15 (11.2) / D-14 (here).
+Sizing and wave split are locked by the plans. Resume: `/gsd:execute-phase 11.1`.
+Last activity: 2026-07-22 — Phase 11.1 complete, transitioned to Phase 11.2
+
+**Planning session (2026-07-22).** Research → pattern-map → plan → check, all gates green:
+8/8 VENUE requirements covered, **12/12** CONTEXT decisions (D-01..D-08, D-14, D-17..D-19) cited by
+`D-NN` token in `must_haves`/`objective`, 17/17 spec-less probe edges authored (10 plain truths +
+3 flat-scalar `verification: backstop` markers + 4 flagged `unclassified` assumptions, never
+auto-backstopped), 4 descriptor-less prohibitions. Plan-checker: **VERIFICATION PASSED**, zero
+blockers, one warning (see below). Artifacts: `11.1-RESEARCH.md` (73d97b1e), `11.1-VALIDATION.md`
+(74292922), `11.1-PATTERNS.md` (7e6c063a), plans (c80899fd, 4c67e8ac).
+
+**Research corrected 11 factual claims in CONTEXT.md.** The five that reshaped the plan:
+
+- **F-2 (CRITICAL, now Wave 1 / plan 01):** `ConnectorProvider` is NOT import-inert —
+  `itrader/connectors/__init__.py:11-12` eagerly re-exports `OkxConnector`, pulling `ccxt` **and**
+  `itrader.connectors.okx`, both in `test_okx_inertness.py`'s `_FORBIDDEN`. D-04 puts
+  `ConnectorProvider` on the backtest import path, so GATE-01 reddens unless the barrel is fixed
+  FIRST. Zero consumers tree-wide; two-line deletion. CONTEXT's D-04 GATE-01 evidence was correct
+  but about a different package (`itrader.venues`).
+
+- **F-5 (CRITICAL):** the byte-exact oracle runs the **legacy** construction arm
+  (`scripts/run_backtest.py:68` → `BacktestTradingSystem(exchange="csv", …)`), NOT
+  `build_backtest_system`. Editing only the factory arm would leave the oracle green while proving
+  nothing. Plans 04/06/07 name both arms.
+
+- **F-1 (CRITICAL):** D-03's "`new_account` loses its `portfolio_ref` parameter" is false for
+  `OkxVenuePlugin` — it uses `portfolio_ref` for D-11 account-identity resolution via
+  `_account_id_for`, which D-01 does not touch. Decision stands; plan 09 passes `account_id` on the
+  config from `add_portfolio` and preserves the raise-on-absent-id guard verbatim.
+
+- **F-3 / F-4 (CRITICAL):** the `'csv'`→`'paper'` blast radius is **27 files**, not "roughly six test
+  sites". Two production sites CONTEXT never named: `order_validator.py:117`'s allowlist (would
+  reject **every** order → 0 trades) and `universe_wiring.py:98`'s silent `.get` + `isinstance`
+  guard (Universe never injected, money arithmetic moves under a green suite — the phase's top
+  silent-corruption risk). Plan 06 asserts the lookup is non-None rather than trusting the oracle diff.
+
+- **F-10:** CONTEXT's "~360 lines deleted" spans 11.1 **and** 11.2; 11.1's real budget is **≈186**.
+  It is nowhere a plan gate, and a ROADMAP correction note was added.
+
+**Two owner decisions taken this session (post-research):**
+
+1. The `('simulated', DEFAULT_ACCOUNT_ID)` registry key is **retired in full**, not kept as a
+   transitional alias — so F-4 and F-11 land in the same commit as the re-key (plan 06).
+
+2. **D-06 and D-08 land in ONE wave** (plan 07). Landing D-06 alone makes `compose.py:239` return
+   `None` and the estimate degrade to `Decimal("0")` — *also* the golden value, so the oracle would
+   stay green while the reservation path is structurally broken.
+
+**Planner inverted RESEARCH's wave order:** D-05/D-19 (plan 06, wave 3) now lands *before* D-06/D-08
+(plan 07, wave 4). Renaming first means `('paper', default)` already exists and resolves when plan 07
+changes *who builds* the object behind it, so the green-and-wrong state never exists. Plan-checker
+scrutinised and confirmed this.
+
+**✓ RESOLVED — owner sign-off 2026-07-22. Deferred to Phase 12 as COMP-07.** Plan 09 retains
+`_attach_venue_accounts` (116 lines) rather than deleting it, for a boot-order fact neither CONTEXT
+nor RESEARCH states: live portfolios are rehydrated (`portfolio_rehydrate.py:130`) **before**
+`_build_account_specs` builds their `VenueSpec`, so a `VenueAccount` cannot be minted at
+portfolio-creation time. The construction-time account is therefore always the compute leaf.
+Accepted consequence: the phase's headline "composition stops reaching in afterwards" holds for the
+**compute-account path** (backtest + paper, fully fixed by D-01/D-02/D-03); the **live venue-truth
+swap** remains and its removal is now **COMP-07** (REQUIREMENTS.md + ROADMAP Phase 12 criterion 8).
+Plan 09's flagged block records the sign-off so no executor reopens it.
+
+**⚠ Carried to Phase 12's discuss step — COMP-07 conflicts with Phase 12's own scope fence.** COMP-07
+requires the live boot ORDER to change (venue/account assembly before portfolio rehydrate), but
+Phase 12 is declared *"pure code-motion — no semantic change to any live contract"* and its criterion
+7 pins the current order as *"a hard invariant, not an implementation detail,"* enforced by
+`test_distinct_account_invariant.py` passing **unmodified**. COMP-07 is therefore the one semantic
+change in an otherwise behaviour-preserving phase. Decide at discuss time: widen the fence for it
+(then that test must change, and the four load-bearing reasons at `live_trading_system.py:1896-1929`
+must be re-derived against the new order), or split COMP-07 into its own phase. A conflict note is
+recorded inline in both ROADMAP.md and REQUIREMENTS.md.
+
+---
+
+*Historical (Phase 11, superseded — retained for the record):* Phase 11 locked a seven-wave
+decomposition; plan-checker VERIFICATION PASSED with zero blockers and zero warnings; gates green —
+7/7 MPORT requirements covered, 30/30 CONTEXT decisions cited by ID in must_haves, 14/14 spec-less
+probe edges authored (8 covered truths + 3 flat-scalar backstop markers + 3 flagged unclassified
+assumptions). Preceded by CONTEXT.md + DISCUSSION-LOG.md (13945336): eleven gray areas discussed,
+30 decisions (D-01..D-30) locked, three sub-decisions explicitly superseded and reconciled in-file.
 
 **Carried into planning (found during discussion):**
 
@@ -64,7 +140,7 @@ sub-decisions explicitly superseded and reconciled in-file.
   portfolio mismatch — benign at N=1, wrong at N>1. Must become evaluate-all.
 
 - **Highest regression risk:** D-09 moves per-portfolio config off `portfolio_account_state.config_json` (P9 D-25)
-  onto the new `portfolios` row — that is the tested RTCFG-03 path **P12's TEST-03 gate verifies**. The migration
+  onto the new `portfolios` row — that is the tested RTCFG-03 path **P13's TEST-03 gate verifies** (was P12 before the 2026-07-22 renumber). The migration
   must move data, not just repoint reads.
 
 - **Folded todo:** `b2-strategy-subscription-portfolio-id-uuid-column` — String→Uuid **and** the FK to `portfolios`
@@ -170,7 +246,7 @@ Progress: [██████████] 100% (8/9 core phases; the three ★ 
 2. **OKX import-inertness** — `tests/integration/test_okx_inertness.py` stays green, extended to assert
    **register-vs-build** on P1/P2/P4/P5 (registering a venue imports no `ccxt.pro` until built;
    `SystemConfig` never constructs Postgres `SqlSettings` at import). **Zero new dependency / no poetry
-   change** anywhere in P1–P12.
+   change** anywhere in P1–P13.
 
 3. **Held throughout** — Decimal money end-to-end; single UUIDv7; determinism (business `time`, seeded
    RNG, injected clock); `mypy --strict` clean on new code; `filterwarnings=["error"]` green; tabs/spaces
@@ -179,7 +255,7 @@ Progress: [██████████] 100% (8/9 core phases; the three ★ 
 ## Phase Map (v1.8 — Phases 1-12, numbering reset)
 
 Dependency graph (not strict numeric order): `P1 · P2` (no deps) → `P3{P1,P2}` → `P4{P3}`; `P5{P2,P3}`;
-`P6{P4,P5}` → `P7{P6}` · `P8{P6}`; `P9★{P4,P7}`; `P10★{P4,P6}`; `P11★{P5,P7}`; `P12{P6,P11}`.
+`P6{P4,P5}` → `P7{P6}` · `P8{P6}`; `P9★{P4,P7}`; `P10★{P4,P6}`; `P11★{P5,P7}` → `P11.1{P11}` → `P12{P11.1}`; `P13{P6,P11,P12}`.
 
 | Phase | Name | Requirements | Notes |
 |-------|------|--------------|-------|
@@ -193,11 +269,14 @@ Dependency graph (not strict numeric order): `P1 · P2` (no deps) → `P3{P1,P2}
 | 8 | Error Subsystem | ERR-01..04 | **CF-1 aggregate breaker MUST trip** (hard criterion); CF-5 |
 | 9 ★ | Runtime-Config Platform | RTCFG-01..06 | feature-add; allowlist + venue-kind-aware fee/slippage gate |
 | 10 ★ | Strategies Registry | STRAT-01..03 | feature-add; STRAT-03 atomic re-config folds pair-strategy TODO |
+| 10.1 | StrategiesHandler Decomposition | DECOMP-01, 01a, 02, 03 | INSERTED follow-up to P10 |
 | 11 ★ | Multi-Portfolio-Live | MPORT-01..07 | LR-03 (never trim); distinct-`account_id` fails loud |
-| 12 | Test Migration + Gates | TEST-01..04 | lands last; production replay-free; attribution gate |
+| 11.1 | Account Provisioning + Mandatory Account Identity | ACCT-01..11 | INSERTED follow-up to P11; DB as sole account-truth source |
+| 12 | Live Composition-Root Dissolution | COMP-01..06 | INSERTED 2026-07-22; `build_live_system` disappears; behaviour-preserving |
+| 13 | Test Migration + Gates | TEST-01..04 | lands last; production replay-free; attribution gate |
 
-**Coverage: 69/69 mapped, 0 orphans.** *(was stated as 64/64 through 2026-07-20 — stale: it predated the four `DECOMP-*` reqs from the inserted P10.1, so the true count was 68 before MPORT-07 was added 2026-07-21.)* ★ = trimmable feature-add (in scope — owner chose full scope; the
-trim boundary P1–P8+P12 core vs P9–P11 ★ is noted, not taken). Research flags (plan-time research): P6
+**Coverage: 86/86 mapped, 0 orphans.** *(was stated as 69/69 through 2026-07-22 — stale: it predated the eleven `ACCT-*` reqs from the inserted P11.1, so the true count was 80 before the six `COMP-*` were added 2026-07-22. Earlier "64/64" was likewise stale from before the four `DECOMP-*` of P10.1.)* ★ = trimmable feature-add (in scope — owner chose full scope; the
+trim boundary P1–P8+P12+P13 core vs P9–P11 ★ is noted, not taken). Research flags (plan-time research): P6
 (`UniverseWiring` byte-exact discipline), P8 (CF-1 route-classification + livelock test), P11
 (`client_order_id`/`portfolio_id` two-key attribution). Skip research-phase: P2/P4/P5 (specified/mechanical).
 
@@ -279,6 +358,8 @@ trim boundary P1–P8+P12 core vs P9–P11 ★ is noted, not taken). Research fl
 
 - Phase 10.1 inserted after Phase 10: StrategiesHandler Decomposition (URGENT)
 - Phase 11.1 inserted after Phase 11: Account Provisioning + Mandatory Account Identity — DB becomes sole source of portfolio+account truth; closes code-review CR-02/CR-03/WR-03/WR-05 (URGENT)
+- Phase 11.2 inserted after Phase 11.1: Split out of Phase 11.1 (D-16): ACCT-01..11 plus the locked decisions D-09..D-13/D-15 move here; 11.1 keeps the structural half
+- Phase 11.3 inserted after Phase 11.2: D-09 Config-Move Migration Guard — ACCT-11 split out of Phase 11.2
 
 ### Decisions
 
@@ -390,7 +471,7 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 - **Indentation hazard:** handler modules use tabs; `config/`, `core/`, `price_handler/feed/`,
   `itrader/storage/`, events package use 4 spaces. Match the sibling file — never normalize.
 
-- **Zero new dependency / no poetry change** anywhere in P1–P12 (adding a lib regresses inertness).
+- **Zero new dependency / no poetry change** anywhere in P1–P13 (adding a lib regresses inertness).
 - New requirements discovered during execution are added to REQUIREMENTS.md with traceability, not
   silently folded into a running phase.
 
@@ -427,6 +508,10 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 | 260722-g6w | Close the two Phase 11 code-review BLOCKERS that need no product decision, as two atomic commits. **CR-01 (cross-venue account conflation)** — the live composition root derived its account set and attached venue accounts by bare `account_id` STRING, discarding the venue half of the `(venue_name, account_id)` pair the rest of the phase pins identity on (the `venue_accounts` composite PK, the `portfolios` FK, `ExecutionHandler.exchanges`, `ConnectorProvider._memo`). A durable portfolio on `binance/main` was handed the **OKX** `VenueAccount` on an okx boot — so `ReconciliationCoordinator` snapshotted one venue's account against another venue's positions and `VenueReconciler` could emit reconciling fills into the wrong portfolio. Fix is the venue FILTER, not a re-key: `_account_ids_for_spec` + `_attach_venue_accounts` take a required keyword-only `venue_name` and skip portfolios whose venue isn't the booted one, venue resolved as `venue_name or exchange` so legacy `add_portfolio(name,'okx',cash)` portfolios (venue_name=None) are NOT stripped. The lifecycle map was deliberately NOT re-keyed to a pair — `assemble_venues` keys by `spec.account_id or 'default'` (`assemble.py:178`) and every spec in one call shares `exchange`, so the map is single-venue BY CONSTRUCTION; re-keying would ripple into 5 call sites for zero behavioural gain. Existing fail-loud `ValidationError` for a same-venue unassembled account preserved (guard ORDER is load-bearing: venue guard precedes the lookup). 8 existing test call sites updated. **CR-05 (per-account credential bleed)** — `OkxSettings(**resolved)` is a `pydantic_settings.BaseSettings`, so every field a partial per-account prefix didn't supply was still env-completed via `validation_alias`: a prefix supplying only `OKX_ACCT_B_API_KEY` authenticated with account B's key + the **ambient global** secret+passphrase, silently, reintroducing at FIELD granularity the fallback T-11-18 forbids at REFERENCE granularity (and D-04's UID guard can't catch it — the ambient secret is a real account whose UID is stable, so trust-on-first-use records the wrong one). Fix gates `OkxSettings`' REQUIRED field set (derived from class-level `model_fields`, = exactly the auth triple; `sandbox`/`region` carry defaults) before construction and raises `CredentialResolutionError` naming missing FIELD NAMES only. Env source deliberately NOT suppressed — init kwargs already outrank it, and suppression would strip `sandbox`/`region` and silently flip a configured EEA account to global+sandbox (OKX 50119). Legacy `secret_ref is None` ambient path byte-identical. **RED proof independently reproduced by the orchestrator**, not taken on the executor's word: pre-fix derivation returned `['main']` for a binance portfolio on an okx boot (post-fix `[None]`, while same-venue AND legacy-venue portfolios stay included), and the CR-05 test failed `DID NOT RAISE CredentialResolutionError` with a probe showing the built connector carrying the ambient secret. Gates: 2819 passed / 6 skipped (pre-existing OKX-credential-gated live suites), oracle byte-exact (134 / 46189.87730727451), inertness green, mypy clean (281 files), exactly 5 files touched. **Deliberately left open** (need product decisions): CR-02 (is account_id mandatory in live), CR-03 (post-boot attach), CR-04 (D-09 config migration no-op), and every WR-* — notably WR-03, whose `or DEFAULT_ACCOUNT_ID` registration/raw-read asymmetry touches the same code and is byte-identical to before. | 2026-07-22 | 47a0e185 | [260722-g6w-fix-code-review-blockers-cr-01-cross-ven](./quick/260722-g6w-fix-code-review-blockers-cr-01-cross-ven/) |
 
 | 260722-hpz | Close Phase 11 code-review **WR-08** — the last review finding not folded into Phase 11.1. `LiveTradingSystem.start()` starts EVERY venue lifecycle but `stop()` read `next(iter(lifecycles.values()), None)` and stopped only the primary, justified by "close_all() … the memo is shared across accounts". That justification covers only ONE of `VenueLifecycle.stop()`'s two branches: the `self._connectors is not None` arm drives `ConnectorProvider.close_all()` (shared memo, every account), but its documented `elif self._bundle.connector is not None: disconnect()` fallback exists precisely for lifecycles built WITHOUT a shared provider and covers only THAT bundle — so in that configuration every non-primary connector leaked a dangling authenticated venue socket, and a `ResourceWarning` is a HARD failure under `filterwarnings=["error"]`. Fix: snapshot `_venue_lifecycles.items()` into a list BEFORE the `try` (keeps the defensive `getattr` for a partially-constructed facade, keeps the map available to `finally` on every return path, and avoids dict-mutation-during-iteration), then loop in the `finally`. Safe because `close_all()` clears its memo inside a `finally` (`connectors/provider.py:82-91`) — **idempotency independently verified by the orchestrator**, since it is the load-bearing premise — so extra calls iterate an empty memo. **Guard placement (decision):** the `try/except` sits at the facade call site, per iteration, NOT inside `VenueLifecycle.stop()` — that method must keep raising for its own single-lifecycle callers and its unit contract; isolation is a property of the fan-out, and only the call site knows there are siblings left to stop and a SQL-spine dispose still to run. Swallowing here also stops a teardown failure from masking an exception already propagating out of the `try` body. The old `if lifecycle is not None` guard is gone because an empty-map loop is self-guarding. Error log now names the failing account. **RED independently reproduced by the orchestrator** at the pre-fix commit: exactly 3 failed / 99 passed, all three showing `assert ['acct-a'] == ['acct-a', 'acct-b', 'acct-c']`. The 4th test (partially-constructed facade) passes both before and after and is labelled a preservation guard so its green is not misread as evidence. Gates: 2823 passed / 6 skipped (pre-existing OKX-credential-gated opt-ins), oracle byte-exact (134 / 46189.87730727451), inertness green, mypy clean (281 files), exactly 2 files touched. Executor noted two out-of-scope observations for Phase 11.1: `_streaming_lifecycles()` has no teardown counterpart in `stop()`, and `VenueLifecycle.stop()`'s shared-provider branch has cross-account side effects (the first `close_all()` disconnects every account), which matters if 11.1 ever needs to stop one account without stopping the run. | 2026-07-22 | 59eb44e3 | [260722-hpz-fix-code-review-wr-08-stop-tears-down-ev](./quick/260722-hpz-fix-code-review-wr-08-stop-tears-down-ev/) |
+| 260723-dc4 | Close the three no-decision-needed WARNINGs from the Phase 11.1 code review as one hygiene batch, three atomic commits, behaviour-preserving. **WR-02** — `DEFAULT_ACCOUNT_ID` had five homes behind a justification that was factually false: `bundles.py`, `assemble.py` and `venue_uid_guard.py` each re-declared a private `_DEFAULT_ACCOUNT_ID = "default"` commented as "declared locally … so this module keeps its zero-dependency import-inertness posture", while `bundles.py` already imported `itrader.logger` and `assemble.py` already imported `itrader.venues.lifecycle`. `venues/registry.py` — the declared home — has ZERO runtime imports (`__future__` + `TYPE_CHECKING` only), making it the cheapest import in the package, so the stated cost never existed. All three private copies deleted and imported from the registry, plus the two inline `spec.account_id or "default"` literals in `okx_plugin.py`; the planner found FOUR reference sites the brief had not enumerated (`bundles.py:89` docstring, `assemble.py:138`/`:232`, `venue_uid_guard.py:95`). The two false comments were deleted, but `venue_uid_guard.py`'s was NOT — it documents the real NULL-PK-half hazard, so its substance was preserved and moved to the use site rather than swept up with the others. **WR-07** — three `('paper', DEFAULT_ACCOUNT_ID)` lookups still spelled the venue name literally despite `registry.py` pinning `COMPUTE_VENUE` as its single home precisely because "a second literal … is how the two arms end up asking the bundle memo for different venues", and they were mutually inconsistent: `universe_wiring.py` had been hardened this phase into a fail-loud subscript while `live_trading_system.py:637` still used `.get(...)`, whose `None` flowed into `SessionInitializer` and silently degraded venue metadata (`validate_symbol` / `resolve_precision`) with no exception. All three now key off `COMPUTE_VENUE` (each file already imported `DEFAULT_ACCOUNT_ID` from the registry, so this extended one existing import line per file — zero new import edges), and the live `.get` was promoted to a subscript so its fallback arm fails as loudly as the backtest one. **The promotion is inert on a wired engine** — `ExecutionHandler.init_exchanges` (`execution_handler.py:303`) unconditionally resolves `self._venue_bundles.get(COMPUTE_VENUE, DEFAULT_ACCOUNT_ID, None)` — verified independently by the executor rather than inherited from the plan; the streaming arm is untouched. `universe_wiring.py:110`'s `'paper'` inside a `ConfigurationError` f-string was collateral the brief missed and was decided at planning (rendered text byte-identical, no test asserts on the message) rather than left as an executor judgment call. **WR-09** — `VenueBundles.logger` was constructed and never read (2 tree-wide occurrences, both writes) and was itself the import falsifying the module's own inertness comment; deleted with its `get_itrader_logger` import. Two stale docstrings in `assemble.py:184` and `account/conformance.py:6` still described the factory as `lifecycle.bundle.account_factory(portfolio)` — the positional-portfolio signature this phase deleted — and were corrected to the real keyword-only `(*, initial_cash, enable_margin, account_id, state_storage)`; `conformance.py` matters most because its stated purpose is keeping that wiring honest under `mypy --strict`. Five unused imports removed (`FillEvent`, `Callable`×2, `PortfolioUpdateEvent`, `List`), each confirmed to be its file's only occurrence — note `live_trading_system.py` sits under a `[[tool.mypy.overrides]]` `ignore_errors` block so mypy would never have caught leftovers there. **Near-miss worth recording:** the executor's first edit to `backtest_trading_system.py` used five tabs where the file has four; the Edit tool's exact-match requirement rejected it and it was corrected against `cat -et`. That failure mode is SILENT if a file is written rather than edited — the file still parses. All four gates re-run independently by the orchestrator, not taken on the executor's word: oracle byte-exact (134 / 46189.87730727451, `check_exact=True`), inertness 4 passed, `mypy itrader` clean (282 files), full suite 2877 passed / 6 skipped — exactly baseline. 12 files, 37 insertions / 44 deletions (deletions-dominant). Added lines checked per-file against the split indentation regime (`live_trading_system.py` 4-space; `universe_wiring.py` / `backtest_trading_system.py` tabs) — zero violations. **Deliberately out of scope:** the other nine 11.1 findings. CR-02 (reject the `enable_margin` runtime flip), WR-04+WR-08 (required `state_storage` kwarg on the simulated leaves), WR-01 (venue-aware `fee_model_provider`) and WR-03 have owner decisions settled and are queued for Phase 11.2; WR-06 (unlocked check-then-set on the bundle/connector memos) is deferred to Phase 12 with the threading contract. | 2026-07-23 | 264c74bc | [260723-dc4-11-1-review-hygiene-wr-02-wr-07-wr-09-co](./quick/260723-dc4-11-1-review-hygiene-wr-02-wr-07-wr-09-co/) |
+| 260723-dq7 | Close four decision-settled Phase 11.1 review findings, four atomic commits. **CR-03 (CRITICAL, live-blocking)** — `EnhancedOrderValidator.supported_exchanges` was `{NYSE, NASDAQ, BINANCE, OANDA, default, paper}` with no `okx`, and `_validate_market_conditions` reads `portfolio_handler.exchange_for(portfolio_id)`, which returns `"okx"` for a live OKX portfolio (`Portfolio.exchange` derives from `venue_name`). A non-member yields `ValidationLevel.ERROR`/`UNSUPPORTED_EXCHANGE` and `validate_order_pipeline` short-circuits at PHASE 2 — so **no `OrderEvent` was ever emitted for the one live venue this milestone ships**. The 11.1 rename pass had repointed `csv`/`simulated` → `paper` and added a "must NEVER be widened … Repoint it; do not weaken it" comment, which then read as an assertion the set was complete. **Owner decision: TACTICAL, not structural** — `"okx"` added, the comment corrected to record that a REGISTERED execution venue must be admissible; deriving the allowlist from the venue registry (the review's preferred fix) was explicitly deferred to avoid coupling the validator to the registry mid-batch. Regression test added beside the three existing default-deny tests, which are pinned as must-not-weaken. Todo `okx-missing-from-validator-allowlist.md` moved pending→completed. **CR-01 residual** — the account-less-portfolio half was fixed earlier (ccfdc3ef); the review's SECOND remedy was never applied, so `_run_replay` still printed "Paper replay complete" with no assertion and an inert composition could again report success with zero trades — the exact "green suite, dead path" shape 11.1 claims to close. `_run_replay` and `_run_okx_smoke` are separate functions so no mode branching was needed (a flat session IS legitimate for `--mode okx`, never for the golden-CSV replay). Guard shaped as a `_refuse_inert_replay(trade_count)` module-level helper matching the script's `_`-prefixed style; **proven end-to-end** by patching `build_trade_log` to `[]` and confirming process exit code 1. Deliberately does NOT assert an exact count — that would duplicate the oracle and couple the smoke script to the golden number. **WR-03** — `OkxVenuePlugin.account_factory` did `replace(account_config, account_id=account_id or account_config.account_id, ...)`, overriding the id but leaving `account_config.spec` — the spec the BUNDLE was built for. `new_account` then calls `connectors.get("okx", account_id, config.spec)`, so a mismatched id would memoize a connector under `("okx","B")` built from `OkxConnectorPlugin.build(spec_of_A)` — account B's session authenticated with **account A's `secret_ref`**, the cross-account misroute D-11/D-12 exist to close. **This was NOT a mechanical fix and was escalated:** two existing tests deliberately asserted the forbidden behaviour with D-11 rationale docstrings, one of them asserting `from_factory._connector is connectors.get("okx","acct-b",spec)` outright. Owner was shown both and chose **ship the guard, rewrite both tests** — the accepted reasoning being that D-11's stated concern is the closure preferring its BUNDLE id over a supplied one (which would attach a portfolio to a different real venue balance), and **refusing a mismatch is not widening**, so D-11's rationale survives while only the assertion chosen for an unreachable case changes. Guard raises `ValidationError` before the `replace(...)`. **Reachability verified before writing it** — unreachable on every current path (`live_trading_system.py:1726` passes the very id it looked the lifecycle up by; `portfolio_handler.py:428` mints under arbitrary ids but always fetches `COMPUTE_VENUE`, the paper arm) — so this is a latent-hazard guard, not a live behaviour change. Exactly two tests changed, no third went red; both kept their D-11 prose, updated to the new contract; the omitted-id fallback and keyword-only-signature tests untouched. Guard deliberately NOT mirrored onto `paper_plugin.py`, where minting under an arbitrary portfolio `account_id` is legitimate and the same guard would refuse every non-default portfolio. **WR-05** — one money scale written three times across a domain boundary: `Portfolio._validate_initial_state` re-derived `to_money(cash).quantize(Decimal('0.01'), ROUND_HALF_UP)` and demanded EXACT equality with `account.balance`, which the account had produced from its own independent literal at `simulated.py:139`, which in turn ignored the account's own declared `self.precision` set nine lines later. A one-line scale change on either side would have raised on EVERY portfolio construction including the oracle path. **The review's proposed fix was wrong and was corrected at planning:** it suggested `core.money.quantize(value, instrument=None, kind="cash")`, but the real signature is `quantize(value, instrument: Instrument, kind)` and derives the cash scale from `instrument.quote_currency` — there is no `Instrument` at portfolio construction, so that helper is unusable here. Fix forced onto the account instead: `precision` hoisted to a class attribute on the `Account` ABC (which already carries non-abstract members `is_venue_truth`/`restore_cash`) with a `quantize_cash` helper, so it resolves under `mypy --strict` where `Portfolio.account` is typed as the ABC. **Second deviation:** the leaf's instance assignment was DELETED rather than reordered — `VenueAccount` has no `precision`, `SimulatedMarginAccount` never reassigns it, `simulated.py:170` was the sole assignment package-wide and no test reads or patches it. Both values were `Decimal('0.01')`, so byte-identical; value-preservation checked site-by-site, not assumed. Also picks up `simulated.py:621`'s existing precision read for free. All gates re-run independently by the orchestrator: oracle byte-exact (134 / `46189.87730727451`, `check_exact=True`), inertness green, `mypy itrader` clean (282 files), full suite **2879 passed / 6 skipped** (+2 from the 2877 baseline: CR-03's test, and WR-03's one-removed/two-added), `run_live_paper.py --mode replay` exit 0 at 134 trades. 9 files, 229 insertions / 21 deletions. Indentation re-measured per file before each first edit (`portfolio.py` tabs; `account/`, `venues/`, `order_validator.py`, `scripts/` 4-space). **Still open from this review:** CR-02, WR-01, WR-04+WR-08 (owner decisions settled, queued for Phase 11.2) and WR-06 (deferred to Phase 12 with the threading contract). | 2026-07-23 | 95b2929c | [260723-dq7-11-1-review-cr-03-okx-allowlist-cr-01-re](./quick/260723-dq7-11-1-review-cr-03-okx-allowlist-cr-01-re/) |
+| 260723-eca | Docs-only: make the Phase 11.1 review resolution state durable before 11.2 planning, so four owner decisions that existed only in a session transcript survive into the phase that consumes them. **`11.1-REVIEW.md`** gains an append-only `## Resolution (2026-07-23)` addendum: a disposition table for all 12 findings (7 CLOSED in code by `260723-dc4`/`260723-dq7`; CR-02, WR-01 and WR-04+WR-08 DECIDED and queued for Phase 11.2; WR-06 DEFERRED to Phase 12), plus each decision's RATIONALE — which is the load-bearing part, since rationale is what stops a decision being re-litigated. **CR-02 → reject the flip**: `enable_margin` is read at CONSTRUCTION by five collaborators (`AdmissionManager._enable_margin`, `EnhancedOrderValidator.enable_margin`, `ManagedStrategies.enable_margin`/SHORT-01, the account leaf kind, and `Portfolio.process_transaction` at fill time) while `ConfigRouter._apply_portfolio` calls only `portfolio.update_config` — so a runtime flip desynchronizes FOUR OF THE FIVE already, today, before 11.1 touched anything; the account-leaf mismatch the review reported is the newest symptom, not the defect. **WR-04+WR-08 → required keyword** (one decision, two sites), chosen over a durability guard in `Portfolio._init_managers` because that guard needs an `_is_durable` predicate that does not exist (no durability marker on `PortfolioStateStorage` — it would need a storage-concretion import inside `Portfolio` or a new property on the base and all three implementations) and because it leaves the in-memory default reachable for callers not routing through `Portfolio`; blast radius verified at 6 leaf constructions in 3 test files, the sole production site already compliant. Carries an **ORDERING CONSTRAINT**: must land BEFORE 11.2's ACCT-05, which ADDS portfolio-creation paths — first means the new paths structurally cannot forget the seam, after means adding paths through the trap then closing it behind them. **WR-01 → venue-aware provider + correct the comment**: oracle-safe (OKX yields None, paper yields ZeroFeeModel, both zero today) but breaks the coupling where a venue-scoped fee update on the paper exchange silently moves OKX reservations; the in-code justification is false in its mechanism (the provider never looks at the OKX exchange, it returns paper's model), and giving `OkxExchange` a real fee model was considered and scoped out as live-behaviour work. **WR-03 → guard not support**, recorded because it overrode two tests that deliberately asserted the forbidden behaviour with D-11 docstrings — the accepted reasoning being that D-11's concern is the closure preferring its BUNDLE id over a supplied one, and refusing a mismatch is not widening. Also records the **CR-*/WR-* ID-namespace collision** between `11-REVIEW.md` and `11.1-REVIEW.md`: 11.2's ROADMAP entry folds in findings by IDs that mean something DIFFERENT in 11.1's review (11.2's CR-02 is the account-less-portfolio raise, 11.1's is the margin flip; 11.2's WR-01 is the `_persist_definition`/`save_config` disagreement, 11.1's is the fee provider), so planning 11.2 from the roadmap text alone resolves the wrong set — same failure mode as the `VENUE-*` collision already on file, and cross-linked to it. **Three new todos** — `venue-bundle-memo-check-then-set-race.md` (WR-06, Phase 12, with the RLock-vs-engine-thread-only decision left explicitly open for the threading contract), `account-reservation-ledger-narrow-port.md` (Phase 12 — `SimulatedCashAccount` holds a ~25-method portfolio-wide store and calls 9; the fix is a narrow `ReservationLedger` port onto the SAME instance, NOT a separate store, because `CachedSqlPortfolioStateStorage` must span a fill's position + cash-scalar writes in one transaction — and a separate store is literally the current bug; records that the 11.2 required-kwarg fix is a down-payment on this shape, not throwaway), `fee-model-provider-venue-blind.md` (WR-01, Phase 11.2) — plus a Decision section added to the existing `enable-margin-runtime-flip-vs-fixed-account-kind.md`. Executor surveyed the repo's `*-REVIEW.md` status vocabulary before touching frontmatter and used the existing `partially_resolved` (6 prior uses) rather than inventing a value; it left the body `**Status:** issues_found` header deliberately untouched under the append-only instruction and documented the intentional frontmatter/body divergence inside the Resolution section rather than silently mutating a historical header. **No gates run — deliberate, not skipped:** nothing under `itrader/`, `tests/` or `scripts/` was touched, so the oracle/inertness/mypy gates have no importable change to observe and are structurally unreachable; gate state carried forward from `260723-dq7` (oracle byte-exact 134 / `46189.87730727451`, mypy clean 282 files, 2879 passed / 6 skipped, replay exit 0). Routed here from `/gsd-fast`, which correctly refused it on its own >3-file-edit guardrail. 5 files, 400 insertions / 1 deletion. | 2026-07-23 | 631d7e30 | [260723-eca-record-phase-11-1-review-resolution-4-ow](./quick/260723-eca-record-phase-11-1-review-resolution-4-ow/) |
+| 260723-fast | Amend the ROADMAP Phase 11.2 entry ahead of planning it — `.planning/ROADMAP.md` sole file, 35 insertions / 3 deletions (the 3 being lines replaced in place; goal, requirements, all 11 success criteria, pre-locked decisions and cross-cutting constraints untouched). **(1) Review-ID namespace disambiguation.** Every bare `CR-NN`/`WR-NN` in the 11.2 entry resolves against `11-REVIEW.md`, but those IDs now ALSO exist in `11.1-REVIEW.md` meaning different things — 11.2's CR-02 is the account-less-portfolio raise vs 11.1's `enable_margin` flip; 11.2's WR-01 is the `_persist_definition`/`save_config` disagreement vs 11.1's venue-blind fee provider. A planner working from unqualified IDs resolves the wrong set. Added a blockquote warning sited BEFORE the success criteria (so it is hit before any ID is read), qualified the "Folded-in review findings" and "Explicitly NOT in this phase" lines with their source file, and cross-linked `venue-requirement-id-collision-v18.md` as the same failure mode. **(2) Folded in the three decided 11.1-review findings** as a separate, explicitly-namespaced block (`11.1-REVIEW CR-02` / `WR-04+WR-08` / `WR-01`), each with its locked owner decision and a pointer to the rationale in `11.1-REVIEW.md`'s Resolution section + the three todo files, so the planner treats them as settled rather than re-litigating. Also records that the WR-04+WR-08 required-kwarg fix is a down-payment on the Phase 12 `ReservationLedger` narrow port, not throwaway work. **(3) Pinned the ordering constraint** as its own bold ⚠ block adjacent to the wave-relevant material rather than a footnote: the WR-04+WR-08 required kwarg must land BEFORE criterion 5 (ACCT-05), because ACCT-05 ADDS portfolio-creation paths — first means the new paths structurally cannot forget the `state_storage` seam, after means adding paths through the trap then closing it behind them, each one producing a portfolio that reports itself live while persisting nothing behind a green backtest. States plainly that any wave plan scheduling ACCT-05 first is wrong regardless of the rest of the dependency graph. Extended the existing Sizing note (left in place) to record that the three folded findings push the phase from 11 to ~14 requirements-worth of work, strengthening the case for the ACCT-11 split it already nominates. No gates run — docs-only, nothing importable changed, so oracle/inertness/mypy are structurally unreachable. | 2026-07-23 | 92537616 | (fast — no dir) |
 
 ## Deferred Items
 
@@ -456,11 +541,11 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-21T07:57:33.832Z
-Stopped at: Phase 11 context gathered
+Last session: 2026-07-22T16:17:00.397Z
+Stopped at: Phase 11.1 context gathered (structural scope; 11.2 split out)
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
-Resume file: .planning/phases/11-multi-portfolio-live/11-CONTEXT.md
+Resume file: .planning/phases/11.1-account-provisioning-mandatory-account-identity/11.1-CONTEXT.md
 Carried todo: 14 pending todos in `todos/pending/` (10 fold into v1.8 as CF-1..CF-10; `v17-residual-carryforward.md`
 is the index; the substantive open item is `margin-equity-double-counts-notional-wr01`, owner-gated).
 

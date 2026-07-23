@@ -202,7 +202,8 @@ class PortfolioReadModel(Protocol):
         Returns
         -------
         str
-            The exchange name (e.g. ``"csv"``, ``"BINANCE"``).
+            The venue name (e.g. ``"paper"`` — the simulated fill engine backing
+            backtest and live-paper, D-05 — or ``"okx"`` / ``"BINANCE"``).
         """
         ...
 

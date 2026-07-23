@@ -32,9 +32,12 @@ Indentation: 4-SPACE (``venues/`` package convention). ``mypy --strict`` applies
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
+from itrader.core.exceptions import ValidationError
 from itrader.logger import get_itrader_logger
+from itrader.venues.registry import DEFAULT_ACCOUNT_ID
 
 if TYPE_CHECKING:
     from itrader.config.credential_resolver import CredentialResolver
@@ -217,29 +220,29 @@ class OkxVenuePlugin:
             return None
         return str(uid)
 
-    def _account_id_for(self, portfolio_ref: Any, config: Any) -> str:
-        """The account id ``new_account`` must mint under, or RAISE (D-11, 11-07).
+    def _account_id_for(self, config: Any) -> str:
+        """The account id ``new_account`` must mint under, or RAISE (D-11, 11.1-09).
 
-        Two callers, two rules, NO cross-fallback between them:
+        ONE rule, and NO fallback behind it: the id is ``config.account_id`` and
+        comes from nowhere else. An absent id RAISES — there is no legitimate
+        "default" venue account to mint under (the MPORT-01 edge probe), because
+        minting under whichever account happens to be at hand attaches a caller that
+        named no account to a real venue balance.
 
-        * a PORTFOLIO was supplied — the id comes from that portfolio and from
-          nowhere else. Falling back to the bundle's ``config.account_id`` here
-          would silently attach an unnamed portfolio to whichever account this
-          bundle happens to be for, which is the exact conflation D-11 closes.
-        * no portfolio was supplied (the facade's ``account_factory()`` call site,
-          which mints the bundle's OWN account) — the id is the bundle's.
-
-        Either way an absent id RAISES: there is no legitimate "default" venue
-        account to mint under (the MPORT-01 edge probe).
+        D-03/F-1 (11.1-09): this used to be a TWO-branch rule, because
+        ``new_account`` also took a ``portfolio_ref`` and had to read the id off the
+        portfolio when one was supplied — deliberately WITHOUT falling back to the
+        bundle's own id, since that fallback is the exact conflation D-11 closes.
+        That branch is gone with the parameter. Note what did NOT change: the caller
+        that knows a portfolio's account (``PortfolioHandler.add_portfolio``) now
+        puts that id on ``config`` before calling, so the id still comes from the
+        portfolio when there is one — the resolution moved OUT of this method, it was
+        not weakened into a fallback. The refusal below is the D-11 invariant itself
+        and is copied verbatim; only the interpolated source word changed, because
+        the config is now where the id is expected from.
         """
-        from itrader.core.exceptions import ValidationError
-
-        if portfolio_ref is not None:
-            account_id = getattr(portfolio_ref, "account_id", None)
-            source = "portfolio"
-        else:
-            account_id = getattr(config, "account_id", None)
-            source = "venue spec"
+        account_id = getattr(config, "account_id", None)
+        source = "venue account config"
         if not account_id:
             raise ValidationError(
                 "account_id",
@@ -249,8 +252,8 @@ class OkxVenuePlugin:
             )
         return str(account_id)
 
-    def new_account(self, portfolio_ref: Any, config: Any) -> Account:
-        """Mint the ``VenueAccount`` for one portfolio, over ITS account's connector.
+    def new_account(self, config: Any) -> Account:
+        """Mint the ``VenueAccount`` for one account, over ITS OWN connector (D-03).
 
         D-12: the connector comes from the shared ``ConnectorProvider`` memo keyed on
         ``(venue, account_id)``, so this account and the bundle's exchange share ONE
@@ -260,11 +263,16 @@ class OkxVenuePlugin:
 
         D-11: ``account_id`` is passed EXPLICITLY as a required keyword. There is no
         arm here that can absorb its arguments and return a shared account.
+
+        D-03: ``config.enable_margin`` is deliberately UNREAD here. Venue-cached
+        truth has no margin-vs-cash leaf to choose — the venue owns the balance — so
+        the flag is the compute arm's alone, which is why the owning
+        ``PortfolioConfig`` rather than the ``venue_accounts`` row is its home.
         """
         # D-04: OKX/account concretions lazy-imported inside the body (never module top).
         from itrader.portfolio_handler.account import VenueAccount
 
-        account_id = self._account_id_for(portfolio_ref, config)
+        account_id = self._account_id_for(config)
         connector = config.connectors.get("okx", account_id, config.spec)
         return VenueAccount(
             connector,
@@ -292,7 +300,7 @@ class OkxVenuePlugin:
 
         # D-03/D-07: the SAME memoized connector for ("okx", account_id) the data
         # arm borrows; account_id=None resolves to the "default" logical account.
-        account_id = spec.account_id or "default"
+        account_id = spec.account_id or DEFAULT_ACCOUNT_ID
         connector = connectors.get("okx", account_id, spec)
 
         exchange = OkxExchange(ctx.bus, connector)
@@ -310,17 +318,61 @@ class OkxVenuePlugin:
         )
 
         def account_factory(
-            portfolio: Any = None, initial_cash: Any = 0.0
+            *,
+            initial_cash: Any = 0.0,
+            enable_margin: bool = False,
+            account_id: str | None = None,
+            state_storage: Any = None,
         ) -> Account:
             # 11-07: the former `(*args, **kwargs)` catch-all — which absorbed a
             # portfolio argument and returned ONE shared unscoped account with no
-            # error — is GONE. This is a thin, explicitly-signed adapter that
-            # DELEGATES to the typed `new_account`, so the bundle field and the
-            # Protocol method can never mint different accounts. `initial_cash` is
-            # accepted (the compute arm needs it and 05-06's `assemble_venue` calls
-            # both factories uniformly) and is not meaningful for venue-cached truth,
-            # where the balance comes from the venue rather than from wiring.
-            return self.new_account(portfolio, account_config)
+            # error — is GONE and STAYS gone. This is a thin, explicitly-signed
+            # KEYWORD-ONLY adapter that DELEGATES to the typed `new_account`, so the
+            # bundle field and the Protocol method can never mint different accounts.
+            # `initial_cash` / `enable_margin` / `state_storage` are accepted because
+            # both bundles are called uniformly (the compute arm needs all three) and
+            # are not meaningful for venue-cached truth, where the balance comes from
+            # the venue rather than from wiring.
+            #
+            # D-11: an OMITTED `account_id` falls back to the BUNDLE's own id — the
+            # documented facade call site, which mints THIS bundle's account. That is
+            # NOT the cross-fallback D-11 forbids: no portfolio is involved, so there
+            # is no unnamed caller being attached to someone else's balance. That
+            # fallback is PRESERVED exactly as it was.
+            #
+            # WR-03 — a SUPPLIED id must MATCH the bundle's own or it is REFUSED. The
+            # `replace(...)` below moves the id but NOT `account_config.spec`, which is
+            # the spec (and therefore the `secret_ref`) the BUNDLE was built for — the
+            # two cannot be moved independently. Minting another id from this bundle
+            # would hand `new_account` a mismatched pair, and
+            # `connectors.get("okx", <other id>, <this bundle's spec>)` would memoize a
+            # session under the OTHER account's key while authenticated from THIS
+            # account's credentials: an order routed to a different REAL venue balance,
+            # with every lookup above it still looking correct (D-11/D-12). Refusing a
+            # mismatch does NOT widen anything — D-11's rule that the closure must never
+            # prefer its own id over a supplied one is untouched, because a supplied id
+            # that disagrees now yields no account at all rather than the wrong one.
+            if account_id is not None and account_id != account_config.account_id:
+                raise ValidationError(
+                    "account_id",
+                    str(account_id),
+                    f"Refusing to mint OKX venue account '{account_id}' from the "
+                    f"bundle built for '{account_config.account_id}': the bundle "
+                    f"carries '{account_config.account_id}'s resolved credentials on "
+                    "its spec, and the spec does not travel with a substituted "
+                    f"account_id — the connector would be memoized under "
+                    f"('okx', '{account_id}') while authenticated from "
+                    f"'{account_config.account_id}'s secret_ref, attaching this id to "
+                    "a DIFFERENT real venue balance. Build a bundle for this account "
+                    "instead (D-11/D-12).",
+                )
+            return self.new_account(replace(
+                account_config,
+                account_id=account_id or account_config.account_id,
+                initial_cash=initial_cash,
+                enable_margin=enable_margin,
+                state_storage=state_storage,
+            ))
 
         # lifecycle stays None — assemble_venue (05-06) builds the VenueLifecycle.
         return VenueBundle(
@@ -348,7 +400,7 @@ class OkxDataPlugin:
         stream = ctx.config.stream
 
         # D-03: SAME memoized connector key as OkxVenuePlugin.build_bundle.
-        account_id = spec.account_id or "default"
+        account_id = spec.account_id or DEFAULT_ACCOUNT_ID
         connector = connectors.get("okx", account_id, spec)
 
         return OkxDataProvider(

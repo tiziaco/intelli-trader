@@ -29,18 +29,14 @@ from itrader.core.exceptions import (
 )
 
 
-class MockPortfolio:
-    """Mock portfolio for testing."""
-
-    def __init__(self):
-        self.portfolio_id = 12345
-
-
 @pytest.fixture
 def cm():
-    """A SimulatedCashAccount seeded with $100000 on a mock portfolio."""
-    portfolio = MockPortfolio()
-    return SimulatedCashAccount(portfolio, 100000.0)
+    """A SimulatedCashAccount seeded with $100000.
+
+    D-01 (11.1-03): no portfolio double is built or passed — the leaf carries no
+    back-reference to a Portfolio, so cash is the whole construction contract.
+    """
+    return SimulatedCashAccount(100000.0)
 
 
 @pytest.fixture
@@ -51,8 +47,7 @@ def mcm():
     accrue_borrow_interest) lives only on the margin leaf after the 01-02 split,
     so the margin-keyed tests exercise it here.
     """
-    portfolio = MockPortfolio()
-    return SimulatedMarginAccount(portfolio, 100000.0)
+    return SimulatedMarginAccount(100000.0)
 
 
 def test_cash_manager_initialization(cm):

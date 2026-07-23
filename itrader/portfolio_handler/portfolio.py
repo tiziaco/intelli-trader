@@ -1,5 +1,5 @@
 from datetime import datetime, UTC
-from typing import Optional, Dict, List, Any, Mapping, TYPE_CHECKING
+from typing import Optional, Dict, Any, Mapping, TYPE_CHECKING
 from decimal import Decimal
 
 from itrader.portfolio_handler.transaction import Transaction
@@ -14,7 +14,11 @@ from itrader.core.enums import PortfolioState, PositionSide, TransactionType
 # Import the new managers
 from itrader.portfolio_handler.transaction.transaction_manager import TransactionManager
 from itrader.portfolio_handler.position.position_manager import PositionManager
-from itrader.portfolio_handler.account import Account, SimulatedCashAccount, SimulatedMarginAccount
+# D-02 (11.1-09): the two SIMULATED leaves are no longer imported for
+# CONSTRUCTION — this module mints no account. ``SimulatedMarginAccount`` survives
+# as a NARROWING type only (``_require_margin_account``'s isinstance guard);
+# ``SimulatedCashAccount`` has no remaining reference and its import is dropped.
+from itrader.portfolio_handler.account import Account, SimulatedMarginAccount
 from itrader.portfolio_handler.metrics.metrics_manager import MetricsManager
 from itrader.portfolio_handler.storage import (
 	PortfolioStateStorage,
@@ -55,7 +59,9 @@ class Portfolio(object):
 	             sql_engine: "Optional[SqlEngine]" = None,
 	             portfolio_id: Optional[PortfolioId] = None,
 	             account_id: Optional[str] = None,
-	             venue_name: Optional[str] = None) -> None:
+	             venue_name: Optional[str] = None,
+	             *,
+	             account: Account) -> None:
 		"""
 		Initialize enhanced portfolio with integrated capabilities.
 
@@ -97,6 +103,20 @@ class Portfolio(object):
 			per-account. The ``exchange`` parameter is the LEGACY input path (the
 			backtest/oracle call site and ~100 test call sites pass it); it is used
 			as-is only when ``venue_name`` is absent, never alongside it.
+		account : Account
+			The BUILT settlement leaf (D-02/D-03, 11.1-09). Constructed by the venue
+			plugin's ``new_account`` — the SOLE account factory — and supplied by
+			``PortfolioHandler.add_portfolio``, which holds the ``PortfolioConfig``
+			the margin-vs-cash selection reads. ``Portfolio`` no longer selects an
+			account kind: the duplicate branch that used to live in
+			``_init_managers`` is deleted, so there is exactly one owner of that rule.
+
+			REQUIRED, keyword-only, and deliberately WITHOUT a default. A default
+			would be a mint-on-omission path, and every construction site that forgot
+			to pass one would then silently receive the wrong account KIND instead of
+			failing with a ``TypeError`` at the call site. Keyword-only for the same
+			reason ``SimulatedCashAccount.state_storage`` is: it cannot be bound
+			positionally by a stale call.
 		"""
 		# Core portfolio identity. F-1: SUPPLYABLE, never re-schemed — a supplied
 		# id is what reattaches the portfolio-scoped durable child tables on a
@@ -140,50 +160,91 @@ class Portfolio(object):
 		}
 		
 		# Initialize managers with self-reference
-		self._init_managers(cash)
-		
+		self._init_managers(account)
+
 		# Validation
-		self._validate_initial_state()
+		self._validate_initial_state(cash)
 	
-	def _init_managers(self, initial_cash: float | Decimal) -> None:
-		"""Initialize portfolio managers.
+	def _init_managers(self, account: Account) -> None:
+		"""Bind the RECEIVED account and initialize the three portfolio managers.
 
-		M2-08: a single ``PortfolioStateStorage`` seam is injected here and shared
-		by all four managers (mirroring how ``OrderManager`` receives an
-		``OrderStorage`` from ``OrderStorageFactory.create(environment)``). The
-		managers no longer own their state containers — they read/write through
-		this seam. The backtest path uses the in-memory backend; live persistence
-		is a pure backend swap (deferred to D-sql).
+		M2-08: a single ``PortfolioStateStorage`` seam is shared by all four
+		managers (mirroring how ``OrderManager`` receives an ``OrderStorage`` from
+		``OrderStorageFactory.create(environment)``). The managers no longer own
+		their state containers — they read/write through this seam. The backtest
+		path uses the in-memory backend; live persistence is a pure backend swap.
 
-		D-07 (05.2-05): the environment/sql_engine/portfolio_id selector is now
-		threaded from the composition root. For "backtest" (the default) the
-		extra kwargs are ignored (the in-memory backend is byte-exact — the
-		SMA_MACD oracle path is UNCHANGED); for "live" they satisfy the SQL arm's
-		required ``sql_engine`` + ``portfolio_id`` (the store scopes every query to
-		this portfolio).
+		D-02 (11.1-09): the account is RECEIVED, never minted. The margin-vs-cash
+		leaf selection that used to live here is DELETED — its sole owner is now
+		``VenuePlugin.new_account`` (D-03), so one selection rule has one home. The
+		field stays declared as the ``Account`` ABC (it IS the settlement contract,
+		not a concretion) so the live ``VenueAccount`` leaf that
+		``_attach_venue_accounts`` swaps in later still wires cleanly; margin-only
+		call sites narrow via ``_require_margin_account``.
+
+		**The seam is ADOPTED from the account when it carries one, and that
+		direction is load-bearing.** The account is now built BEFORE the portfolio
+		exists, so a portfolio that built its own backend here would leave the leaf
+		on a private one. Nothing else in the tree reads the leaf's three containers
+		(reserved cash, locked margin, the cash-operation audit trail), so the split
+		is invisible in backtest and the byte-exact oracle stays green — while in
+		live the restart path (``state_storage.rehydrate(account)``) repopulates
+		those caches on THIS object and every reservation is silently lost across a
+		restart. Adopting makes one instance a structural fact rather than a wiring
+		convention two call sites have to keep agreeing on.
+
+		D-07 (05.2-05): the environment/sql_engine/portfolio_id selector remains the
+		FALLBACK, for a leaf that exposes no seam of its own (a venue-truth account,
+		whose balance lives at the venue). For "backtest" (the default) the extra
+		kwargs are ignored (the in-memory backend is byte-exact — the SMA_MACD
+		oracle path is UNCHANGED); for "live" they satisfy the SQL arm's required
+		``sql_engine`` + ``portfolio_id`` (the store scopes every query to this
+		portfolio).
 		"""
-		self.state_storage: PortfolioStateStorage = PortfolioStateStorageFactory.create(
-			self._environment, sql_engine=self._sql_engine, portfolio_id=self.portfolio_id
+		account_seam = getattr(account, "state_storage", None)
+		self.state_storage: PortfolioStateStorage = (
+			account_seam if account_seam is not None
+			else PortfolioStateStorageFactory.create(
+				self._environment,
+				sql_engine=self._sql_engine,
+				portfolio_id=self.portfolio_id,
+			)
 		)
-		# D-03: the runtime enable_margin branch becomes leaf selection at wiring —
-		# construct the account leaf the same way the four managers are built
-		# (ACCT-01). enable_margin=False -> the verbatim-critical spot cash leaf
-		# (SimulatedCashAccount, the SMA_MACD byte-exact oracle path, D-04);
-		# enable_margin=True -> the margin superset. D-02: declared as the Account
-		# ABC (the field IS the settlement contract, not a concretion) so the live
-		# VenueAccount leaf wires in cleanly; margin-only call sites narrow to
-		# SimulatedMarginAccount via _require_margin_account (isinstance guard).
-		self.account: Account = (
-			SimulatedMarginAccount(self, initial_cash=initial_cash)
-			if self.config.trading_rules.enable_margin
-			else SimulatedCashAccount(self, initial_cash=initial_cash)
-		)
+		self.account: Account = account
 		self.transaction_manager = TransactionManager(self)
 		self.position_manager = PositionManager(self)
 		self.metrics_manager = MetricsManager(self)
 
-	def _validate_initial_state(self) -> None:
-		"""Validate initial portfolio state."""
+	def _validate_initial_state(self, cash: float | Decimal) -> None:
+		"""Validate initial portfolio state.
+
+		``cash`` is the opening balance the CALLER asked for. It is compared against
+		the balance the RECEIVED account actually carries (T-11.1-42): the two are
+		now built by different code — ``PortfolioHandler.add_portfolio`` computes
+		``to_money(cash)`` once and passes it to both — so a caller that supplies one
+		value to the portfolio and another (or none) to the account factory would
+		otherwise get a portfolio whose reported opening cash and whose ledger
+		disagree, with nothing red.
+
+		Venue-truth leaves are exempt: their balance comes from the venue, not from
+		wiring, so there is no wiring value to agree with.
+
+		WR-05: the expected value ASKS the account how it rounds cash
+		(``Account.quantize_cash``) instead of re-deriving the scale here. The two
+		sides of this exact-equality check are built by different code across a
+		domain boundary; when each spelled the scale out for itself, a one-sided
+		change made every portfolio construction raise — including the oracle path.
+		"""
+		if not getattr(account := self.account, "is_venue_truth", False):
+			expected = account.quantize_cash(cash)
+			if account.balance != expected:
+				raise ValidationError(
+					"account",
+					str(account.balance),
+					f"The supplied account opens at {account.balance} but the "
+					f"portfolio was asked to open at {expected}; the account's "
+					"initial_cash and the portfolio's cash must be the SAME value",
+				)
 		if self.account.balance < 0:
 			# FL-01: input validation on the cash field at construction (not a
 			# transaction funds-shortfall — InsufficientFundsError's

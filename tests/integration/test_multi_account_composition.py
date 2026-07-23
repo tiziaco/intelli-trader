@@ -85,8 +85,9 @@ def _okx_entries(system):
     """The ``(venue, account_id) -> exchange`` entries for the OKX venue only.
 
     Filtered by VENUE rather than asserting on ``len(exchanges)``: the registry also
-    holds the compose-built ``('simulated', 'default')`` and ``('csv', 'default')``
-    entries, so a bare length assertion would be counting unrelated rows.
+    holds the compose-built ``('paper', 'default')`` entry (D-05 collapsed the former
+    ``'simulated'``/``'csv'`` alias pair plus the dead ``'ccxt'`` placeholder into
+    that one key), so a bare length assertion would be counting unrelated rows.
     """
     return {
         key: exchange
@@ -240,6 +241,107 @@ def test_a_single_account_spec_registers_exactly_one_exchange(okx_env) -> None:
     system = build_live_system(_spec(["acct-solo"]))
     try:
         assert set(_okx_entries(system)) == {(_VENUE, "acct-solo")}
+    finally:
+        system.stop()
+
+
+# --------------------------------------------------------------------------- #
+# 11.1-08 — EXACTLY ONE build per boot (D-08 bundles, D-14 provider)
+#
+# These are COUNTING gates, and that is the whole point of them. Every assertion in
+# this file above counts ENTRIES or asserts that an object EXISTS, and both pass
+# identically whether the boot built one object or two. A duplicate `OkxExchange` per
+# account is invisible to them — yet `OkxExchange.connect()` is the sole spawn site for
+# `_stream_fills`/`_stream_orders`, so a second one double-spawns that account's fill
+# and order streams. The unit-level memo test (plan 11.1-05) proves `VenueBundles`
+# memoizes; it cannot see whether the LIVE wiring actually goes through it.
+# --------------------------------------------------------------------------- #
+def _count_class_calls(monkeypatch, cls, method_name):
+    """Wrap ``cls.method_name`` with a call counter, delegating to the original.
+
+    Patched on the CLASS so EVERY call site is counted, including one that resolves its
+    own plugin instance from a registry this test never sees.
+    """
+    calls = []
+    original = getattr(cls, method_name)
+
+    def _counting(self, *args, **kwargs):
+        calls.append(args)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(cls, method_name, _counting)
+    return calls
+
+
+def test_a_two_account_boot_builds_exactly_two_bundles(monkeypatch, okx_env) -> None:
+    """D-08: two accounts -> exactly TWO `build_bundle` calls, not four.
+
+    Four is what a boot performed before 11.1-08: `assemble_venues` called the exec
+    registry DIRECTLY while `ExecutionHandler`/`PortfolioHandler` read the shared
+    `VenueBundles` memo, so each account could be built twice and the two arms could
+    hold different exchanges for one `(venue, account_id)`. The identity assertions
+    below are the other half — a count of two with two DIFFERENT objects reaching the
+    two arms would still be the defect.
+    """
+    from itrader.venues.okx_plugin import OkxVenuePlugin
+
+    build_calls = _count_class_calls(monkeypatch, OkxVenuePlugin, "build_bundle")
+
+    system = build_live_system(_spec(["acct-a", "acct-b"]))
+    try:
+        assert len(build_calls) == 2, (
+            "exactly one OKX bundle per account per boot (D-08); "
+            f"got {len(build_calls)} builds for 2 accounts"
+        )
+
+        entries = _okx_entries(system)
+        for account_id in ("acct-a", "acct-b"):
+            lifecycle = system._venue_lifecycles[account_id]
+            registered = entries[(_VENUE, account_id)]
+            # The lifecycle that CONNECTS the venue and the exchange that RECEIVES the
+            # orders are the same object — asserted by identity, never by type.
+            assert lifecycle.bundle.exchange is registered
+            # ...and both are the memo's, so plan 11.1-09's PortfolioHandler will read
+            # this same object rather than a third one.
+            memo = system.execution_handler._venue_bundles._memo
+            assert memo[(_VENUE, account_id)] is lifecycle.bundle
+    finally:
+        system.stop()
+
+
+def test_a_two_account_boot_builds_exactly_one_data_provider(
+    monkeypatch, okx_env,
+) -> None:
+    """D-14/WR-07: two accounts -> exactly ONE `build_provider` call, for the primary.
+
+    Two is what a boot performed before 11.1-08, and the second provider was then
+    discarded: `VenueLifecycle` took it as a required positional and only re-exposed it
+    read-only. Each construction resolves that account's OWN credentials through the
+    `CredentialResolver`, so the discarded one is a live credential-bearing object with
+    no owner, no lifecycle and no halt path — WR-07. D-14 closes it by never building
+    it, and only a COUNT can tell the two states apart.
+    """
+    from itrader.venues.okx_plugin import OkxDataPlugin
+
+    build_calls = _count_class_calls(monkeypatch, OkxDataPlugin, "build_provider")
+
+    system = build_live_system(_spec(["acct-a", "acct-b"], primary="acct-a"))
+    try:
+        assert len(build_calls) == 1, (
+            "ONE feed means ONE data provider per boot (D-14); "
+            f"got {len(build_calls)} builds for 2 accounts"
+        )
+        # It was built for the PRIMARY account — the first spec. A provider built for a
+        # non-primary account would silently re-point the market-data source.
+        _ctx, built_for_spec, _connectors = build_calls[0]
+        assert built_for_spec.account_id == "acct-a"
+
+        # The ONE provider reached the ONE feed AND the primary lifecycle; every other
+        # lifecycle carries none, because none was built.
+        primary = system._venue_lifecycles["acct-a"]
+        assert primary.provider is not None
+        assert system.feed._provider is primary.provider
+        assert system._venue_lifecycles["acct-b"].provider is None
     finally:
         system.stop()
 
@@ -504,7 +606,13 @@ def test_a_portfolio_naming_an_unassembled_account_is_refused() -> None:
     primary = SimpleNamespace(
         bundle=SimpleNamespace(
             connector=object(),
-            account_factory=lambda portfolio: SimpleNamespace(
+            # 11.1-09 (D-03): the factory is KEYWORD-ONLY and takes no portfolio.
+            # Signed explicitly rather than with a `**kwargs` catch-all — a
+            # double that swallows anything would keep passing after a real
+            # signature change, which is the failure 11-07 removed from
+            # production for the same reason.
+            account_factory=lambda *, account_id=None, initial_cash=0.0,
+            enable_margin=False, state_storage=None: SimpleNamespace(
                 account_id="acct-primary")))
     orphan = SimpleNamespace(
         name="pf-orphan", account_id="acct-missing", account=None,
@@ -555,7 +663,9 @@ def test_a_foreign_venue_portfolio_is_never_given_this_venues_account() -> None:
     okx_lifecycle = SimpleNamespace(
         bundle=SimpleNamespace(
             connector=object(),
-            account_factory=lambda portfolio: marker))
+            # Keyword-only and portfolio-free (D-03), signed explicitly.
+            account_factory=lambda *, account_id=None, initial_cash=0.0,
+            enable_margin=False, state_storage=None: marker))
     sentinel = object()
     foreign = SimpleNamespace(
         name="pf-binance", account_id="main", venue_name="binance",

@@ -39,18 +39,33 @@ _logger = get_itrader_logger().bind(component="VenueLifecycle")
 class VenueLifecycle:
     """Fixed connector start/stop order for one venue bundle, None-guarding absent members (D-10).
 
-    Holds the built ``bundle`` + ``provider`` (exposed read-only so the composition
-    root can read them back) plus the optional shared ``ConnectorProvider``.
-    ``start()`` / ``stop()`` drive ONLY the connector lifecycle this phase (P5); a
-    paper bundle (``connector=None``) no-ops the connector step via a structural
-    None-guard, never a venue-string check.
+    Holds the built ``bundle`` and OPTIONALLY a ``provider`` (both exposed read-only so
+    the composition root can read them back) plus the optional shared
+    ``ConnectorProvider``. ``start()`` / ``stop()`` drive ONLY the connector lifecycle
+    this phase (P5); a paper bundle (``connector=None``) no-ops the connector step via a
+    structural None-guard, never a venue-string check.
+
+    **Only the PRIMARY account's lifecycle carries a provider (11.1-08, D-14).** There
+    is ONE ``LiveBarFeed`` and therefore ONE data provider — the decision is documented
+    at the composition root's facade-dependent wiring loop ("the DATA provider stays
+    deliberately single (one feed, the primary's provider), so it is wired outside the
+    loop"). ``provider`` was a REQUIRED positional this class never read: it only
+    re-exposed it, so ``assemble_venue`` built one per account and the composition root
+    discarded all but the first. Those discarded objects are ``11-REVIEW.md``'s WR-07 —
+    each resolves its own account's credentials, so an unwired one is a live
+    credential-bearing object with no owner and no halt path. D-14 closes that by never
+    constructing them, so the parameter is keyword-only and defaults to ``None``.
+
+    Nothing in this class dereferences ``_provider``; ``start()`` / ``stop()`` drive the
+    connector only. A provider-less lifecycle is therefore a fully functional one, not a
+    degraded one.
     """
 
     def __init__(
         self,
         bundle: VenueBundle,
-        provider: LiveDataProvider,
         *,
+        provider: LiveDataProvider | None = None,
         connectors: ConnectorProvider | None = None,
         plugin: Any = None,
         venue_name: str | None = None,
@@ -79,8 +94,15 @@ class VenueLifecycle:
         return self._bundle
 
     @property
-    def provider(self) -> LiveDataProvider:
-        """The venue ``LiveDataProvider`` this lifecycle orchestrates (read-only)."""
+    def provider(self) -> LiveDataProvider | None:
+        """The ONE feed-bound ``LiveDataProvider``, or ``None`` (read-only, D-14).
+
+        Populated for the PRIMARY account only. A non-primary lifecycle answers
+        ``None`` because that account's provider is never built — see the class
+        docstring (WR-07). Callers already None-guard this: the facade reads it as
+        ``streaming[0].provider if streaming else None`` and gates every use on
+        ``is not None``.
+        """
         return self._provider
 
     def start(self) -> None:

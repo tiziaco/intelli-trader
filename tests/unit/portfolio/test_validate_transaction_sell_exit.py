@@ -21,6 +21,7 @@ from itrader.core.exceptions import PortfolioError
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.position import Position
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
+from tests.support.venue_wiring import compute_account
 
 _TICKER = "BTCUSDT"
 _PORTFOLIO_ID = "pf-wr01"
@@ -34,8 +35,9 @@ def _at_limit_portfolio() -> Portfolio:
         {"limits": {"max_positions": 1}, "validation": {"validate_transactions": True}},
     ))
     portfolio = Portfolio(
-        name="wr01-pf", exchange="simulated",
+        name="wr01-pf", exchange="paper",
         cash=Decimal("100000"), time=_TIME, config=config,
+        account=compute_account(Decimal("100000")),
     )
     # Seed ONE open long so n_open_positions == max_positions (at the limit).
     buy = Transaction(

@@ -35,6 +35,7 @@ from itrader.order_handler.order_handler import OrderHandler
 from itrader.order_handler.storage import OrderStorageFactory
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.core.enums import OrderCommand, OrderStatus, Side
+from tests.support.venue_wiring import backtest_portfolio_handler
 
 
 class _Harness:
@@ -42,7 +43,7 @@ class _Harness:
 
     def __init__(self, n_portfolios=2):
         self.queue = Queue()
-        self.ptf_handler = PortfolioHandler(self.queue)
+        self.ptf_handler = backtest_portfolio_handler(self.queue)
         self.storage = OrderStorageFactory.create("test")
         self.handler = OrderHandler(self.queue, self.ptf_handler, self.storage)
         self.portfolio_ids = [

@@ -1,16 +1,28 @@
-import random
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from .base import AbstractExecutionHandler
 from .exchanges.base import AbstractExchange
 from itrader.events_handler.bus import EventBus
-from itrader.events_handler.events import BarEvent, FillEvent, OrderEvent
+from itrader.events_handler.events import BarEvent, OrderEvent
+# Still needed by update_config / validate_config, which isinstance-NARROW against
+# the simulated exchange. Nothing in this module constructs one any more (D-06).
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 
 from itrader.config import ExchangeConfig
 from itrader.core.exceptions.base import ConfigurationError
 from itrader.core.exceptions.portfolio import PortfolioNotFoundError
 from itrader.logger import get_itrader_logger
+from itrader.venues.bundles import VenueBundles
+# 11.1-09 — RE-EXPORTED from the import-inert venue substrate.
+# ``DEFAULT_ACCOUNT_ID`` (the single-account key half, D-27/MPORT-07) and
+# ``COMPUTE_VENUE`` (``'paper'``, D-05) are venue-domain facts that BOTH handlers
+# need: this one resolves its exchange under them, and ``PortfolioHandler`` mints
+# every portfolio's construction-time compute leaf under them. They are declared
+# ONCE in ``venues/registry.py`` — which imports nothing at runtime, so this pulls
+# no concretion — and re-exported here so every existing
+# ``from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID``
+# keeps working. Their full rationale lives at the declaration.
+from itrader.venues.registry import COMPUTE_VENUE, DEFAULT_ACCOUNT_ID
 
 if TYPE_CHECKING:
 	# Read-model seam only (D-27): the Protocol is imported for TYPING ONLY so
@@ -21,19 +33,35 @@ if TYPE_CHECKING:
 	from itrader.core.portfolio_read_model import PortfolioReadModel
 
 
-#: The logical venue account of a SINGLE-account venue (D-27/MPORT-07).
-#:
-#: The exchange registry is keyed on the ``(venue, account_id)`` PAIR, because
-#: an order's real target is a specific AUTHENTICATED SESSION, not a venue.
-#: Venues that have only ever had one account — the simulated/backtest path,
-#: and any venue before per-account wiring — register under this constant.
-#:
-#: It is deliberately a separate KEY HALF and never spliced into the venue
-#: name: ``Order.exchange`` is a persisted column, so a composed
-#: ``"venue:account"`` string would leak account topology into durable data and
-#: into every query over it. The key is a runtime tuple; the persisted column
-#: keeps the bare venue name.
-DEFAULT_ACCOUNT_ID = 'default'
+# mypy --strict disables implicit re-export, so the two venue constants above are
+# named explicitly here to stay importable from this module (their historical home).
+__all__ = ['COMPUTE_VENUE', 'DEFAULT_ACCOUNT_ID', 'ExecutionHandler', 'default_exchange_config']
+
+
+def default_exchange_config() -> ExchangeConfig:
+	"""Build the DEFAULT-PRESET exchange config (D-13, Trap 1; D-17).
+
+	Reproduces the historical direct-construction symbol set byte-exactly: the
+	default preset symbols UNION ``{BTCUSD}`` (the union the removed hardcoded
+	BTCUSD registration used to produce). Seeded at construction so it is
+	replacement-safe — a later ``update_config`` that re-derives
+	``_supported_symbols`` from ``config.limits`` can never wipe BTCUSD.
+
+	D-17: this is the FALLBACK for callers that have NO run-derived config — the
+	live root and the direct-construction test sites — and it is NEVER the
+	preferred source. The preferred source is the factory's run-derived config,
+	which folds THIS run's complete ticker set into ``limits.supported_symbols``;
+	a default preset silently narrows the tradeable symbol set and the failure
+	surfaces as refused orders far from its cause.
+
+	Promoted from the private ``ExecutionHandler._default_backcompat_config``
+	static in plan 11.1-07: the handler no longer builds an exchange, so its only
+	internal caller is gone, while the live root and the shared test-wiring helper
+	both need it.
+	"""
+	config = ExchangeConfig.default()
+	config.limits.supported_symbols = set(config.limits.supported_symbols) | {'BTCUSD'}
+	return config
 
 
 class ExecutionHandler(AbstractExecutionHandler):
@@ -51,14 +79,25 @@ class ExecutionHandler(AbstractExecutionHandler):
 	while maintaining backward compatibility with existing systems.
 	"""
 
-	def __init__(self, global_queue: "EventBus",
-				exchange_config: Optional[ExchangeConfig] = None,
+	def __init__(self, global_queue: "EventBus", *,
+				venue_bundles: "VenueBundles",
 				portfolio_read_model: Optional["PortfolioReadModel"] = None) -> None:
 		"""
 		Parameters
 		----------
 		global_queue: `Queue object`
 			The events queue of the trading system
+		venue_bundles: `VenueBundles`
+			The REQUIRED shared ``(venue, account_id)`` bundle memo (D-08). The
+			handler no longer MINTS an exchange — it ASKS for one, and the venue
+			plugin behind the memo is what builds it (D-06). The same instance is
+			held by the portfolio arm, so both arms see ONE exchange and ONE
+			account factory per venue+account; two independent ``build_bundle``
+			calls would double-spawn a live venue's fill/order streams.
+
+			It is REQUIRED, not ``Optional[...] = None``: a nullable seam here
+			would let a caller silently fall back to a hand-minted exchange, and
+			the two paths would then diverge without anything turning red.
 		portfolio_read_model: `PortfolioReadModel`, optional
 			The injected read-model used to resolve an order's VENUE ACCOUNT
 			from its portfolio (D-27/MPORT-07). The injection is ASYMMETRIC by
@@ -80,57 +119,30 @@ class ExecutionHandler(AbstractExecutionHandler):
 			through whatever session is registered as the default. Plan 11-08
 			owns the composition-time invariant that makes ``account_id``
 			mandatory in live; until then this refusal IS the guard.
-		exchange_config: `ExchangeConfig`, optional
-			Construction-time exchange configuration threaded to the
-			SimulatedExchange (D-13, COMP-01). When provided the FACTORY has
-			already folded the COMPLETE supported_symbols set
-			(default preset ∪ {BTCUSD} ∪ spec tickers) into
-			``exchange_config.limits.supported_symbols`` — replacement-safe so a
-			later ``update_config`` re-derivation never wipes a symbol
-			(PATTERNS-A2 Trap 1). When None a TEMPORARY backward-compat default
-			is built that unions ``{BTCUSD}`` into the preset, so the
-			direct-construction oracle/integration sites (still calling
-			``ExecutionHandler(global_queue)`` until Wave 4) keep BTCUSD
-			admitted byte-exactly. Wave 4 (04-05) removes the None fallback once
-			every site migrates to the spec-driven factory.
+
+		Notes
+		-----
+		D-07: the handler holds NO determinism seam any more. The ONE shared
+		seeded ``random.Random`` rides on ``EngineContext.rng`` and reaches the
+		exchange through ``PaperVenuePlugin.build_bundle`` — the component that
+		now BUILDS it (D-06). The former ``rng`` parameter (plus ``_rng`` /
+		``_rng_seed`` / ``_resolve_rng_seed``) lost its only reader when the mint
+		moved out and was removed rather than left accepted-and-ignored: a
+		vestigial seam here would let a caller believe determinism was wired
+		through this handler when it no longer is.
 		"""
 		# Initialize logger first
 		self.logger = get_itrader_logger().bind(component="ExecutionHandler")
 
 		self.global_queue = global_queue
-		self._exchange_config = exchange_config
+		self._venue_bundles = venue_bundles
 		self._portfolio_read_model = portfolio_read_model
 
-		# Determinism seam (D-11): construct a SINGLE seeded random.Random at engine
-		# wiring and inject it into every stochastic component (SimulatedExchange +
-		# its slippage model). The seed comes from the documented system config key
-		# `performance.rng_seed` (default 42); a YAML override in settings/system.yaml
-		# wins when present. One shared Random — never seeded per-call or duplicated —
-		# so a backtest run is reproducible (#5/PERF2).
-		self._rng_seed: int = self._resolve_rng_seed()
-		self._rng: random.Random = random.Random(self._rng_seed)
-
-		# Initialize exchanges (requires logger + rng). Keyed on the
+		# Initialize exchanges (requires logger + the bundle memo). Keyed on the
 		# (venue, account_id) PAIR — see DEFAULT_ACCOUNT_ID (D-27/MPORT-07).
 		self.exchanges: dict[tuple[str, str], Optional[AbstractExchange]] = self.init_exchanges()
 
-		self.logger.info('Execution Handler initialized (rng_seed=%s)', self._rng_seed)
-
-	def _resolve_rng_seed(self) -> int:
-		"""Resolve the determinism seed from the process-wide config singleton (D-16/W4-06).
-
-		Reads ``config.rng_seed`` off the single process-wide ``ITraderConfig``
-		initialised in ``itrader/__init__.py`` — NOT a second duplicate config
-		construction (the W4-06 duplication this fix removes). P9 D-09 moved the
-		seed off the retired ``config.performance.rng_seed`` onto the frozen
-		``ITraderConfig`` base (``config.rng_seed``), immutable at runtime
-		(RTCFG-04). One run-wide determinism setting (default 42); a boot YAML/env
-		override resolves before construction, making this read byte-identical or
-		strictly more correct. Seed stays 42 → the single shared
-		``random.Random(42)`` is unchanged → byte-exact.
-		"""
-		from itrader import config
-		return int(config.rng_seed)
+		self.logger.info('Execution Handler initialized (exchanges resolved via VenueBundles)')
 
 	def update_config(self, updates: Dict[str, Any]) -> None:
 		"""Update execution configuration at runtime (D-07/D-08/D-09).
@@ -142,14 +154,16 @@ class ExecutionHandler(AbstractExecutionHandler):
 		keeping the single web-catchable raise contract. Returns ``None``; raises
 		``ConfigurationError`` on failure (including when no exchange is wired).
 		"""
-		# D-27: the simulated venue is single-account, so it lives under the
-		# default-account half of the pair key. This preserves object identity
-		# and the alias structure exactly — the oracle is unaffected.
-		exchange = self.exchanges.get(('simulated', DEFAULT_ACCOUNT_ID))
+		# D-27/D-05: the paper venue is single-account, so it lives under the
+		# default-account half of the pair key. ``'paper'`` is the ONE name for
+		# the simulated fill engine across backtest and live-paper (D-05) — the
+		# retired ``'simulated'``/``'csv'`` synonyms no longer resolve anything,
+		# so this lookup must never be written against them again.
+		exchange = self.exchanges.get((COMPUTE_VENUE, DEFAULT_ACCOUNT_ID))
 		if not isinstance(exchange, SimulatedExchange):
 			raise ConfigurationError(
-				config_key='simulated',
-				reason='no simulated exchange wired to update')
+				config_key=COMPUTE_VENUE,
+				reason='no paper exchange wired to update')
 		exchange.update_config(updates)
 
 	def validate_config(self, updates: Dict[str, Any]) -> None:
@@ -164,12 +178,12 @@ class ExecutionHandler(AbstractExecutionHandler):
 		Returns ``None``; RAISES ``ConfigurationError`` on failure (including when
 		no exchange is wired) — the SAME contract shape as ``update_config``.
 		"""
-		# D-27: single-account simulated venue -> default-account key half.
-		exchange = self.exchanges.get(('simulated', DEFAULT_ACCOUNT_ID))
+		# D-27/D-05: single-account paper venue -> default-account key half.
+		exchange = self.exchanges.get((COMPUTE_VENUE, DEFAULT_ACCOUNT_ID))
 		if not isinstance(exchange, SimulatedExchange):
 			raise ConfigurationError(
-				config_key='simulated',
-				reason='no simulated exchange wired to update')
+				config_key=COMPUTE_VENUE,
+				reason='no paper exchange wired to update')
 		exchange.validate_config(updates)
 
 
@@ -241,19 +255,22 @@ class ExecutionHandler(AbstractExecutionHandler):
 
 	def on_market_data(self, bar: BarEvent) -> None:
 		"""Drive resting-order matching on each exchange with a new bar."""
-		# Dedup by instance identity: multiple venue aliases (e.g. 'simulated' and 'csv')
-		# may point to the same exchange object; driving it once per bar avoids
-		# double-matching the resting-order book (DEF-01-B alias, Plan 01-04).
+		# Dedup by instance identity: two registry keys may resolve to ONE
+		# exchange object; driving it once per bar avoids double-matching the
+		# resting-order book.
 		#
-		# D-27: this dedup stays IDENTITY-based and is correct by construction
-		# under the pair key — do NOT "clean it up" into a key- or name-based
-		# dedup. It exists to collapse ALIASES (two keys deliberately pointing
-		# at ONE object). Two ACCOUNTS on one venue are two DISTINCT objects
-		# with distinct identity, so they are correctly driven separately: each
-		# account owns its own resting-order book and correlation index and
-		# must see every bar. A key-based rewrite would drive the shared
-		# simulated exchange twice per bar and silently change every backtest
-		# number.
+		# D-05: VENUE ALIASES no longer exist — one venue name, one key, one
+		# object. What remains is the ACCOUNT case: a caller may register the
+		# same exchange object under two ACCOUNTS of one venue, and that object
+		# must still be driven exactly once per bar. That is the only case this
+		# dedup now collapses.
+		#
+		# D-27: it stays IDENTITY-based — do NOT "clean it up" into a key- or
+		# name-based dedup. Two accounts holding DISTINCT exchange objects are
+		# correctly driven separately: each owns its own resting-order book and
+		# correlation index and must see every bar. A key-based rewrite would
+		# drive a shared exchange twice per bar and silently change every
+		# backtest number.
 		seen: set[int] = set()
 		for key, exchange in self.exchanges.items():
 			if exchange is None or id(exchange) in seen:
@@ -268,47 +285,46 @@ class ExecutionHandler(AbstractExecutionHandler):
 	
 	def init_exchanges(self) -> dict[tuple[str, str], Optional[AbstractExchange]]:
 		"""
-		Initialize configured exchanges.
+		RESOLVE the wired exchanges through ``VenueBundles`` (D-06/D-08).
 
-		Creates exchange instances using their default configurations.
-		Each exchange manages its own fee models, slippage simulation, etc.
+		The handler MINTS NOTHING. The venue plugin behind the memo builds the
+		exchange from its own run-derived ``ExchangeConfig`` and the shared seeded
+		RNG (D-17/D-07), exactly as the OKX plugin builds its ``OkxExchange``.
+		Each exchange still manages its own fee/slippage models.
 		"""
-		# D-13/Trap 1: thread the construction-time ExchangeConfig into the
-		# SimulatedExchange so the COMPLETE supported_symbols set is seeded at
-		# construction (replacement-safe) instead of an additive post-construction
-		# register_symbol. When the factory supplies a config it has already folded
-		# default preset ∪ {BTCUSD} ∪ spec tickers into limits.supported_symbols.
+		# D-08: ASK the shared memo. ``spec=None`` because ``PaperVenuePlugin.build_bundle``
+		# reads no spec field at all (unlike the OKX arm, which reads spec.account_id) —
+		# passing a synthesized stand-in spec would invent a value nothing consumes.
 		#
-		# TEMPORARY backward-compat (Wave 4 / 04-05 removes this): when no config is
-		# supplied (direct-construction oracle/integration sites still calling
-		# ExecutionHandler(global_queue)), build a default-preset config that UNIONS
-		# {BTCUSD} so the golden ticker stays admitted byte-exactly — replacing the
-		# removed hardcoded BTCUSD registration without an additive mutation.
-		exchange_config = self._exchange_config or self._default_backcompat_config()
-		# Inject the single seeded Random (D-11) so the exchange + its slippage
-		# model share one deterministic RNG instance for the whole backtest run.
-		simulated = SimulatedExchange(self.global_queue, config=exchange_config, rng=self._rng)
-		# D-27: keyed on the (venue, account_id) PAIR. All three built-in venues
-		# are single-account, so each pairs with DEFAULT_ACCOUNT_ID — which is
-		# precisely what preserves the alias structure (and therefore the
-		# byte-exact oracle) across the keying change.
+		# Only the PAPER arm is resolved here. The OKX arm is registered by the live
+		# root's per-account loop (``assemble_venues`` + the registration loop in
+		# ``build_live_system``), which knows the account set; this seam has no way to
+		# enumerate accounts and must not guess one.
+		bundle = self._venue_bundles.get(COMPUTE_VENUE, DEFAULT_ACCOUNT_ID, None)
+		simulated = bundle.exchange
+		# D-05: ONE venue name for the simulated fill engine — ``'paper'``.
+		# Backtest and live-paper are the SAME behaviour (a simulated fill
+		# engine over computed accounts), so they carry one name, not a
+		# synonym. The former ``('simulated', ...)``/``('csv', ...)`` alias pair
+		# (two keys, one object) and the dead ``('ccxt', ...): None`` placeholder
+		# are both RETIRED IN FULL — no transitional alias. A portfolio's
+		# ``exchange``/``venue_name`` is ``'paper'`` (D-19), so its orders land
+		# on this single key.
+		#
+		# D-27: keyed on the (venue, account_id) PAIR. The paper venue is
+		# single-account, so it pairs with DEFAULT_ACCOUNT_ID. Only the venue
+		# half changed here; the key SHAPE is untouched.
 		exchanges: dict[tuple[str, str], Optional[AbstractExchange]] = {
-			('simulated', DEFAULT_ACCOUNT_ID): simulated,
-			# Backtest portfolios use exchange="csv" (offline golden feed). Orders carry the
-			# portfolio's exchange string, so the 'csv' venue must resolve to the simulated
-			# matching engine for the backtest fill path to work (DEF-01-B, Plan 01-04).
-			# SAME OBJECT as 'simulated' above — the deliberate aliasing the
-			# identity dedup below and in on_market_data exists to collapse.
-			('csv', DEFAULT_ACCOUNT_ID): simulated,
-			('ccxt', DEFAULT_ACCOUNT_ID): None  # Placeholder for live exchange implementation
+			(COMPUTE_VENUE, DEFAULT_ACCOUNT_ID): simulated,
 		}
 
-		# Connect to exchanges that support it. Dedup by instance identity:
-		# venue aliases (e.g. 'simulated' and 'csv') may point to the same
-		# exchange object; connecting it once avoids a misleading second
-		# "Successfully connected" log for the idempotent no-op call (IN-03).
+		# Connect to exchanges that support it. Dedup by instance identity: two
+		# keys may resolve to one exchange object (post-D-05 that means two
+		# ACCOUNTS on one venue, never two venue names), and connecting it once
+		# avoids a misleading second "Successfully connected" log for the
+		# idempotent no-op call (IN-03).
 		# D-27: identity-based for the same reason as the on_market_data dedup —
-		# it collapses aliases, never distinct per-account exchanges.
+		# it collapses shared objects, never distinct per-account exchanges.
 		seen_connect: set[int] = set()
 		for exchange_key, exchange in exchanges.items():
 			if exchange is None or id(exchange) in seen_connect:
@@ -327,22 +343,6 @@ class ExecutionHandler(AbstractExecutionHandler):
 				self.logger.debug('Exchange %s does not support connection management', exchange_name)
 		
 		return exchanges
-
-	@staticmethod
-	def _default_backcompat_config() -> ExchangeConfig:
-		"""Build the TEMPORARY no-config default exchange config (D-13, Trap 1).
-
-		Reproduces today's direct-construction symbol set byte-exactly: the
-		default preset symbols UNION ``{BTCUSD}`` (the union the removed
-		hardcoded BTCUSD registration used to produce). Seeded at
-		construction so it is replacement-safe — a later ``update_config`` that
-		re-derives ``_supported_symbols`` from ``config.limits`` can never wipe
-		BTCUSD. Wave 4 (04-05) removes this fallback once every construction site
-		passes a spec-derived config through the factory.
-		"""
-		config = ExchangeConfig.default()
-		config.limits.supported_symbols = set(config.limits.supported_symbols) | {'BTCUSD'}
-		return config
 
 	def get_exchange_health(self, exchange_name: Optional[str] = None) -> dict[str, Any]:
 		"""

@@ -31,6 +31,7 @@ from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.portfolio_handler.position import Position
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
+from tests.support.venue_wiring import backtest_portfolio_handler
 
 
 def _margin_config(max_leverage: str = "10") -> PortfolioConfig:
@@ -71,7 +72,7 @@ class _StubUniverse:
 
 
 def _handler(universe: Any = None) -> PortfolioHandler:
-    h = PortfolioHandler(Queue())
+    h = backtest_portfolio_handler(Queue())
     if universe is not None:
         h.set_universe(universe)
     return h
@@ -84,7 +85,7 @@ def _open_position(handler: PortfolioHandler, *, side: str, ticker: str = _TICKE
                    cash: Decimal = Decimal("1000000")) -> tuple[Any, Position]:
     """Create a portfolio with one open LONG/SHORT position + a WB margin lock."""
     pid = handler.add_portfolio(
-        name=f"liq-{ticker}", exchange="simulated", cash=float(cash),
+        name=f"liq-{ticker}", exchange="paper", cash=float(cash),
         portfolio_config=_margin_config())
     portfolio: Portfolio = handler.get_portfolio(pid)
     txn_type = TransactionType.BUY if side == "long" else TransactionType.SELL
@@ -165,7 +166,7 @@ def test_multi_breach_deterministic():
         "AAAUSD": _StubInstrument(_MMR, Decimal("0")),
     }
     h = _handler(_StubUniverse(instruments))
-    pid = h.add_portfolio(name="multi", exchange="simulated", cash=1000000.0,
+    pid = h.add_portfolio(name="multi", exchange="paper", cash=1000000.0,
                           portfolio_config=_margin_config())
     portfolio = h.get_portfolio(pid)
     # Re-propagate the universe to the account created after set_universe (01-03).

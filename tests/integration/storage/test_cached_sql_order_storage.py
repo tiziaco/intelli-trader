@@ -87,7 +87,7 @@ def _make_order(**overrides):
         action=Side.BUY,
         price=Decimal("45000.12345678"),
         quantity=Decimal("0.5"),
-        exchange="simulated",
+        exchange="paper",
         strategy_id=StrategyId(uc.uuid7()),
         portfolio_id=PortfolioId(uc.uuid7()),
     )

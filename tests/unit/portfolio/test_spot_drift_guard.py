@@ -45,6 +45,10 @@ from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
 from itrader.portfolio_handler.account.venue import VenueAccount
+from tests.support.venue_wiring import (
+    backtest_portfolio_handler,
+    compute_account,
+)
 
 _TICKER = "BTC/USDC"
 _SPOT_FIXTURE = Path(__file__).parent / "okx_recon_payloads_spot.json"
@@ -99,7 +103,7 @@ def venue_connectors():
 
 @pytest.fixture
 def handler() -> PortfolioHandler:
-    return PortfolioHandler(queue.Queue())
+    return backtest_portfolio_handler(queue.Queue())
 
 
 @pytest.fixture
@@ -116,7 +120,8 @@ def _spot_venue_portfolio(venue_connectors, btc_total: str) -> Portfolio:
     holding == ``btc_total``; ``fetch_positions`` == ``[]`` (spot has no rows).
     """
     connector = venue_connectors(_spot_payloads_with_btc(btc_total))
-    portfolio = Portfolio("spot_venue_pf", "okx", Decimal("150000"), datetime.now())
+    portfolio = Portfolio("spot_venue_pf", "okx", Decimal("150000"), datetime.now(),
+                          account=compute_account(Decimal("150000")))
     # Wire the account exactly as the composition root now does (D-03,
     # live_trading_system.py:400): the real quote (USDC) + spot market-type +
     # symbol so per-symbol position truth derives from total[BASE] (OKX spot has

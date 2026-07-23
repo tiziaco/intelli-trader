@@ -1,35 +1,47 @@
-"""Shared component-graph wiring seam + commission adapter (D-14/D-14a/D-15).
+"""Shared component-graph wiring seam (D-14/D-14a/D-18).
 
 ``compose_engine`` is the SHARED, mode-agnostic wiring seam both
 ``build_backtest_system`` (now) and a future ``build_live_system`` (fast-follow)
 consume. It builds the component graph extracted from the fat
 ``BacktestTradingSystem.__init__`` body — queue, clock, store, feed, signal
-store, strategies/screeners/portfolio/execution handlers, the commission
-adapter, order handler, event handler — and returns them as a small ``Engine``
+store, strategies/screeners/portfolio/execution handlers, the fee-model
+provider, order handler, event handler — and returns them as a small ``Engine``
 holder.
 
 D-14a boundary: ``compose_engine`` must NOT hardcode a run-mode backend string
 (no backtest/live literal). The mode-specific FACTORY (``build_backtest_system``)
 selects the concrete backends (the order-storage + signal-store backends) via
-their respective factories, plus the construction-time
-``ExchangeConfig`` (with the complete symbol set already folded in — D-13/Trap 1)
-and passes them IN. The seam wires the graph from those injected concretes,
-staying run-mode-agnostic (mirrors the injected ``CommissionEstimator`` /
-``PortfolioReadModel`` DI rationale).
+their respective factories and passes them IN. The seam wires the graph from those
+injected concretes, staying run-mode-agnostic (mirrors the injected
+``FeeModelProvider`` / ``PortfolioReadModel`` DI rationale).
 
-D-15: ``FeeModelCommissionEstimator`` promotes the inline ``_estimate_commission``
-closure to a typed adapter conforming to the ``core`` ``CommissionEstimator``
-Protocol. It holds the EXCHANGE ref and reads ``exchange.fee_model`` at CALL
-time (late binding) — ``update_config`` may rebuild the fee model, and a stale
-capture would silently use the wrong estimator. The golden run pins fees 0
-(ZeroFeeModel), so the estimate is ``Decimal("0")`` exactly as today.
+11.1-07 (D-04/D-08/D-17) moves the VENUE backends up to that same boundary, one
+level higher than the retired exchange-config parameter. The factory now builds an
+``ExecutionVenueRegistry``, registers the concrete plugin(s) with their RUN-DERIVED
+``ExchangeConfig`` (a concrete ``PaperVenuePlugin`` is mode-specific, so registering
+it here would be exactly the hardcoded-backend D-14a forbids), builds a real —
+possibly EMPTY — ``ConnectorProvider``, and hands in a built ``VenueBundles``. This
+seam therefore no longer takes an ``ExchangeConfig`` at all: it does not build an
+exchange, so it has no use for one.
+
+11.1-10 (D-18) DECOMPOSES the single commission-estimate adapter CLASS that used to
+live in this module (D-15, Wave 2), and DELETES it. The adapter did two unrelated jobs: it
+late-resolved the exchange's current fee model (a WIRING concern — this module's
+job) and it applied the buy/market admission convention — the ``side`` and
+``order_type`` an admission estimate is taken at — which is an ADMISSION-POLICY
+concern and NOT this module's job. What remains here
+is only the wiring half: a ``FeeModelProvider`` closure that dereferences
+``exchange.fee_model`` at CALL time (LATE BINDING — ``update_config`` REPLACES the
+fee-model object at ``exchanges/simulated.py:775``, so a captured reference would
+silently price reservations at a retired rate). The convention now lives in
+``AdmissionManager._estimate_commission``. The golden run pins fees 0
+(ZeroFeeModel), so the estimate is ``Decimal("0")`` exactly as before.
 
 Indentation: TABS (``trading_system/`` package convention).
 """
 
 from dataclasses import dataclass
-from decimal import Decimal
-from typing import Any, Optional
+from typing import Any, Optional, TYPE_CHECKING, cast
 
 from itrader.core.clock import BacktestClock
 from itrader.config import OrderConfig
@@ -38,10 +50,10 @@ from itrader.events_handler.error_handler import ErrorHandler
 from itrader.events_handler.error_policy import FailFastPolicy
 from itrader.events_handler.full_event_handler import EventHandler
 from itrader.execution_handler.execution_handler import (
+	COMPUTE_VENUE,
 	DEFAULT_ACCOUNT_ID,
 	ExecutionHandler,
 )
-from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.price_handler.feed.base import BarFeed
@@ -52,33 +64,16 @@ from itrader.strategy_handler.strategies_handler import StrategiesHandler
 from itrader.trading_system.engine_context import EngineContext
 from itrader.trading_system.simulation.time_generator import TimeGenerator
 from itrader.universe import Universe
+# Import-inert (TYPE_CHECKING-only internals) and deliberately NOT taken from the
+# ``itrader.venues`` barrel — see the module docstring of ``venues/bundles.py``.
+from itrader.venues.bundles import VenueBundles
 
-
-class FeeModelCommissionEstimator:
-	"""Typed commission-estimate adapter over the exchange (D-15, Trap 2).
-
-	Promotes the inline ``_estimate_commission`` closure. Holds the EXCHANGE
-	REF and reads ``exchange.fee_model`` inside ``__call__`` (LATE BINDING) —
-	NEVER captures ``fee_model`` at ``__init__``. ``update_config`` may rebuild
-	the exchange's fee model; a construction-time capture would silently use a
-	stale estimator. Conforms structurally to the ``core`` ``CommissionEstimator``
-	Protocol (``(Decimal, Decimal) -> Decimal``).
-
-	The ``side="buy", order_type="market"`` admission convention is preserved
-	(D-04). A non-``SimulatedExchange`` (or a None exchange) yields ``Decimal("0")``
-	— byte-identical to the closure's isinstance guard, so the golden run's
-	ZeroFeeModel estimate stays exactly 0.
-	"""
-
-	def __init__(self, exchange: Optional[Any]) -> None:
-		# Hold the REF only — late binding reads exchange.fee_model in __call__.
-		self._exchange = exchange
-
-	def __call__(self, quantity: Decimal, price: Decimal) -> Decimal:
-		if not isinstance(self._exchange, SimulatedExchange):
-			return Decimal("0")
-		return self._exchange.fee_model.calculate_fee(
-			quantity, price, side="buy", order_type="market")
+if TYPE_CHECKING:
+	# D-18: concrete-type import for the fee-model PROVIDER annotation ONLY,
+	# mirroring ``engine_context.py:53-65``. Guarded so no fee-model concretion is
+	# pulled onto this module's import graph; the annotation is a string
+	# forward-ref and stays unevaluated at runtime.
+	from itrader.execution_handler.fee_model.base import FeeModel
 
 
 @dataclass
@@ -121,7 +116,7 @@ class Engine:
 
 def compose_engine(
 	ctx: "EngineContext", *,
-	exchange_config: Optional[Any] = None,
+	venue_bundles: "VenueBundles",
 	results_store: Optional["ResultsStore"] = None,
 	alert_sink: Optional[Any] = None,
 	system_store: Optional[Any] = None,
@@ -137,8 +132,10 @@ def compose_engine(
 	built the store/feed) and no longer constructs a ``CsvPriceStore`` /
 	``BacktestBarFeed`` itself. The only two remaining inputs are HOW/WHERE to
 	execute + persist, so they become explicit keyword params, NOT a spec read:
-	``exchange_config`` (the already-seeded ``ExchangeConfig``, ``None`` for live's
-	default) and ``results_store`` (the OPTIONAL sink, ``None`` on the oracle path).
+	``venue_bundles`` (the built ``(venue, account_id)`` bundle memo — 11.1-07 raised
+	this from the retired exchange-config parameter, because the venue PLUGIN now
+	builds the exchange) and ``results_store`` (the OPTIONAL sink, ``None`` on the
+	oracle path).
 	The WHAT-to-run description (strategies / portfolios / dates / ticker) stays
 	FACTORY-LOCAL and never crosses this shared seam — backtest keeps its
 	``SystemSpec``, live keeps a tiny venue-spec object.
@@ -172,10 +169,17 @@ def compose_engine(
 
 		It is an explicit keyword rather than a read of ``ctx.environment`` so a live
 		system built with a test environment string still routes by account.
-	exchange_config : Optional[Any]
-		The already-seeded ``ExchangeConfig`` threaded into the ``ExecutionHandler``
-		(the complete symbol set folded in by the factory, D-13/Trap 1). ``None`` yields
-		the ``ExecutionHandler`` default (live's behavior today — no change).
+	venue_bundles : VenueBundles
+		The REQUIRED, already-built ``(venue, account_id)`` bundle memo (D-08). The
+		FACTORY constructs the registry, registers the concrete plugin(s) with their
+		RUN-DERIVED ``ExchangeConfig`` (D-17), builds the ``ConnectorProvider`` — a
+		REAL, EMPTY one on the backtest path, never ``None`` (D-04) — and hands the
+		memo in. ``ExecutionHandler`` then RESOLVES its exchange instead of minting
+		one, and (from plan 11.1-09) ``PortfolioHandler`` holds the SAME instance, so
+		both arms see one exchange and one account factory per venue+account.
+
+		Deliberately NOT re-surfaced on the ``Engine`` holder: the handlers hold it,
+		and a second read path is how two callers end up with divergent views.
 	results_store : Optional[ResultsStore]
 		The OPTIONAL results sink forwarded onto the ``Engine`` holder (RESULT-01/D-04).
 		``None`` on the oracle path keeps it store-free AND SQL-import-inert (GATE-01).
@@ -218,27 +222,60 @@ def compose_engine(
 
 	# ScreenersHandler is a deferred subsystem (ignore_errors override).
 	screeners_handler = ScreenersHandler(ctx.bus, feed)  # type: ignore[no-untyped-call]
-	portfolio_handler = PortfolioHandler(ctx.bus, environment=ctx.environment, sql_engine=ctx.sql_engine)
+	# D-02/D-03/D-08 (11.1-09): the portfolio handler and the execution handler now
+	# share ONE VenueBundles instance. The portfolio arm asks it for the ACCOUNT
+	# view (every portfolio's construction-time compute leaf, minted by
+	# PaperVenuePlugin.new_account — the sole account factory) and the execution arm
+	# asks the SAME memo for the exchange, so a single (venue, account_id) bundle
+	# backs both. COMPUTE_VENUE is the one home of the 'paper' name.
+	portfolio_handler = PortfolioHandler(
+		ctx.bus, environment=ctx.environment, sql_engine=ctx.sql_engine,
+		venue_bundles=venue_bundles, compute_venue=COMPUTE_VENUE)
 
 	# Execution handler is constructed BEFORE the order handler so the admission
-	# gate's commission estimator can adapt the simulated exchange's fee model
-	# (D-04). The construction-time ExchangeConfig threads the complete symbol
+	# gate's fee-model provider can close over the resolved exchange (D-04/D-18).
+	# The construction-time ExchangeConfig threads the complete symbol
 	# set (D-13). Construction-order only — runtime stays queue-mediated.
 	# D-27/MPORT-07: the read-model is injected ONLY on the account-routing (live)
 	# arm — see the route_orders_by_account docstring above for why the backtest
 	# arm must stay on the unconditional default account.
+	# D-06/D-08 (11.1-07): the handler RESOLVES its exchange through the injected
+	# VenueBundles instead of minting one. The determinism seam rides on ``ctx.rng``
+	# and reaches the exchange through the PLUGIN (which the memo calls), so the
+	# handler no longer carries an rng of its own — the ctx object itself is what
+	# flows, never a fresh equal-seeded one: identity is the contract.
 	execution_handler = ExecutionHandler(
-		ctx.bus, exchange_config=exchange_config,
+		ctx.bus, venue_bundles=venue_bundles,
 		portfolio_read_model=portfolio_handler if route_orders_by_account else None)
 
-	# Commission estimator for the admission cash-reservation gate (D-04/D-15):
-	# the typed FeeModelCommissionEstimator adapter holds the exchange ref and
-	# reads fee_model at call time (late binding). The golden run pins fees 0,
-	# so the reservation equals price x quantity exactly (value-preserving).
-	# D-27: pair-keyed registry; the simulated venue is single-account.
-	simulated_exchange = execution_handler.exchanges.get(
-		('simulated', DEFAULT_ACCOUNT_ID))
-	commission_estimator = FeeModelCommissionEstimator(simulated_exchange)
+	# Fee-model PROVIDER for the admission cash-reservation gate (D-04/D-18).
+	# D-18 narrowed this seam to WIRING only: hand the order domain the venue's
+	# CURRENT fee model and let AdmissionManager own the admission convention.
+	# The golden run pins fees 0, so the reservation equals price x quantity
+	# exactly (value-preserving).
+	# D-27/D-05: pair-keyed registry; the paper venue is single-account and is
+	# now the ONLY key ``init_exchanges`` returns.
+	admission_exchange = execution_handler.exchanges.get(
+		(COMPUTE_VENUE, DEFAULT_ACCOUNT_ID))
+
+	def fee_model_provider() -> "Optional[FeeModel]":
+		"""The venue's CURRENT fee model, or None if it exposes none (D-18).
+
+		The closure captures the EXCHANGE and reads ``fee_model`` INSIDE the call
+		— it must NEVER capture ``exchange.fee_model`` itself.
+		``SimulatedExchange.update_config`` REBINDS that attribute at
+		``exchanges/simulated.py:775``, immediately after the atomic config swap at
+		``:770``, so the object is REPLACED rather than mutated; a captured
+		reference would keep pricing admission reservations at a rate the exchange
+		no longer charges, silently, with nothing anywhere raising.
+
+		``getattr(..., None)`` is the explicit "this venue exposes no fee model"
+		contract that replaced the deleted adapter's
+		``isinstance(exchange, SimulatedExchange)`` guard — it also covers the
+		``None`` exchange. AdmissionManager degrades a ``None`` to ``Decimal("0")``.
+		"""
+		return cast("Optional[FeeModel]",
+			getattr(admission_exchange, "fee_model", None))
 
 	# Plan 02-03 (D-09/D-14): thread the portfolio's margin settings into the
 	# order domain at construction so the admission leverage cap (D-04) and the
@@ -291,7 +328,7 @@ def compose_engine(
 	order_handler = OrderHandler(
 		ctx.bus, portfolio_handler,
 		order_config=resolved_order_config,
-		commission_estimator=commission_estimator,
+		fee_model_provider=fee_model_provider,
 		enable_margin=trading_rules.enable_margin,
 		portfolio_max_leverage=trading_rules.max_leverage,
 		environment=ctx.environment,

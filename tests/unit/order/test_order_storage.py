@@ -11,6 +11,7 @@ from itrader.core.enums import OrderType, OrderStatus, OrderTriggerSource, Side
 from itrader.core.exceptions import ConfigurationError
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
+from tests.support.venue_wiring import backtest_portfolio_handler
 
 
 # --- InMemoryOrderStorage ---------------------------------------------------
@@ -525,8 +526,8 @@ def test_unsupported_environment():
 def handler_env():
     """OrderHandler wired to a PortfolioHandler with one funded portfolio."""
     queue = Queue()
-    ptf_handler = PortfolioHandler(queue)
-    ptf_handler.add_portfolio("test_ptf", "simulated", 1000)
+    ptf_handler = backtest_portfolio_handler(queue)
+    ptf_handler.add_portfolio("test_ptf", "paper", 1000)
     storage = InMemoryOrderStorage()
     order_handler = OrderHandler(queue, ptf_handler, storage)
     yield SimpleNamespace(

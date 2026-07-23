@@ -41,6 +41,7 @@ from itrader.core.exceptions import InsufficientFundsError
 from itrader.portfolio_handler.account import SimulatedMarginAccount
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.transaction import Transaction
+from tests.support.venue_wiring import compute_account
 
 
 def _margin_config(max_leverage: str = "10") -> PortfolioConfig:
@@ -58,28 +59,23 @@ def _margin_config(max_leverage: str = "10") -> PortfolioConfig:
 # ---------------------------------------------------------------------------
 
 
-class _MockPortfolio:
-    """Minimal portfolio stub for the isolated margin-account guard test."""
-
-    def __init__(self):
-        self.portfolio_id = 12345
-
-
 @pytest.fixture
 def cm():
-    """A SimulatedMarginAccount seeded with $10000 on a mock portfolio.
+    """A SimulatedMarginAccount seeded with $10000.
 
     The margin leaf — ``assert_lock_fits_buying_power`` / ``lock_margin`` live
-    on the margin superset after the 01-02 split.
+    on the margin superset after the 01-02 split. D-01 (11.1-03): the portfolio
+    stub this fixture used to build is gone; the leaf takes no portfolio.
     """
-    return SimulatedMarginAccount(_MockPortfolio(), 10000.0)
+    return SimulatedMarginAccount(10000.0)
 
 
 @pytest.fixture
 def margin_portfolio():
     """A $100000 portfolio with enable_margin=True (lock-and-settle on)."""
     return Portfolio(
-        "wr04_pf", "simulated", 100000, datetime.now(), config=_margin_config()
+        "wr04_pf", "paper", 100000, datetime.now(), config=_margin_config(),
+        account=compute_account(100000, enable_margin=True),
     )
 
 

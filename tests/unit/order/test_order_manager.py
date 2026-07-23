@@ -18,6 +18,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from itrader.execution_handler.fee_model.base import FeeModel
 from itrader.order_handler.order_manager import OrderManager
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.order_handler.order import Order
@@ -28,6 +29,7 @@ from itrader.events_handler.events import SignalEvent, OrderEvent, FillEvent
 from itrader.core.enums import OrderType, OrderCommand, OrderStatus, Side, OrderTriggerSource, MarketExecution
 from itrader.core.exceptions import InsufficientFundsError
 from itrader.core.sizing import FractionOfCash, TradingDirection
+from tests.support.venue_wiring import backtest_portfolio_handler
 
 
 # --- OrderManager initialization -------------------------------------------
@@ -67,7 +69,7 @@ class _Harness:
 
     def __init__(self):
         self.queue = Queue()
-        self.ptf_handler = PortfolioHandler(self.queue)
+        self.ptf_handler = backtest_portfolio_handler(self.queue)
         self.storage = OrderStorageFactory.create("test")
         self.handler = OrderHandler(self.queue, self.ptf_handler, self.storage)
         self.portfolio_id = self.ptf_handler.add_portfolio("p", "default", 100000)
@@ -307,7 +309,7 @@ class _FakeReadModel:
         return 0
 
 
-def _reserve_manager(read_model, commission_estimator=None):
+def _reserve_manager(read_model, fee_model_provider=None):
     """OrderManager wired to the fake read model + its own in-memory storage."""
     storage = InMemoryOrderStorage()
     manager = OrderManager(
@@ -315,9 +317,24 @@ def _reserve_manager(read_model, commission_estimator=None):
         Mock(),
         market_execution="immediate",
         portfolio_handler=read_model,
-        commission_estimator=commission_estimator,
+        fee_model_provider=fee_model_provider,
     )
     return manager, storage
+
+
+class _FixedFeeModel(FeeModel):
+    """A fee model returning a fixed fee (D-18: the provider hands one of these).
+
+    Subclasses the production ABC so the double carries the real
+    ``calculate_fee`` shape rather than an invented one.
+    """
+
+    def __init__(self, fee):
+        self.fee = fee
+
+    def calculate_fee(self, quantity, price, side="buy", order_type="market",
+                      is_maker=None):
+        return self.fee
 
 
 def _reserve_signal(action=Side.BUY, quantity=2.0, price=40.0,
@@ -335,8 +352,9 @@ def _reserve_signal(action=Side.BUY, quantity=2.0, price=40.0,
 def test_buy_signal_reserves_cost_plus_estimated_commission():
     """A BUY reserves exactly price x quantity + estimated commission (D-02)."""
     read_model = _FakeReadModel()
+    fee_model = _FixedFeeModel(Decimal("1.5"))
     manager, storage = _reserve_manager(
-        read_model, commission_estimator=lambda quantity, price: Decimal("1.5")
+        read_model, fee_model_provider=lambda: fee_model
     )
 
     results = manager.process_signal(_reserve_signal())
@@ -399,9 +417,9 @@ def test_bracket_children_reserve_nothing():
 
 
 def test_default_zero_commission_estimator_reserves_price_times_quantity():
-    """With no estimator wired, reservation == price x quantity exactly (D-04)."""
+    """With no provider wired, reservation == price x quantity exactly (D-04)."""
     read_model = _FakeReadModel()
-    manager, storage = _reserve_manager(read_model)  # estimator omitted -> 0
+    manager, storage = _reserve_manager(read_model)  # provider omitted -> 0
 
     manager.process_signal(_reserve_signal())
 

@@ -134,14 +134,14 @@ def test_persist_end_to_end_writes_runs_portfolios_and_artifacts() -> None:
 def test_persist_true_without_store_raises_configuration_error() -> None:
     """D-03: run(persist=True) with no store injected raises ConfigurationError."""
     system = BacktestTradingSystem(
-        exchange="csv",
+        exchange="paper",
         start_date="2018-01-01",
         end_date="2018-06-01",  # tiny window — the guard raises post-loop regardless
     )
     strategy = _make_strategy()
     system.strategies_handler.add_strategy(strategy)
     portfolio_id = system.portfolio_handler.add_portfolio(
-        name="guard_pf", exchange="csv", cash=10_000)
+        name="guard_pf", exchange="paper", cash=10_000)
     strategy.subscribe_portfolio(portfolio_id)
 
     assert system.engine.results_store is None
@@ -152,14 +152,14 @@ def test_persist_true_without_store_raises_configuration_error() -> None:
 def test_oracle_byte_exact_under_persist_false() -> None:
     """D-04 / GATE-01: the default persist=False path keeps the oracle byte-exact."""
     system = BacktestTradingSystem(
-        exchange="csv",
+        exchange="paper",
         start_date="2018-01-01",
         end_date="2026-06-03",
     )
     strategy = _make_strategy()
     system.strategies_handler.add_strategy(strategy)
     portfolio_id = system.portfolio_handler.add_portfolio(
-        name="oracle_pf", exchange="csv", cash=10_000)
+        name="oracle_pf", exchange="paper", cash=10_000)
     strategy.subscribe_portfolio(portfolio_id)
 
     # persist defaults False — NO dump code executes, so the numbers are byte-exact.

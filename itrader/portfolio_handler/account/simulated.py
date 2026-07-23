@@ -17,6 +17,15 @@ The ``CashOperation`` audit entity moves here with the cash leaf and is re-expor
 the ``account/`` barrel, giving every importer a single stable home once
 ``cash_manager.py`` is deleted in plan 01-03.
 
+D-01 (11.1-03): neither leaf carries a reference back to the ``Portfolio`` that owns
+it. Both construct from ``initial_cash`` (plus an explicitly-supplied state-storage
+seam) and NOTHING else, and the three portfolio-side reads the margin math needed
+(open positions, portfolio id, total equity) are now METHOD ARGUMENTS supplied by
+``PortfolioHandler`` — already their only production caller. The math stays on the
+leaf; only the reads moved out. This is what lets a built ``Account`` be handed TO a
+``Portfolio`` (D-02/D-03) instead of the constructor demanding a ``Portfolio`` that
+does not exist yet.
+
 Money (D-12): Decimal end-to-end via ``to_money``; quantization only at ledger
 boundaries, never mid-stream. 4-space indentation (matches the ``cash_manager.py``
 code-motion source).
@@ -25,7 +34,7 @@ code-motion source).
 import uuid
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime, UTC
-from typing import Any, Optional, List, Dict
+from typing import Any, Optional, List, Dict, TYPE_CHECKING
 from dataclasses import dataclass
 
 import uuid_utils.compat as uuid_compat
@@ -42,6 +51,9 @@ from itrader.logger import get_itrader_logger
 from itrader.portfolio_handler.position import Position
 
 from .base import Account
+
+if TYPE_CHECKING:
+    from itrader.portfolio_handler.base import PortfolioStateStorage
 
 
 @dataclass
@@ -78,6 +90,15 @@ class SimulatedCashAccount(Account):
     ``release(order_id)``), the D-05 reserve/release dropping ``portfolio_id``
     (the account IS the single account, LX-04 1:1).
 
+    D-01 (11.1-03): this leaf holds NO reference to the ``Portfolio`` that owns
+    it. It never read one — it only stored one — so removing the attribute is
+    value-inert and the byte-exact oracle is unmoved. The state-storage seam the
+    old constructor used to SNIFF off the portfolio (``getattr(portfolio,
+    "state_storage", ...)``) is now supplied EXPLICITLY by the caller, which is
+    strictly more honest: the seam was always the only thing this leaf wanted
+    from the portfolio, and passing it names that dependency instead of reaching
+    through an object graph for it.
+
     Features:
     - Decimal precision for financial calculations
     - Cash reservations for pending orders
@@ -86,14 +107,39 @@ class SimulatedCashAccount(Account):
     - Balance validation and consistency checks
     """
 
-    def __init__(self, portfolio: Any, initial_cash: float | Decimal = 0.0) -> None:
-        self.portfolio = portfolio
+    def __init__(
+        self,
+        initial_cash: float | Decimal = 0.0,
+        *,
+        state_storage: "PortfolioStateStorage | None" = None,
+    ) -> None:
+        """Construct a spot cash leaf from cash alone (D-01, 11.1-03).
+
+        Parameters
+        ----------
+        initial_cash:
+            The opening cash balance, quantized to the cash scale at this ledger
+            boundary (D-04 string entry via ``to_money``, D-03 HALF_UP).
+        state_storage:
+            The shared ``PortfolioStateStorage`` seam (reserved cash, locked
+            margin, cash-operation audit trail). ``Portfolio._init_managers``
+            passes the SAME instance its four managers hold, so the account and
+            its siblings stay on one backend. Keyword-only ON PURPOSE: the old
+            signature took a ``portfolio`` FIRST positional, so a stale
+            ``Account(portfolio, cash)`` call now fails loud with a ``TypeError``
+            instead of silently binding a portfolio into this slot. Omitted
+            (standalone construction, e.g. a focused unit test) falls back to a
+            private in-memory backend.
+        """
         # D-19: lock removed — single-writer contract, see Portfolio docstring.
         self.logger = get_itrader_logger().bind(component="SimulatedCashAccount")
 
         # Cash balance with high precision (D-04 string entry via to_money;
         # quantize to the cash scale at this ledger boundary, D-03 HALF_UP).
-        self._balance = to_money(initial_cash).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        # WR-05: the scale comes from the account's declared precision (the ABC's
+        # single home) — `Portfolio._validate_initial_state` asks the SAME helper,
+        # so the opening-cash equality guard cannot be broken by a one-sided change.
+        self._balance = self.quantize_cash(initial_cash)
 
         # M2-08: reserved cash (working state) + cash operations (audit trail) now
         # live in the injected state-storage seam. This account no longer owns
@@ -101,43 +147,57 @@ class SimulatedCashAccount(Account):
         # cash *balance* (self._balance) stays on the account: it is not one of the
         # four relocated containers (positions / transactions / cash-ops+reserved /
         # snapshots) — reserved cash is the working-state container, the running
-        # balance is intrinsic ledger state. A real Portfolio always injects a
-        # shared seam; an account constructed standalone (e.g. with a lightweight
-        # test portfolio) falls back to its own in-memory backend.
+        # balance is intrinsic ledger state.
+        #
+        # D-01 (11.1-03): the seam is now PASSED IN, not sniffed off a portfolio
+        # back-reference. Every real owner (Portfolio._init_managers, and through
+        # it the paper venue plugin) supplies the SAME instance its four managers
+        # hold, so the previous getattr-and-write-back dance — fabricate a backend
+        # from the portfolio's ``_environment``/``_sql_engine``, then assign it
+        # BACK onto ``portfolio.state_storage`` so siblings do not end up on
+        # disjoint backends (the old WR-02 note) — is no longer needed: there is
+        # exactly one seam and the caller names it. The remaining fallback is for
+        # STANDALONE construction only (a focused unit test with no portfolio at
+        # all), and it is deliberately plain in-memory: with no portfolio to read
+        # an environment from, guessing 'live' is not an option, and a caller that
+        # wants a durable backend must now say so by passing one.
         from itrader.portfolio_handler.base import PortfolioStateStorage
         from itrader.portfolio_handler.storage import PortfolioStateStorageFactory
-        storage = getattr(portfolio, "state_storage", None)
-        if storage is None:
-            # D-07 (05.2-05): honor the portfolio's durable environment/backend so
-            # a standalone-constructed live portfolio fabricates the SAME 'live'
-            # backend rather than silently falling back to in-memory. Defaults
-            # ("backtest"/None) keep a lightweight test portfolio in-memory
-            # (oracle-dark); portfolio.py:_init_managers is the primary lever.
-            storage = PortfolioStateStorageFactory.create(
-                getattr(portfolio, "_environment", "backtest"),
-                sql_engine=getattr(portfolio, "_sql_engine", None),
-                portfolio_id=getattr(portfolio, "portfolio_id", None),
-            )
-            # WR-02: share the fabricated seam with sibling managers so a
-            # standalone-constructed portfolio does not end up with disjoint
-            # per-manager backends (which would silently break cross-manager
-            # invariants). A real Portfolio always sets state_storage first.
-            try:
-                portfolio.state_storage = storage
-            except AttributeError:
-                pass
-        self._storage: PortfolioStateStorage = storage
+        if state_storage is None:
+            state_storage = PortfolioStateStorageFactory.create("backtest")
+        self._storage: PortfolioStateStorage = state_storage
 
         # Configuration
         self.min_balance = Decimal('0.00')  # Minimum allowed balance
         self.max_balance = Decimal('10000000.00')  # Maximum allowed balance
-        self.precision = Decimal('0.01')  # Precision for rounding
+        # WR-05: `precision` is NOT re-declared here — the cash scale is declared
+        # once on the `Account` ABC and inherited, so `_validate_and_convert_amount`
+        # below and `quantize_cash` above read one value, not two copies of it.
 
         self.logger.info("SimulatedCashAccount initialized",
             initial_balance=str(self._balance),
             min_balance=str(self.min_balance),
             max_balance=str(self.max_balance)
         )
+
+    @property
+    def state_storage(self) -> "PortfolioStateStorage":
+        """The shared persistence seam this leaf routes its working state through.
+
+        Exposed READ-ONLY (11.1-09, D-02) so ``Portfolio`` can ADOPT the seam of the
+        account it is handed rather than building a second one. That inversion is
+        what makes the account/managers split structurally impossible: the account is
+        now built BEFORE its portfolio exists, so a portfolio that built its own
+        backend would leave the leaf on a private one — and the live restart path
+        (``state_storage.rehydrate(account)``) repopulates the reservation and
+        locked-margin caches on the PORTFOLIO's instance, so every reservation would
+        be silently lost across a restart. Backtest reads none of those containers
+        anywhere else, so the byte-exact oracle would stay green throughout.
+
+        There is NO setter: rebinding the seam after construction is the late-init
+        shape this phase exists to remove.
+        """
+        return self._storage
 
     @property
     def balance(self) -> Decimal:
@@ -628,8 +688,24 @@ class SimulatedMarginAccount(SimulatedCashAccount):
     mint step, never mid-formula.
     """
 
-    def __init__(self, portfolio: Any, initial_cash: float | Decimal = 0.0) -> None:
-        super().__init__(portfolio, initial_cash)
+    def __init__(
+        self,
+        initial_cash: float | Decimal = 0.0,
+        *,
+        state_storage: "PortfolioStateStorage | None" = None,
+    ) -> None:
+        """Construct a margin leaf from cash alone (D-01, 11.1-03).
+
+        Parameters
+        ----------
+        initial_cash:
+            The opening cash balance (see ``SimulatedCashAccount.__init__``).
+        state_storage:
+            The shared ``PortfolioStateStorage`` seam, keyword-only. Same
+            contract as the cash superclass — the margin leaf additionally keeps
+            its position-keyed margin locks there.
+        """
+        super().__init__(initial_cash, state_storage=state_storage)
         # The Universe read-model used to resolve per-symbol Instruments for the
         # margin/liquidation math. Wired by the runner via ``set_universe`` (the
         # math-pulldown moves the universe seam with it); 01-03 re-points the
@@ -812,25 +888,45 @@ class SimulatedMarginAccount(SimulatedCashAccount):
     # D-13/MARGIN-03 + LIQ-01/02). Pure Decimal end-to-end (Pitfall 5 — NEVER
     # Decimal(float)); the liq price is quantized to the instrument price scale
     # ONLY at the FillEvent boundary in the handler mint step, never mid-formula.
-    # Receiver references adapted from the handler's
-    # ``self.get_portfolio(portfolio_id)`` form to the account's own state — the
-    # account IS the single account under LX-04 (1:1). The emission shell stays
-    # in PortfolioHandler this wave; 01-03 re-points it to call DOWN here.
+    # D-01 (11.1-03): the MATH stays here; the portfolio-side READS it needs
+    # (open positions, the portfolio id carried by the fail-loud guard, and
+    # mark-to-market equity) are METHOD ARGUMENTS supplied by ``PortfolioHandler``
+    # — already the only production caller of both. That is what dissolves the
+    # mutual Account<->Portfolio reference: the leaf answers a margin question
+    # about state it is HANDED, so it needs no object graph to walk. The emission
+    # shell stays in PortfolioHandler.
     # ------------------------------------------------------------------
 
-    def maintenance_margin(self) -> Decimal:
+    def maintenance_margin(self, positions: Any, portfolio_id: Any) -> Decimal:
         """Return maintenance margin computed on demand (D-13/MARGIN-03).
 
         ``maintenance_margin = Σ (Instrument.maintenance_margin_rate × |size| ×
-        current_price)`` over the portfolio's OPEN positions, resolving each
+        current_price)`` over the supplied OPEN positions, resolving each
         ticker's Instrument via the injected Universe. Decimal end-to-end
         (RESEARCH Pitfall 8 — Position.net_quantity is already |size| Decimal and
         current_price is Decimal; the rate is Decimal). NOT a stored Position
         field (D-13a). With no open positions the sum is ``Decimal("0")``.
+
+        Parameters
+        ----------
+        positions:
+            The open positions to price, as the ticker-keyed mapping
+            ``PositionManager.get_all_positions()`` returns. D-01: supplied by
+            the caller (``PortfolioHandler``) instead of read off a portfolio
+            back-reference.
+        portfolio_id:
+            The portfolio the positions belong to, carried as attribution
+            context on the WR-02 fail-loud ``StateError`` below. NOT optional
+            and NOT droppable (RESEARCH F-6): dropping it degrades a
+            context-rich error on a money-arithmetic path.
+
+        Returns
+        -------
+        Decimal
+            The maintenance margin, full precision, ``Decimal("0")`` when there
+            is nothing to price.
         """
-        portfolio = self.portfolio
         total = Decimal("0")
-        positions = portfolio.position_manager.get_all_positions()
         # WR-02 (T-03-17): the per-symbol Instrument read dereferences the
         # injected Universe. If positions exist but the Universe was never wired
         # (``set_universe`` not called), fail LOUD with a context-rich StateError
@@ -839,7 +935,7 @@ class SimulatedMarginAccount(SimulatedCashAccount):
         # unwired Universe is benign and the sum is ``Decimal("0")``.
         if positions and self._universe is None:
             raise StateError(
-                portfolio.portfolio_id,
+                portfolio_id,
                 "universe-unwired",
                 required_state="universe-wired (call set_universe)",
                 operation="maintenance_margin",
@@ -853,7 +949,7 @@ class SimulatedMarginAccount(SimulatedCashAccount):
             )
         return total
 
-    def margin_ratio(self) -> Decimal:
+    def margin_ratio(self, equity: Decimal, positions: Any, portfolio_id: Any) -> Decimal:
         """Return ``total_equity / maintenance_margin`` (D-12/D-13).
 
         Mark-to-market equity over maintenance margin — the figure a UI/live layer
@@ -863,14 +959,29 @@ class SimulatedMarginAccount(SimulatedCashAccount):
         maintenance margin is ``Decimal("0")`` (no open positions, no margin
         required) it returns the deterministic sentinel ``Decimal("0")`` rather
         than dividing by zero.
+
+        Parameters
+        ----------
+        equity:
+            Mark-to-market total equity, already Decimal at the boundary
+            (``Portfolio.total_equity``). D-01: supplied by the caller.
+        positions:
+            The open positions, forwarded verbatim to ``maintenance_margin``.
+        portfolio_id:
+            The portfolio id, forwarded verbatim to ``maintenance_margin`` for
+            its WR-02 guard. ``positions``/``portfolio_id`` ride along BECAUSE of
+            that internal delegation — VENUE-01's requirement text writes
+            ``margin_ratio(equity)`` naming only the read it removes, which is
+            the same elision RESEARCH F-6 flags on ``maintenance_margin``.
+
+        Returns
+        -------
+        Decimal
+            The ratio, or the ``Decimal("0")`` zero-maintenance sentinel.
         """
-        maintenance = self.maintenance_margin()
+        maintenance = self.maintenance_margin(positions, portfolio_id)
         if maintenance == Decimal("0"):
             return Decimal("0")
-        # Bind to a Decimal-typed local: self.portfolio is Any here (the handler's
-        # typed PortfolioHandler.total_equity(portfolio_id) -> Decimal source kept
-        # this strict-clean), so pin the type at the boundary.
-        equity: Decimal = self.portfolio.total_equity
         return equity / maintenance
 
     @staticmethod

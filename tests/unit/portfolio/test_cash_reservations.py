@@ -26,7 +26,7 @@ import uuid_utils.compat as uuid_compat
 
 from itrader.core.enums import FillStatus, Side
 from itrader.events_handler.events import FillEvent
-from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
+from tests.support.venue_wiring import backtest_portfolio_handler
 
 
 def _gap_up_fill(portfolio_id, order_id, *, price, quantity,
@@ -51,8 +51,8 @@ def test_gap_up_settlement_above_reservation_succeeds_and_releases():
     """A BUY reserved at decision-close settles at a HIGHER next-open:
     the debit succeeds (invariant checks balance, not available) and the
     terminal release frees the exact reserved amount."""
-    handler = PortfolioHandler(Queue())
-    pid = handler.add_portfolio("p", "simulated", 10000)
+    handler = backtest_portfolio_handler(Queue())
+    pid = handler.add_portfolio("p", "paper", 10000)
     portfolio = handler.get_portfolio(pid)
     cash = portfolio.account
     order_id = uuid_compat.uuid7()
@@ -83,8 +83,8 @@ def test_gap_up_settlement_above_reservation_succeeds_and_releases():
 def test_release_after_gap_up_settle_is_idempotent():
     """A second release for the same order id is a silent no-op — the
     uniform terminal release in on_fill reconciliation can never double-free."""
-    handler = PortfolioHandler(Queue())
-    pid = handler.add_portfolio("p", "simulated", 10000)
+    handler = backtest_portfolio_handler(Queue())
+    pid = handler.add_portfolio("p", "paper", 10000)
     cash = handler.get_portfolio(pid).account
     order_id = uuid_compat.uuid7()
 

@@ -11,6 +11,7 @@ from itrader.core.bar import Bar
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.events_handler.events import FillEvent, BarEvent, PortfolioUpdateEvent
 from itrader.core.enums import FillStatus, Side
+from tests.support.venue_wiring import backtest_portfolio_handler
 
 
 def _fill(ticker, action, price, quantity, portfolio_id):
@@ -27,8 +28,8 @@ def _fill(ticker, action, price, quantity, portfolio_id):
 def env():
     """A PortfolioHandler with one funded ($1000) simulated portfolio."""
     queue = Queue()
-    ptf_handler = PortfolioHandler(queue)
-    portfolio_id = ptf_handler.add_portfolio("test_ptf", "simulated", 1000)
+    ptf_handler = backtest_portfolio_handler(queue)
+    portfolio_id = ptf_handler.add_portfolio("test_ptf", "paper", 1000)
     yield SimpleNamespace(queue=queue, ptf_handler=ptf_handler, portfolio_id=portfolio_id)
     while not queue.empty():
         queue.get_nowait()

@@ -22,6 +22,7 @@ from itrader.core.enums import PortfolioState
 from itrader.core.ids import PortfolioId
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.portfolio_handler.rehydrate.portfolio_rehydrate import rehydrate_portfolios
+from tests.support.venue_wiring import backtest_portfolio_handler
 
 
 class _FakeDefinitionStore:
@@ -70,7 +71,7 @@ def handler() -> PortfolioHandler:
     The rehydrate contract under test is "rows in, portfolios out"; the durable write-back
     is 11-08's separate writer gate. Using the backtest arm keeps these tests SQL-free.
     """
-    return PortfolioHandler(queue.Queue(), environment="backtest", sql_engine=None)
+    return backtest_portfolio_handler(queue.Queue(), environment="backtest", sql_engine=None)
 
 
 # --------------------------------------------------------------------------- #

@@ -28,6 +28,7 @@ import uuid_utils.compat as uuid_compat
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
 from itrader import idgen
+from tests.support.venue_wiring import compute_account
 
 
 _INITIAL_CASH = 150000
@@ -44,7 +45,8 @@ def _txn(txn_type, ticker, price, qty, commission=0, fee_currency=None):
 
 def _spot_portfolio():
     """A fresh SPOT simulated portfolio (enable_margin defaults False)."""
-    return Portfolio("spot_pf", "simulated", _INITIAL_CASH, datetime.now())
+    return Portfolio("spot_pf", "paper", _INITIAL_CASH, datetime.now(),
+                     account=compute_account(_INITIAL_CASH))
 
 
 def test_base_fee_buy_reduces_position_not_cash():

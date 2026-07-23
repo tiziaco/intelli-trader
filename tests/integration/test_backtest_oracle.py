@@ -259,7 +259,7 @@ def test_golden_run_signal_store_is_non_empty_and_queryable():
     weakened here.
     """
     system = BacktestTradingSystem(
-        exchange="csv",
+        exchange="paper",
         start_date="2018-01-01",
         end_date="2026-06-03",
     )
@@ -273,7 +273,7 @@ def test_golden_run_signal_store_is_non_empty_and_queryable():
     )
     system.strategies_handler.add_strategy(strategy)
     portfolio_id = system.portfolio_handler.add_portfolio(
-        name="sig02_pf", exchange="csv", cash=10_000,
+        name="sig02_pf", exchange="paper", cash=10_000,
     )
     strategy.subscribe_portfolio(portfolio_id)
 

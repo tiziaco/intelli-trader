@@ -132,7 +132,7 @@ def test_engine_survives_heterogeneous_spans_with_no_look_ahead(tmp_path):
     ends = write_kline_csv(tmp_path / "ends.csv", ENDSEARLY_DAYS, base=300.0)
 
     system = BacktestTradingSystem(
-        exchange="csv",
+        exchange="paper",
         csv_paths={"EARLYUSD": early, "LATEUSD": late, "ENDSEARLYUSD": ends},
         start_date=WINDOW_START,
         end_date=WINDOW_END,
@@ -143,7 +143,7 @@ def test_engine_survives_heterogeneous_spans_with_no_look_ahead(tmp_path):
     # D-13/Trap 1), so these synthetic tickers are already admitted. Re-registering
     # each via the public register_symbol seam (D-07) is therefore a no-op union here
     # — kept to exercise that the seam stays additive (never wipes the seeded set).
-    simulated = system.execution_handler.exchanges[("simulated", DEFAULT_ACCOUNT_ID)]
+    simulated = system.execution_handler.exchanges[("paper", DEFAULT_ACCOUNT_ID)]
     for ticker in ("EARLYUSD", "LATEUSD", "ENDSEARLYUSD"):
         simulated.register_symbol(ticker)
     # WR-02: fail loudly at setup if the supported-symbol set drifts. Without
@@ -161,7 +161,7 @@ def test_engine_survives_heterogeneous_spans_with_no_look_ahead(tmp_path):
 
     portfolio_id = system.portfolio_handler.add_portfolio(
         name="spans_pf",
-        exchange="csv",
+        exchange="paper",
         cash=1_000_000,
     )
     strategy.subscribe_portfolio(portfolio_id)
@@ -170,6 +170,21 @@ def test_engine_survives_heterogeneous_spans_with_no_look_ahead(tmp_path):
     # all three spans) and the run completes over the mid-run listing and the
     # differing end date without raising.
     system.run(print_summary=False)
+
+    # F-4 (D-05) — DIRECT evidence that ``wire_universe`` injected the Universe
+    # into the exchange it resolved off the ('paper', DEFAULT_ACCOUNT_ID) key.
+    # This assertion exists because the injection used to be a soft lookup plus
+    # an isinstance guard: on a stale key the guard skipped, set_universe never
+    # ran, min_order_size resolution changed and the money arithmetic moved with
+    # NO exception and no red test. A green run is NOT evidence the injection
+    # happened — the fallback path produces plausible numbers — so assert it
+    # directly, by IDENTITY (an equal-but-distinct Universe would mean two
+    # objects were built and the exchange holds the wrong one).
+    assert simulated._universe is system.engine.universe, (
+        "wire_universe did not inject the Universe into the exchange registered "
+        "under ('paper', DEFAULT_ACCOUNT_ID) — min_order_size resolution has "
+        "silently fallen back to the venue-level default"
+    )
 
     portfolio = system.portfolio_handler.get_portfolio(portfolio_id)
     # All positions (open + closed) seen during the run.

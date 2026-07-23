@@ -97,14 +97,14 @@ def _run_backtest_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
     round-trip, NO diff against the committed frozen golden artifact directory.
     """
     system = BacktestTradingSystem(
-        exchange="csv",
+        exchange="paper",
         start_date=_START_DATE,
         end_date=_END_DATE,
     )
     strategy = _build_golden_strategy()
     system.strategies_handler.add_strategy(strategy)
     portfolio_id = system.portfolio_handler.add_portfolio(
-        name="parity_bt", exchange="csv", cash=_CASH,
+        name="parity_bt", exchange="paper", cash=_CASH,
     )
     strategy.subscribe_portfolio(portfolio_id)
     # print_summary=False suppresses the display-only metrics printout (oracle-inert).
@@ -119,7 +119,7 @@ def _run_paper_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
 
     The paper side (TEST-01/D-18): ``build_paper_replay_system()`` builds the paper live
     system with the relocated ``TestDataPlugin`` injected on the data registry (paper↔replay
-    lives ONLY in the fixture now) and reuses the account-free 'simulated'
+    lives ONLY in the fixture now) and reuses the account-free 'paper'
     ``SimulatedExchange`` as-is (D-04); ``TestRunner(system, provider).run()`` replays the
     golden bars through the real feed -> queue seam with backtest-faithful per-tick +
     run-end discipline, fail-fast BY DEFAULT (D-19).
@@ -127,14 +127,14 @@ def _run_paper_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
     system, provider = build_paper_replay_system()
     strategy = _build_golden_strategy()
     system.strategies_handler.add_strategy(strategy)
-    # 'simulated' routes to the reused SimulatedExchange (D-04) — the paper exchange.
+    # 'paper' routes to the reused SimulatedExchange (D-04) — the paper exchange.
     # D-27: the paper side is a LIVE system, so its portfolio must NAME the venue
     # account its orders route through — on_order resolves the account through the
     # injected read-model and REFUSES a portfolio that names none. The reused
     # simulated exchange is registered under the default account, so naming it here
     # is parity-preserving: the same object receives the same orders as before.
     portfolio_id = system.portfolio_handler.add_portfolio(
-        name="parity_paper", exchange="simulated", cash=_CASH,
+        name="parity_paper", exchange="paper", cash=_CASH,
         account_id=DEFAULT_ACCOUNT_ID,
     )
     strategy.subscribe_portfolio(portfolio_id)

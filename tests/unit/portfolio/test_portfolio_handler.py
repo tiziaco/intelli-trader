@@ -15,9 +15,14 @@ import pytest
 # Import the portfolio classes
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.portfolio_handler.portfolio import Portfolio, Position
+from itrader.portfolio_handler.account import SimulatedMarginAccount
 from itrader.core.enums import PortfolioState, PositionSide
 from itrader.config import PortfolioConfig, get_portfolio_preset
 from itrader.outils.dict_merge import recursive_merge
+from tests.support.venue_wiring import (
+    backtest_portfolio_handler,
+    compute_account,
+)
 
 
 def _margin_config(max_leverage: str = "10") -> PortfolioConfig:
@@ -49,7 +54,7 @@ def _fill_event(ticker, action, price, quantity, commission, portfolio_id, time=
 
 # Legacy-compatibility test data.
 _PORTFOLIO_NAME = "test_pf"
-_EXCHANGE = "simulated"
+_EXCHANGE = "paper"
 _CASH = 150000
 
 
@@ -57,7 +62,7 @@ _CASH = 150000
 def env():
     """A PortfolioHandler (test environment) + its global queue."""
     global_queue = Queue()
-    handler = PortfolioHandler(
+    handler = backtest_portfolio_handler(
         global_queue=global_queue,
         config_dir="settings",
         environment="test",
@@ -556,6 +561,7 @@ def portfolio():
     return Portfolio(
         name="Test Portfolio", exchange="NYSE",
         cash=10000.0, time=datetime.now(UTC),
+        account=compute_account(10000.0),
     )
 
 
@@ -709,3 +715,77 @@ def test_universe_unwired_no_positions_is_not_an_error(env):
     portfolio_id = env.handler.add_portfolio(_PORTFOLIO_NAME, _EXCHANGE, _CASH)
     # No positions, no set_universe — must NOT raise.
     assert env.handler.maintenance_margin(portfolio_id) == Decimal("0")
+
+
+# ---------------------------------------------------------------------------
+# D-01 / VENUE-01 (11.1-03) — the Account leaf carries NO reference back to the
+# Portfolio that owns it. The object-graph property itself is not directly
+# assertable, so the checkable proxy is constructibility-and-exercisability in
+# ISOLATION: if the leaf can be built and its margin math driven to a real
+# number with no Portfolio object in existence at all, there is no residual
+# coupling left to find (no attribute, no closure capture, no getattr fallback).
+# ---------------------------------------------------------------------------
+
+
+def _fake_position(ticker, net_quantity, current_price):
+    """A minimal open-position stand-in for the margin sum (D-13).
+
+    Exposes exactly the three reads maintenance_margin performs: ``ticker``
+    (universe lookup key), ``net_quantity`` and ``current_price``.
+    """
+    return SimpleNamespace(
+        ticker=ticker,
+        net_quantity=net_quantity,
+        current_price=current_price,
+    )
+
+
+def test_margin_math_runs_with_no_portfolio_object_in_existence():
+    """D-01/VENUE-01: the margin leaf needs no Portfolio — not to construct, and
+    not to compute. Built from cash alone, handed positions and an id directly."""
+    account = SimulatedMarginAccount(10000)
+    account.set_universe(_fake_universe({
+        "AAA": Decimal("0.01"),
+        "BBB": Decimal("0.02"),
+    }))
+
+    # Σ (mmr × |size| × price): 0.01×2×100 = 2 ; 0.02×1×50 = 1 -> 3
+    positions = {
+        "AAA": _fake_position("AAA", Decimal("2"), Decimal("100")),
+        "BBB": _fake_position("BBB", Decimal("1"), Decimal("50")),
+    }
+    mm = account.maintenance_margin(positions, "pf-no-portfolio")
+    assert isinstance(mm, Decimal)
+    assert mm == Decimal("3")
+
+    # margin_ratio takes equity as an argument for the same reason — no
+    # Portfolio to read total_equity from.
+    assert account.margin_ratio(Decimal("30"), positions, "pf-no-portfolio") == Decimal("10")
+
+    # VENUE-01 `empty` edge: an EMPTY positions mapping returns Decimal('0')
+    # WITHOUT dereferencing the Universe, so the WR-02 unwired-Universe guard
+    # stays unreachable when there is nothing to price. Proved on a SECOND,
+    # deliberately unwired account so the assertion cannot free-ride on the
+    # set_universe call above.
+    unwired = SimulatedMarginAccount(10000)
+    assert unwired._universe is None
+    assert unwired.maintenance_margin({}, "pf-no-portfolio") == Decimal("0")
+
+    # VENUE-01 boundary edge: zero maintenance returns the Decimal('0') sentinel
+    # rather than dividing by zero.
+    assert unwired.margin_ratio(Decimal("500"), {}, "pf-no-portfolio") == Decimal("0")
+
+
+def test_margin_math_with_no_portfolio_still_fails_loud_on_unwired_universe():
+    """D-01 must NOT weaken the WR-02 detective control: positions present but no
+    Universe still raises a context-rich StateError carrying the portfolio id."""
+    account = SimulatedMarginAccount(10000)  # set_universe deliberately not called
+    positions = {"AAA": _fake_position("AAA", Decimal("2"), Decimal("100"))}
+
+    with pytest.raises(StateError) as exc_info:
+        account.maintenance_margin(positions, "pf-attribution-id")
+    message = str(exc_info.value)
+    assert "universe" in message.lower()
+    # The portfolio-id attribution the caller supplied survives into the error
+    # (RESEARCH F-6 — the id is not an optional, droppable argument).
+    assert "pf-attribution-id" in message

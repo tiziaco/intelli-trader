@@ -31,12 +31,13 @@ import uuid_utils.compat as uuid_compat
 from itrader.core.enums import FillStatus, Side
 from itrader.events_handler.events import FillEvent
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
+from tests.support.venue_wiring import backtest_portfolio_handler
 
 
 @pytest.fixture
 def env():
     queue: "Queue" = Queue()
-    ptf = PortfolioHandler(queue)
+    ptf = backtest_portfolio_handler(queue)
     pid = ptf.add_portfolio("p", "default", 100000)
 
     def fill(*, venue_trade_id=None, quantity=0.5, price=40000.0):

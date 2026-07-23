@@ -24,6 +24,8 @@ from itrader.execution_handler.fee_model.percent_fee_model import PercentFeeMode
 from itrader.execution_handler.slippage_model.linear_slippage_model import LinearSlippageModel
 from itrader.core.exceptions.base import ConfigurationError
 
+from tests.support.venue_wiring import backtest_venue_bundles
+
 
 @pytest.fixture
 def exchange():
@@ -106,14 +108,15 @@ def test_update_config_omitting_supported_symbols_preserves_the_set(exchange):
 
 @pytest.fixture
 def handler():
-    return ExecutionHandler(Queue())
+    queue = Queue()
+    return ExecutionHandler(queue, venue_bundles=backtest_venue_bundles(queue))
 
 
 def test_execution_handler_delegates_to_exchange(handler):
     """ExecutionHandler.update_config routes to the simulated exchange."""
     result = handler.update_config({"limits": {"min_order_size": "7"}})
     assert result is None
-    simulated = handler.exchanges.get(("simulated", DEFAULT_ACCOUNT_ID))
+    simulated = handler.exchanges.get(("paper", DEFAULT_ACCOUNT_ID))
     assert simulated._min_order_size == Decimal("7")
 
 

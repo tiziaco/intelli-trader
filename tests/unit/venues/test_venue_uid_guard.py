@@ -63,7 +63,7 @@ class _FakePlugin:
     def build_bundle(self, ctx: Any, spec: Any, connectors: Any) -> Any:  # pragma: no cover
         return None
 
-    def new_account(self, portfolio_ref: Any, config: Any) -> Any:  # pragma: no cover
+    def new_account(self, config: Any) -> Any:  # pragma: no cover
         # 11-07 (D-10) widened the VenuePlugin Protocol. This fake is not
         # ``isinstance``-checked today (the guard duck-types ``credential_model`` /
         # ``fetch_venue_uid``), so declaring this member is future-proofing rather
@@ -335,7 +335,8 @@ def test_guard_runs_on_the_real_assemble_venue_production_path() -> None:
     from itrader.trading_system.venue_spec import VenueSpec
     from itrader.venues.assemble import assemble_venue
     from itrader.venues.bundle import VenueBundle
-    from itrader.venues.registry import DataProviderRegistry, ExecutionVenueRegistry
+    from itrader.venues.bundles import VenueBundles
+    from itrader.venues.registry import ExecutionVenueRegistry
     from tests.support.schema import provision_schema
 
     class _Connector:
@@ -353,10 +354,6 @@ def test_guard_runs_on_the_real_assemble_venue_production_path() -> None:
                 connector=_Connector(),
             )
 
-    class _DataPlugin:
-        def build_provider(self, ctx: Any, spec: Any, connectors: Any) -> Any:
-            return object()
-
     store = VenueAccountStore(SqlEngine(SqlSettings.default()))
     try:
         provision_schema(store.backend)
@@ -371,17 +368,16 @@ def test_guard_runs_on_the_real_assemble_venue_production_path() -> None:
         )
 
         exec_registry = ExecutionVenueRegistry()
-        data_registry = DataProviderRegistry()
         exec_registry.register("okx", _ExecPlugin("uid-from-venue"))
-        data_registry.register("okx", _DataPlugin())
         sink = _RecordingAlertSink()
 
+        # 11.1-08 (D-08): assemble resolves BOTH the bundle and the guard's plugin
+        # through the ONE shared memo, so the plugin the guard interrogates is provably
+        # the same object that built the bundle whose connector it interrogates.
         _bundle, lifecycle = assemble_venue(
-            object(),
             VenueSpec(execution_venue="okx", data_provider="okx", account_id="acct-a"),
-            connectors=None,
-            exec_registry=exec_registry,
-            data_registry=data_registry,
+            None,
+            VenueBundles(exec_registry, None, object()),
             account_store=store,
             alert_sink=sink,
         )
@@ -395,11 +391,9 @@ def test_guard_runs_on_the_real_assemble_venue_production_path() -> None:
         exec_registry_2 = ExecutionVenueRegistry()
         exec_registry_2.register("okx", _ExecPlugin("uid-IMPOSTOR"))
         _bundle2, lifecycle2 = assemble_venue(
-            object(),
             VenueSpec(execution_venue="okx", data_provider="okx", account_id="acct-a"),
-            connectors=None,
-            exec_registry=exec_registry_2,
-            data_registry=data_registry,
+            None,
+            VenueBundles(exec_registry_2, None, object()),
             account_store=store,
             alert_sink=sink,
         )

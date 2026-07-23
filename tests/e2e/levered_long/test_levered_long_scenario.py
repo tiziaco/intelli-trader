@@ -220,7 +220,7 @@ def _build_margin_system():
     per-portfolio margin knob), wire the oracle-dark margin Universe, and return the
     engine + portfolio handle ready to drive tick-by-tick."""
     system = BacktestTradingSystem(
-        exchange="csv",
+        exchange="paper",
         csv_paths={_TICKER: HERE / "bars.csv"},
         start_date="2020-01-01",
         end_date="2020-01-06",
@@ -232,7 +232,7 @@ def _build_margin_system():
         # CONSTRUCTION from enable_margin; the post-construction config swap below
         # refines the rest but no longer rebuilds the leaf — so margin must be on
         # in the constructor config to get a SimulatedMarginAccount.
-        name="levered_long_pf", exchange="csv", cash=_CASH,
+        name="levered_long_pf", exchange="paper", cash=_CASH,
         portfolio_config=PortfolioConfig.model_validate(recursive_merge(
             get_portfolio_preset("default").model_dump(),
             {"trading_rules": {"enable_margin": True}})))
@@ -260,7 +260,7 @@ def _build_margin_system():
     runner = system.runner
     runner._initialise_backtest_session()
     universe = Universe(members=[_TICKER], instrument_map={_TICKER: _levered_instrument()})
-    system.execution_handler.exchanges[("simulated", DEFAULT_ACCOUNT_ID)].set_universe(universe)
+    system.execution_handler.exchanges[("paper", DEFAULT_ACCOUNT_ID)].set_universe(universe)
     system.order_handler.set_universe(universe)
     system.portfolio_handler.set_universe(universe)
 

@@ -50,6 +50,10 @@ from itrader.portfolio_handler.storage.in_memory_storage import (
     InMemoryPortfolioStateStorage,
 )
 from itrader.portfolio_handler.transaction.transaction import Transaction
+from tests.support.venue_wiring import (
+    backtest_portfolio_handler,
+    compute_account,
+)
 
 # A business time (never wall clock) reused so derived timestamps are deterministic.
 _BT = datetime(2024, 1, 1, tzinfo=timezone.utc)
@@ -161,8 +165,9 @@ def test_restart_restores_position_and_cash_into_live_managers() -> None:
 
     # "Restart": a FRESH Portfolio constructed at its original initial cash, sharing the
     # durable backing store. Before rehydrate it remembers nothing.
-    fresh = Portfolio(name="restart_pf", exchange="simulated",
-                      cash=Decimal("100000.00"), time=_BT)
+    fresh = Portfolio(name="restart_pf", exchange="paper",
+                      cash=Decimal("100000.00"), time=_BT,
+                      account=compute_account(Decimal("100000.00")))
     _rebind_storage(fresh, store)
 
     # Pre-rehydrate: the fresh handler has NOT remembered its state.
@@ -182,8 +187,8 @@ def test_restart_restores_position_and_cash_into_live_managers() -> None:
 
 def _handler_with_portfolio_on(store: Any, cash: Decimal = Decimal("100000")):
     """Build a fresh PortfolioHandler + one portfolio wired to the shared durable store."""
-    handler = PortfolioHandler(queue.Queue())
-    portfolio_id = handler.add_portfolio(name="restart_pf", exchange="simulated", cash=cash)
+    handler = backtest_portfolio_handler(queue.Queue())
+    portfolio_id = handler.add_portfolio(name="restart_pf", exchange="paper", cash=cash)
     portfolio = handler.get_portfolio(portfolio_id)
     _rebind_storage(portfolio, store)
     return handler, portfolio_id, portfolio
@@ -434,8 +439,9 @@ def test_on_fill_position_and_cash_persist_atomically_single_txn() -> None:
         handler.on_fill(fill)
 
     # "Restart": a fresh Portfolio sharing the same durable store.
-    fresh = Portfolio(name="restart_pf", exchange="simulated",
-                      cash=initial_cash, time=_BT)
+    fresh = Portfolio(name="restart_pf", exchange="paper",
+                      cash=initial_cash, time=_BT,
+                      account=compute_account(initial_cash))
     _rebind_storage(fresh, store)
     fresh.state_storage.rehydrate(fresh.account)
 

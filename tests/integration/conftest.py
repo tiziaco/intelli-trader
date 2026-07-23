@@ -116,7 +116,7 @@ def backtest_engine():
         )
 
         return BacktestTradingSystem(
-            exchange="csv",
+            exchange="paper",
             start_date=start_date,
             end_date=end_date,
         )
@@ -372,7 +372,7 @@ def remove_policy_harness():
         # provider is injected via the test harness (paper↔replay lives in the fixture).
         system, _ = build_paper_replay_system()
         simulated = system.execution_handler.exchanges[
-            ("simulated", DEFAULT_ACCOUNT_ID)]  # D-27 pair key
+            ("paper", DEFAULT_ACCOUNT_ID)]  # D-27 pair key
         simulated.register_symbol(held)
         simulated.register_symbol(other)
         # Bind the live feed to the queue + membership so update() emits BarEvents.
@@ -384,7 +384,7 @@ def remove_policy_harness():
         # none, rather than falling back to whatever is registered as default.
         # The reused simulated exchange is registered under the default account.
         portfolio_id = system.portfolio_handler.add_portfolio(
-            name="remove_policy_pf", exchange="simulated", cash=cash,
+            name="remove_policy_pf", exchange="paper", cash=cash,
             account_id=DEFAULT_ACCOUNT_ID)
 
         def _instrument(symbol: str) -> Instrument:

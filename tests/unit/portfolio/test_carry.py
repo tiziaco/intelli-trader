@@ -19,6 +19,7 @@ from itrader.core.enums import CashOperationType
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.position import Position
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
+from tests.support.venue_wiring import compute_account
 
 
 def _margin_config(max_leverage: str = "10") -> PortfolioConfig:
@@ -53,8 +54,9 @@ class _StubUniverse:
 
 def _portfolio(cash: Decimal = Decimal("100000")) -> Portfolio:
     return Portfolio(
-        name="carry-pf", exchange="simulated",
+        name="carry-pf", exchange="paper",
         cash=cash, time=datetime(2024, 1, 1), config=_margin_config(),
+        account=compute_account(cash, enable_margin=True),
     )
 
 

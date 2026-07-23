@@ -22,7 +22,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 2. **OKX import-inertness** — `tests/integration/test_okx_inertness.py` stays green; extended to assert
    register-vs-build on P1/P2/P4/P5. Registering a venue imports no `ccxt.pro` until built; `SystemConfig`
    never constructs Postgres `SqlSettings` at import; `FifoEventBus`/`EngineContext(sql_engine=None)` pull
-   nothing heavy. **Zero new third-party dependency, no poetry change** anywhere in P1–P12 (research STACK).
+   nothing heavy. **Zero new third-party dependency, no poetry change** anywhere in P1–P13 (research STACK).
 
 3. **Held throughout** — Decimal money end-to-end; single UUIDv7; determinism (business `time`, seeded RNG,
    injected clock); `mypy --strict` clean on new code; `filterwarnings=["error"]` green; tabs/spaces
@@ -350,7 +350,81 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   makes an existing dimension explicit rather than adding one: every mutable field on `OkxExchange` is already
   account-scoped, and the markets/precision map lives on the connector (`okx.py:952-955`). (P11 CONTEXT D-27.)
 
-### Account Provisioning + Mandatory Account Identity (P11.1 — INSERTED follow-up to P11)
+### One Venue Path + Account Ownership (P11.1 — added 2026-07-22 when P11.1 was split)
+
+*Source: the 2026-07-22 Phase 11.1 discussion (`11.1-CONTEXT.md`, decisions D-01..D-08 / D-14 /
+D-17..D-19). Root decision: domain objects stop participating in their own wiring — **objects receive
+their collaborators; composition constructs them**. `Portfolio` mints its own `Account` and
+`ExecutionHandler` mints its own `SimulatedExchange`, and composition then reaches in to overwrite or
+alias the result. Fixing that at the source DELETES ~360 lines that a relocation would merely have moved.
+The discussion explicitly rejected extracting a `trading_system/venue_wiring.py` module. Backtest and
+live then differ only in which plugins are registered. Every requirement here is oracle-gated: SMA_MACD
+byte-exact `134 / 46189.87730727451`.*
+
+- [x] **VENUE-01** *(D-01)*: `Account` carries no reference to `Portfolio`. `SimulatedCashAccount(initial_cash)`
+  and `SimulatedMarginAccount(initial_cash)` drop the `portfolio` constructor parameter; `VenueAccount` already
+  takes none. The two portfolio-dependent reads move into their method signatures — `maintenance_margin(positions, ...)`
+  and `margin_ratio(equity)` — supplied by `PortfolioHandler`, already their only caller
+  (`portfolio_handler.py:569` / `:581`). The mutual reference is an accident, not a structural constraint:
+  `SimulatedCashAccount` stores `self.portfolio` and never reads it (that is the byte-exact oracle leaf), and only
+  `SimulatedMarginAccount` reads it, at `simulated.py:831-833` and `:873`. **The `Account` ABC does NOT change** —
+  neither method is abstract, and `account/conformance.py` references neither.
+
+- [x] **VENUE-02** *(D-02, D-03)*: `Portfolio.__init__` receives a **built** `Account`; the duplicate account-leaf
+  selection at `portfolio.py:176-179` is deleted, and `VenuePlugin.new_account` becomes the sole account factory,
+  losing its `portfolio_ref` parameter. Passing a *factory* into `Portfolio` was considered and rejected — it would
+  leave `Portfolio` participating in its own wiring, which is the defect rather than the fix. Today the same
+  margin-vs-cash selection is implemented twice, and `PaperVenuePlugin.new_account`'s own docstring admits it is
+  the pre-11-07 `account_factory` copied verbatim.
+
+- [x] **VENUE-03** *(D-04)*: The backtest registers `PaperVenuePlugin` and goes through the same venue path as live,
+  passing a real, empty `ConnectorProvider({})` — **no `Optional`/`None` wiring seam**, honouring the standing
+  constraint against late-init. Safe because `ConnectorProvider.__init__` takes a plain plugin dict and
+  `PaperVenuePlugin.build_bundle` deliberately ignores its `connectors` argument (paper has no venue session).
+  GATE-01 inertness is preserved and independently evidenced: `venues/__init__.py` imports no concretion by P5
+  acceptance gate, `venues/registry.py` has zero runtime imports, and `itrader.venues` is absent from
+  `test_okx_inertness.py`'s `_FORBIDDEN` list.
+
+- [x] **VENUE-04** *(D-05, D-19)*: The backtest venue is named `'paper'`, the `('csv', DEFAULT_ACCOUNT_ID)` alias in
+  `ExecutionHandler` is retired, and backtest portfolios pass `venue_name='paper'` explicitly so backtest and live
+  portfolios are structurally identical at creation. **Highest oracle-risk item in the phase** — it warrants its own
+  byte-exact-gated plan. Blast radius: `backtest_trading_system.py:520` (the string is `'csv'`, not `'simulated'`),
+  the whole `exchanges` dict literal at `execution_handler.py:290-303` including the dead `('ccxt', …): None` slot,
+  the direct reads at `backtest_trading_system.py:395` and `compose.py:239-240`, and ~6 test sites. All fail loudly.
+
+- [x] **VENUE-05** *(D-06, D-17)*: `PaperVenuePlugin` builds its **own** `SimulatedExchange` inside `build_bundle`,
+  symmetric with `OkxVenuePlugin` building its own `OkxExchange`, from an `ExchangeConfig` received at construction
+  (`PaperVenuePlugin(exchange_config)` at registration). `ExecutionHandler` neither mints one (`:290`) nor is handed
+  one. This dissolves the compose-versus-venue-assembly cycle at its source — `PaperVenuePlugin(execution_handler.exchanges[...])`
+  at `live_trading_system.py:2028` has nothing left to reach for. The config must be passed, not imported: it is absent
+  from the `ITraderConfig` singleton AND run-derived, since `_seed_supported_symbols` folds this run's complete ticker
+  set into `limits.supported_symbols` (`backtest_trading_system.py:67-78`, `:463-466`).
+
+- [x] **VENUE-06** *(D-07)*: `EngineContext` carries `rng`, so the one shared seeded `random.Random` reaches the plugin
+  that now builds a stochastic component. A consequence of VENUE-05: determinism requires ONE instance injected at the
+  wiring seam rather than re-derived per plugin. `EngineContext` currently carries only
+  `bus`/`config`/`environment`/`feed`/`store`/`sql_engine`.
+
+- [x] **VENUE-07** *(D-08, D-14)*: A memoized `VenueBundles` provider over `(registry, connectors, ctx)` is held by BOTH
+  `ExecutionHandler` and `PortfolioHandler`, each asking for the view it needs (the exchange, or the account). Nothing is
+  passed in pre-built and nothing is mutated from outside. It REPLACES `assemble_venues`' eager map plus the registration
+  loop at `live_trading_system.py:2101` — a swap, not an addition. Memoization is load-bearing: two independent
+  `build_bundle` callers would produce two `OkxExchange` instances per account, and `OkxExchange.connect()` is the sole
+  spawn site for `_stream_fills`/`_stream_orders`, so the fill streams would double-spawn. Exactly **one** data provider
+  is built, for the feed, which closes `11-REVIEW.md` **WR-07** structurally — non-primary accounts build none, so there
+  are no unwired credential-bearing providers to wire. The review's alternative fix (wire halt-signal on every provider)
+  is rejected: it contradicts the documented single-feed decision at `live_trading_system.py:2347`.
+
+- [x] **VENUE-08** *(D-18)*: The commission estimator is decomposed. `FeeModelCommissionEstimator` leaves `compose.py`
+  (`:57-81`), the `core/commission_estimator.py` seam narrows to a fee-model provider, and the admission convention
+  (`side="buy"`, `order_type="market"`) moves into `AdmissionManager`, which owns it — it is admission policy, not wiring.
+  Late binding MUST be preserved: `simulated.py:775` **replaces** the fee model object on config update, so holding it
+  directly would silently compute reservations against a stale rate. **Reopens the prior-phase D-15 Protocol shape** —
+  deliberate, not accidental. Side effect: the `isinstance(self._exchange, SimulatedExchange)` guard at `compose.py:78`
+  is replaced by an explicit "this venue exposes no fee model" contract. The golden run pins `ZeroFeeModel` so the estimate
+  is `0` under both shapes, but the reservation path is oracle-critical and value-identity must be PROVEN byte-exact.
+
+### Account Provisioning + Mandatory Account Identity (P11.2 — split out of P11.1 on 2026-07-22)
 
 *Source: the Phase 11 code review (`11-REVIEW.md` CR-02/CR-03/WR-03/WR-05) plus the 2026-07-22 design
 discussion. Root decision: `(venue_name, account_id)` is mandatory for a live portfolio, and the DURABLE
@@ -364,6 +438,7 @@ the code does not yet trust it.*
   no account identity of its own. Decouples provisioning from portfolio creation — an account can be
   provisioned before any portfolio references it, which is what makes the composite FK satisfiable at
   `add_portfolio` time.
+
 - [ ] **ACCT-02**: `_mint_account_rows` is replaced by a deliberate provisioning path — a
   `venue_account:{venue}/{id}` `config_router` scope mirroring the existing `venue:{name}` → `VenueStore`
   scope and reusing its secret-scrub guard. A **handoff, not a deletion**: minting is currently the only
@@ -371,6 +446,7 @@ the code does not yet trust it.*
   `add_portfolio` on a fresh DB. Minting also writes `secret_ref=None`, routing that account to the ambient
   `OKX_API_*` credentials — the fail-open composite of `11-REVIEW.md` WR-05 — so it is a liability, not a
   convenience.
+
 - [ ] **ACCT-03** *(closes 11-REVIEW CR-02)*: A live portfolio naming no venue account **raises** at
   composition time. Today it is silently skipped and left on its `SimulatedCashAccount` leaf with
   `is_venue_truth=False`, which disables snapshot, streaming, `VenueReconciler` and the D-04
@@ -383,20 +459,24 @@ the code does not yet trust it.*
   multi-portfolio test demonstrates the exact account sharing D-14/D-15 forbid. ACCT-03 makes the fixture
   illegal, so it must be given distinct `account_id`s and a real `venue_name` in this phase; the phase
   cannot go green otherwise. Close the half-null bypass explicitly rather than relying on it.
+
 - [ ] **ACCT-04** *(closes 11-REVIEW WR-03)*: The six live-path `or DEFAULT_ACCOUNT_ID` coercions are
   deleted. Registration writes `(venue, 'default')` while both readers construct `(venue, None)` raw, so for
   an unnamed account the registered key is unreachable by every reader — a write-only entry, not merely an
   asymmetry. The backtest/simulated uses are KEPT: `DEFAULT_ACCOUNT_ID` is the backtest single-account
   identity and is load-bearing for the golden oracle.
+
 - [ ] **ACCT-05** *(closes 11-REVIEW CR-03)*: The venue account is attached on every portfolio creation
   path, not only inside `build_live_system`. Under DB-as-source-of-truth this is the PRIMARY creation path:
   on a fresh DB nothing rehydrates, so the first `add_portfolio` yields a portfolio submitting real orders
   against a compute-leaf ledger with no reconcile. The attach seam must not use `None`-then-assign late
   wiring or a post-construction setter.
+
 - [ ] **ACCT-06**: The two docstrings asserting the phantom *"plan 11-08 makes account_id mandatory at
   composition time"* invariant (`execution_handler.py:209`, `core/portfolio_read_model.py:227`) are
   corrected — ACCT-03 is what makes it true. The two citing 11-08's **distinct**-account invariant
   (`live_trading_system.py:1627`, `reconciliation_coordinator.py:164`) are accurate and stay untouched.
+
 - [ ] **ACCT-07** *(closes 11-REVIEW WR-01)*: `PortfolioHandler._persist_definition` and
   `SqlPortfolioStorage.save_config` agree on when a definition row is required. `save_config`'s legacy
   account-state arm was deleted on the stated grounds that *"a live portfolio now always has a definition
@@ -405,6 +485,7 @@ the code does not yet trust it.*
   and its config never persists. ACCT-03 makes that early-return unreachable, which resolves the
   disagreement; the early-return itself is then removed or converted to the same typed raise so the two
   halves cannot drift apart again.
+
 - [ ] **ACCT-08** *(closes 11-REVIEW WR-09)*: `PortfolioHandler` exposes `all_portfolios()` and
   `has_portfolio(portfolio_id)`, and the production reach-ins to the private `_portfolios` dict are
   converted (`portfolio_rehydrate.py:124`, `live_trading_system.py:1341/1591/1964`). Folded here because
@@ -415,6 +496,7 @@ the code does not yet trust it.*
   poisoned `config_json` skips every portfolio after it in iteration order with one warning naming only the
   first failure — despite the docstring claiming per-scope isolation. The guard moves INSIDE the loop.
   Folded here because WR-02 and this requirement edit the SAME statement (`live_trading_system.py:1341`).
+
 - [ ] **ACCT-09** *(closes 11-REVIEW WR-10)*: `ExecutionHandler.on_order`'s fail-closed paths emit a
   `FillEvent(REFUSED)` — the established rejection-as-event convention, which also reconciles the order
   mirror instead of leaving it PENDING forever — rather than only calling `logger.error(...)` and
@@ -423,6 +505,7 @@ the code does not yet trust it.*
   (`if account_id is None`) unreachable, so this covers TWO paths (unknown portfolio, unregistered
   `(venue, account)` pair), and the dead branch is removed rather than instrumented — its comment is one of
   the two phantom-invariant citations ACCT-06 corrects.
+
 - [ ] **ACCT-10** *(closes 11-REVIEW WR-04)*: Runtime portfolio deactivation PERSISTS. `_persist_definition`
   hardcodes `enabled=True` and is gated on row absence, and nothing else ever writes `enabled=False`, so
   `Portfolio.set_state(INACTIVE)` never reaches the store and a portfolio an operator deliberately stopped
@@ -430,6 +513,7 @@ the code does not yet trust it.*
   `set_enabled(portfolio_id, enabled)` write on `PortfolioDefinitionStore`, called from whatever flips
   `PortfolioState`. This also makes `rehydrate_portfolios`' present-but-inactive branch
   (`portfolio_rehydrate.py:141-147`) reachable as designed instead of only via an out-of-band DB write.
+
 - [ ] **ACCT-11** *(closes 11-REVIEW CR-04 + WR-12)*: The D-09 config move REFUSES rather than silently
   skipping. `_move_config` copies `portfolio_account_state.config_json` onto a matching `portfolios` row and
   counts a non-match as a benign "orphan" — but `portfolios` is created empty by the immediately preceding
@@ -444,9 +528,139 @@ the code does not yet trust it.*
   unreachable in a real chain, and the negative control varies only the chain head — so add a test whose
   staging inserts ONLY `portfolio_account_state` rows (the real pre-upgrade shape) and asserts the refusal.
 
-### Test Migration + Gates (P12 — except TEST-01, pulled forward into P6)
+### Live Composition-Root Dissolution (P12 — INSERTED 2026-07-22)
 
-- [x] **TEST-01** *(delivered in **P6**, pulled forward from P12)*: the ENTIRE replay test-harness moves
+> Source: the 2026-07-22 pre-11.1 structural read of `itrader/trading_system/live_trading_system.py`.
+> The file is **2409 lines** — a 1143-line facade class (105–1248) welded to a 1160-line composition
+> root (1250–2409) of which `build_live_system` alone is **687 lines**. The backtest path splits the
+> same job three ways (`backtest_trading_system.py` / `compose.py` / `backtest_runner.py`); live has
+> no `compose.py` peer. The milestone goal states a *~200-line* facade and the `__init__` docstring
+> at `:138` still cites that P7-EXIT gate; post-P7 the class is 1143 lines and grew through P9/P10/P11.
+> These are the "Tier 2" findings — Tier 1 (the account-provisioning + venue-wiring extraction,
+> ~510 lines) is Phase 11.1's own Wave 1, since 8 of 11 ACCT criteria edit that region.
+> All six are **behaviour-preserving code motion**: no semantic change to any live contract.
+
+- [ ] **COMP-01**: `build_live_system` **disappears as a builder**. No single function anywhere in the
+  tree carries the live composition root. Composition becomes an ordered sequence of named,
+  independently-constructible steps — storage bootstrap → engine → portfolio bootstrap → venue wiring →
+  runtime-config platform → safety → runner — each constructible and assertable **without booting a
+  `LiveTradingSystem`**. The seams are already legible in the current body's own section comments
+  (`:1779` / `:1828` / `:1896` / `:1971` / `:2147` / `:2266`). A thin ordered entry point survives so
+  the three externally-imported names keep resolving — verified 2026-07-22 that `LiveTradingSystem`,
+  `build_live_system` and `_layer_persisted_overrides` are the **complete** external surface across
+  `itrader/`, `tests/` (37 files touch the module) and `scripts/`, so the move is cheap behind a
+  re-export. Whether the entry point keeps the `build_live_system` name is a discussion decision.
+
+- [ ] **COMP-02**: Live storage bootstrap is a pure step. The `SqlSettings` credential probe that
+  resolves `(environment, sql_engine, halt_record_store, system_store)` (`:1779–1826`) has no facade,
+  venue or handler knowledge and is unit-testable on both arms — Postgres credential present, and the
+  in-memory fallback that WR-10 requires to warn loudly rather than default a credential string.
+
+- [ ] **COMP-03**: Config-ingress validation leaves the facade. `_validate_config_ingress` +
+  `_dry_validate_config_ingress` (`:1135–1238`, 105 lines) touch no facade state beyond
+  `self._config_router is None` and the logger, and are the literal FastAPI-400 boundary this milestone
+  exists to expose (LR-01 keeps the ASGI code out; the *seam* is in scope). **Reconcile with**
+  `config_router.py:402::_dry_validate_copy` — today two implementations of one validation contract,
+  hand-synced and deliberately divergent (a fresh default instance vs `model_copy`, because the ingress
+  check runs on the EXTERNAL caller thread and must not read the sub-models the engine thread writes).
+  Either unify them or pin the divergence as a decision with the thread-ownership rationale in-code.
+
+- [ ] **COMP-04**: The live stats + status read-model leaves the facade — `_stats` / `_stats_lock` /
+  `_update_stats` / `_on_order_throttle_rejected` / `_increment_error_count` / `_snapshot_system_stats`
+  (`:498`, 49 lines) / `get_status` (`:973`, 68 lines) — ~180 lines into one collaborator owning its own
+  lock. `get_status` merges four sources (safety snapshot, stats dict, throttle counter, runner thread
+  state, error-policy breaker snapshot) into a dict; that is what the FastAPI layer serves, so it belongs
+  in a read-model, not on the lifecycle object. Together with COMP-05 this is what breaks the
+  construction cycle COMP-06 measures.
+
+- [ ] **COMP-05**: The three connector-loop callbacks leave the facade —
+  `_on_venue_stream_down` / `_on_venue_stream_up` / `_request_connector_halt` (`:423–462`, 41 lines) —
+  onto an object constructed with the bus. They touch **only** `global_queue` and the logger; nothing
+  facade-owned. Load-bearing beyond tidiness: they are one of the two knots forcing the builder to
+  construct the facade mid-function (`:2138`) before it can wire venue callbacks (`:2348–2358`). Their
+  Pitfall-9 contract is preserved verbatim — thread-safe `bus.put` only, never blocking venue I/O on the
+  connector asyncio loop, and `_request_connector_halt` keeps emitting the FIXED
+  `HaltReason.CONNECTOR_FATAL.value` literal and never `str(exc)` (V7/T-07-01, no secret crosses the
+  loop→engine boundary).
+
+- [ ] **COMP-06**: **The None-then-assign wiring pattern is GONE — zero survivors, not a reduced count.**
+  `LiveTradingSystem.__init__` today declares **nine** `Optional[Any] = None` wiring fields (`_safety`,
+  `_stream_recovery`, `_throttle`, `_config_router`, `_system_store`, `_system_stats_store`,
+  `_live_runner`, `_error_policy`, `_quarantined_strategies`) that composition assigns afterward across
+  ~10 statements. Every one becomes a **required constructor argument** with a real value at
+  construction: no `Optional[Any] = None` wiring field, no post-construction `facade._<field> =`
+  assignment anywhere in composition. Grep-clean on both, verified as a completion gate.
+
+  *Scope boundary — WIRING fields only, not runtime state.* `universe` / `_universe_handler` /
+  `_session_initialized` are populated by `_initialize_live_session` at `start()` and legitimately do not
+  exist at construction (D-12 keeps session init deferred, and the live suite monkeypatches that method
+  in three places). They are runtime state, stay as they are, and this requirement does not touch them.
+  The distinction is the point: a collaborator that exists before the facade must be injected; state that
+  comes into being during the run must not be faked into the constructor.
+
+  *Why this is achievable rather than aspirational* (verified against the code 2026-07-22):
+  **six of the nine hold no facade reference at all** — `_stream_recovery`, `_throttle`,
+  `_config_router`, `_system_store`, `_system_stats_store`, `_quarantined_strategies` are constructed
+  from stores/config/bus/lifecycles and are late-attached only by habit; they are injectable today with
+  no prerequisite. The **three genuine construction cycles** — `_safety` (needs
+  `notify_status_change=facade._notify_status_change`), `_live_runner` (needs five facade hooks:
+  `_on_loop_start` / `_update_stats` / `_record_bar_metrics` / `_on_loop_error` /
+  `_on_order_throttle_rejected`), and `_error_policy` (`.bind(error_counter=facade._increment_error_count)`)
+  — all close once **COMP-04 and COMP-05** move those callback bodies off the facade: every one of them
+  reduces to `safety.update_status` + a stats write + a `portfolio_handler` read, none of which is
+  facade-unique. COMP-04/05 are therefore hard prerequisites of this requirement, not neighbours.
+
+  *One field needs explicit handling:* `_stop_event` is created in `__init__` today and handed **out**
+  to `LiveRunner` + `WorkerSupervisor` by the builder. It must be created before the facade and injected
+  into all three, so ownership is stated once rather than inverted.
+
+  *Consequence that makes this checkable:* the WR-02 `StateError` guard at `start()`
+  (`live_trading_system.py:697` — *"facade constructed outside build_live_system
+  (LiveRunner/ErrorPolicy/SafetyController unwired)"*) becomes **unreachable and is deleted**. An unwired
+  facade stops being constructible, so it stops needing a runtime check. If that guard cannot be deleted,
+  this requirement is not met.
+
+  *Blast radius (measured 2026-07-22):* exactly **one** production construction site
+  (`live_trading_system.py:2138`) and **zero** direct constructions in `tests/` — every test reaches the
+  facade through `build_live_system` / `for_exchange`. Five test-side late-attach assignments
+  (`tests/unit/trading_system/test_stop_tears_down_every_lifecycle.py` ×2,
+  `tests/support/replay_harness.py`, `tests/integration/test_strategy_external_add_lifecycle.py`,
+  `tests/integration/test_config_ingress.py`) convert to construction-time injection. The other ~10
+  matching assignments elsewhere in `itrader/` are other classes assigning their OWN constructor
+  arguments (`session_initializer`, `route_registrar`, `stream_recovery_handler`, `config_router`,
+  `full_event_handler`, `error_handler`) and are out of scope.
+
+- [ ] **COMP-07** *(deferred here from Phase 11.1 by owner sign-off, 2026-07-22)*: **the live venue-truth
+  account swap stops being a reach-in.** `_attach_venue_accounts` (`live_trading_system.py:1608-1721`,
+  116 lines) re-assigns `portfolio.account` AFTER venue assembly, which is the exact
+  "composition reaches in afterwards to overwrite the result" pattern Phase 11.1's goal names. Phase 11.1
+  closes it for the **compute-account path** (backtest + paper) via VENUE-01/02 (D-01/D-02/D-03) but
+  **cannot** close it for the live venue-truth path, for a boot-order fact discovered during 11.1 planning
+  and stated in neither `11.1-CONTEXT.md` nor `11.1-RESEARCH.md`: live portfolios are rehydrated
+  (`portfolio_rehydrate.py:130`) **before** `_build_account_specs` builds their per-account `VenueSpec`, so
+  a `VenueAccount` — which needs that spec's `secret_ref` to resolve a connector — cannot exist at
+  portfolio-creation time. The construction-time account is therefore always the compute leaf, which is
+  what `_attach_venue_accounts:1640-1645` / `:1708-1711` already document that they expect.
+
+  Satisfied when `Portfolio` receives its final `Account` — venue-truth or compute — at construction on
+  the live path too, `_attach_venue_accounts` is deleted, and the `compute_venue` parameter injected into
+  `PortfolioHandler` by 11.1's plan 09 (the seam this requirement removes) is gone.
+
+  **⚠ Scope-fence conflict — decide this at Phase 12's discuss step, do not let an executor discover it.**
+  This requirement needs the live boot ORDER to change (venue/account assembly must precede portfolio
+  rehydrate). Phase 12's cross-cutting constraint says *"pure code-motion — no semantic change to any live
+  contract"*, and its success criterion 7 pins the current order — distinct-account invariant → portfolio
+  rehydrate → account/venue assembly → config layering → strategy rehydrate — as *"a hard invariant, not
+  an implementation detail,"* pinned by `tests/integration/test_distinct_account_invariant.py` and
+  documented as load-bearing in four independent ways at `live_trading_system.py:1896-1929`. COMP-07 is
+  therefore **the one semantic change inside an otherwise behaviour-preserving phase**. Either widen the
+  fence explicitly for this requirement (and re-derive what the four load-bearing reasons actually require,
+  since `test_distinct_account_invariant.py` must then change rather than pass unmodified), or split
+  COMP-07 into its own phase. Do not fold it in silently.
+
+### Test Migration + Gates (P13 — except TEST-01, pulled forward into P6)
+
+- [x] **TEST-01** *(delivered in **P6**, pulled forward from this phase)*: the ENTIRE replay test-harness moves
   OUT of the `itrader` package into `tests/` — `run_paper_replay` → **`TestRunner`**, `ReplayDataProvider`
   → **`TestLiveDataProvider`**, `ReplayDataPlugin` → **`TestDataPlugin`** (registered **only** by a test
   fixture), `PAPER_PARITY_*`/`_PAPER_*` → `tests/`; production is replay-free (concern 9/§13/§8e). The
@@ -502,7 +716,7 @@ Explicitly excluded — documented to prevent scope creep.
 
 ## Traceability
 
-Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is created — the 12 phases are formalized in `.planning/ROADMAP.md` (`### Phase 1` .. `### Phase 12`, goals + success criteria + dependency graph). The old P4 (SqlEngine Migrations Relocation) and P5 (New Durable Stores) were merged into a single storage-schema phase P4 (both live-only, off the oracle hot path). Status `Pending` = mapped + roadmapped, awaiting execution.
+Each requirement maps to exactly one phase. The roadmap was created 2026-07-09 with 12 phases; it now carries **13 integer phases plus four decimal insertions** (6.1, 10.1, 11.1, 11.2), formalized in `.planning/ROADMAP.md` (`### Phase 1` .. `### Phase 13`, goals + success criteria + dependency graph). The old P4 (SqlEngine Migrations Relocation) and P5 (New Durable Stores) were merged into a single storage-schema phase P4 (both live-only, off the oracle hot path); Phase 12 (Live Composition-Root Dissolution) was inserted 2026-07-22, renumbering Test Migration + Gates to P13. Status `Pending` = mapped + roadmapped, awaiting execution.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
@@ -571,10 +785,17 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | MPORT-05 | P11 | Complete |
 | MPORT-06 | P11 | Complete |
 | MPORT-07 | P11 | Complete |
+| COMP-01 | P12 | Pending |
+| COMP-02 | P12 | Pending |
+| COMP-03 | P12 | Pending |
+| COMP-04 | P12 | Pending |
+| COMP-05 | P12 | Pending |
+| COMP-06 | P12 | Pending |
+| COMP-07 | P12 | Pending |
 | TEST-01 | P6 | Complete |
-| TEST-02 | P12 | Pending |
-| TEST-03 | P12 | Pending |
-| TEST-04 | P12 | Pending |
+| TEST-02 | P13 | Pending |
+| TEST-03 | P13 | Pending |
+| TEST-04 | P13 | Pending |
 
 **Coverage:**
 
@@ -584,6 +805,8 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 
 ---
 *Requirements defined: 2026-07-09*
-*Last updated: 2026-07-21 — added **MPORT-07** (discovered during P11 discussion: the execution exchange must be keyed `(venue, account_id)`, not by venue name alone). **69/69 requirements mapped, 0 orphans.** Note the previously-stated "64/64" was stale from 2026-07-09: it predated the four `DECOMP-*` requirements added by the inserted Phase 10.1, so the true count was already 68 before MPORT-07. Full scope P1–P12 + 3 owner refinements.*
+*Last updated: 2026-07-22 (second edit) — **Phase 11.1 was SPLIT in two (D-16)**. The eleven `ACCT-*` requirements moved from P11.1 to the new **Phase 11.2: Account Provisioning Bootstrap + Review Closures**, and eight new **VENUE-0N** requirements were added for P11.1's retained structural scope (one venue path + account ownership), derived from its locked decisions D-01..D-08 / D-14 / D-17..D-19. **94/94 requirements mapped, 0 orphans** (86 before VENUE). Every phase maps at least one requirement again.*
+
+*Previously: 2026-07-22 — added the six **COMP-0N** requirements for the INSERTED **Phase 12: Live Composition-Root Dissolution** (`build_live_system` disappears; the facade sheds config-ingress validation, the stats/status read-model, and the connector-loop signal callbacks). Test Migration + Gates renumbered **P12 → P13**. **86/86 requirements mapped, 0 orphans** (80 before COMP). Note the previously-stated "69/69" was stale: it predated the eleven `ACCT-*` requirements added 2026-07-22 for the inserted Phase 11.1, so the true count was already 80 before COMP. Full scope P1–P13 + 3 owner refinements.*
 
 *Prior: 2026-07-09 — roadmap revised to 12 phases (old P4 SqlEngine Migrations Relocation folded into old P5 New Durable Stores → merged storage-schema phase P4; all downstream phases renumbered −1); full scope P1–P12 + 3 owner refinements*

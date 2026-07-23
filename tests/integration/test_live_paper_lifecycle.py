@@ -39,7 +39,7 @@ def _build_paper_system() -> LiveTradingSystem:
     """Construct a paper-venue system wired with the golden strategy + a portfolio.
 
     Mirrors the worker composition: the golden SMA_MACD literals + a single
-    ``'simulated'``-exchange portfolio. Production paper re-points to the OKX live feed
+    ``'paper'``-exchange portfolio. Production paper re-points to the OKX live feed
     (D-21), so the offline replay DATA provider is injected via
     ``build_paper_replay_system`` — no OKX credentials or network needed (D-11).
     """
@@ -54,7 +54,7 @@ def _build_paper_system() -> LiveTradingSystem:
     system.strategies_handler.add_strategy(strategy)
     portfolio_id = system.portfolio_handler.add_portfolio(
         name="paper_pf",
-        exchange="simulated",
+        exchange="paper",
         cash=10_000,
     )
     strategy.subscribe_portfolio(portfolio_id)

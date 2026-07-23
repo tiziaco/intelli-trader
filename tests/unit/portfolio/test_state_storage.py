@@ -26,6 +26,7 @@ from itrader.portfolio_handler.storage import (
     InMemoryPortfolioStateStorage,
     PortfolioStateStorageFactory,
 )
+from tests.support.venue_wiring import compute_account
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +245,7 @@ def portfolio():
         exchange="binance",
         cash=Decimal("100000.00"),
         time=datetime(2020, 1, 1),
+        account=compute_account(Decimal("100000.00")),
     )
 
 

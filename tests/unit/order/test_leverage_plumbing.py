@@ -55,7 +55,7 @@ def _signal(leverage=Decimal("1"), sizing=None, action=Side.BUY,
 
 def test_order_event_carries_order_leverage():
     """new_order_event reads the effective leverage off the Order entity."""
-    order = Order.new_order(_signal(leverage=Decimal("5")), "simulated",
+    order = Order.new_order(_signal(leverage=Decimal("5")), "paper",
                             leverage=Decimal("5"))
     event = OrderEvent.new_order_event(order)
     assert event.leverage == Decimal("5")
@@ -63,7 +63,7 @@ def test_order_event_carries_order_leverage():
 
 def test_order_event_default_leverage_is_one():
     """A default Order (no leverage supplied) yields OrderEvent.leverage == 1."""
-    order = Order.new_order(_signal(), "simulated")
+    order = Order.new_order(_signal(), "paper")
     event = OrderEvent.new_order_event(order)
     assert event.leverage == Decimal("1")
 
@@ -73,7 +73,7 @@ def test_order_event_default_leverage_is_one():
 
 def test_fill_event_carries_order_event_leverage():
     """new_fill carries the OrderEvent's leverage onto the FillEvent."""
-    order = Order.new_order(_signal(leverage=Decimal("5")), "simulated",
+    order = Order.new_order(_signal(leverage=Decimal("5")), "paper",
                             leverage=Decimal("5"))
     event = OrderEvent.new_order_event(order)
     fill = FillEvent.new_fill("EXECUTED", event,
@@ -83,7 +83,7 @@ def test_fill_event_carries_order_event_leverage():
 
 
 def test_fill_event_default_leverage_is_one():
-    order = Order.new_order(_signal(), "simulated")
+    order = Order.new_order(_signal(), "paper")
     event = OrderEvent.new_order_event(order)
     fill = FillEvent.new_fill("EXECUTED", event,
                               price=event.price, quantity=event.quantity,
@@ -95,7 +95,7 @@ def test_fill_event_default_leverage_is_one():
 
 
 def _fill(leverage):
-    order = Order.new_order(_signal(leverage=leverage), "simulated",
+    order = Order.new_order(_signal(leverage=leverage), "paper",
                             leverage=leverage)
     event = OrderEvent.new_order_event(order)
     return FillEvent.new_fill("EXECUTED", event,
@@ -153,7 +153,7 @@ def _admission(enable_margin, pf_max_leverage):
         None,  # order_validator
         None,  # sizing_resolver
         None,  # portfolio_handler
-        None,  # commission_estimator
+        None,  # fee_model_provider
         brackets, bracket_manager,
         enable_margin=enable_margin,
         portfolio_max_leverage=pf_max_leverage,
@@ -169,7 +169,7 @@ def test_admission_clamps_over_cap_leverage_onto_order():
     mgr = _admission(enable_margin=True, pf_max_leverage=Decimal("5"))
     signal = _signal(leverage=Decimal("20"),
                      sizing=LeveredFraction(fraction=Decimal("2")))
-    order = mgr._build_primary_order(signal, "simulated", Decimal("200"))
+    order = mgr._build_primary_order(signal, "paper", Decimal("200"))
     assert isinstance(order, Order)
     # No Universe wired -> instr cap degrades to Decimal("1"); min(20, 1, 5) = 1.
     assert order.leverage == Decimal("1")
@@ -182,6 +182,6 @@ def test_admission_spot_path_forces_leverage_one():
     (oracle-dark) even when the signal requests 20."""
     mgr = _admission(enable_margin=False, pf_max_leverage=Decimal("1"))
     signal = _signal(leverage=Decimal("20"))
-    order = mgr._build_primary_order(signal, "simulated", Decimal("200"))
+    order = mgr._build_primary_order(signal, "paper", Decimal("200"))
     assert isinstance(order, Order)
     assert order.leverage == Decimal("1")
