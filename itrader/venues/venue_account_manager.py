@@ -78,6 +78,7 @@ if TYPE_CHECKING:
     from itrader.venues.bundle import VenueBundle
     from itrader.venues.bundles import VenueBundles
     from itrader.venues.lifecycle import VenueLifecycle
+    from itrader.venues.venue_uid_guard import VenueUidGuardOutcome
 
 #: The one table name the D-34 fresh-deployment probe tests for. Narrow BY DESIGN.
 _ACCOUNTS_TABLE = "venue_accounts"
@@ -227,6 +228,32 @@ class VenueAccountManager:
     def is_online(self, venue_name: str, account_id: str) -> bool:
         """Whether ``bring_online`` built a runtime for this pair IN THIS PROCESS."""
         return (venue_name, account_id) in self._online
+
+    def venue_uid_guard_active(
+        self,
+    ) -> dict[tuple[str, str], "VenueUidGuardOutcome"]:
+        """The D-04 UID-guard outcome for EVERY online pair (11.2-06, D-15/D-40).
+
+        D-15 named a ``venue_uid_guard_active`` flag; D-40 makes it carry OUTCOME +
+        REASON per ``(venue_name, account_id)``, because a bare boolean tells an operator
+        the guard is off but not WHICH of its six holes they have — and the holes need
+        six different fixes.
+
+        The map is built LIVE from each online record's lifecycle rather than cached at
+        ``bring_online``, which is the deliberate reading of D-15's own condition that
+        the flag reflect the guard's ACTUAL outcome. Arming is a CONNECT-time event
+        (``VenueLifecycle.start()`` runs the guard post-connect), and ``bring_online``
+        does not connect — so a value frozen at bring-up would report every pair as
+        unarmed forever. Reading through the lifecycle means the surface tracks the guard
+        as sessions actually start, and the lifecycle is the single owner of that
+        outcome (no second copy to drift, D-08's own discipline).
+
+        In-memory only; nothing new is persisted (D-40).
+        """
+        return {
+            pair: record.lifecycle.venue_uid_guard_outcome
+            for pair, record in self._online.items()
+        }
 
     def online(self, venue_name: str, account_id: str) -> OnlineVenueAccount:
         """The runtime ``bring_online`` built for this pair; refuses when there is none.
