@@ -18,6 +18,7 @@ from decimal import Decimal
 from uuid import UUID
 
 import pytest
+from sqlalchemy import Boolean, Column, Index, MetaData, String, Table
 from sqlalchemy.exc import IntegrityError
 
 from itrader.config.sql import SqlSettings
@@ -278,6 +279,116 @@ def test_read_all_order_is_stable_across_calls() -> None:
         assert first == [_PID_A, _PID_B]
     finally:
         portfolios.dispose()
+
+
+# --------------------------------------------------------------------------------------
+# D-32 partial-unique-index MECHANISM spike (11.2-02 task 1)
+# --------------------------------------------------------------------------------------
+#
+# RESEARCH Assumption A6 (MED risk): partial-index kwargs have ZERO in-tree usage, so
+# SQLAlchemy 2.0's ``Index(..., unique=True, sqlite_where=..., postgresql_where=...)`` was
+# unproven on the dialect the WHOLE suite runs. This spike converts that assumption into
+# evidence against a throwaway table BEFORE the registrar commits to the shape, and is KEPT
+# so a future SQLAlchemy bump that silently degrades the predicate fails here — loudly, on a
+# 6-line table — rather than in production where it would mean two live portfolios quietly
+# sharing one venue account.
+#
+# The predicate is a SQLAlchemy column EXPRESSION (``~column``, i.e. ``NOT is_deleted``), not
+# a raw string, so ONE object serves both dialect kwargs and no dialect can drift.
+
+
+def _spike_table(metadata: MetaData) -> Table:
+    """A minimal (venue_name, account_id, is_deleted) table with the D-32 partial index."""
+    table = Table(
+        "spike_portfolios",
+        metadata,
+        Column("row_id", String, primary_key=True),
+        Column("venue_name", String, nullable=False),
+        Column("account_id", String, nullable=False),
+        Column("is_deleted", Boolean, nullable=False),
+    )
+    Index(
+        "uq_spike_live",
+        table.c.venue_name,
+        table.c.account_id,
+        unique=True,
+        postgresql_where=~table.c.is_deleted,
+        sqlite_where=~table.c.is_deleted,
+    )
+    return table
+
+
+def _spike_engine() -> tuple[SqlEngine, Table]:
+    """An in-memory SQLite engine carrying only the spike table."""
+    backend = SqlEngine(SqlSettings.default())
+    table = _spike_table(MetaData())
+    table.metadata.create_all(backend.engine)
+    return backend, table
+
+
+def _insert(backend: SqlEngine, table: Table, row_id: str, deleted: bool) -> None:
+    """Insert one ``('okx', 'main')`` row with the given retirement flag."""
+    with backend.engine.begin() as connection:
+        connection.execute(
+            table.insert(),
+            [{
+                "row_id": row_id,
+                "venue_name": "okx",
+                "account_id": "main",
+                "is_deleted": deleted,
+            }],
+        )
+
+
+def test_spike_partial_index_permits_retired_plus_live_pair() -> None:
+    """(a) A RETIRED row and a LIVE row on the same pair BOTH persist — sequential reuse."""
+    backend, table = _spike_engine()
+    try:
+        _insert(backend, table, "retired", deleted=True)
+        _insert(backend, table, "live", deleted=False)
+        with backend.engine.connect() as connection:
+            rows = connection.execute(table.select()).mappings().all()
+        assert {row["row_id"] for row in rows} == {"retired", "live"}
+    finally:
+        backend.dispose()
+
+
+def test_spike_partial_index_refuses_two_live_rows_on_one_pair() -> None:
+    """(b) TWO LIVE rows on one pair raise ``IntegrityError`` — simultaneous sharing refused.
+
+    The predicate must actually reach SQLite: if ``sqlite_where`` were ignored the index
+    would be PLAIN and case (a) above would fail instead; if the index were dropped entirely
+    this case would pass silently. Both halves are asserted, so neither degradation is green.
+    """
+    backend, table = _spike_engine()
+    try:
+        _insert(backend, table, "first", deleted=False)
+        with pytest.raises(IntegrityError):
+            _insert(backend, table, "second", deleted=False)
+    finally:
+        backend.dispose()
+
+
+def test_spike_partial_index_refuses_un_retiring_into_a_live_successor() -> None:
+    """(c) Flipping a RETIRED row back live while a successor holds the pair is refused.
+
+    The index is self-enforcing in BOTH directions — an UPDATE that moves a row INTO the
+    indexed set is checked exactly like an INSERT, so a resurrected portfolio cannot collide
+    with the one that took over its account.
+    """
+    backend, table = _spike_engine()
+    try:
+        _insert(backend, table, "retired", deleted=True)
+        _insert(backend, table, "successor", deleted=False)
+        with pytest.raises(IntegrityError):
+            with backend.engine.begin() as connection:
+                connection.execute(
+                    table.update()
+                    .where(table.c.row_id == "retired")
+                    .values(is_deleted=False)
+                )
+    finally:
+        backend.dispose()
 
 
 def test_build_portfolio_definition_tables_is_idempotent_and_shaped() -> None:
