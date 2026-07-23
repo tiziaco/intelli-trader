@@ -33,15 +33,41 @@ from itrader.order_handler.brackets.bracket_book import BracketBook
 from itrader.order_handler.brackets.bracket_manager import BracketManager
 from itrader.order_handler.order import Order
 from itrader.order_handler.storage import OrderStorageFactory
+from itrader.venues.registry import DEFAULT_ACCOUNT_ID
 
 
 class _StubLogger:
     """The logger double this directory already uses (test_leverage_plumbing)."""
 
-    def warning(self, *a, **k): ...
+    def __init__(self) -> None:
+        self.warnings = []
+
+    def warning(self, *a, **k):
+        self.warnings.append((a, k))
+
     def error(self, *a, **k): ...
     def info(self, *a, **k): ...
     def debug(self, *a, **k): ...
+
+
+class _StubReadModel:
+    """A ``PortfolioReadModel`` double exposing ONLY ``account_for``.
+
+    ``_estimate_commission`` reads exactly one member of the read model — the
+    ACCOUNT half of the ``(venue, account_id)`` lookup key — so the double
+    carries exactly that member. ``account_for`` is ``Optional[str]`` in the
+    Protocol (``portfolio_read_model.py:210``) and returns ``None`` for every
+    backtest portfolio, so ``None`` is a first-class value here, not an error
+    case invented for the test.
+    """
+
+    def __init__(self, account_id):
+        self._account_id = account_id
+        self.account_calls = []
+
+    def account_for(self, portfolio_id):
+        self.account_calls.append(portfolio_id)
+        return self._account_id
 
 
 class _FakeFeeModel(FeeModel):
@@ -62,7 +88,7 @@ class _FakeFeeModel(FeeModel):
         return self.fee
 
 
-def _make_admission(fee_model_provider) -> AdmissionManager:
+def _make_admission(fee_model_provider, portfolio_handler=None) -> AdmissionManager:
     """An AdmissionManager wired for commission estimation only.
 
     Copies the construction idiom already used in
@@ -70,6 +96,10 @@ def _make_admission(fee_model_provider) -> AdmissionManager:
     ``_estimate_commission`` does not touch are passed as ``None``. D-18: the
     sixth positional collaborator is the fee-model PROVIDER, not the old
     ``(quantity, price) -> Decimal`` estimator.
+
+    ``portfolio_handler`` defaults to ``None`` (the shape every pre-existing case
+    in this file uses); the WR-01 cases below pass a ``_StubReadModel`` because
+    the ACCOUNT half of the lookup key is read off it.
     """
     storage = OrderStorageFactory.create("test")
     logger = _StubLogger()
@@ -79,14 +109,19 @@ def _make_admission(fee_model_provider) -> AdmissionManager:
         storage, logger,
         None,  # order_validator
         None,  # sizing_resolver
-        None,  # portfolio_handler
+        portfolio_handler,
         fee_model_provider,
         brackets, bracket_manager,
     )
 
 
-def _make_order() -> Order:
-    """A PENDING order — ``_estimate_commission`` reads only quantity and price."""
+def _make_order(exchange: str = "paper") -> Order:
+    """A PENDING order — ``_estimate_commission`` reads quantity, price and venue.
+
+    ``exchange`` is the VENUE half of the ``(venue, account_id)`` lookup key
+    (11.1-REVIEW WR-01). It defaults to the paper compute venue, so every
+    pre-existing case in this file is unchanged.
+    """
     return Order(
         time=datetime(2024, 1, 2, 12, 0, 0),
         type=OrderType.MARKET,
@@ -95,7 +130,7 @@ def _make_order() -> Order:
         action=Side.BUY,
         price=40000.0,
         quantity=0.5,
-        exchange="paper",
+        exchange=exchange,
         strategy_id=1,
         portfolio_id=1,
     )
@@ -251,3 +286,133 @@ def test_provider_is_dereferenced_once_per_estimate():
     assert len(calls) == 3
     # And nothing was stashed on the manager between orders.
     assert not hasattr(manager, "_fee_model")
+
+
+# ---------------------------------------------------------------------------
+# 11.1-REVIEW WR-01 — the VENUE-BLIND fee-model provider.
+#
+# Before this plan the provider was a ZERO-ARG closure in ``compose.py`` over
+# ``exchanges.get((COMPUTE_VENUE, DEFAULT_ACCOUNT_ID))`` — resolved ONCE at
+# wiring time, so every order's admission reservation was priced against the
+# PAPER compute exchange no matter which venue would actually fill it. The
+# provider now takes the order's own ``(venue, account_id)`` pair and resolves
+# the registry inside the call.
+#
+# RESEARCH Pitfall 2 applies to every case below: ``Decimal("0")`` is BOTH the
+# correct golden value and what a dead seam returns, so each case that must
+# distinguish a working seam from a broken one uses a NON-ZERO fee.
+# ---------------------------------------------------------------------------
+
+
+def test_provider_is_called_with_the_orders_own_venue_and_account():
+    """The provider receives the ORDER's ``(venue, account_id)`` (WR-01).
+
+    Asserts the RECORDED ARGUMENTS, not a call count: a venue-blind provider is
+    still called exactly once per estimate, so a counter cannot see the defect.
+    Only the arguments can.
+    """
+    calls = []
+
+    def recording_provider(venue, account_id):
+        calls.append((venue, account_id))
+        return _FakeFeeModel(Decimal("7.5"))
+
+    manager = _make_admission(
+        recording_provider, portfolio_handler=_StubReadModel("acct-b"))
+
+    assert manager._estimate_commission(
+        _make_order(exchange="okx")) == Decimal("7.5")
+    assert calls == [("okx", "acct-b")]
+
+
+def test_two_venues_with_different_fee_models_yield_different_estimates():
+    """IDENTITY SENTINEL (WR-01) — a venue-blind provider fails this case.
+
+    Two registered pairs carrying DIFFERENT fee models. A provider that always
+    resolves the paper compute exchange returns the paper fee for BOTH orders,
+    so this is the case that goes red if venue-awareness regresses. A call
+    counter would stay green through that regression, which is why this file
+    pins an identity sentinel alongside the argument assertion above (the
+    two-independent-signals convention from
+    ``tests/unit/venues/test_venue_bundles.py``).
+    """
+    registry = {
+        ("paper", DEFAULT_ACCOUNT_ID): _FakeFeeModel(Decimal("1.5")),
+        ("okx", "acct-b"): _FakeFeeModel(Decimal("9.25")),
+    }
+
+    def registry_provider(venue, account_id):
+        return registry.get((venue, account_id))
+
+    paper_manager = _make_admission(
+        registry_provider, portfolio_handler=_StubReadModel(None))
+    okx_manager = _make_admission(
+        registry_provider, portfolio_handler=_StubReadModel("acct-b"))
+
+    assert paper_manager._estimate_commission(
+        _make_order(exchange="paper")) == Decimal("1.5")
+    assert okx_manager._estimate_commission(
+        _make_order(exchange="okx")) == Decimal("9.25")
+
+
+def test_unregistered_pair_degrades_to_zero_without_raising():
+    """An unresolvable pair yields ``Decimal("0")`` and does NOT raise (WR-01).
+
+    The provider's contract is "return None on a miss, never raise" — admission
+    must degrade exactly as it does for a venue that exposes no fee model. The
+    degrade is deliberately NOT silent: the warning assertion below is what
+    keeps a routing miss from hiding behind the golden zero.
+    """
+    def registry_provider(venue, account_id):
+        return {("paper", DEFAULT_ACCOUNT_ID): _FakeFeeModel(Decimal("1.5"))}.get(
+            (venue, account_id))
+
+    manager = _make_admission(
+        registry_provider, portfolio_handler=_StubReadModel("no-such-account"))
+
+    assert manager._estimate_commission(
+        _make_order(exchange="okx")) == Decimal("0")
+    assert manager.logger.warnings, (
+        "a pair that resolves no fee model must be LOUD — a silent Decimal('0') "
+        "is exactly how the venue-blind provider survived review (WR-01)")
+
+
+def test_unnamed_account_resolves_the_default_account_identity():
+    """A portfolio naming NO account resolves ``DEFAULT_ACCOUNT_ID`` (WR-01).
+
+    ``Portfolio.account_id`` is optional and EVERY backtest portfolio leaves it
+    unset (``add_portfolio`` in ``backtest_trading_system.py:578-583`` passes no
+    ``account_id``), so the golden run reaches this resolution with ``None``.
+    Coercing it to the single-account identity is what keeps the byte-exact
+    oracle resolving the ``('paper', DEFAULT_ACCOUNT_ID)`` compute exchange.
+    """
+    calls = []
+
+    def recording_provider(venue, account_id):
+        calls.append((venue, account_id))
+        return _FakeFeeModel(Decimal("2.25"))
+
+    manager = _make_admission(
+        recording_provider, portfolio_handler=_StubReadModel(None))
+
+    assert manager._estimate_commission(_make_order()) == Decimal("2.25")
+    assert calls == [("paper", DEFAULT_ACCOUNT_ID)]
+
+
+def test_no_read_model_resolves_the_default_account_identity():
+    """With NO read model there is exactly ONE account (WR-01).
+
+    Mirrors ``ExecutionHandler._resolve_account_id``'s no-read-model arm: the
+    single-account identity is correct and unconditional, because a manager
+    without a portfolio read model has no portfolio to ask.
+    """
+    calls = []
+
+    def recording_provider(venue, account_id):
+        calls.append((venue, account_id))
+        return _FakeFeeModel(Decimal("4.5"))
+
+    manager = _make_admission(recording_provider)
+
+    assert manager._estimate_commission(_make_order()) == Decimal("4.5")
+    assert calls == [("paper", DEFAULT_ACCOUNT_ID)]
