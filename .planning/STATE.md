@@ -4,17 +4,17 @@ milestone: v1.8
 milestone_name: Live System Refactor & Live-Readiness Hardening
 current_phase: 11.2
 current_phase_name: INSERTED — split out of Phase 11.1
-status: planning
-stopped_at: Phase 11.2 context gathered
-last_updated: "2026-07-23T10:43:01.554Z"
+status: ready_to_execute
+stopped_at: Phase 11.2 planned — 14 plans across 8 waves, verification passed, ready to execute
+last_updated: "2026-07-23T12:14:12.762Z"
 last_activity: 2026-07-23
-last_activity_desc: "Phase 11.2 context gathered — 23 decisions (D-20..D-42); COMP-07 absorbed, PortfolioFactory split, one migration"
+last_activity_desc: Phase 11.2 planned — 14 plans / 8 waves, plan-checker VERIFICATION PASSED (`15c1e17b`)
 progress:
   total_phases: 15
   completed_phases: 11
-  total_plans: 53
+  total_plans: 81
   completed_plans: 53
-  percent: 73
+  percent: 65
 ---
 
 # Project State
@@ -34,9 +34,9 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 ## Current Position
 
 Phase: 11.2 — Account Provisioning Bootstrap + Review Closures (INSERTED — split out of Phase 11.1)
-Plan: Not started
-Status: Context gathered — ready to plan. Resume: `/gsd-plan-phase 11.2`.
-Last activity: 2026-07-23 — Phase 11.2 CONTEXT.md + DISCUSSION-LOG.md committed (`21c08474`)
+Plan: 0/14 complete (8 waves)
+Status: Planned — 14 plans, plan-checker VERIFICATION PASSED. Resume: `/gsd-execute-phase 11.2`.
+Last activity: 2026-07-23 — Phase 11.2 planned, 14 plans / 8 waves committed (`15c1e17b`)
 
 **Discussion session (2026-07-23).** Ten gray areas, **23 decisions locked (D-20..D-42)** — numbering
 continues from 11.1's D-01..D-19, whose D-09..D-13/D-15 were the pre-locked 11.2 set and are NOT
@@ -51,15 +51,18 @@ Claude-proposed framing first:
   becomes trivially true** (one creation path). Three earlier framings were rejected as "moving the mess
   around", including one this session had already locked as D-22 — now superseded, `add_portfolio` keeps its
   plain-data signature and the 133 call sites are untouched.
+
 - **D-20 — COMP-07 lands HERE, not Phase 12.** Assembly moves above rehydrate; `_attach_venue_accounts`
   (116 lines) is deleted. **⚠ Phase 12's criterion 7 and COMP-07 must be amended** — it declares the current
   boot order a hard invariant and requires `test_distinct_account_invariant.py` unmodified.
+
 - **D-32 — the phase's only migration.** `enabled` (pause, keeps its account) and `is_deleted` (retire,
   releases the pair) become two flags, and `portfolios`' unique constraint becomes **partial**
   (`WHERE NOT is_deleted`, both `postgresql_where` and `sqlite_where`). Driven by the owner's real workflow —
   retire a portfolio, run a new one on the same real venue account — which the plain constraint blocks. This
   revises `portfolio_definition_store.py:23`'s documented "PLAIN (never partial)"; that rationale is about
   *simultaneous* sharing and predates `enabled` having any writer (which is WR-04/ACCT-10 itself).
+
 - **D-35/D-26/D-36 — nothing is added to `live_trading_system.py`.** Owner-stated twice. Provisioning lives on
   `VenueAccountManager.provision(...)` (there is no `system.provision_venue_account`); "primary account" is
   deleted outright (`_primary_lifecycle` has **zero production consumers** — 28 test sites, 7 files) and the
@@ -70,13 +73,17 @@ Claude-proposed framing first:
 - `delete_portfolio` (`portfolio_handler.py:495-520`) **never touches the definition store**, so a deleted
   portfolio returns on the next boot with its persisted id and its child tables reattached — a worse instance
   of WR-04 than the INACTIVE case ACCT-10 names.
+
 - `VenueAccountStore` has **no `read_enabled_for`** (only `upsert`/`record_venue_uid`/`get`/`read_all`), and
   `config_json`/`enabled` have **zero readers** today.
+
 - ACCT-08 collapses: two of its four reach-ins are DELETED by D-20/D-25 rather than converted, and the
   roadmap's line numbers are stale — the real remaining site is `live_trading_system.py:1367`, the WR-02 loop.
+
 - `ExecutionErrorCode` has no member fitting either surviving ACCT-09 path; D-42 adds two.
 - `scripts/run_live_paper.py` depends on boot-time minting today, so it breaks the moment `_mint_account_rows`
   goes — hence D-29 (existing scripts become provisioning callers; no new script).
+
 - Full feed/account decoupling is **verified** blocked at `OkxSettings`' required credential fields
   (`okx_plugin.py:136-150`), not merely assumed — deferred to the market-data phase.
 
@@ -214,6 +221,21 @@ found this session, both silent:
 2. **`state.planned-phase` no-opped (`updated: []`).** It is template-aware by design — it only overwrites
    KNOWN_TEMPLATE_DEFAULTS, so the executor-authored `Status:`/`Last activity:` in `## Current Position` were
    preserved and nothing moved. STATE.md was updated by hand to what the handler would have written.
+
+Note (P11.2 planning, 2026-07-23): the **unstarred** header `### Phase 11.2:` resolved cleanly — `roadmap.get-phase`
+`found:true`, `phase_req_ids` populated (ACCT-01..10), and the decision-coverage gate parsed all **23** bullets
+(D-20..D-42) on the first try with no reformatting needed. So the starred-header failure mode is confirmed to be
+**the star, not the decimal**. Two known no-ops recurred and were handled by hand: `state.planned-phase`
+(`updated: []`, template-aware — STATE.md written by hand as before) and `roadmap.annotate-dependencies`
+(`updated:false`) — though the latter was a genuine idempotent skip this time, because the planner had already
+written the wave list into ROADMAP.md itself. Also: `query commit` needs **repo-relative** `--files` paths; an
+absolute path silently returns `nothing_to_commit`.
+
+⚠ **CROSS-PHASE OBLIGATION surfaced during P11.2 planning — must reach the ROADMAP before Phase 12 is planned.**
+D-20 moves venue assembly above portfolio rehydrate, which **invalidates Phase 12's criterion 7** (it declares the
+current boot order "a hard invariant, not an implementation detail" and requires `test_distinct_account_invariant.py`
+to pass **unmodified** — P11.2 amends that test). **COMP-07 must be struck from Phase 12's scope**, since D-20 lands
+it here instead. Plans 11.2-07 and 11.2-14 require this to be recorded in their summaries.
 
 Note: `phase.complete` again advanced current_phase to 12 (its next-phase dir-scan skips the not-yet-created
 P11 ★ dir); corrected to 11 per the roadmap sequence. P12 (core-final) depends on P11.
