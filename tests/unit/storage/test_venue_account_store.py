@@ -17,6 +17,7 @@ denylist while ``"secret_ref"`` passes — which is precisely why the column is 
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from itrader.config.sql import SqlSettings
 from itrader.core.exceptions import ValidationError
@@ -315,3 +316,142 @@ def test_build_venue_accounts_table_is_idempotent() -> None:
         assert "credentials" not in first.c
     finally:
         backend.dispose()
+
+
+# --------------------------------------------------------------------------- #
+# 11.2-05 — the CREATE-ONLY write (D-11) + the venue-scoped ENABLED read (ACCT-01)
+# --------------------------------------------------------------------------- #
+
+
+def test_create_inserts_a_new_row() -> None:
+    """``create`` is the create-only sibling of ``upsert`` — one new row, every column."""
+    store = _make_store()
+    try:
+        store.create(
+            "okx",
+            "main",
+            secret_ref="env:OKX_MAIN",
+            venue_uid=None,
+            enabled=True,
+            config={"region": "eea"},
+            at=_AT,
+        )
+        row = store.get("okx", "main")
+        assert row is not None
+        assert row["secret_ref"] == "env:OKX_MAIN"
+        assert row["enabled"] is True
+        assert row["config"] == {"region": "eea"}
+    finally:
+        store.dispose()
+
+
+def test_create_on_an_existing_pair_raises_and_leaves_the_row_untouched() -> None:
+    """D-11 — the DATABASE refuses the duplicate, and the operator's row survives intact.
+
+    This is the property ``upsert`` cannot provide, and the whole reason ``create``
+    exists: ``upsert`` is a DELETE-then-INSERT on the composite key, so a second write
+    silently CLOBBERS the operator's ``secret_ref`` / ``config`` and resets the
+    engine-written ``venue_uid`` to NULL — disarming the D-04 trust-on-first-use guard for
+    that account. Both halves are asserted: that it raises, AND that all three columns are
+    unchanged afterwards.
+    """
+    store = _make_store()
+    try:
+        store.create(
+            "okx", "main", secret_ref="env:FIRST", venue_uid="uid-1",
+            enabled=True, config={"region": "eea"}, at=_AT,
+        )
+        with pytest.raises(IntegrityError):
+            store.create(
+                "okx", "main", secret_ref="env:SECOND", venue_uid=None,
+                enabled=True, config={"region": "us"}, at=_AT,
+            )
+        row = store.get("okx", "main")
+        assert row is not None
+        assert row["secret_ref"] == "env:FIRST"
+        assert row["venue_uid"] == "uid-1"
+        assert row["config"] == {"region": "eea"}
+        assert len(store.read_all()) == 1
+    finally:
+        store.dispose()
+
+
+def test_create_rejects_a_secret_bearing_config_before_any_write() -> None:
+    """``create`` runs the SAME single denylist ``upsert`` runs (D-02) — nothing persists."""
+    store = _make_store()
+    try:
+        with pytest.raises(ValidationError):
+            store.create(
+                "okx", "main", secret_ref=None, venue_uid=None,
+                enabled=True, config={"api_key": "leaked"}, at=_AT,
+            )
+        assert store.get("okx", "main") is None
+        assert store.read_all() == []
+    finally:
+        store.dispose()
+
+
+def test_the_secret_denylist_is_the_reused_one_and_runs_first_in_both_writers() -> None:
+    """VERIFY-AND-CITE: the guard is REUSED from ``venue_store`` and fires FIRST (D-02).
+
+    ``venue_account_store.py:58`` imports ``_assert_no_secret_keys`` from ``venue_store``
+    — the ONE denylist — and ``:138`` calls it as the FIRST statement of ``upsert``,
+    before the transaction opens, so a rejected write persists NOTHING. ``create`` does
+    the same at its own first statement.
+
+    Asserted STRUCTURALLY, not only behaviourally, because the risk here is not "the guard
+    is missing" but "a SECOND denylist was added". The module's own docstring forbids that:
+    membership is EXACT and lowercased, so ``"credential"`` is denied while
+    ``"credentials"`` passes by one letter — two lists that drift by a single entry land
+    live exchange keys in every ``pg_dump``, read replica and backup snapshot. A purely
+    behavioural test stays green against a rebuilt local copy; this one pins the shared
+    IDENTITY and the POSITION.
+    """
+    import inspect
+
+    from itrader.storage import venue_account_store as module
+    from itrader.storage.venue_store import _assert_no_secret_keys as canonical
+
+    # REUSED, never rebuilt: the module-level name IS venue_store's object.
+    assert module._assert_no_secret_keys is canonical
+
+    for writer in (module.VenueAccountStore.upsert, module.VenueAccountStore.create):
+        lines = [
+            line.strip()
+            for line in inspect.getsource(writer).split("\n")
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        # The first statement AFTER the closing docstring quotes must be the guard.
+        closing = max(index for index, line in enumerate(lines) if '"""' in line)
+        assert lines[closing + 1] == "_assert_no_secret_keys(config)", (
+            f"{writer.__qualname__} must call the shared denylist as its FIRST "
+            f"statement, before any transaction opens; found {lines[closing + 1]!r}"
+        )
+
+
+def test_read_enabled_for_is_venue_scoped_enabled_only_and_ordered() -> None:
+    """ACCT-01 — one venue's ENABLED rows, ``account_id`` ASC, never another venue's.
+
+    Rows are inserted deliberately out of order and across two venues: an unscoped read
+    hands one venue another venue's accounts (``account_id`` alone cannot derive its
+    venue — D-01), and an unordered SELECT has no guaranteed row order at all.
+    """
+    store = _make_store()
+    try:
+        for venue, account, enabled in (
+            ("okx", "zeta", True),
+            ("okx", "alpha", True),
+            ("okx", "off", False),
+            ("paper", "alpha", True),
+        ):
+            store.upsert(
+                venue, account, secret_ref=None, venue_uid=None,
+                enabled=enabled, config={}, at=_AT,
+            )
+        rows = store.read_enabled_for("okx")
+        assert [row["account_id"] for row in rows] == ["alpha", "zeta"]
+        assert {row["venue_name"] for row in rows} == {"okx"}
+        assert [row["account_id"] for row in store.read_enabled_for("paper")] == ["alpha"]
+        assert store.read_enabled_for("unknown-venue") == []
+    finally:
+        store.dispose()
