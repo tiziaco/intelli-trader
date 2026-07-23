@@ -1991,16 +1991,16 @@ def build_live_system(
 
     # compose already wired portfolio_handler.set_order_storage(order_handler.storage) and
     # the admission fee-model provider (D-05; 11.1-10 / D-18 narrowed that seam to wiring
-    # only), so the former inline commission
-    # closure + the duplicate set_order_storage call are gone. NOTE (T-11.1-48, KNOWN and
-    # DELIBERATELY DEFERRED): the live OKX exchange exposes no ``fee_model`` attribute, so
-    # the provider yields None here and admission reserves NO fee headroom on a venue that
-    # charges real fees. D-18 made this VISIBLE (an explicit no-fee-model contract replacing
-    # an isinstance guard) without fixing it — a fix changes reservation amounts on the
-    # golden path and must arrive as its own decision, not as a refactor. build_live_system only needs
-    # the three handles its remaining venue + post-facade wiring touches; the facade sources
-    # the FULL graph (+ storages, store=None) off the engine in __init__ (D-10), so no
-    # duplicate locals are threaded through here.
+    # only), so the former inline commission closure + the duplicate set_order_storage call
+    # are gone. Since D-39 / 11.1-REVIEW WR-01 that provider takes the ORDER's own
+    # ``(venue, account_id)`` pair and resolves ``execution_handler.exchanges`` INSIDE the
+    # call, yielding that exchange's ``fee_model`` when it has one; admission LOGS the miss
+    # and degrades to ``Decimal("0")`` when it does not. (This note used to blame the None on
+    # "the live OKX exchange exposes no fee model" — FALSE, and why the gap survived review:
+    # the zero-arg provider never reached an OKX exchange, it resolved the paper compute
+    # exchange captured at wiring time. OkxExchange still has none, so T-11.1-48 stays open.)
+    # build_live_system only needs the three handles its remaining venue + post-facade wiring
+    # touches; the facade sources the FULL graph off the engine in __init__ (D-10).
     execution_handler = engine.execution_handler
     portfolio_handler = engine.portfolio_handler
     event_handler = engine.event_handler

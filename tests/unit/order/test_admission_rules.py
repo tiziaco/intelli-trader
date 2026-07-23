@@ -41,6 +41,7 @@ from itrader.events_handler.events import FillEvent, OrderEvent, SignalEvent
 from itrader.core.enums import OrderType, OrderStatus, Side, OrderTriggerSource, PositionSide
 from itrader.core.money import to_money
 from itrader.core.sizing import FractionOfCash, TradingDirection
+from itrader.venues.registry import DEFAULT_ACCOUNT_ID
 from tests.support.venue_wiring import backtest_portfolio_handler
 
 
@@ -448,7 +449,7 @@ def test_increase_with_insufficient_funds_yields_cash_reservation_rejection(harn
 
     huge_fee_model = _HugeFeeModel()
     harness.order_handler.order_manager.admission_manager.fee_model_provider = (
-        lambda: huge_fee_model
+        lambda venue, account_id: huge_fee_model
     )
 
     signal = harness.create_mock_signal("BUY", allow_increase=True)
@@ -1057,3 +1058,162 @@ def test_funded_short_increase_still_admits(harness):
     order_event: OrderEvent = harness.queue.get(False)
     assert order_event.action is Side.SELL
     assert order_event.quantity == 100
+
+
+# ---------------------------------------------------------------------------
+# 11.1-REVIEW WR-01 — the admission fee-model provider must be VENUE-AWARE.
+#
+# The defect: ``fee_model_provider`` was a ZERO-ARG closure in ``compose.py``
+# over ``exchanges.get((COMPUTE_VENUE, DEFAULT_ACCOUNT_ID))`` resolved once at
+# wiring time, so EVERY order's admission reservation was priced against the
+# paper compute exchange whatever venue would actually fill it. Nothing went red:
+# the golden run pins fees to zero, so the seam's output is ``Decimal("0")``
+# whether it works or is dead (RESEARCH Pitfall 2), and the live root carried a
+# comment blaming the ``None`` on OKX exposing no fee model — an explanation that
+# made a venue-blind provider look venue-aware.
+#
+# These cases pin the fix END-TO-END, through ``on_signal`` and the real
+# check-and-reserve gate, with TWO INDEPENDENT SIGNALS (the convention in
+# ``tests/unit/venues/test_venue_bundles.py``): the RECORDED ARGUMENTS, and an
+# IDENTITY SENTINEL. A call counter alone is satisfied by a lookup that returns
+# the wrong entry, which is exactly this defect.
+# ---------------------------------------------------------------------------
+
+
+class _FlatFeeModel(FeeModel):
+    """A fee model charging a FIXED non-zero commission, whatever the order.
+
+    Non-zero on purpose: ``Decimal("0")`` is both the golden value and what a
+    dead seam returns, so a zero-fee double cannot tell them apart.
+    """
+
+    def __init__(self, fee):
+        self.fee = fee
+
+    def calculate_fee(self, quantity, price, side="buy", order_type="market",
+                      is_maker=None):
+        return self.fee
+
+
+def _venue_harness(venue, account_id=None):
+    """An admission harness whose ACTIVE portfolio trades ``(venue, account_id)``.
+
+    ``account_id=None`` is the backtest shape — every golden portfolio leaves
+    ``Portfolio.account_id`` unset — and must resolve the single-account
+    identity rather than missing the registry.
+    """
+    harness = _AdmissionHarness()
+    harness.last_ptf_id = harness.ptf_handler.add_portfolio(
+        f"{venue}_ptf", venue, 10000, account_id=account_id)
+    return harness
+
+
+def _install_provider(harness, provider):
+    """Install a fee-model provider on the harness's AdmissionManager.
+
+    The post-construction assignment idiom this file already uses for the
+    commission seam (see the insufficient-funds increase case above).
+    """
+    harness.order_handler.order_manager.admission_manager.fee_model_provider = provider
+
+
+def test_admission_asks_the_provider_for_the_orders_own_venue_and_account():
+    """Admission calls the provider with the ORDER's ``(venue, account_id)``.
+
+    Asserts the RECORDED ARGUMENTS: a venue-blind provider is still called
+    exactly once per admitted BUY, so a call count cannot see the defect.
+    """
+    calls = []
+
+    def recording_provider(venue, account_id):
+        calls.append((venue, account_id))
+        return _FlatFeeModel(Decimal("1"))
+
+    harness = _venue_harness("okx", account_id="acct-b")
+    _install_provider(harness, recording_provider)
+
+    harness.order_handler.on_signal(harness.create_mock_signal("BUY"))
+
+    assert calls == [("okx", "acct-b")]
+
+
+def test_orders_on_different_pairs_reserve_different_commissions():
+    """IDENTITY SENTINEL (WR-01) — the case that fails if venue-awareness regresses.
+
+    Two portfolios on DIFFERENT ``(venue, account_id)`` pairs, one provider, two
+    fee models. A provider that resolves a single captured exchange returns the
+    SAME fee for both and the two reserved amounts collapse to equal — which is
+    precisely the pre-fix behaviour. Verified by reverting ``_estimate_commission``
+    to the captured-exchange shape locally: this case goes red while the
+    byte-exact oracle stays green.
+    """
+    registry = {
+        ("paper", DEFAULT_ACCOUNT_ID): _FlatFeeModel(Decimal("1")),
+        ("okx", "acct-b"): _FlatFeeModel(Decimal("100")),
+    }
+
+    def registry_provider(venue, account_id):
+        return registry.get((venue, account_id))
+
+    paper = _venue_harness("paper")                      # names NO account
+    okx = _venue_harness("okx", account_id="acct-b")
+    _install_provider(paper, registry_provider)
+    _install_provider(okx, registry_provider)
+
+    paper.order_handler.on_signal(paper.create_mock_signal("BUY"))
+    okx.order_handler.on_signal(okx.create_mock_signal("BUY"))
+
+    # Both sized identically (0.95 x 10000 / 40 = 237.5 @ 40 -> 9500 notional),
+    # so the ONLY difference in reserved cash is the commission estimate.
+    paper_reserved = Decimal("10000") - paper.ptf_handler.available_cash(paper.last_ptf_id)
+    okx_reserved = Decimal("10000") - okx.ptf_handler.available_cash(okx.last_ptf_id)
+
+    assert paper_reserved == Decimal("9501")
+    assert okx_reserved == Decimal("9600")
+    assert paper_reserved != okx_reserved
+
+
+def test_unregistered_pair_reserves_bare_notional_and_does_not_raise():
+    """A pair with no registered exchange degrades to ``Decimal("0")`` (WR-01).
+
+    The provider's contract is "return None on a miss, never raise": admission
+    reserves the bare notional and the order is still emitted. The degrade is
+    NOT silent — ``_estimate_commission`` logs the pair that missed — but the
+    admission verdict is unchanged, which is what keeps the change
+    value-preserving for the byte-exact oracle.
+    """
+    def registry_provider(venue, account_id):
+        return {("paper", DEFAULT_ACCOUNT_ID): _FlatFeeModel(Decimal("1"))}.get(
+            (venue, account_id))
+
+    harness = _venue_harness("okx", account_id="no-such-account")
+    _install_provider(harness, registry_provider)
+
+    harness.order_handler.on_signal(harness.create_mock_signal("BUY"))
+
+    order_event: OrderEvent = harness.queue.get(False)
+    assert order_event.action is Side.BUY
+    reserved = Decimal("10000") - harness.ptf_handler.available_cash(harness.last_ptf_id)
+    assert reserved == Decimal("9500")  # bare notional, zero commission headroom
+
+
+def test_a_portfolio_naming_no_account_resolves_the_default_identity():
+    """An unnamed account resolves ``DEFAULT_ACCOUNT_ID``, not a registry miss (WR-01).
+
+    ``Portfolio.account_id`` is optional and EVERY backtest portfolio leaves it
+    unset, so the golden run reaches the lookup with ``None``. Coercing it to the
+    single-account identity is what keeps the oracle resolving the paper compute
+    exchange — a miss here would silently zero every golden commission estimate.
+    """
+    calls = []
+
+    def recording_provider(venue, account_id):
+        calls.append((venue, account_id))
+        return _FlatFeeModel(Decimal("1"))
+
+    harness = _venue_harness("paper")
+    _install_provider(harness, recording_provider)
+
+    harness.order_handler.on_signal(harness.create_mock_signal("BUY"))
+
+    assert calls == [("paper", DEFAULT_ACCOUNT_ID)]

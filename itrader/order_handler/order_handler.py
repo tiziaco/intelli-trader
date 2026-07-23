@@ -70,12 +70,13 @@ class OrderHandler:
 			- "immediate": Execute market orders immediately (live trading)
 			- "next_bar": Queue market orders for next bar execution (realistic backtesting)
 		fee_model_provider: FeeModelProvider, optional
-			``() -> FeeModel | None`` — the venue's CURRENT fee model, forwarded to
-			OrderManager's admission reservation gate (Plan 05-06, D-04/D-18). The
-			ADMISSION CONVENTION for reading it (``side="buy"``,
-			``order_type="market"``) lives in ``AdmissionManager``, not here and not
-			in the provider. None (or a provider returning None) -> zero estimate
-			(golden run pins fees 0).
+			``(venue, account_id) -> FeeModel | None`` — the CURRENT fee model of
+			the exchange serving an order's pair, forwarded to OrderManager's
+			admission reservation gate (Plan 05-06, D-04/D-18/D-39). The ADMISSION
+			CONVENTION for reading it (``side="buy"``, ``order_type="market"``) lives
+			in ``AdmissionManager``, not here and not in the provider — and so does
+			the resolution of the pair itself. None (or a provider returning None)
+			-> zero estimate (golden run pins fees 0).
 		"""
 		self.global_queue = global_queue
 		self.portfolio_handler = portfolio_handler

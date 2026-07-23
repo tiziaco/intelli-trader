@@ -1,7 +1,9 @@
 """Structural + late-binding conformance tests for ``FeeModelProvider`` (D-18).
 
 Pins the WIRING half of the decomposed commission seam: a ``runtime_checkable``
-Protocol with a ``() -> FeeModel | None`` ``__call__``, mirroring
+Protocol with a ``(venue, account_id) -> FeeModel | None`` ``__call__``
+(D-39/11.1-REVIEW WR-01 widened it from ``()``: a provider that cannot be ASKED
+about a venue cannot be caught answering for the wrong one), mirroring
 ``PortfolioReadModel`` (zero ``itrader`` deps AT RUNTIME — the ``FeeModel``
 annotation is ``TYPE_CHECKING``-guarded).
 
@@ -42,6 +44,7 @@ from itrader.config import FeeModelType
 from itrader.core.commission_estimator import FeeModelProvider
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.execution_handler.fee_model import FeeModel, PercentFeeModel
+from itrader.venues.registry import DEFAULT_ACCOUNT_ID
 
 pytestmark = pytest.mark.unit
 
@@ -52,7 +55,7 @@ class _ConformingProvider:
     def __init__(self, fee_model: Optional[FeeModel]) -> None:
         self._fee_model = fee_model
 
-    def __call__(self) -> Optional[FeeModel]:
+    def __call__(self, venue: str, account_id: str) -> Optional[FeeModel]:
         return self._fee_model
 
 
@@ -78,7 +81,7 @@ def test_conforming_provider_returns_the_fee_model_it_provides():
     """The conforming provider is callable with the documented signature."""
     fee_model = PercentFeeModel(fee_rate=Decimal("0.001"))
     provider = _ConformingProvider(fee_model)
-    assert provider() is fee_model
+    assert provider("paper", DEFAULT_ACCOUNT_ID) is fee_model
 
 
 def test_non_conforming_class_fails_protocol_isinstance():
@@ -102,7 +105,8 @@ def test_lambda_provider_satisfies_protocol():
     provider that replaced it is a closure over the exchange.
     """
     exchange = _make_default_exchange()
-    provider = lambda: getattr(exchange, "fee_model", None)  # noqa: E731
+    provider = lambda venue, account_id: getattr(  # noqa: E731
+        exchange, "fee_model", None)
     assert isinstance(provider, FeeModelProvider)
 
 
@@ -118,10 +122,11 @@ def test_provider_may_return_none_for_a_venue_with_no_fee_model():
         pass
 
     venue = _VenueWithoutFeeModel()
-    provider = lambda: getattr(venue, "fee_model", None)  # noqa: E731
+    provider = lambda venue_name, account_id: getattr(  # noqa: E731
+        venue, "fee_model", None)
 
     assert isinstance(provider, FeeModelProvider)
-    assert provider() is None
+    assert provider("paper", DEFAULT_ACCOUNT_ID) is None
 
 
 def test_late_binding_provider_reads_the_current_fee_model():
@@ -138,18 +143,19 @@ def test_late_binding_provider_reads_the_current_fee_model():
     the exchange no longer charges.
     """
     exchange = _make_default_exchange()
-    provider = lambda: getattr(exchange, "fee_model", None)  # noqa: E731
+    provider = lambda venue, account_id: getattr(  # noqa: E731
+        exchange, "fee_model", None)
 
-    before = provider()
+    before = provider("paper", DEFAULT_ACCOUNT_ID)
     # Idempotency: two derefs with NO config change agree (VENUE-08).
-    assert provider() is before
+    assert provider("paper", DEFAULT_ACCOUNT_ID) is before
 
     # Hot-swap the fee model through the REAL production mechanism (the canonical
     # dict/model_validate update_config contract), which re-inits self.fee_model.
     exchange.update_config(
         {"fee_model": {"model_type": FeeModelType.PERCENT.value, "fee_rate": "0.001"}})
 
-    after = provider()
+    after = provider("paper", DEFAULT_ACCOUNT_ID)
     assert after is not before
     assert after is exchange.fee_model
     assert isinstance(after, PercentFeeModel)
@@ -168,13 +174,15 @@ def test_a_provider_that_captures_its_fee_model_is_not_late_bound():
     original = exchange.fee_model
     # THE UNSUPPORTED PATTERN: the model is bound once, at construction.
     capturing_provider = _ConformingProvider(exchange.fee_model)
-    late_bound_provider = lambda: getattr(exchange, "fee_model", None)  # noqa: E731
+    late_bound_provider = lambda venue, account_id: getattr(  # noqa: E731
+        exchange, "fee_model", None)
 
     exchange.update_config(
         {"fee_model": {"model_type": FeeModelType.PERCENT.value, "fee_rate": "0.001"}})
 
     # The capturing provider is STALE — it still hands out the retired model.
-    assert capturing_provider() is original
+    assert capturing_provider("paper", DEFAULT_ACCOUNT_ID) is original
     # The late-bound provider tracks the exchange. The divergence IS the defect.
-    assert late_bound_provider() is exchange.fee_model
-    assert capturing_provider() is not late_bound_provider()
+    assert late_bound_provider("paper", DEFAULT_ACCOUNT_ID) is exchange.fee_model
+    assert (capturing_provider("paper", DEFAULT_ACCOUNT_ID)
+            is not late_bound_provider("paper", DEFAULT_ACCOUNT_ID))
