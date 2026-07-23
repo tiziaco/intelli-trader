@@ -193,18 +193,27 @@ class LiveTradingSystem:
         # you can have one lifecycle per account, and ``VenueLifecycle`` already
         # exposes ``.bundle`` / ``.provider``, so every former alias is now a read
         # THROUGH the lifecycle at its use site. This is a SUBTRACTION: six fields
-        # collapse to one, and no new type was introduced (``assemble_venues`` is a
-        # plain function beside ``assemble_venue``).
+        # collapse to one.
         #
-        # Insertion order is the PRIMARY contract: ``_account_ids_for_spec`` puts the
-        # spec-level account first, so ``_primary_lifecycle`` below is deterministic
-        # across restarts — load-bearing because ONE data provider is bound to the ONE
-        # feed and it must be the same account's provider on every boot.
+        # 11.2-07 (D-36): "primary account" is DELETED. There is no longer a
+        # primary-lifecycle accessor and no insertion-order PRIMARY contract — the ONE feed is
+        # bound to a CONNECTION by ``FeedConnectionBinder``, which borrows the first
+        # available and re-borrows when that account is retired, so no account is
+        # privileged here. The map is still keyed by account id (bring-up order = the
+        # store's ``account_id`` ASC), used only for per-account iteration (start/stop,
+        # halt-wiring), never for a "which is first" decision.
         #
         # The ``bundle.connector is not None`` streaming-venue discriminator is NOT
-        # applied here any more: it is applied at each use site, unchanged in meaning
-        # (paper carries a lifecycle with connector=None and reaches no venue arm).
+        # applied here: it is applied at each use site, unchanged in meaning (paper
+        # carries a lifecycle with connector=None and reaches no venue arm).
         self._venue_lifecycles: Dict[str, Any] = dict(lifecycles) if lifecycles else {}
+        # 11.2-07 (D-36): the FeedConnectionBinder that owns the ONE feed's borrowed
+        # connection + provider. ATTACHED by build_live_system after construction (it is
+        # built alongside the venue manager inside the SQL-spine gate). None on the
+        # in-memory arm and on a facade built outside build_live_system; ``feed_provider``
+        # reads None-guard it. The live session's warmup/subscribe reads the bound provider
+        # through it, replacing the deleted primary-lifecycle provider read.
+        self._feed_binder: Optional[Any] = None
 
         # -- Fresh per-instance RUNTIME state (NOT wiring) ----------------------
         # P7 (SAFE-01/03/§11e): the status latch + halt/pause machinery + the
@@ -282,24 +291,14 @@ class LiveTradingSystem:
         self.logger.info('Live trading system initialized')
 
     # ---- Venue reads THROUGH the per-account lifecycle map (11-09) ----------------
-    # Two derived accessors, no stored state. They exist so the multi-account shape has
-    # ONE spelling: "the primary account's lifecycle" and "every streaming lifecycle".
+    # ONE derived accessor, no stored state: "every streaming lifecycle". 11.2-07 (D-36)
+    # DELETED the primary-lifecycle accessor — there is no privileged first account any
+    # more (the feed is bound to a connection by FeedConnectionBinder, not a lifecycle).
     # Note what is deliberately NOT here: no ``_okx_exchange`` / ``_venue_account`` /
     # ``_okx_data_provider`` back-compat properties. Re-adding them as read-throughs
     # would keep six names alive while pretending to delete them, and the whole point
     # of holding the object instead of its pieces is that there is nothing left to
     # keep in sync.
-
-    @property
-    def _primary_lifecycle(self) -> Optional[Any]:
-        """The PRIMARY account's ``VenueLifecycle``, or ``None`` when none is assembled.
-
-        The primary is the FIRST inserted entry (``_account_ids_for_spec`` puts the
-        spec-level account first, then portfolio accounts in stable order), so this is
-        deterministic across restarts — required because the ONE live feed is bound to
-        exactly one data provider and that binding must not move between boots.
-        """
-        return next(iter(self._venue_lifecycles.values()), None)
 
     def _streaming_lifecycles(self) -> List[Any]:
         """Every assembled lifecycle whose bundle carries a live connector.
@@ -661,9 +660,12 @@ class LiveTradingSystem:
                 engine,
                 universe_config=universe_config,
                 venue_exchange=venue_exchange,
-                # ONE feed, so ONE data provider: the primary streaming account's.
+                # 11.2-07 (D-36): ONE feed, so ONE data provider — the connection the
+                # FeedConnectionBinder borrowed, read through it (the "primary" lifecycle
+                # concept is deleted). None on a zero-account boot / the in-memory arm.
                 data_provider=(
-                    streaming[0].provider if streaming else None),
+                    self._feed_binder.feed_provider
+                    if self._feed_binder is not None else None),
                 freeze_gate=(
                     lambda: self._safety.is_halted()
                     or self._safety.is_submission_paused()),
@@ -773,11 +775,15 @@ class LiveTradingSystem:
             # stream starts (single-writer ring/guard). Gated to the OKX arm — a
             # non-OKX venue has no provider, so the None provider is never dereferenced
             # (mirrors the CR-02 venue-guard). Warmup MUST precede start_stream.
-            # 11-09: ONE feed, so ONE provider — the primary streaming account's
-            # (unchanged: the facade only ever wired the primary's provider to the feed).
+            # 11.2-07 (D-36): ONE feed, so ONE provider — the connection the
+            # FeedConnectionBinder borrowed, read through it rather than off a "primary"
+            # lifecycle (the primary concept is deleted). None-guarded: a zero-account boot
+            # or the in-memory arm leaves the binder None / the provider None.
             streaming = self._streaming_lifecycles()
-            primary_provider = streaming[0].provider if streaming else None
-            if primary_provider is not None:
+            data_provider = (
+                self._feed_binder.feed_provider
+                if self._feed_binder is not None else None)
+            if data_provider is not None:
                 # Plan 06-05 (D-05): un-hardcode the stream symbol — the live
                 # subscription set is now SOURCED FROM MEMBERSHIP. For each member,
                 # warm the feed FIRST (REST replay sets the ring) THEN subscribe the
@@ -790,7 +796,7 @@ class LiveTradingSystem:
                 members = self.universe.members if self.universe is not None else []
                 for sym in members:
                     self.feed.warmup(sym, _system_config.stream.okx_stream_timeframe)
-                    primary_provider.subscribe(sym)
+                    data_provider.subscribe(sym)
 
             # CR-01 (RECON-02, RES-01): spawn the order-arm venue streams. This is
             # the SOLE spawn site for OkxExchange._stream_fills()/_stream_orders()
@@ -1674,6 +1680,10 @@ def build_live_system(
     # yet (it returns []).
     venue_lifecycles: Dict[str, Any] = {}
     venue_accounts: Dict[str, Any] = {}
+    # 11.2-07 (D-36): the feed-connection binder, built inside the store gate below with
+    # the manager it belongs to. None on the in-memory arm (no store, no venue accounts),
+    # exactly like ``venue_account_store`` — the facade's feed-provider reads None-guard it.
+    feed_binder: Optional[Any] = None
 
     if system_db_backend is not None:
         from sqlalchemy import inspect as _sa_inspect
@@ -1684,7 +1694,23 @@ def build_live_system(
         from itrader.portfolio_handler.rehydrate.portfolio_rehydrate import (
             rehydrate_portfolios,
         )
+        from itrader.venues.feed_binder import FeedConnectionBinder
         from itrader.venues.venue_account_manager import VenueAccountManager
+
+        # 11.2-07 (D-36): the ONE feed's connection binder. "Primary account" is deleted —
+        # the feed borrows the first available venue CONNECTION and re-borrows when that
+        # account is retired or disabled. It owns the provider build (the SAME
+        # data_registry.build_provider path the root used), the feed wiring and the
+        # re-borrow rule; the manager DRIVES it from bring_online. Built here so the manager
+        # can hold it; it reads the same ctx / data_registry / connectors / feed / bus the
+        # rest of the boot already resolved.
+        feed_binder = FeedConnectionBinder(
+            feed=feed,
+            data_registry=data_registry,
+            ctx=ctx,
+            connectors=connectors,
+            global_queue=global_queue,
+        )
 
         # The venue-ACCOUNT domain owner (D-21/D-26/D-27), built HERE — above the
         # bootstrap — so assembly can run before rehydrate (D-20). It EXCLUSIVELY owns the
@@ -1699,6 +1725,7 @@ def build_live_system(
             connectors,
             execution_handler,
             alert_sink=alert_sink,
+            feed_binder=feed_binder,
         )
 
         # The store the handler already OWNS (DECOMP-01a). One instance, so the rehydrate
@@ -1738,6 +1765,11 @@ def build_live_system(
         for row in venue_manager.read_enabled_for(exchange):
             record = venue_manager.bring_online(row)
             venue_lifecycles[str(row["account_id"])] = record.lifecycle
+        # D-36: finalize the feed's connection binding once the bring-up loop is done. A
+        # boot with zero streaming accounts leaves the feed UNBOUND and logs the cause
+        # here (bring_online's per-row rebind never ran, so nothing else would); a boot
+        # with accounts already bound it on the first streaming row, so this is a no-op.
+        venue_manager.rebind_feed()
 
         # (3) PORTFOLIO REHYDRATE, which recreates the portfolio objects with their
         #     PERSISTED ids (T-11-41) so the portfolio-scoped child tables and the
@@ -1940,6 +1972,9 @@ def build_live_system(
     facade._safety = safety
     facade._stream_recovery = stream_recovery
     facade._throttle = throttle
+    # 11.2-07 (D-36): the feed-connection binder the live session reads its bound data
+    # provider through. None on the in-memory arm (no venue manager was built).
+    facade._feed_binder = feed_binder
 
     # RTCFG-06 read-model sinks (D-18/D-19). Attach the durable KV (state.last_started_at
     # at start(); SafetyController/ErrorHandler own the other state.* keys) and construct
@@ -1965,16 +2000,19 @@ def build_live_system(
     # streaming lifecycle. Two copies of one wiring rule is how a second account ends up
     # accepting orders after a connector-fatal halt latched the first — a
     # partially-halted engine is worse than a single-account one, because the surviving
-    # arm looks healthy. The DATA provider stays deliberately single (one feed, the
-    # primary's provider), so it is wired outside the loop.
+    # arm looks healthy.
     #
-    # 11.1-08 (D-14): it is now BUILT outside the loop as well as wired outside it — see
-    # (3a) in the venue-assembly block above. That is what makes this comment's claim
-    # structural rather than aspirational: previously N providers existed and N-1 reached
-    # neither this halt-signal wiring nor the feed (WR-07). The review's proposal to loop
-    # this block over every provider was REJECTED for the reason stated above — there is
-    # ONE feed. The ``is not None`` guard stays: the unregistered-venue arm and a
-    # zero-account boot (D-09) both legitimately yield no provider.
+    # 11.2-07 (D-36): the DATA provider stays deliberately single (one feed), so it is
+    # wired outside the loop — read through the FeedConnectionBinder (the "primary" concept
+    # is deleted). The ``is not None`` guard stays: the unregistered-venue arm, a
+    # zero-account boot (D-09) and the in-memory arm (no binder) all legitimately yield no
+    # provider. A runtime re-borrow re-wires its own halt signal off this same seam when
+    # that path lands; here at boot the first-bound provider is wired once.
+    feed_provider = feed_binder.feed_provider if feed_binder is not None else None
+    if feed_provider is not None:
+        feed_provider.set_halt_signal(facade._request_connector_halt)
+        feed_provider.set_stream_state_listener(
+            facade._on_venue_stream_down, facade._on_venue_stream_up)
     for lifecycle in venue_lifecycles.values():
         bundle = lifecycle.bundle
         if bundle.connector is None:

@@ -1,4 +1,4 @@
-"""assemble_venue / assemble_venues — resolve the venue bundle + wrap it in a lifecycle (05-06, VENUE-06, D-06).
+"""assemble_venue — resolve the venue bundle + wrap it in a lifecycle (05-06, VENUE-06, D-06).
 
 ``assemble_venue`` is the SINGLE venue-assembly delegation seam (D-06). It asks the
 shared ``VenueBundles`` memo for the execution ``VenueBundle`` of one
@@ -46,20 +46,19 @@ memo would put the rule in two places and let the memo and the exchange registry
 disagree about an unnamed account. The RAW ``spec.account_id`` still reaches the
 lifecycle, which owns the guard's normalization.
 
-``assemble_venues`` (11-09) is the PLURAL form: one ``VenueLifecycle`` per account
-spec, keyed by account id. It is a plain FUNCTION beside ``assemble_venue``, NOT a
-new type — the facade used to shatter one lifecycle into six scalar aliases
-(``_venue_bundle`` / ``_okx_connector`` / ``_okx_exchange`` / ``_venue_account`` /
-``_okx_data_provider``); you cannot have six scalars per account, but you can have
-one lifecycle per account. ``VenueLifecycle`` already exposes ``.bundle`` /
-``.provider``, so every former alias is a read THROUGH the lifecycle. (Post-D-14
-``.provider`` is populated on the PRIMARY lifecycle only — which is exactly what the
-one alias it replaced, the single ``_okx_data_provider``, always was.)
+**The PLURAL boot loop is GONE (11.2-07, D-36).** ``assemble_venues`` — the "one
+``VenueLifecycle`` per account spec, PRIMARY FIRST" helper — was DELETED with the
+spec-derived boot it served. The boot now reads its account set off durable rows and
+brings each online through ``VenueAccountManager.bring_online``, which calls this
+singular ``assemble_venue`` once per row. D-36 also deletes "primary account" as a
+concept: the feed is bound to a CONNECTION by ``FeedConnectionBinder``, not handed to a
+privileged first account's lifecycle, so ``assemble_venue``'s ``provider`` kwarg is left
+at its ``None`` default on the boot path (``VenueLifecycle`` never reads it — a
+provider-less lifecycle is fully functional).
 
 Import-inert: ``from __future__ import annotations`` + ``TYPE_CHECKING``-only
 annotations keep this module ccxt/sqlalchemy/async-free (the P5 inertness gate) —
-the concretion imports live inside the plugins' ``build*`` bodies (D-04). That
-property holds for the plural form too: it only loops over the singular one.
+the concretion imports live inside the plugins' ``build*`` bodies (D-04).
 
 Indentation: 4-SPACE (``venues/`` package convention). ``mypy --strict`` applies.
 """
@@ -72,8 +71,6 @@ from itrader.venues.lifecycle import VenueLifecycle
 from itrader.venues.registry import DEFAULT_ACCOUNT_ID
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
-
     from itrader.connectors.provider import ConnectorProvider
     from itrader.price_handler.providers.live_provider import LiveDataProvider
     from itrader.venues.bundle import VenueBundle
@@ -156,73 +153,3 @@ def assemble_venue(
         alert_sink=alert_sink,
     )
     return bundle, lifecycle
-
-
-def assemble_venues(
-    specs: Iterable[Any],
-    connectors: ConnectorProvider,
-    bundles: VenueBundles,
-    *,
-    primary_provider: LiveDataProvider | None = None,
-    account_store: Any = None,
-    alert_sink: Any = None,
-) -> dict[str, VenueLifecycle]:
-    """One ``VenueLifecycle`` per account spec, keyed by account id (11-09, D-19).
-
-    A plain function over ``assemble_venue`` — deliberately NOT a new class. The
-    composition root used to keep the primary account's lifecycle and pre-derive five
-    scalar aliases off it (bundle / connector / exchange / account / provider), which
-    is unrepresentable once there is more than one account. Holding the LIFECYCLE per
-    account instead of its pieces makes the multi-account shape fall out with no new
-    concept: ``lifecycles[account_id].bundle.exchange`` replaces ``_okx_exchange``,
-    ``.bundle.connector`` replaces ``_okx_connector``, ``.provider`` replaces
-    ``_okx_data_provider``, and ``.bundle.account_factory(account_id=account_id)``
-    replaces the single unscoped ``_venue_account``.
-
-    Parameters
-    ----------
-    specs :
-        The per-account venue specs, PRIMARY FIRST. Ordering is the caller's
-        contract (``_account_ids_for_spec`` pins it): the returned ``dict`` preserves
-        insertion order, so ``next(iter(...))`` is the deterministic primary. One
-        data provider is wired to the one feed, so the primary must not vary across
-        restarts — and 11.1-08 makes that contract load-bearing rather than incidental,
-        because the FIRST spec is the one that receives ``primary_provider``.
-    primary_provider :
-        11.1-08 (D-14): the ONE ``LiveDataProvider`` the composition root built for the
-        feed. It is handed to the FIRST spec's lifecycle and to no other — the
-        primary-is-first ordering contract above is the single home of that rule, so no
-        caller re-derives "which account is primary". ``None`` (the default, and the
-        whole map's value on a venue with no data arm) leaves every lifecycle
-        provider-less, which is a supported state: ``VenueLifecycle`` never reads it.
-    connectors, bundles, account_store, alert_sink :
-        Threaded verbatim into each ``assemble_venue`` call.
-
-    Returns
-    -------
-    dict[str, VenueLifecycle]
-        Keyed by ``spec.account_id or "default"`` — the SAME key
-        ``ExecutionHandler.exchanges`` and the venue plugins' connector memo use, so
-        venue, exchange registry and lifecycle map all agree on one account key.
-
-    Notes
-    -----
-    Unit-testable standalone with NO ``LiveTradingSystem`` — the same property
-    ``assemble_venue`` carries, and the reason the assembly logic lives here rather
-    than in the composition root.
-    """
-    lifecycles: dict[str, VenueLifecycle] = {}
-    for index, spec in enumerate(specs):
-        _bundle, lifecycle = assemble_venue(
-            spec,
-            connectors,
-            bundles,
-            # D-14: ONE feed, ONE provider — the PRIMARY account's, and the primary is
-            # the first spec. Handing it to index 0 here (rather than at the call site)
-            # keeps the ordering contract documented above as its own enforcement.
-            provider=primary_provider if index == 0 else None,
-            account_store=account_store,
-            alert_sink=alert_sink,
-        )
-        lifecycles[getattr(spec, "account_id", None) or DEFAULT_ACCOUNT_ID] = lifecycle
-    return lifecycles
