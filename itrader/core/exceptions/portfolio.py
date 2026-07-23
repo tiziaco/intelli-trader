@@ -119,6 +119,59 @@ class PortfolioValidationError(ValidationError):
         super().__init__(validation_type, str(portfolio_id), message)
 
 
+# Per-key rationale for ImmutableConfigKeyError. Keyed so the message names the ACTUAL
+# consequence + remediation for the refused key rather than a vague generic line; the
+# fallback keeps a future key honest if its entry is forgotten.
+_IMMUTABLE_KEY_RATIONALE: dict[str, str] = {
+    "enable_margin": (
+        "Four of its five readers bind the value at CONSTRUCTION — "
+        "AdmissionManager._enable_margin, EnhancedOrderValidator.enable_margin, "
+        "ManagedStrategies.enable_margin (the SHORT-01 direction gate) and the account "
+        "leaf's very KIND (cash vs margin) — while only Portfolio.process_transaction "
+        "re-reads it per fill. A runtime flip would therefore desynchronize four of the "
+        "five readers silently: settlement would take the margin arm while admission, "
+        "validation, the strategy gate and the account leaf all still believe margin is "
+        "off. Recreate the portfolio with the desired margin setting instead."
+    ),
+}
+
+_IMMUTABLE_KEY_FALLBACK = (
+    "Its readers bind the value at construction, so a runtime flip would desynchronize "
+    "them silently. Recreate the portfolio with the desired setting instead."
+)
+
+
+class ImmutableConfigKeyError(PortfolioError):
+    """A runtime config update names a portfolio key that is deliberately immutable (11.1-REVIEW CR-02).
+
+    Raised by BOTH refusal layers over the single ``IMMUTABLE_PORTFOLIO_CONFIG_KEYS`` set:
+    ``ConfigRouter._apply_portfolio`` (the queue-facing default-deny gate, which converts
+    this into its standard deduped WARNING rejection rather than letting it escape
+    ``apply()``) and ``Portfolio.update_config`` (the backstop for any caller that reaches
+    the domain object directly). The two layers are deliberate defense-in-depth, not
+    redundancy: the router cannot see a caller that bypasses the queue.
+
+    The refusal is KEY-scoped, never section-scoped — ``trading_rules`` stays a mutable
+    section and every other field in it stays routable. It is also presence-based, not
+    value-based: naming the key with its CURRENT value is refused too, so an operator
+    cannot discover the boundary by accident and conclude the knob "sometimes works".
+
+    Carries the rejected ``key`` (and the originating ``scope`` when the router raises it)
+    as structured fields and builds its message in ``__init__`` (the project's exception
+    convention). The message names the CONSEQUENCE (which readers desynchronize) and the
+    REMEDIATION (recreate the portfolio) so an operator can act on it.
+    """
+
+    def __init__(self, key: str, scope: Optional[str] = None):
+        self.key = key
+        self.scope = scope
+        where = f" (scope {scope!r})" if scope else ""
+        rationale = _IMMUTABLE_KEY_RATIONALE.get(key, _IMMUTABLE_KEY_FALLBACK)
+        super().__init__(
+            f"Portfolio config key {key!r}{where} is not runtime-mutable. {rationale}"
+        )
+
+
 class ReconciliationError(ITraderError):
     """A venue resting-order payload is missing/uncoercible where reconciliation needs an id (CF-7/SAFE-05)."""
     pass
