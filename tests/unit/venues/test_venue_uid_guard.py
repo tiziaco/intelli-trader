@@ -140,9 +140,9 @@ def _guard(
     store: Any,
     alert_sink: Any,
     account_id: str | None = "acct-a",
-) -> None:
-    """Drive the guard with the standard okx/acct-a pair."""
-    assert_venue_uid(
+) -> Any:
+    """Drive the guard with the standard okx/acct-a pair; return its outcome."""
+    return assert_venue_uid(
         plugin=plugin,
         connector=object(),
         venue_name="okx",
@@ -315,6 +315,137 @@ def test_a_none_account_id_is_normalized_to_the_default_account() -> None:
     _guard(plugin=_FakePlugin("uid-111"), store=store, alert_sink=sink, account_id=None)
 
     assert store.recorded == [("okx", "default", "uid-111", _AT)]
+
+
+# --------------------------------------------------------------------------- #
+# 11.2-06 (D-15/D-40) — the guard REPORTS its outcome AND its reason
+# --------------------------------------------------------------------------- #
+class _RaisingPlugin(_FakePlugin):
+    """A plugin whose ``fetch_venue_uid`` RAISES (the third-party-plugin case)."""
+
+    def fetch_venue_uid(self, connector: Any) -> str | None:
+        raise RuntimeError("the venue endpoint exploded")
+
+
+class _WriteOnlyExplodingStore(_FakeStore):
+    """A store that READS fine but whose ``record_venue_uid`` fails.
+
+    Distinct from ``_ExplodingStore``: the read-failure and the write-failure are two
+    DIFFERENT inertness paths needing two different operator investigations (a broken
+    query path vs a broken write path / read-only replica), so they must not collapse
+    into one reason.
+    """
+
+    def record_venue_uid(
+        self, venue_name: str, account_id: str, venue_uid: str, at: datetime
+    ) -> None:
+        raise RuntimeError("the account row is read-only")
+
+
+def test_the_guard_reports_armed_when_it_records_on_first_connect() -> None:
+    """D-40 — trust-on-first-use SUCCEEDED, so the guard is genuinely armed."""
+    from itrader.venues.venue_uid_guard import GUARD_ARMED
+
+    outcome = _guard(
+        plugin=_FakePlugin("uid-111"), store=_FakeStore(venue_uid=None),
+        alert_sink=_RecordingAlertSink())
+
+    assert outcome.outcome == GUARD_ARMED
+    assert outcome.armed is True
+
+
+def test_the_guard_reports_armed_when_it_asserts_a_match() -> None:
+    """D-40 — the steady state is the guard WORKING, not the guard idle."""
+    from itrader.venues.venue_uid_guard import GUARD_ARMED
+
+    outcome = _guard(
+        plugin=_FakePlugin("uid-111"), store=_FakeStore(venue_uid="uid-111"),
+        alert_sink=_RecordingAlertSink())
+
+    assert outcome.outcome == GUARD_ARMED
+
+
+def test_the_guard_reports_armed_when_it_detects_a_mismatch() -> None:
+    """D-40 — a DETECTION is the guard at its most armed, never an inert state.
+
+    Reporting a mismatch as anything but armed would invert the operator's reading of
+    the status at exactly the moment it matters most.
+    """
+    from itrader.venues.venue_uid_guard import (
+        GUARD_ARMED,
+        REASON_MISMATCH_ALERTED,
+    )
+
+    outcome = _guard(
+        plugin=_FakePlugin("uid-999"), store=_FakeStore(venue_uid="uid-111"),
+        alert_sink=_RecordingAlertSink())
+
+    assert outcome.outcome == GUARD_ARMED
+    assert outcome.reason == REASON_MISMATCH_ALERTED
+
+
+def test_each_of_the_six_inertness_paths_reports_a_DISTINCT_reason() -> None:
+    """D-40 — the six paths in the guard's OWN code each need a different fix.
+
+    This is the whole of D-40: a bare boolean tells an operator the guard is off but not
+    WHICH HOLE they have, and these six need six different actions — restore the venue
+    endpoint, fix the renamed UID field, accept the credential-less no-op, restore the
+    database read path, provision the missing row, fix the write path. Collapsing any
+    two because they look similar sends an operator to the wrong investigation.
+
+    Enumerated from ``venue_uid_guard.py`` itself, which is the set the plan asked for.
+    The lifecycle contributes further inertness paths of its own (a bundle with no
+    connector, and absent guard collaborators); those are surfaced too but live in
+    ``lifecycle.py``, so they are asserted there rather than smuggled into this six.
+    """
+    from itrader.venues.venue_uid_guard import (
+        GUARD_INERT,
+        REASON_FETCH_RAISED,
+        REASON_NO_ACCOUNT_ROW,
+        REASON_NO_VENUE_IDENTITY,
+        REASON_RECORD_WRITE_FAILED,
+        REASON_STORE_READ_FAILED,
+        REASON_UID_UNAVAILABLE_CREDENTIALED,
+    )
+
+    cases = {
+        # 1. the plugin's fetch raised (a third-party plugin breaking its contract)
+        REASON_FETCH_RAISED: (_RaisingPlugin("unused"), _FakeStore(venue_uid=None)),
+        # 2. a CREDENTIALED venue supplied no uid (renamed field / revoked read scope)
+        REASON_UID_UNAVAILABLE_CREDENTIALED: (
+            _FakePlugin(None), _FakeStore(venue_uid=None)),
+        # 3. the venue declares NO credentials and has no venue-side identity (paper)
+        REASON_NO_VENUE_IDENTITY: (
+            _PaperLikePlugin(None), _FakeStore(venue_uid=None)),
+        # 4. the store READ failed (database outage)
+        REASON_STORE_READ_FAILED: (_FakePlugin("uid-111"), _ExplodingStore()),
+        # 5. no account row for this pair yet
+        REASON_NO_ACCOUNT_ROW: (_FakePlugin("uid-111"), _FakeStore(exists=False)),
+        # 6. the first-connect record WRITE failed
+        REASON_RECORD_WRITE_FAILED: (
+            _FakePlugin("uid-111"), _WriteOnlyExplodingStore(venue_uid=None)),
+    }
+
+    observed = {}
+    for expected_reason, (plugin, store) in cases.items():
+        outcome = _guard(
+            plugin=plugin, store=store, alert_sink=_RecordingAlertSink())
+        assert outcome.outcome == GUARD_INERT, expected_reason
+        assert outcome.reason == expected_reason
+        observed[expected_reason] = outcome.reason
+
+    # SIX paths, SIX distinct reasons — no two collapsed.
+    assert len(set(observed.values())) == 6
+
+
+def test_the_guard_outcome_is_not_a_bare_boolean() -> None:
+    """D-40/D-15 — outcome WITHOUT reason is the shape D-15's own condition rejects."""
+    outcome = _guard(
+        plugin=_FakePlugin("uid-111"), store=_FakeStore(venue_uid=None),
+        alert_sink=_RecordingAlertSink())
+
+    assert not isinstance(outcome, bool)
+    assert isinstance(outcome.reason, str) and outcome.reason
 
 
 # --------------------------------------------------------------------------- #

@@ -527,6 +527,79 @@ def test_the_merged_spec_still_carries_the_accounts_own_secret_ref() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# D-40 — the per-pair venue-UID guard outcome surfaced on the manager
+# --------------------------------------------------------------------------- #
+
+
+def test_bring_online_surfaces_a_per_pair_guard_outcome() -> None:
+    """D-40 — every online pair has a ``venue_uid_guard_active`` entry, not a bare bool.
+
+    The whole of D-40: a bare boolean tells an operator the guard is off but not which
+    of its holes they have. The surface must carry an OUTCOME OBJECT with a reason per
+    ``(venue, account_id)``, so the status is diagnosable rather than merely on/off.
+    """
+    manager, store, _ = _make_manager()
+    try:
+        row = manager.provision(_VENUE, "acct-1")
+        manager.bring_online(row)
+
+        active = manager.venue_uid_guard_active()
+        outcome = active[(_VENUE, "acct-1")]
+
+        assert not isinstance(outcome, bool)
+        assert isinstance(outcome.reason, str) and outcome.reason
+    finally:
+        store.dispose()
+
+
+def test_two_pairs_report_their_guard_outcomes_independently() -> None:
+    """One pair's guard state never masks another's (D-40).
+
+    The map is keyed per pair for exactly this reason: a single flag on the manager
+    would collapse two accounts' guard states into one, so an inert guard on account A
+    would hide an armed guard on account B (or vice versa).
+    """
+    manager, store, _ = _make_manager()
+    try:
+        for account in ("acct-1", "acct-2"):
+            manager.bring_online(manager.provision(_VENUE, account))
+
+        active = manager.venue_uid_guard_active()
+        assert (_VENUE, "acct-1") in active
+        assert (_VENUE, "acct-2") in active
+        # Two independent outcome objects, not one shared reference.
+        assert active[(_VENUE, "acct-1")] is not active[(_VENUE, "acct-2")]
+    finally:
+        store.dispose()
+
+
+def test_the_guard_outcome_reflects_the_lifecycles_actual_state() -> None:
+    """The surface reads the LIVE lifecycle outcome, not a value frozen at bring-up.
+
+    D-15's condition is that the flag reflect the guard's ACTUAL outcome. Arming happens
+    at connect (inside ``VenueLifecycle.start()``), not at ``bring_online`` — this
+    manager's paper bundle carries no connector, so once its lifecycle starts the guard
+    never runs and the outcome names THAT, rather than staying at a stale bring-up
+    placeholder.
+    """
+    from itrader.venues.lifecycle import GUARD_REASON_PAPER_NO_CONNECTOR
+
+    manager, store, _ = _make_manager()
+    try:
+        record = manager.bring_online(manager.provision(_VENUE, "acct-1"))
+        # Before start(): a "not yet connected" placeholder, never armed.
+        assert manager.venue_uid_guard_active()[(_VENUE, "acct-1")].armed is False
+
+        record.lifecycle.start()
+
+        outcome = manager.venue_uid_guard_active()[(_VENUE, "acct-1")]
+        assert outcome.armed is False
+        assert outcome.reason == GUARD_REASON_PAPER_NO_CONNECTOR
+    finally:
+        store.dispose()
+
+
+# --------------------------------------------------------------------------- #
 # ACCT-03 — resolution, and the three distinguishable causes
 # --------------------------------------------------------------------------- #
 
