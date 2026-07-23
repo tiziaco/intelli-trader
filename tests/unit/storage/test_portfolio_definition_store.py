@@ -18,6 +18,7 @@ from decimal import Decimal
 from uuid import UUID
 
 import pytest
+from sqlalchemy import Boolean, Column, Index, MetaData, String, Table
 from sqlalchemy.exc import IntegrityError
 
 from itrader.config.sql import SqlSettings
@@ -94,11 +95,12 @@ def test_upsert_get_round_trip_with_decimal_cash() -> None:
 
 
 def test_duplicate_venue_account_pair_raises_integrity_error() -> None:
-    """D-14 — a SECOND portfolio on the SAME (venue_name, account_id) is rejected by the DB.
+    """D-14/D-32 — a second LIVE portfolio on the SAME (venue_name, account_id) is rejected.
 
-    Two portfolios sharing one venue account would conflate buying power the venue cannot
-    split back out; the constraint is PLAIN (not partial/conditional) so an out-of-band write
-    cannot bypass it either.
+    Two portfolios sharing one venue account SIMULTANEOUSLY would conflate buying power the
+    venue cannot split back out. D-32 narrowed the index to ``WHERE NOT is_deleted`` but this
+    case is unchanged: both rows here are live. Enforcement stays at the DB layer, so an
+    out-of-band write that never reaches the application cannot bypass it either.
     """
     portfolios, accounts = _make_stores()
     try:
@@ -280,6 +282,255 @@ def test_read_all_order_is_stable_across_calls() -> None:
         portfolios.dispose()
 
 
+# --------------------------------------------------------------------------------------
+# D-32 — is_deleted (RETIRED) vs enabled (PAUSED), and the partial unique index
+# --------------------------------------------------------------------------------------
+
+
+def test_retired_portfolio_releases_its_account_for_a_successor() -> None:
+    """D-32 — RETIRE then reuse: a retired row and a live row share one pair.
+
+    The owner's workflow: retire a portfolio, run a NEW one on the SAME real venue account.
+    The plain constraint blocked it; the partial index (``WHERE NOT is_deleted``) permits it
+    because the retired row has left the indexed set. Its row, history and child tables all
+    survive — deletion is SOFT.
+    """
+    portfolios, accounts = _make_stores()
+    try:
+        _seed_account(accounts, "okx", "main")
+        portfolios.upsert(
+            _PID_A,
+            name="retired",
+            venue_name="okx",
+            account_id="main",
+            initial_cash=Decimal("1000"),
+            enabled=True,
+            config=None,
+            at=_AT,
+            is_deleted=True,
+        )
+        portfolios.upsert(
+            _PID_B,
+            name="successor",
+            venue_name="okx",
+            account_id="main",
+            initial_cash=Decimal("2000"),
+            enabled=True,
+            config=None,
+            at=_AT,
+        )
+        retired = portfolios.get(_PID_A)
+        successor = portfolios.get(_PID_B)
+        assert retired is not None and retired["is_deleted"] is True
+        assert successor is not None and successor["is_deleted"] is False
+    finally:
+        portfolios.dispose()
+
+
+def test_paused_portfolio_keeps_its_account() -> None:
+    """D-32 — ``enabled=False`` is PAUSED, NOT retired: it does NOT release its pair.
+
+    This is the distinction D-31 collapsed and D-32 splits. Because a paused portfolio still
+    holds its account, a second live portfolio on the same pair is still refused — which is
+    what makes re-enabling it always work rather than collide.
+    """
+    portfolios, accounts = _make_stores()
+    try:
+        _seed_account(accounts, "okx", "main")
+        portfolios.upsert(
+            _PID_A,
+            name="paused",
+            venue_name="okx",
+            account_id="main",
+            initial_cash=Decimal("1000"),
+            enabled=False,
+            config=None,
+            at=_AT,
+        )
+        with pytest.raises(IntegrityError):
+            portfolios.upsert(
+                _PID_B,
+                name="intruder",
+                venue_name="okx",
+                account_id="main",
+                initial_cash=Decimal("2000"),
+                enabled=True,
+                config=None,
+                at=_AT,
+            )
+    finally:
+        portfolios.dispose()
+
+
+def test_read_all_omits_retired_portfolios() -> None:
+    """D-32 — ``read_all`` is the REHYDRATE read, so a retired portfolio must not come back."""
+    portfolios, accounts = _make_stores()
+    try:
+        _seed_account(accounts, "okx", "main")
+        _seed_account(accounts, "okx", "hedge")
+        portfolios.upsert(
+            _PID_A,
+            name="retired",
+            venue_name="okx",
+            account_id="main",
+            initial_cash=Decimal("1000"),
+            enabled=True,
+            config=None,
+            at=_AT,
+            is_deleted=True,
+        )
+        portfolios.upsert(
+            _PID_B,
+            name="live",
+            venue_name="okx",
+            account_id="hedge",
+            initial_cash=Decimal("2000"),
+            enabled=True,
+            config=None,
+            at=_AT,
+        )
+        rows = portfolios.read_all()
+        assert [row["portfolio_id"] for row in rows] == [_PID_B]
+        # get() is id-addressed, NOT the rehydrate read — it still returns the retired row so
+        # a caller holding the handle can see WHY it is gone.
+        assert portfolios.get(_PID_A) is not None
+    finally:
+        portfolios.dispose()
+
+
+def test_upsert_defaults_is_deleted_to_false_and_exposes_it() -> None:
+    """A definition written without the flag is LIVE, and every read exposes ``is_deleted``."""
+    portfolios, accounts = _make_stores()
+    try:
+        _seed_account(accounts, "paper", "acct_a")
+        portfolios.upsert(
+            _PID_A,
+            name="fresh",
+            venue_name="paper",
+            account_id="acct_a",
+            initial_cash=Decimal("500"),
+            enabled=True,
+            config=None,
+            at=_AT,
+        )
+        row = portfolios.get(_PID_A)
+        assert row is not None
+        assert row["is_deleted"] is False
+        assert portfolios.read_all()[0]["is_deleted"] is False
+    finally:
+        portfolios.dispose()
+
+
+# --------------------------------------------------------------------------------------
+# D-32 partial-unique-index MECHANISM spike (11.2-02 task 1)
+# --------------------------------------------------------------------------------------
+#
+# RESEARCH Assumption A6 (MED risk): partial-index kwargs have ZERO in-tree usage, so
+# SQLAlchemy 2.0's ``Index(..., unique=True, sqlite_where=..., postgresql_where=...)`` was
+# unproven on the dialect the WHOLE suite runs. This spike converts that assumption into
+# evidence against a throwaway table BEFORE the registrar commits to the shape, and is KEPT
+# so a future SQLAlchemy bump that silently degrades the predicate fails here — loudly, on a
+# 6-line table — rather than in production where it would mean two live portfolios quietly
+# sharing one venue account.
+#
+# The predicate is a SQLAlchemy column EXPRESSION (``~column``, i.e. ``NOT is_deleted``), not
+# a raw string, so ONE object serves both dialect kwargs and no dialect can drift.
+
+
+def _spike_table(metadata: MetaData) -> Table:
+    """A minimal (venue_name, account_id, is_deleted) table with the D-32 partial index."""
+    table = Table(
+        "spike_portfolios",
+        metadata,
+        Column("row_id", String, primary_key=True),
+        Column("venue_name", String, nullable=False),
+        Column("account_id", String, nullable=False),
+        Column("is_deleted", Boolean, nullable=False),
+    )
+    Index(
+        "uq_spike_live",
+        table.c.venue_name,
+        table.c.account_id,
+        unique=True,
+        postgresql_where=~table.c.is_deleted,
+        sqlite_where=~table.c.is_deleted,
+    )
+    return table
+
+
+def _spike_engine() -> tuple[SqlEngine, Table]:
+    """An in-memory SQLite engine carrying only the spike table."""
+    backend = SqlEngine(SqlSettings.default())
+    table = _spike_table(MetaData())
+    table.metadata.create_all(backend.engine)
+    return backend, table
+
+
+def _insert(backend: SqlEngine, table: Table, row_id: str, deleted: bool) -> None:
+    """Insert one ``('okx', 'main')`` row with the given retirement flag."""
+    with backend.engine.begin() as connection:
+        connection.execute(
+            table.insert(),
+            [{
+                "row_id": row_id,
+                "venue_name": "okx",
+                "account_id": "main",
+                "is_deleted": deleted,
+            }],
+        )
+
+
+def test_spike_partial_index_permits_retired_plus_live_pair() -> None:
+    """(a) A RETIRED row and a LIVE row on the same pair BOTH persist — sequential reuse."""
+    backend, table = _spike_engine()
+    try:
+        _insert(backend, table, "retired", deleted=True)
+        _insert(backend, table, "live", deleted=False)
+        with backend.engine.connect() as connection:
+            rows = connection.execute(table.select()).mappings().all()
+        assert {row["row_id"] for row in rows} == {"retired", "live"}
+    finally:
+        backend.dispose()
+
+
+def test_spike_partial_index_refuses_two_live_rows_on_one_pair() -> None:
+    """(b) TWO LIVE rows on one pair raise ``IntegrityError`` — simultaneous sharing refused.
+
+    The predicate must actually reach SQLite: if ``sqlite_where`` were ignored the index
+    would be PLAIN and case (a) above would fail instead; if the index were dropped entirely
+    this case would pass silently. Both halves are asserted, so neither degradation is green.
+    """
+    backend, table = _spike_engine()
+    try:
+        _insert(backend, table, "first", deleted=False)
+        with pytest.raises(IntegrityError):
+            _insert(backend, table, "second", deleted=False)
+    finally:
+        backend.dispose()
+
+
+def test_spike_partial_index_refuses_un_retiring_into_a_live_successor() -> None:
+    """(c) Flipping a RETIRED row back live while a successor holds the pair is refused.
+
+    The index is self-enforcing in BOTH directions — an UPDATE that moves a row INTO the
+    indexed set is checked exactly like an INSERT, so a resurrected portfolio cannot collide
+    with the one that took over its account.
+    """
+    backend, table = _spike_engine()
+    try:
+        _insert(backend, table, "retired", deleted=True)
+        _insert(backend, table, "successor", deleted=False)
+        with pytest.raises(IntegrityError):
+            with backend.engine.begin() as connection:
+                connection.execute(
+                    table.update()
+                    .where(table.c.row_id == "retired")
+                    .values(is_deleted=False)
+                )
+    finally:
+        backend.dispose()
+
+
 def test_build_portfolio_definition_tables_is_idempotent_and_shaped() -> None:
     """The registrar reuses registered tables and declares the D-07 shape + both constraints."""
     backend = SqlEngine(SqlSettings.default())
@@ -294,13 +545,32 @@ def test_build_portfolio_definition_tables_is_idempotent_and_shaped() -> None:
         assert "exchange" not in portfolios.c
         assert portfolios.c.account_id.nullable is False
         assert portfolios.c.config_json.nullable is True
-        # D-14 — the unique constraint is PLAIN over exactly the pair.
+        # D-32 — is_deleted is NOT NULL and declares NO server_default, so the registrar and
+        # the migrated schema agree (the migration drops its backfill default inside a batch).
+        assert portfolios.c.is_deleted.nullable is False
+        assert portfolios.c.is_deleted.server_default is None
+        # D-32 — the PLAIN table-level UniqueConstraint on the pair is GONE ...
         unique_pairs = [
             tuple(column.name for column in constraint.columns)
             for constraint in portfolios.constraints
             if constraint.__class__.__name__ == "UniqueConstraint"
         ]
-        assert ("venue_name", "account_id") in unique_pairs
+        assert ("venue_name", "account_id") not in unique_pairs
+        # ... replaced by a PARTIAL unique index carrying BOTH dialect predicates. A
+        # single-dialect predicate silently degrades to a plain index on the other engine —
+        # and the suite runs SQLite while production runs Postgres, so a missing
+        # ``sqlite_where`` would never be observed by any test.
+        live_index = next(
+            index for index in portfolios.indexes
+            if index.name == "uq_portfolios_live_account"
+        )
+        assert live_index.unique is True
+        assert [column.name for column in live_index.columns] == [
+            "venue_name",
+            "account_id",
+        ]
+        assert live_index.dialect_options["postgresql"]["where"] is not None
+        assert live_index.dialect_options["sqlite"]["where"] is not None
         foreign_key_targets = {
             foreign_key.target_fullname for foreign_key in portfolios.foreign_keys
         }
