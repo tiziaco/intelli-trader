@@ -343,6 +343,25 @@ def test_a_margin_leaf_cannot_be_built_without_naming_its_persistence_seam() -> 
         SimulatedMarginAccount(Decimal("1000"))  # type: ignore[call-arg]
 
 
+def test_neither_leaf_declares_a_default_for_its_persistence_seam() -> None:
+    """Asserted on the SIGNATURE, so the refusal cannot be "fixed" back into a default.
+
+    The behavioural tests above would still pass under a re-defaulted
+    ``state_storage: ... = None`` paired with an explicit ``raise`` in the body — but
+    that shape reintroduces exactly what this phase removes: an Optional production
+    collaborator whose absence is a runtime discovery rather than a call-site one.
+    ``inspect`` is the durable form of the property (the same convention
+    ``test_paper_plugin.py`` uses on the ``account_factory`` closure).
+    """
+    for leaf in (SimulatedCashAccount, SimulatedMarginAccount):
+        parameter = inspect.signature(leaf.__init__).parameters["state_storage"]
+        assert parameter.kind is inspect.Parameter.KEYWORD_ONLY, (
+            f"{leaf.__name__}.state_storage must be keyword-only: {parameter!r}")
+        assert parameter.default is inspect.Parameter.empty, (
+            f"{leaf.__name__}.state_storage must carry NO default "
+            f"(11.1-REVIEW WR-04): {parameter!r}")
+
+
 def test_a_named_seam_is_the_one_the_leaf_routes_through() -> None:
     """The positive half: naming a seam binds THAT instance, unchanged behaviour.
 
