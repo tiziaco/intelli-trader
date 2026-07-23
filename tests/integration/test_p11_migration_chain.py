@@ -42,9 +42,14 @@ from tests.support.schema import provision_schema
 
 _NOW = datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc)
 
-# The head after BOTH Phase 11 revisions, and the revision that creates the two new tables
-# but has NOT yet moved the config (the staging point for the data-movement tests).
-_HEAD = "p11_b2_uuid_fk_config_move"
+# The current single head, and the revision that creates the two new tables but has NOT yet
+# moved the config (the staging point for the data-movement tests).
+#
+# ``_HEAD`` is the CHAIN head, not "the last Phase 11 revision" — Phase 11.2 chained
+# ``p112_portfolios_is_deleted`` (D-32) on top of ``p11_b2_uuid_fk_config_move``. Pinning the
+# Phase-11 tail here instead would make the single-head assertion fail the moment any later
+# phase chains a revision, for a reason that has nothing to do with what this file tests.
+_HEAD = "p112_portfolios_is_deleted"
 _REVISION_ONE = "p11_venue_accounts_portfolios"
 
 # A distinctive, NESTED, NON-DEFAULT blob. Nested on purpose: a shallow dict could survive a
@@ -342,7 +347,14 @@ def _store_with_definition_row(portfolio_id: uuid.UUID) -> SqlPortfolioStateStor
             [{
                 "portfolio_id": portfolio_id, "name": "p11", "venue_name": "paper",
                 "account_id": "main", "initial_cash": Decimal("10000.50"),
-                "enabled": True, "config_json": None, "updated_at": _NOW,
+                # D-32 — this insert runs against the REGISTRAR-built schema (provision_schema
+                # above), which carries `is_deleted` NOT NULL with no server_default, so the
+                # key is required. The raw-SQL seed in `_seed_pre_move_rows` deliberately does
+                # NOT carry it: that one runs at `_REVISION_ONE`, where the column does not
+                # exist yet, and it is the fixture that proves the migration's server_default
+                # actually backfills a pre-existing row.
+                "enabled": True, "is_deleted": False,
+                "config_json": None, "updated_at": _NOW,
             }],
         )
     return store

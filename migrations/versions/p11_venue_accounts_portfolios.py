@@ -117,9 +117,18 @@ def upgrade() -> None:
             name=op.f("fk_portfolios_venue_name_venue_accounts"),
         ),
         sa.PrimaryKeyConstraint("portfolio_id", name=op.f("pk_portfolios")),
-        # D-14 / T-11-02 — PLAIN (never partial, conditional or deferrable). Two portfolios
-        # sharing one venue account would conflate buying power the venue cannot split back
-        # out; at the DB layer this also binds out-of-band writers.
+        # D-14 / T-11-02 — PLAIN at THIS revision. Two portfolios sharing one venue account
+        # would conflate buying power the venue cannot split back out; at the DB layer this
+        # also binds out-of-band writers.
+        #
+        # SUPERSEDED DOWNSTREAM (D-32): ``p112_portfolios_is_deleted`` drops this constraint
+        # by name and replaces it with the partial unique index
+        # ``uq_portfolios_live_account ... WHERE NOT is_deleted``. Both halves of the
+        # rationale above survive that swap — simultaneous sharing is still refused (two live
+        # portfolios are both indexed) and the DB is still the enforcer — while SEQUENTIAL
+        # reuse of an account after a retirement becomes possible. This revision is left
+        # UNCHANGED on purpose: rewriting an already-applied migration would desynchronise
+        # deployed databases from the chain. Read the two revisions together.
         sa.UniqueConstraint(
             "venue_name", "account_id", name=op.f("uq_portfolios_venue_name")
         ),
