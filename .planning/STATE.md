@@ -5,16 +5,16 @@ milestone_name: Live System Refactor & Live-Readiness Hardening
 current_phase: 11.2
 current_phase_name: INSERTED — split out of Phase 11.1
 status: planning
-stopped_at: Phase 11.1 context gathered (structural scope; 11.2 split out)
-last_updated: "2026-07-23T08:33:48.296Z"
-last_activity: 2026-07-22
-last_activity_desc: "Split ACCT-11 into Phase 11.3; repaired roadmap checklist (11.2 missing, 11.1 stale) and phase counters"
+stopped_at: Phase 11.2 context gathered
+last_updated: "2026-07-23T10:43:01.554Z"
+last_activity: 2026-07-23
+last_activity_desc: "Phase 11.2 context gathered — 23 decisions (D-20..D-42); COMP-07 absorbed, PortfolioFactory split, one migration"
 progress:
-  total_phases: 18
-  completed_phases: 14
+  total_phases: 15
+  completed_phases: 11
   total_plans: 53
   completed_plans: 53
-  percent: 78
+  percent: 73
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (Current Milestone: v1.8 — Live System Refactor & Li
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct,
 deterministic, cross-validated numbers (oracle **134 / `46189.87730727451`**; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 shipped a live operating mode (paper-first on OKX) without disturbing that oracle.
-**Current focus:** Phase 11.1 — account-provisioning-mandatory-account-identity
+**Current focus:** Phase 11.2 — account-provisioning-bootstrap-review-closures
 thin ~200-line facade over focused, venue-parametrized, FastAPI-ready collaborators — **without
 disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI itself is out of scope
 (LR-01). Full scope: core refactor (P1–P8 + P12 + P13) + the three ★ feature-adds (P9–P11).
@@ -35,10 +35,55 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 
 Phase: 11.2 — Account Provisioning Bootstrap + Review Closures (INSERTED — split out of Phase 11.1)
 Plan: Not started
-Status: Ready to plan
-provisioning to Phase 11.2, and WR-06 / WR-07 were settled in-file as D-15 (11.2) / D-14 (here).
-Sizing and wave split are locked by the plans. Resume: `/gsd:execute-phase 11.1`.
-Last activity: 2026-07-22 — Phase 11.1 complete, transitioned to Phase 11.2
+Status: Context gathered — ready to plan. Resume: `/gsd-plan-phase 11.2`.
+Last activity: 2026-07-23 — Phase 11.2 CONTEXT.md + DISCUSSION-LOG.md committed (`21c08474`)
+
+**Discussion session (2026-07-23).** Ten gray areas, **23 decisions locked (D-20..D-42)** — numbering
+continues from 11.1's D-01..D-19, whose D-09..D-13/D-15 were the pre-locked 11.2 set and are NOT
+re-litigated. Four owner reframings rewrote the phase rather than filling in details, and each rejected a
+Claude-proposed framing first:
+
+- **D-24/D-25 (the big one).** The source defect is that `add_portfolio` conflates a durable **write** with a
+  runtime **build** — `rehydrate_portfolios` calls `add_portfolio` (`portfolio_rehydrate.py:130`), and
+  `_persist_definition`'s "GATED ON ABSENCE" (`portfolio_handler.py:454`) exists ONLY to survive that
+  re-entry. A composition-owned **`PortfolioFactory`** splits create from materialize; rehydrate materializes
+  only; `PortfolioHandler` loses its `VenueBundles` injection. **ACCT-07 closes structurally** and **ACCT-05
+  becomes trivially true** (one creation path). Three earlier framings were rejected as "moving the mess
+  around", including one this session had already locked as D-22 — now superseded, `add_portfolio` keeps its
+  plain-data signature and the 133 call sites are untouched.
+- **D-20 — COMP-07 lands HERE, not Phase 12.** Assembly moves above rehydrate; `_attach_venue_accounts`
+  (116 lines) is deleted. **⚠ Phase 12's criterion 7 and COMP-07 must be amended** — it declares the current
+  boot order a hard invariant and requires `test_distinct_account_invariant.py` unmodified.
+- **D-32 — the phase's only migration.** `enabled` (pause, keeps its account) and `is_deleted` (retire,
+  releases the pair) become two flags, and `portfolios`' unique constraint becomes **partial**
+  (`WHERE NOT is_deleted`, both `postgresql_where` and `sqlite_where`). Driven by the owner's real workflow —
+  retire a portfolio, run a new one on the same real venue account — which the plain constraint blocks. This
+  revises `portfolio_definition_store.py:23`'s documented "PLAIN (never partial)"; that rationale is about
+  *simultaneous* sharing and predates `enabled` having any writer (which is WR-04/ACCT-10 itself).
+- **D-35/D-26/D-36 — nothing is added to `live_trading_system.py`.** Owner-stated twice. Provisioning lives on
+  `VenueAccountManager.provision(...)` (there is no `system.provision_venue_account`); "primary account" is
+  deleted outright (`_primary_lifecycle` has **zero production consumers** — 28 test sites, 7 files) and the
+  feed binds to a *connection*, rebinding when that account is retired. That file may only SHRINK.
+
+**Found during discussion, not in the roadmap:**
+
+- `delete_portfolio` (`portfolio_handler.py:495-520`) **never touches the definition store**, so a deleted
+  portfolio returns on the next boot with its persisted id and its child tables reattached — a worse instance
+  of WR-04 than the INACTIVE case ACCT-10 names.
+- `VenueAccountStore` has **no `read_enabled_for`** (only `upsert`/`record_venue_uid`/`get`/`read_all`), and
+  `config_json`/`enabled` have **zero readers** today.
+- ACCT-08 collapses: two of its four reach-ins are DELETED by D-20/D-25 rather than converted, and the
+  roadmap's line numbers are stale — the real remaining site is `live_trading_system.py:1367`, the WR-02 loop.
+- `ExecutionErrorCode` has no member fitting either surviving ACCT-09 path; D-42 adds two.
+- `scripts/run_live_paper.py` depends on boot-time minting today, so it breaks the moment `_mint_account_rows`
+  goes — hence D-29 (existing scripts become provisioning callers; no new script).
+- Full feed/account decoupling is **verified** blocked at `OkxSettings`' required credential fields
+  (`okx_plugin.py:136-150`), not merely assumed — deferred to the market-data phase.
+
+**Wave shape locked (D-39):** W1 foundations (required kwarg + the migration + two 11.1-review closures) →
+W2 `VenueAccountManager` (ACCT-01/02/04 + the assembly move) → W3 `PortfolioFactory` (ACCT-03/05/07 + the
+WR-11 fixture) → W4 lifecycle persist (ACCT-10) → W5 corrections ∥ (ACCT-06 · ACCT-08+WR-02 · ACCT-09) →
+W6 tests. ACCT-01 and ACCT-02 **must land together**; the required-kwarg **must** precede ACCT-05.
 
 **Planning session (2026-07-22).** Research → pattern-map → plan → check, all gates green:
 8/8 VENUE requirements covered, **12/12** CONTEXT decisions (D-01..D-08, D-14, D-17..D-19) cited by
@@ -541,11 +586,11 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-22T16:17:00.397Z
-Stopped at: Phase 11.1 context gathered (structural scope; 11.2 split out)
+Last session: 2026-07-23T10:43:01.527Z
+Stopped at: Phase 11.2 context gathered
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
-Resume file: .planning/phases/11.1-account-provisioning-mandatory-account-identity/11.1-CONTEXT.md
+Resume file: .planning/phases/11.2-account-provisioning-bootstrap-review-closures/11.2-CONTEXT.md
 Carried todo: 14 pending todos in `todos/pending/` (10 fold into v1.8 as CF-1..CF-10; `v17-residual-carryforward.md`
 is the index; the substantive open item is `margin-equity-double-counts-notional-wr01`, owner-gated).
 
