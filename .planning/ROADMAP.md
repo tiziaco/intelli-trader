@@ -684,8 +684,8 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2)*
 
-- [ ] 11.2-06-PLAN.md — D-38 account `config_json` precedence merge with a raising three-key allowlist, the `market_type` hardcode cleared, and D-40's per-pair UID-guard outcome+reason (ACCT-02)
-- [ ] 11.2-07-PLAN.md — D-20 boot reorder + ACCT-01/ACCT-02 handoff: six helpers and the spec `portfolios` field deleted, D-36 removes "primary account" and moves the feed binding out, plus the 10-file test blast-radius rewrite and a deleted-symbol static gate (ACCT-01, ACCT-02)
+- [x] 11.2-06-PLAN.md — D-38 account `config_json` precedence merge with a raising three-key allowlist, the `market_type` hardcode cleared, and D-40's per-pair UID-guard outcome+reason (ACCT-02)
+- [x] 11.2-07-PLAN.md — D-20 boot reorder + ACCT-01/ACCT-02 handoff: six helpers and the spec `portfolios` field deleted, D-36 removes "primary account" and moves the feed binding out, plus the 10-file test blast-radius rewrite and a deleted-symbol static gate (ACCT-01, ACCT-02)
 
 **Wave 4** *(blocked on Wave 3)*
 
