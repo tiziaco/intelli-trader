@@ -6,15 +6,15 @@ current_phase: 11.2
 current_phase_name: INSERTED — split out of Phase 11.1
 status: planning
 stopped_at: Phase 11.1 context gathered (structural scope; 11.2 split out)
-last_updated: "2026-07-22T20:43:53.640Z"
-last_activity: 2026-07-23
-last_activity_desc: "Amended ROADMAP Phase 11.2 entry: ID disambiguation, 3 folded 11.1 findings, ACCT-05 ordering constraint"
+last_updated: "2026-07-23T08:33:48.296Z"
+last_activity: 2026-07-22
+last_activity_desc: "Split ACCT-11 into Phase 11.3; repaired roadmap checklist (11.2 missing, 11.1 stale) and phase counters"
 progress:
-  total_phases: 14
-  completed_phases: 11
+  total_phases: 18
+  completed_phases: 14
   total_plans: 53
   completed_plans: 53
-  percent: 79
+  percent: 78
 ---
 
 # Project State
@@ -359,6 +359,7 @@ trim boundary P1–P8+P12+P13 core vs P9–P11 ★ is noted, not taken). Researc
 - Phase 10.1 inserted after Phase 10: StrategiesHandler Decomposition (URGENT)
 - Phase 11.1 inserted after Phase 11: Account Provisioning + Mandatory Account Identity — DB becomes sole source of portfolio+account truth; closes code-review CR-02/CR-03/WR-03/WR-05 (URGENT)
 - Phase 11.2 inserted after Phase 11.1: Split out of Phase 11.1 (D-16): ACCT-01..11 plus the locked decisions D-09..D-13/D-15 move here; 11.1 keeps the structural half
+- Phase 11.3 inserted after Phase 11.2: D-09 Config-Move Migration Guard — ACCT-11 split out of Phase 11.2
 
 ### Decisions
 
