@@ -26,6 +26,7 @@ from .portfolio import (
     PortfolioStateError,
     PortfolioConfigurationError,
     PortfolioValidationError,
+    ImmutableConfigKeyError,
     ReconciliationError,
     DuplicateVenueAccountError
 )
@@ -81,6 +82,7 @@ __all__ = [
     'PortfolioStateError',
     'PortfolioConfigurationError',
     'PortfolioValidationError',
+    'ImmutableConfigKeyError',
     'ReconciliationError',
     'DuplicateVenueAccountError',
 

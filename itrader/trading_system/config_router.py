@@ -69,13 +69,16 @@ from sqlalchemy.exc import SQLAlchemyError
 from itrader.config.itrader_config import ITraderConfig
 from itrader.outils.dict_merge import recursive_merge
 from itrader.config.order import OrderConfig
-from itrader.config.portfolio import PortfolioConfig
+from itrader.config.portfolio import IMMUTABLE_PORTFOLIO_CONFIG_KEYS, PortfolioConfig
 from itrader.config.system import SystemSettings
 from itrader.config.universe import UniverseConfig
 from itrader.core.clock import Clock
 from itrader.core.enums import ErrorSeverity
 from itrader.core.exceptions.base import ConfigurationError
-from itrader.core.exceptions.portfolio import PortfolioNotFoundError
+from itrader.core.exceptions.portfolio import (
+    ImmutableConfigKeyError,
+    PortfolioNotFoundError,
+)
 from itrader.core.ids import PortfolioId
 from itrader.events_handler.events import ConfigUpdateEvent, ErrorEvent
 from itrader.logger import get_itrader_logger
@@ -87,6 +90,9 @@ _REASON_UNKNOWN_PORTFOLIO = "unknown-portfolio"
 _REASON_VALIDATION_FAILED = "validation-failed"
 _REASON_VENUE_KIND = "venue-kind-live-fee-slippage"
 _REASON_PERSIST_FAILED = "persist-failed"
+# 11.1-REVIEW CR-02: the key is a real field on a mutable section, but is DELIBERATELY not
+# runtime-mutable — a distinct category from ``unknown-key`` (which means "no such field").
+_REASON_IMMUTABLE_KEY = "immutable-key"
 # WR-02: a store read / handler push / model-validate failure that escaped the per-scope
 # guards (NOT a _RejectedUpdate) — surfaced as a deduped WARNING rejection, never an escape.
 _REASON_APPLY_FAILED = "apply-failed"
@@ -216,6 +222,15 @@ class ConfigRouter:
                 raise _RejectedUpdate(_REASON_UNROUTED_SCOPE)
         except _RejectedUpdate as rejected:
             self._surface_rejection(event, rejected.reason, now)
+        except ImmutableConfigKeyError:
+            # 11.1-REVIEW CR-02: the immutable-key refusal is a TYPED DOMAIN exception (so a
+            # direct caller of Portfolio.update_config gets a remediation-bearing message), but
+            # ``ImmutableConfigKeyError`` is a ``PortfolioError(ITraderError)`` — NOT a
+            # ``_RejectedUpdate`` and NOT in the known-failure tuple below. Without this arm it
+            # would ESCAPE apply() to the engine error boundary, turning a refused operator knob
+            # into an ErrorEvent / handler-error path in live mode. Caught here so the refusal
+            # surfaces as the SAME deduped WARNING rejection as every other default-deny.
+            self._surface_rejection(event, _REASON_IMMUTABLE_KEY, now)
         except (SQLAlchemyError, ConfigurationError, pydantic.ValidationError) as exc:
             # WR-02/D-16: a KNOWN store-read / handler-push / model-validate failure that
             # escaped the per-scope guards (e.g. an out-of-``_persist`` venue ``get``, a
@@ -349,7 +364,20 @@ class ConfigRouter:
         input, persists to the Portfolio's OWN ``state_storage.save_config`` (already
         portfolio_id-scoped — NOT SystemStore, NO id-keying), then applies via
         ``portfolio.update_config`` (recursive_merge -> validate -> atomic-swap push, D-01).
+
+        11.1-REVIEW CR-02: a key in ``IMMUTABLE_PORTFOLIO_CONFIG_KEYS`` is refused FIRST — before
+        the id resolves, before any store is read, and before any merge — so nothing is even
+        partially applied. The check is KEY-scoped, NOT section-scoped: ``trading_rules`` stays in
+        ``_PORTFOLIO_MUTABLE_SECTIONS`` and every other field in it stays routable. Removing the
+        whole section would ban fields the owner never asked to freeze.
         """
+        # 11.1-REVIEW CR-02 — immutable-key default-deny (a TIGHTENING of the router's access
+        # control). Placed above the id resolution because immutability is a property of the KEY,
+        # not of the addressed portfolio; ``_resolve_portfolio_section`` keeps its documented
+        # ``Optional[str]`` return-None-for-default-deny contract and does no raising.
+        if key in IMMUTABLE_PORTFOLIO_CONFIG_KEYS:
+            raise ImmutableConfigKeyError(key=key, scope=f"portfolio:{pid}")
+
         try:
             portfolio_id = PortfolioId(uuid.UUID(pid))
         except (ValueError, AttributeError, TypeError) as exc:
