@@ -4,11 +4,11 @@ milestone: v1.8
 milestone_name: Live System Refactor & Live-Readiness Hardening
 current_phase: 11.2
 current_phase_name: account-provisioning-bootstrap-review-closures
-status: executing
-stopped_at: Phase 11.2 planned — 14 plans across 8 waves, verification passed, ready to execute
-last_updated: "2026-07-23T15:45:59.125Z"
-last_activity: 2026-07-23
-last_activity_desc: Phase 11.2 execution started
+status: paused
+stopped_at: Phase 11.2 wave 5 HALTED — plan 09 pulled for replan around the exchange-registry extraction (D-43); waves 1–4 (plans 01–08) merged and green
+last_updated: "2026-07-24T00:00:00.000Z"
+last_activity: 2026-07-24
+last_activity_desc: Wave 5 halted; plan 09 to be replanned around D-43 (exchange-registry extraction) — see 11.2-09-REPLAN-BRIEF.md
 progress:
   total_phases: 15
   completed_phases: 11
@@ -33,10 +33,34 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 
 ## Current Position
 
-Phase: 11.2 (account-provisioning-bootstrap-review-closures) — EXECUTING
-Plan: 1 of 14
-Status: Executing Phase 11.2
-Last activity: 2026-07-23 — Phase 11.2 execution started
+Phase: 11.2 (account-provisioning-bootstrap-review-closures) — PAUSED at wave 5
+Plan: 8 of 14 complete (plans 01–08 merged; wave 5 / plan 09 halted for replan)
+Status: Wave 5 halted. Plan 09 (the keystone create/materialize split) pulled — its
+  materialize→VenueAccountManager wiring hit a 4-node construction cycle that the naive fixes
+  could only close with a forbidden late-init/Optional-collaborator pattern. Owner decision
+  **D-43: extract the exchange registry** — the sole `VAM → execution_handler` coupling is a
+  one-line reach-in (`venue_account_manager.py:448` writes `execution_handler.exchanges[...]`);
+  making the `(venue,account_id)→exchange` registry a composition-root-owned component that both
+  `ExecutionHandler` and `VenueAccountManager` receive breaks the cycle at its only false edge,
+  leaving MPORT-07's read-model edge and the `add_portfolio` API untouched, and lets a real-VAM
+  `PortfolioFactory` inject into `compose_engine` with no late-init. Full design + verified code
+  anchors: `11.2-09-REPLAN-BRIEF.md`. Resume path: replan 09, then `/gsd-execute-phase 11.2`.
+Last activity: 2026-07-24 — wave 5 halted; plan 09 to be replanned around D-43
+
+**Waves 1–4 complete (plans 01–08), all merged and gated (2966 passed / 6 skipped, oracle
+byte-exact 134 / `46189.87730727451`, mypy clean 285 files, OKX inertness green):**
+- W1: required `state_storage` kwarg (01) · `is_deleted` + D-32 partial unique index (02) ·
+  `(venue,account_id)`-aware `fee_model_provider` (03) · reject `enable_margin` runtime flip (04)
+- W2: `VenueAccountManager` provisioning spine — create-only `VenueAccountStore.create` (05)
+- W3: account `config_json` merge + `VenueSpec` extension (06) · store-derived boot, D-20 assembly
+  above rehydrate, six live-only helpers + "primary account" deleted, −439 net in
+  `live_trading_system.py` (07)
+- W4: `PortfolioFactory` + one storage site for the pair on the account leaf (08); live
+  `account_for` wiring deferred to 09
+
+**Carried obligations:** COMP-07 must be struck from Phase 12's scope (D-20 landed it here,
+invalidating Phase 12 criterion 7) — plans 07 & 14 carry it. Live portfolios currently sit on
+compute leaves (`is_venue_truth=False`); plan 09 (post-replan) closes that window.
 
 **Discussion session (2026-07-23).** Ten gray areas, **23 decisions locked (D-20..D-42)** — numbering
 continues from 11.1's D-01..D-19, whose D-09..D-13/D-15 were the pre-locked 11.2 set and are NOT
