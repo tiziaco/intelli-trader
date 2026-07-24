@@ -39,7 +39,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from itrader.logger import get_itrader_logger
-from itrader.venues.registry import DEFAULT_ACCOUNT_ID
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -142,8 +141,13 @@ def assert_venue_uid(
     connector :
         The freshly-connected ``LiveConnector`` session to interrogate.
     venue_name, account_id :
-        The composite natural key of the ``venue_accounts`` row. ``account_id`` may be
-        ``None`` and is normalized here.
+        The composite natural key of the ``venue_accounts`` row. ACCT-04/WR-03: the guard
+        is armed from ``bring_online`` with the row's REAL ``account_id`` and uses it
+        VERBATIM — it applies NO ``or DEFAULT_ACCOUNT_ID`` substitution. Substituting here
+        (as the deleted coercion did) is the read-side half of the WR-03 asymmetry: the
+        guard would record an unnamed account under a fabricated key while the registration
+        side keyed it differently, so the recorded row was unreachable by any later
+        connect.
     store :
         The ``VenueAccountStore`` holding the recorded ``venue_uid``.
     alert_sink :
@@ -158,14 +162,14 @@ def assert_venue_uid(
         into the caller and never halts — an inert outcome is how every degraded path
         reports itself, so the caller can surface WHICH hole it has.
     """
-    # The plugins normalize a None spec.account_id to DEFAULT_ACCOUNT_ID INSIDE
-    # build_bundle — a normalization the lifecycle never sees. The guard MUST apply the
-    # same one: writing a NULL PK half produces a row that silently never matches on any
-    # later connect, permanently disabling the guard for that account.
-    resolved_account_id = account_id or DEFAULT_ACCOUNT_ID
-
+    # ACCT-04/WR-03: NO substitution. ``build_bundle`` no longer coerces an unnamed
+    # account onto ``"default"`` (it RAISES), so the guard must not either — after ACCT-03
+    # the ``account_id`` it is armed with is the row's real id. The deleted
+    # ``account_id or DEFAULT_ACCOUNT_ID`` here was the read-side half of the asymmetry:
+    # substituting a default while the registration side keyed the account differently is
+    # how the recorded row became unreachable by every later connect.
     uid, fetch_inert_reason = _fetch_uid(
-        plugin, connector, venue_name, resolved_account_id)
+        plugin, connector, venue_name, account_id)
     if uid is None:
         # Paths 1-3 live in _fetch_uid; it returns the specific reason so the three do
         # not collapse into one "no uid".
@@ -173,7 +177,7 @@ def assert_venue_uid(
         return VenueUidGuardOutcome.inert_with(fetch_inert_reason)
 
     try:
-        row = store.get(venue_name, resolved_account_id)
+        row = store.get(venue_name, account_id)
     except Exception:
         # Path 4. T-11-19: a storage outage must not abort a healthy connect. Logged
         # loudly because it means the spoofing detector is inert for this session.
@@ -181,7 +185,7 @@ def assert_venue_uid(
             "venue-uid guard could not read the account row; the D-04 spoofing "
             "guard is inert for this connect",
             venue_name=venue_name,
-            account_id=resolved_account_id,
+            account_id=account_id,
             exc_info=True,
         )
         return VenueUidGuardOutcome.inert_with(REASON_STORE_READ_FAILED)
@@ -193,14 +197,14 @@ def assert_venue_uid(
         _logger.warning(
             "venue-uid guard found no account row; nothing recorded or asserted",
             venue_name=venue_name,
-            account_id=resolved_account_id,
+            account_id=account_id,
         )
         return VenueUidGuardOutcome.inert_with(REASON_NO_ACCOUNT_ROW)
 
     recorded = row.get("venue_uid")
 
     if recorded is None:
-        if not _record_uid(store, venue_name, resolved_account_id, uid, at):
+        if not _record_uid(store, venue_name, account_id, uid, at):
             # Path 6. The write failed; the guard stays inert for this pair until it
             # succeeds. Distinct from the READ failure above — a different fix.
             return VenueUidGuardOutcome.inert_with(REASON_RECORD_WRITE_FAILED)
@@ -213,7 +217,7 @@ def assert_venue_uid(
     _emit_mismatch_alert(
         alert_sink,
         venue_name,
-        resolved_account_id,
+        account_id,
         recorded=recorded,
         observed=uid,
         at=at,
@@ -222,7 +226,7 @@ def assert_venue_uid(
 
 
 def _fetch_uid(
-    plugin: Any, connector: Any, venue_name: str, account_id: str
+    plugin: Any, connector: Any, venue_name: str, account_id: str | None
 ) -> tuple[str | None, str | None]:
     """The plugin's venue UID, or ``(None, inert_reason)`` (D-04/D-40).
 
@@ -266,7 +270,7 @@ def _fetch_uid(
 
 
 def _record_uid(
-    store: Any, venue_name: str, account_id: str, uid: str, at: datetime
+    store: Any, venue_name: str, account_id: str | None, uid: str, at: datetime
 ) -> bool:
     """Trust-on-first-use write; a store failure is logged and swallowed (T-11-19).
 
@@ -296,7 +300,7 @@ def _record_uid(
 def _emit_mismatch_alert(
     alert_sink: Any,
     venue_name: str,
-    account_id: str,
+    account_id: str | None,
     *,
     recorded: str,
     observed: str,
