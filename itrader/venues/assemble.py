@@ -38,13 +38,16 @@ wires a wrong one. (The ``data_provider`` half of that guard now fires at the
 composition root's ONE ``DataProviderRegistry.get`` call, for the same reason and
 with the same ``KeyError``.)
 
-The ``"default"`` account_id fallback is applied INSIDE the plugins (05-05,
-``spec.account_id or "default"``) for the connector memo. 11.1-08: assemble now
-applies the SAME rule once more when calling ``VenueBundles.get``, whose
-``account_id`` is a REQUIRED argument by design (11.1-05) — normalizing inside the
-memo would put the rule in two places and let the memo and the exchange registry
-disagree about an unnamed account. The RAW ``spec.account_id`` still reaches the
-lifecycle, which owns the guard's normalization.
+ACCT-04/WR-03: ``account_id`` is read UNCOERCED and is REQUIRED. After ACCT-03 a
+live spec always names an account, so ``assemble_venue`` no longer applies a
+``spec.account_id or DEFAULT_ACCOUNT_ID`` fallback — an absent id RAISES instead. The
+deleted coercion keyed an unnamed account onto ``"default"`` HERE while the exchange
+registry's write side keyed the SAME account differently: a write-only registry entry
+no reader reached. Registration-side and resolution-side defaults are not symmetric,
+and normalizing in two places is how the exchange registry and the connector memo end
+up disagreeing about the same real account. The ONE uncoerced id now feeds both
+``VenueBundles.get`` (the memo key) and the lifecycle (which arms the guard), so the
+write side and the read side agree.
 
 **The PLURAL boot loop is GONE (11.2-07, D-36).** ``assemble_venues`` — the "one
 ``VenueLifecycle`` per account spec, PRIMARY FIRST" helper — was DELETED with the
@@ -67,8 +70,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from itrader.core.exceptions import ValidationError
 from itrader.venues.lifecycle import VenueLifecycle
-from itrader.venues.registry import DEFAULT_ACCOUNT_ID
 
 if TYPE_CHECKING:
     from itrader.connectors.provider import ConnectorProvider
@@ -123,11 +126,22 @@ def assemble_venue(
         start/stop (None-guarded for the connector-less paper bundle).
     """
     venue = spec.execution_venue
-    # The ``spec.account_id or "default"`` normalization is applied HERE, at the call
-    # site, because ``VenueBundles.get`` takes ``account_id`` as a REQUIRED argument
-    # (11.1-05) — normalizing in two places is how the exchange registry and the
-    # connector memo end up disagreeing about an unnamed account.
-    account_id = getattr(spec, "account_id", None) or DEFAULT_ACCOUNT_ID
+    # ACCT-04/WR-03: read ``account_id`` UNCOERCED. ``VenueBundles.get`` takes it as a
+    # REQUIRED argument (11.1-05), and after ACCT-03 a live spec always names an account —
+    # so an absent id is a wiring bug and RAISES rather than being coerced onto
+    # ``"default"``. The deleted ``... or DEFAULT_ACCOUNT_ID`` fallback keyed an unnamed
+    # account here while the registration side keyed it differently: a write-only registry
+    # entry no reader reached (WR-03). Registration-side and resolution-side defaults are
+    # not symmetric.
+    account_id = getattr(spec, "account_id", None)
+    if account_id is None:
+        raise ValidationError(
+            "account_id",
+            str(account_id),
+            f"Cannot assemble venue '{venue}': the spec names no venue account, and "
+            "there is no legitimate default one (ACCT-04/WR-03) — registration-side and "
+            "resolution-side defaults are not symmetric",
+        )
     # D-01: fail loud on an unregistered venue (the registry get behind the memo
     # raises KeyError). Resolved BEFORE the bundle so a mis-specified venue never
     # reaches a build.
@@ -137,18 +151,18 @@ def assemble_venue(
     # D-04: the concretion imports live inside build_bundle (never at module top).
     bundle = bundles.get(venue, account_id, spec)
 
-    # D-04: the lifecycle carries the exec plugin + the pair identity so its
-    # post-connect hook can run the venue-UID guard. ``account_id`` is passed RAW
-    # (Optional[str]) — the guard applies the same ``or "default"`` normalization the
-    # plugins apply inside ``build_bundle``, keeping that rule in ONE place rather
-    # than duplicating it at every hand-off.
+    # D-04/ACCT-04: the lifecycle carries the exec plugin + the pair identity so its
+    # post-connect hook can run the venue-UID guard. ``account_id`` is the SAME uncoerced
+    # id handed to ``bundles.get`` above — the guard arms against it verbatim, with no
+    # substitution, so the write side (the memo key) and the read side (the guard) can
+    # never disagree about the same real account (WR-03).
     lifecycle = VenueLifecycle(
         bundle,
         provider=provider,
         connectors=connectors,
         plugin=exec_plugin,
         venue_name=venue,
-        account_id=getattr(spec, "account_id", None),
+        account_id=account_id,
         account_store=account_store,
         alert_sink=alert_sink,
     )

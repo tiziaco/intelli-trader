@@ -37,7 +37,6 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from itrader.core.exceptions import ValidationError
 from itrader.logger import get_itrader_logger
-from itrader.venues.registry import DEFAULT_ACCOUNT_ID
 
 if TYPE_CHECKING:
     from itrader.config.credential_resolver import CredentialResolver
@@ -353,9 +352,21 @@ class OkxVenuePlugin:
         # derived from total[BASE] (mirror live_trading_system.py:498-503).
         quote = symbol.split("/")[1]
 
-        # D-03/D-07: the SAME memoized connector for ("okx", account_id) the data
-        # arm borrows; account_id=None resolves to the "default" logical account.
-        account_id = spec.account_id or DEFAULT_ACCOUNT_ID
+        # D-03/D-07: the SAME memoized connector for ("okx", account_id) the data arm
+        # borrows. ACCT-04/WR-03: ``account_id`` is read UNCOERCED — a ``None`` is a wiring
+        # bug and RAISES rather than being memoized under a fabricated ``"default"`` key
+        # while the exchange registry keys the same account differently. Registration-side
+        # and resolution-side defaults are not symmetric, and normalizing in two places is
+        # how the exchange registry and the connector memo end up disagreeing about the
+        # same real account.
+        account_id = getattr(spec, "account_id", None)
+        if account_id is None:
+            raise ValidationError(
+                "account_id",
+                str(account_id),
+                "Cannot build the OKX venue bundle: the spec names no venue account, "
+                "and there is no legitimate default one (ACCT-04/WR-03)",
+            )
         connector = connectors.get("okx", account_id, spec)
 
         exchange = OkxExchange(ctx.bus, connector)
@@ -469,8 +480,18 @@ class OkxDataPlugin:
         # IN-01: the injected ITraderConfig stream target (one wiring source).
         stream = ctx.config.stream
 
-        # D-03: SAME memoized connector key as OkxVenuePlugin.build_bundle.
-        account_id = spec.account_id or DEFAULT_ACCOUNT_ID
+        # D-03: SAME memoized connector key as OkxVenuePlugin.build_bundle. ACCT-04/WR-03:
+        # ``account_id`` is read UNCOERCED — a ``None`` RAISES rather than coercing onto a
+        # ``"default"`` key, so the data arm constructs the SAME (venue, account_id) pair
+        # the exec arm does (a divergent memo key opens two sessions for one account).
+        account_id = getattr(spec, "account_id", None)
+        if account_id is None:
+            raise ValidationError(
+                "account_id",
+                str(account_id),
+                "Cannot build the OKX data provider: the spec names no venue account, "
+                "and there is no legitimate default one (ACCT-04/WR-03)",
+            )
         connector = connectors.get("okx", account_id, spec)
 
         return OkxDataProvider(

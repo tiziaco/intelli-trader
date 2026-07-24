@@ -2,13 +2,17 @@
 
 Drives ``OkxVenuePlugin.build_bundle`` / ``OkxDataPlugin.build_provider`` with a
 FAKE ``ConnectorProvider`` (``get`` returns a trivial fake connector) + a fake
-``ctx`` (``bus`` attr) + a fake ``spec`` (``account_id=None``), asserting:
+``ctx`` (``bus`` attr) + a fake ``spec`` naming a REAL account, asserting:
 
   - the bundle shape (exchange is an ``OkxExchange`` wrapping the fake connector,
     ``account_factory`` is callable and mints a ``VenueAccount``, ``connector`` is
     the SAME fake instance, ``lifecycle`` is ``None``),
   - the data provider is an ``OkxDataProvider`` bound to the SAME memoized
-    connector (both arms call ``connectors.get("okx", "default", spec)``),
+    connector (both arms call ``connectors.get("okx", <spec.account_id>, spec)``),
+  - a spec that names NO account is REFUSED (ACCT-04/WR-03) rather than silently
+    coerced onto a ``"default"`` memo key — the ``spec.account_id or
+    DEFAULT_ACCOUNT_ID`` coercion that let the exchange registry and the connector
+    memo disagree about an unnamed account is GONE,
   - importing ``itrader.venues.okx_plugin`` pulls NO ccxt at module scope (D-04
     triple-deferral — the concretion import lives inside ``build*``).
 
@@ -107,17 +111,17 @@ def test_okx_venue_plugin_builds_bundle_wrapping_the_connector() -> None:
 
     connectors = _FakeConnectorProvider()
     ctx = _fake_ctx()
-    spec = _fake_spec(account_id=None)
+    spec = _fake_spec(account_id="acct-a")
 
     bundle = OkxVenuePlugin().build_bundle(ctx, spec, connectors)
 
     assert isinstance(bundle, VenueBundle)
     assert isinstance(bundle.exchange, OkxExchange)
-    # account_id=None -> the "default" logical account key (D-07).
-    assert connectors.calls == [("okx", "default", spec)]
+    # ACCT-04/WR-03: the memo keys on the spec's OWN account_id, uncoerced.
+    assert connectors.calls == [("okx", "acct-a", spec)]
     # The bundle carries the SAME connector the provider handed out.
-    assert bundle.exchange._connector is connectors.get("okx", "default", spec)
-    assert bundle.connector is connectors.get("okx", "default", spec)
+    assert bundle.exchange._connector is connectors.get("okx", "acct-a", spec)
+    assert bundle.connector is connectors.get("okx", "acct-a", spec)
     # 11-09: the dead ``VenueBundle.lifecycle`` field is gone — assemble_venue returns
     # the lifecycle beside the bundle, so there was never anything to store here.
     assert not hasattr(bundle, "lifecycle")
@@ -125,7 +129,7 @@ def test_okx_venue_plugin_builds_bundle_wrapping_the_connector() -> None:
     assert callable(bundle.account_factory)
     account = bundle.account_factory()
     assert isinstance(account, VenueAccount)
-    assert account._connector is connectors.get("okx", "default", spec)
+    assert account._connector is connectors.get("okx", "acct-a", spec)
 
 
 def test_okx_data_plugin_shares_the_same_connector() -> None:
@@ -135,17 +139,19 @@ def test_okx_data_plugin_shares_the_same_connector() -> None:
 
     connectors = _FakeConnectorProvider()
     ctx = _fake_ctx()
-    spec = _fake_spec(account_id=None)
+    spec = _fake_spec(account_id="acct-a")
 
     bundle = OkxVenuePlugin().build_bundle(ctx, spec, connectors)
     provider = OkxDataPlugin().build_provider(ctx, spec, connectors)
 
     assert isinstance(provider, OkxDataProvider)
-    # ONE connector for ("okx", "default") shared across BOTH builders (D-03):
-    # two get() calls, one memoized instance.
+    # ONE connector for ("okx", "acct-a") shared across BOTH builders (D-03):
+    # two get() calls, one memoized instance. The key is the spec's OWN account_id,
+    # uncoerced (ACCT-04/WR-03) — build_bundle and build_provider must construct the
+    # SAME pair or the exec and data arms open two sessions for one account.
     assert connectors.calls == [
-        ("okx", "default", spec),
-        ("okx", "default", spec),
+        ("okx", "acct-a", spec),
+        ("okx", "acct-a", spec),
     ]
     assert provider._connector is bundle.connector
 
@@ -165,6 +171,51 @@ def test_okx_plugins_honor_explicit_account_id() -> None:
         ("okx", "sub-7", spec),
         ("okx", "sub-7", spec),
     ]
+
+
+# --------------------------------------------------------------------------- #
+# ACCT-04 / WR-03 — a spec naming NO account is REFUSED, never coerced to a
+# ``"default"`` memo key
+# --------------------------------------------------------------------------- #
+def test_build_bundle_raises_when_the_spec_names_no_account() -> None:
+    """ACCT-04/WR-03: ``build_bundle`` refuses a ``None`` account_id, no ``"default"``.
+
+    The deleted ``spec.account_id or DEFAULT_ACCOUNT_ID`` coercion memoized the
+    connector under ``("okx", "default")`` for an unnamed account, while the exchange
+    registry's write side keyed the SAME account differently — a write-only registry
+    entry no reader reached (the WR-03 asymmetry). With the coercion gone, an unnamed
+    account is a bug and RAISES here rather than silently building a bundle under a
+    fabricated key. Registration-side and resolution-side defaults are not symmetric.
+    """
+    from itrader.core.exceptions import ValidationError
+    from itrader.venues.okx_plugin import OkxVenuePlugin
+
+    connectors = _FakeConnectorProvider()
+
+    with pytest.raises(ValidationError):
+        OkxVenuePlugin().build_bundle(_fake_ctx(), _fake_spec(account_id=None), connectors)
+
+    # The refusal precedes any connector build — no session was memoized.
+    assert connectors.calls == []
+
+
+def test_build_provider_raises_when_the_spec_names_no_account() -> None:
+    """ACCT-04/WR-03: ``build_provider`` refuses a ``None`` account_id, same reasoning.
+
+    ``build_provider`` shares ``build_bundle``'s ``(venue, account_id)`` memo key, so
+    it must construct the pair identically — including refusing a ``None`` rather than
+    coercing it. Normalizing in two places is how the exchange registry and the
+    connector memo end up disagreeing about the same real account.
+    """
+    from itrader.core.exceptions import ValidationError
+    from itrader.venues.okx_plugin import OkxDataPlugin
+
+    connectors = _FakeConnectorProvider()
+
+    with pytest.raises(ValidationError):
+        OkxDataPlugin().build_provider(_fake_ctx(), _fake_spec(account_id=None), connectors)
+
+    assert connectors.calls == []
 
 
 # --------------------------------------------------------------------------- #
