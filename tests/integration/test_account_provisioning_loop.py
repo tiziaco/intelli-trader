@@ -52,7 +52,16 @@ import pytest
 from itrader.config import ExchangeConfig
 from itrader.config.sql import SqlSettings
 from itrader.connectors.provider import ConnectorProvider
-from itrader.core.exceptions import VenueAccountNotProvisionedError
+from itrader.core.exceptions import (
+    DuplicateVenueAccountProvisionError,
+    VenueAccountNotProvisionedError,
+)
+from itrader.portfolio_handler.account import SimulatedCashAccount
+from itrader.portfolio_handler.portfolio_factory import (
+    ComputeAccountAuthority,
+    PortfolioFactory,
+    VenueValidatedComputeAuthority,
+)
 from itrader.storage import SqlEngine
 from itrader.storage.venue_account_store import VenueAccountStore
 from itrader.trading_system.alert_sink import LogAlertSink
@@ -129,7 +138,7 @@ def wiring():
     try:
         yield SimpleNamespace(
             store=store, manager=manager, plugin=plugin,
-            exchange_registry=exchange_registry,
+            exchange_registry=exchange_registry, bundles=bundles,
         )
     finally:
         store.dispose()
@@ -212,3 +221,88 @@ def test_account_for_an_unprovisioned_pair_raises_and_never_returns_a_leaf(wirin
 def test_zero_enabled_rows_yields_an_empty_account_set_and_no_error(wiring):
     """ACCT-01/D-09 empty case: a fresh deployment comes up empty, not broken."""
     assert wiring.manager.read_enabled_for(_VENUE) == []
+
+
+def test_fresh_deployment_provisioning_gate_walks_the_whole_loop(wiring):
+    """D-29's fresh-deployment gate: the WHOLE loop in ONE test, on a zero-account spine.
+
+    ACCT-01/ACCT-02/ACCT-03; D-09/D-11/D-27/D-29. Six steps, in the EXACT order a fresh
+    deployment performs them, on ONE in-memory SQLite spine and ONE
+    ``VenueAccountManager`` instance — NO process restart anywhere between them. This is
+    the gate that proves deleting boot-time minting left a WORKING replacement: each step
+    below pins the precise failure the deletion would otherwise reintroduce, and the
+    account key WRITTEN by provisioning is the key the portfolio path READS.
+
+    The "add_portfolio" seam here is the LIVE portfolio-creation path verbatim: a
+    ``PortfolioFactory`` over a ``VenueValidatedComputeAuthority`` wrapping the REAL
+    ``VenueAccountManager`` (portfolio_factory.py — the arm the live composition root
+    injects). It GATES on ACCT-03 through ``manager.assert_available`` and, on success,
+    builds a COMPUTE leaf carrying the real pair.
+
+    Step 5 asserts a COMPUTE leaf carrying the REAL ``(venue, account_id)`` pair, NOT a
+    venue-truth leaf and NOT ``is_venue_truth is True``: the ``VenueAccount`` swap is
+    COMP-07 / Phase 12 (owner decision, wave 5, 2026-07-24) — a venue-truth balance is
+    unreadable at ``Portfolio.__init__`` (T-05-07). A test asserting ``is_venue_truth``
+    here would pin a defect this phase deliberately does NOT ship.
+    """
+    authority = VenueValidatedComputeAuthority(
+        manager=wiring.manager,
+        compute=ComputeAccountAuthority(
+            venue_bundles=wiring.bundles, compute_venue=_VENUE),
+    )
+    factory = PortfolioFactory(authority=authority, environment="backtest")
+
+    def _add_portfolio() -> Any:
+        # The same manager instance and the same process perform steps 2–5 — the whole
+        # point of D-27's single-path provisioning is that no restart sits in the middle.
+        return factory.materialize(
+            name="pf", exchange=_VENUE, cash=Decimal("10000"),
+            account_id=_ACCOUNT, venue_name=_VENUE)
+
+    # (1) A zero-account boot comes up RUNNING and empty (ACCT-01/D-09): the store read
+    # yields ``[]`` with no error, and nothing is online yet.
+    assert wiring.manager.read_enabled_for(_VENUE) == []
+    assert wiring.exchange_registry == {}
+
+    # (2) add_portfolio BEFORE provisioning refuses with the TYPED account-domain error —
+    # not a bare KeyError/AttributeError, and never a silently-created compute leaf
+    # (ACCT-03). A generic ``Exception`` assertion would pass on the very defect this pins,
+    # so the concrete type and cause are asserted.
+    with pytest.raises(VenueAccountNotProvisionedError) as before:
+        _add_portfolio()
+    assert before.value.cause == VenueAccountNotProvisionedError.NOT_PROVISIONED
+    assert before.value.account_id == _ACCOUNT
+
+    # (3) ``provision`` (the create-only verb, NOT a raw store write) writes EXACTLY ONE
+    # durable row (ACCT-02/D-11).
+    row = wiring.manager.provision(_VENUE, _ACCOUNT, secret_ref=_SECRET_REF)
+    assert len(wiring.store.read_all()) == 1
+    # ACCT-03 exact-string encoding: the id is stored VERBATIM — no case-fold, trim or
+    # normalization — and reads back byte for byte.
+    assert row["account_id"] == _ACCOUNT
+
+    # (4) ``bring_online`` makes it usable in THIS process with no restart (D-27): the SAME
+    # manager instance registers the exchange under the EXACT pair, never a coerced
+    # ``(venue, 'default')`` — the coerced key type-checks, boots clean and blackholes
+    # every order for the named account.
+    wiring.manager.bring_online(row)
+    assert (_VENUE, _ACCOUNT) in wiring.exchange_registry
+    assert (_VENUE, DEFAULT_ACCOUNT_ID) not in wiring.exchange_registry
+
+    # (5) The NEXT add_portfolio SUCCEEDS — on a COMPUTE leaf carrying the real pair
+    # (D-23). The venue-truth swap is COMP-07/Phase 12, so this asserts the compute-leaf
+    # KIND and the real ``(venue, account_id)`` identity, NOT ``is_venue_truth``. The id
+    # read back off the leaf equals the id provisioned at step 3, byte for byte.
+    portfolio = _add_portfolio()
+    assert portfolio.account_id == _ACCOUNT
+    assert portfolio.venue_name == _VENUE
+    assert isinstance(portfolio.account, SimulatedCashAccount)
+    assert portfolio.account.balance == Decimal("10000.00")
+
+    # (6) A SECOND provision of the same pair refuses with the TYPED duplicate error and
+    # leaves the first row INTACT (ACCT-02/D-11): create-only, never a silent overwrite
+    # that would clear the engine-written ``venue_uid`` and disarm the identity guard.
+    with pytest.raises(DuplicateVenueAccountProvisionError) as dup:
+        wiring.manager.provision(_VENUE, _ACCOUNT, secret_ref="env:OTHER")
+    assert dup.value.account_id == _ACCOUNT
+    assert len(wiring.store.read_all()) == 1
