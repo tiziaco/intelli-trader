@@ -448,6 +448,24 @@ class PortfolioHandler:
         """
         return portfolio_id in self._portfolios
 
+    def all_portfolios(self) -> Dict[PortfolioId, Portfolio]:
+        """Every REGISTERED portfolio regardless of state, keyed by ``portfolio_id`` (ACCT-08 / D-41).
+
+        The handler's full PUBLIC read surface, alongside ``has_portfolio`` (11-REVIEW
+        WR-09). Every consumer that reached for the private ``_portfolios`` map wanted one
+        of two questions no public accessor answered: *all* portfolios, or *is this id
+        registered* — ``get_active_portfolios()`` answers a DIFFERENT question (ACTIVE
+        only). This is also the read surface the FastAPI layer needs.
+
+        Returns a SHALLOW COPY of the registry, never the live private dict: an accessor
+        that lets a caller mutate the registry is the reach-in with extra steps (D-41
+        prohibition). ``has_portfolio(pid)`` is true exactly when ``pid`` is a key of the
+        value returned here — both read the same registry, so the two can never disagree.
+        Empty registry returns an empty mapping, never ``None``; entries preserve the
+        registry's own insertion order.
+        """
+        return dict(self._portfolios)
+
     def delete_portfolio(self, portfolio_id: PortfolioId, force: bool = False) -> bool:
         """Delete a portfolio with validation."""
         
