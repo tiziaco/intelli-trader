@@ -707,7 +707,7 @@ Plans:
 
 **Wave 8** *(blocked on Wave 7)*
 
-- [ ] 11.2-14-PLAN.md — D-29's six-step fresh-deployment gate, existing scripts become the `provision` callers, D-37's residue, and the full phase gate incl. all three static gates (ACCT-01..ACCT-04)
+- [x] 11.2-14-PLAN.md — D-29's six-step fresh-deployment gate, existing scripts become the `provision` callers, D-37's residue, and the full phase gate incl. all three static gates (ACCT-01..ACCT-04)
 
 *Cross-cutting constraints (apply to every plan): the backtest path is untouched — SMA_MACD oracle byte-exact
 `134 / 46189.87730727451`; GATE-01 import inertness preserved (`test_okx_inertness.py` green, no new eager
