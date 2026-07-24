@@ -64,6 +64,7 @@ from itrader.core.exceptions import (
     DuplicateVenueAccountProvisionError,
     UnknownVenueAccountConfigKeyError,
     ValidationError,
+    VenueAccountInUseError,
     VenueAccountNotProvisionedError,
 )
 from itrader.logger import get_itrader_logger
@@ -197,6 +198,21 @@ class VenueAccountManager:
         self._registry = registry
         self._alert_sink = alert_sink
         self._feed_binder = feed_binder
+        # D-33/ACCT-10: the DURABLE read backing the account-disable refusal. Built HERE over
+        # the SAME shared ``SqlEngine`` this manager's ``VenueAccountStore`` already owns
+        # (``store.backend``), so the constructor signature is UNCHANGED — no new injected
+        # collaborator, and nothing to re-thread through the composition root. It is a
+        # READ-ONLY view (``live_portfolio_ids_for_account``): pause and retire are durable, so
+        # the block a disable must respect is durable too, and the manager stays free of a
+        # portfolio-handler back-reference (the one-directional layering, facade → manager →
+        # storage). ``build_portfolio_definition_tables`` registers idempotently on the shared
+        # MetaData, so a second store view over the same spine is safe. GATE-01: the store
+        # import is LAZY and in-body, like every other SQL name this module touches — this
+        # class is never on the backtest import graph, but the file keeps SQL one import away
+        # from anything that reaches the venue substrate.
+        from itrader.storage.portfolio_definition_store import PortfolioDefinitionStore
+
+        self._portfolio_definitions = PortfolioDefinitionStore(store.backend)
         # Keyed on the PAIR, the same key the exchange registry, the connector memo and
         # the bundle memo all use. A second memo on any other key is how those registries
         # end up disagreeing about an account (the defect D-08 exists to prevent), so this
@@ -380,6 +396,51 @@ class VenueAccountManager:
         except IntegrityError as exc:
             raise DuplicateVenueAccountProvisionError(
                 venue_name, account_id) from exc
+
+    def set_enabled(self, venue_name: str, account_id: str, enabled: bool) -> None:
+        """Enable/disable a venue account durably, REFUSING a disable a live portfolio needs (D-33).
+
+        The account-level enable flag, and the D-33 refusal that guards it. Disabling an
+        account no live portfolio references succeeds; disabling one a LIVE portfolio still
+        depends on raises ``VenueAccountInUseError`` naming the account, the blocking
+        portfolio ids, and the remediation (pause or retire them first). A disable that
+        raises writes NOTHING — the check runs BEFORE the store write, so the account row is
+        left byte-identical.
+
+        **"Live" is resolved against the DURABLE store, not live in-memory portfolio state.**
+        A blocking portfolio is one whose definition row has ``enabled = True AND NOT
+        is_deleted`` (``PortfolioDefinitionStore.live_portfolio_ids_for_account``). This is
+        deliberate: pause and retire are DURABLE (ACCT-10), so the block a disable must
+        respect is durable too, and reading it here keeps the manager free of a
+        portfolio-handler back-reference — the one-directional layering (facade → manager →
+        storage) is preserved, and this stays cleanly parallel with the portfolio-handler
+        work. A PAUSED portfolio (``enabled=False``) does NOT block, which is precisely why
+        pausing is D-33's sanctioned way to release the block; a RETIRED one
+        (``is_deleted=True``) has already released its pair.
+
+        **Independence (D-33).** Account-``enabled`` and portfolio-``enabled`` are independent.
+        Disabling a PORTFOLIO must NEVER touch its account — a venue account is a real
+        external thing that outlives any number of internal portfolios — and, symmetrically,
+        disabling the ACCOUNT is refused while a live portfolio needs it.
+
+        **Out-of-band case.** If an account instead arrives disabled behind the engine's back
+        (a future integrations page writing the row directly, which this in-band refusal
+        cannot bind), it is simply not brought online — ``read_enabled_for`` skips it and
+        ``assert_available`` raises DISABLED — so its portfolios hit the composition-time
+        ACCT-03 refusal and the boot fails LOUD rather than trading against a leaf with no
+        venue truth. Enabling (``enabled=True``) is never refused.
+
+        Clock-free write timestamp minted at the call site (D-07), the same idiom
+        ``provision`` uses.
+        """
+        if not enabled:
+            blocking = self._portfolio_definitions.live_portfolio_ids_for_account(
+                venue_name, account_id)
+            if blocking:
+                raise VenueAccountInUseError(venue_name, account_id, list(blocking))
+        self._store.set_enabled(venue_name, account_id, enabled, datetime.now(UTC))
+        self.logger.info(
+            "Set venue account (%s, %s) enabled=%s", venue_name, account_id, enabled)
 
     def bring_online(self, row: Mapping[str, Any]) -> OnlineVenueAccount:
         """Turn ONE durable account row into a live, routable venue account (D-27).

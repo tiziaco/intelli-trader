@@ -349,6 +349,55 @@ class UnknownVenueAccountConfigKeyError(PortfolioError):
         )
 
 
+class VenueAccountInUseError(PortfolioError):
+    """A venue account cannot be DISABLED while a live portfolio still depends on it (D-33/ACCT-10).
+
+    The typed refusal ``VenueAccountManager.set_enabled(..., enabled=False)`` raises when the
+    account is still referenced by at least one LIVE portfolio — one whose durable definition
+    row has ``enabled = True AND NOT is_deleted``. Disabling the account out from under it
+    would strand a running portfolio on a venue account the engine has excluded from bring-up
+    (``read_enabled_for`` skips disabled rows, and ``assert_available`` raises DISABLED), so
+    the portfolio would fail ACCT-03 at the next composition — the boot failing loud rather
+    than trading blind.
+
+    D-33: account-``enabled`` and portfolio-``enabled`` are INDEPENDENT. Disabling a portfolio
+    NEVER touches its account (a venue account is a real external thing that outlives any
+    number of internal portfolios), and — symmetrically — disabling the account is refused
+    while a live portfolio needs it. The remediation is the sanctioned release: PAUSE
+    (``deactivate_portfolio`` → ``enabled=False``) or RETIRE (``delete_portfolio`` →
+    ``is_deleted=True``) the referencing portfolios first; a paused portfolio no longer
+    blocks the disable, which is exactly why pausing is the release mechanism.
+
+    The refusal is resolved against the DURABLE store (``PortfolioDefinitionStore``), not a
+    live in-memory portfolio collaborator: pause and retire are durable, so the block a
+    disable must respect is durable too, and the manager stays free of a portfolio-handler
+    back-reference (the one-directional layering).
+
+    Carries the pair and the blocking portfolio ids as structured fields and builds its
+    message in ``__init__`` (the project's exception convention), naming the consequence and
+    the remediation.
+    """
+
+    def __init__(
+        self,
+        venue_name: str,
+        account_id: str,
+        portfolio_ids: list[Any],
+    ):
+        self.venue_name = venue_name
+        self.account_id = account_id
+        self.portfolio_ids = portfolio_ids
+        ids = ", ".join(str(pid) for pid in portfolio_ids)
+        super().__init__(
+            f"Venue account ({venue_name!r}, {account_id!r}) cannot be disabled: "
+            f"{len(portfolio_ids)} live portfolio(s) still depend on it [{ids}]. "
+            f"Refusing (D-33): disabling the account would strand these portfolios on a "
+            f"venue account excluded from bring-up, so each would fail ACCT-03 at the next "
+            f"composition. Pause (deactivate) or retire (delete) the referencing "
+            f"portfolios first — a paused or retired portfolio no longer holds the account."
+        )
+
+
 class DuplicateVenueAccountProvisionError(PortfolioError):
     """``provision`` named a ``(venue_name, account_id)`` that already exists (ACCT-02/D-11).
 

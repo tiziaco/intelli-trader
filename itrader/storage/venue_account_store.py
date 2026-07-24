@@ -238,6 +238,39 @@ class VenueAccountStore:
                 .values(venue_uid=venue_uid, updated_at=at)
             )
 
+    def set_enabled(
+        self,
+        venue_name: str,
+        account_id: str,
+        enabled: bool,
+        at: datetime,
+    ) -> None:
+        """Enable/disable one account — a TARGETED UPDATE of ``enabled`` only (D-33/ACCT-10).
+
+        The durable half of D-33's account-level enable flag. A TARGETED UPDATE of
+        ``enabled`` (and ``updated_at``) only, leaving ``secret_ref`` / ``venue_uid`` /
+        ``config_json`` UNTOUCHED — same reasoning as ``record_venue_uid``: it must NOT
+        travel through the operator-authored ``upsert`` (a DELETE-then-INSERT that would
+        restate, and therefore be able to clobber, the operator's own columns and reset the
+        D-04 trust-on-first-use ``venue_uid`` to NULL). The REFUSAL that guards a disable
+        (a live portfolio still depends on this account) is the CALLER's job
+        (``VenueAccountManager.set_enabled``, D-33), never this store's — this store stays a
+        store.
+
+        Clock-free (D-07): caller-supplied ``at``. A pair with no row is a silent no-op
+        (zero rows matched), matching ``record_venue_uid``. Parameterized Core against the
+        constant ``Table`` (SEC-01 / T-11-01).
+        """
+        with self.engine.begin() as connection:
+            connection.execute(
+                update(self.venue_accounts)
+                .where(
+                    self.venue_accounts.c.venue_name == venue_name,
+                    self.venue_accounts.c.account_id == account_id,
+                )
+                .values(enabled=enabled, updated_at=at)
+            )
+
     def get(self, venue_name: str, account_id: str) -> Optional[Mapping[str, Any]]:
         """The account row for the ``(venue_name, account_id)`` pair, or None when absent."""
         statement = self._select_columns().where(

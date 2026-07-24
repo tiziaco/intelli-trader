@@ -318,7 +318,12 @@ class ReconciliationCoordinator:
         for residual in residuals:
             self.logger.error(
                 "Session-start baseline guard: unexplained base-asset residual — "
-                "halting before trading (venue exposure the engine cannot explain)",
+                "halting before trading (venue exposure the engine cannot explain). "
+                "Check for ACCOUNT REUSE (ACCT-10/D-32): a fresh portfolio that took over a "
+                "(venue, account_id) its retired predecessor left NON-FLAT inherits that "
+                "predecessor's open holdings, and this guard tripping IS it working "
+                "correctly — the engine must not silently adopt exposure it did not open. "
+                "Also check for wrong sub-account wiring or a crashed-session leftover.",
                 portfolio_id=str(residual.portfolio_id),
                 account_id=str(residual.account_id),
                 symbol=residual.symbol,

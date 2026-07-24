@@ -58,9 +58,11 @@ from itrader.core.exceptions import (
     DuplicateVenueAccountProvisionError,
     UnknownVenueAccountConfigKeyError,
     ValidationError,
+    VenueAccountInUseError,
     VenueAccountNotProvisionedError,
 )
 from itrader.storage import SqlEngine
+from itrader.storage.portfolio_definition_store import PortfolioDefinitionStore
 from itrader.storage.venue_account_store import VenueAccountStore
 from itrader.trading_system.alert_sink import LogAlertSink
 from itrader.venues.bundles import VenueBundles
@@ -760,5 +762,123 @@ def test_account_for_delegates_under_the_exact_pair() -> None:
         assert portfolio_args["venue_name"] == _VENUE
         assert account.account_id == "acct-1"
         assert account.seq == len(bundles.calls)
+    finally:
+        store.dispose()
+
+
+# --------------------------------------------------------------------------- #
+# D-33 — an account refuses to be disabled while a live portfolio depends on it
+# --------------------------------------------------------------------------- #
+#
+# The blocking set is resolved against the DURABLE store (a live portfolio is one whose
+# definition row has enabled=True AND NOT is_deleted), NOT a live in-memory portfolio
+# collaborator — pause and retire are durable, so the block a disable must respect is durable
+# too, and the manager keeps no portfolio-handler back-reference. The store is REAL SQLite.
+
+
+import uuid as _uuid  # noqa: E402 - kept beside the D-33 tests that use it
+
+
+def _manager_with_portfolio_schema():
+    """A manager whose engine ALSO has the ``portfolios`` table created.
+
+    ``_make_manager`` provisions the schema BEFORE constructing the manager, but the manager
+    is what registers ``portfolios`` (it builds a ``PortfolioDefinitionStore`` view over the
+    shared engine). So provision AGAIN afterwards — ``create_all(checkfirst=True)`` is
+    idempotent and now also creates the freshly-registered ``portfolios`` table. Returns a
+    real ``PortfolioDefinitionStore`` over the SAME engine for seeding.
+    """
+    manager, store, _registry = _make_manager()
+    provision_schema(store.backend)
+    definitions = PortfolioDefinitionStore(store.backend)
+    return manager, store, definitions
+
+
+def _seed_account_and_portfolio(
+    store, definitions, venue, account_id, portfolio_id, *, portfolio_enabled=True
+):
+    """A venue account parent + one portfolio definition row referencing it."""
+    store.upsert(venue, account_id, secret_ref=None, venue_uid=None,
+                 enabled=True, config={}, at=_AT)
+    definitions.upsert(
+        portfolio_id, name="pf", venue_name=venue, account_id=account_id,
+        initial_cash=Decimal("1000"), enabled=portfolio_enabled, config=None, at=_AT)
+
+
+def test_disabling_an_account_a_live_portfolio_needs_is_refused_unchanged() -> None:
+    """D-33 — the refusal names the blocking portfolio and leaves the account row unchanged."""
+    manager, store, definitions = _manager_with_portfolio_schema()
+    try:
+        pid = _uuid.UUID("01930000-0000-7000-8000-0000000000a1")
+        _seed_account_and_portfolio(store, definitions, _VENUE, "acct-1", pid)
+
+        before = store.get(_VENUE, "acct-1")
+        with pytest.raises(VenueAccountInUseError) as excinfo:
+            manager.set_enabled(_VENUE, "acct-1", False)
+
+        assert pid in excinfo.value.portfolio_ids
+        # The account row is byte-identical — a refused disable writes NOTHING.
+        assert store.get(_VENUE, "acct-1") == before
+    finally:
+        store.dispose()
+
+
+def test_pausing_the_portfolio_releases_the_block_and_the_disable_succeeds() -> None:
+    """D-33 — a PAUSED portfolio (enabled=False) no longer blocks; pausing IS the release."""
+    manager, store, definitions = _manager_with_portfolio_schema()
+    try:
+        pid = _uuid.UUID("01930000-0000-7000-8000-0000000000a2")
+        _seed_account_and_portfolio(store, definitions, _VENUE, "acct-1", pid)
+
+        # Pause the portfolio durably, then the disable is allowed.
+        definitions.set_enabled(pid, False, _AT)
+        manager.set_enabled(_VENUE, "acct-1", False)
+
+        assert store.get(_VENUE, "acct-1")["enabled"] is False
+    finally:
+        store.dispose()
+
+
+def test_a_retired_portfolio_does_not_block_the_disable() -> None:
+    """D-33 — a RETIRED portfolio (is_deleted=True) has released its pair; disable succeeds."""
+    manager, store, definitions = _manager_with_portfolio_schema()
+    try:
+        pid = _uuid.UUID("01930000-0000-7000-8000-0000000000a3")
+        _seed_account_and_portfolio(store, definitions, _VENUE, "acct-1", pid)
+
+        definitions.set_deleted(pid, True, _AT)
+        manager.set_enabled(_VENUE, "acct-1", False)
+
+        assert store.get(_VENUE, "acct-1")["enabled"] is False
+    finally:
+        store.dispose()
+
+
+def test_disabling_an_unreferenced_account_succeeds() -> None:
+    """D-33 — no live portfolio depends on the account, so the disable persists."""
+    manager, store, definitions = _manager_with_portfolio_schema()
+    try:
+        store.upsert(_VENUE, "acct-lonely", secret_ref=None, venue_uid=None,
+                     enabled=True, config={}, at=_AT)
+
+        manager.set_enabled(_VENUE, "acct-lonely", False)
+
+        assert store.get(_VENUE, "acct-lonely")["enabled"] is False
+    finally:
+        store.dispose()
+
+
+def test_enabling_an_account_is_never_refused() -> None:
+    """D-33 — the refusal guards a DISABLE only; enabling a disabled account always works."""
+    manager, store, definitions = _manager_with_portfolio_schema()
+    try:
+        pid = _uuid.UUID("01930000-0000-7000-8000-0000000000a4")
+        _seed_account_and_portfolio(store, definitions, _VENUE, "acct-1", pid)
+        # Start disabled (out-of-band), then re-enable it while a live portfolio references it.
+        store.set_enabled(_VENUE, "acct-1", False, _AT)
+
+        manager.set_enabled(_VENUE, "acct-1", True)
+
+        assert store.get(_VENUE, "acct-1")["enabled"] is True
     finally:
         store.dispose()

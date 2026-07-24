@@ -463,12 +463,28 @@ class PortfolioHandler:
                     if portfolio.cash > 0:
                         raise InvalidPortfolioOperationError("Cannot delete portfolio with remaining cash")
                 
-                # Archive portfolio first
+                # ACCT-10 / D-32 / WR-04: RETIRE the definition durably BEFORE the in-memory
+                # teardown. delete_portfolio historically flipped to ARCHIVED and dropped the
+                # registry entry but NEVER touched the definition store, so a "deleted"
+                # portfolio returned on the next boot with its persisted id and its child
+                # tables reattached. Persisting is_deleted=True FIRST orders the failure the
+                # safe way: a crash after this leaves the row RETIRED (rehydrate's read_all
+                # filters is_deleted, so it never returns), never a still-live row that comes
+                # back trading. The terminal-ARCHIVED state does NOT collide with D-30's
+                # pause/resume path — a retired row never rehydrates, and the object leaves the
+                # registry so nothing can call activate_portfolio on it. is_deleted=True (D-32
+                # RETIRED) also RELEASES the (venue_name, account_id) pair for a successor. No
+                # `state` column is added (deferred, stays deferred). None on the
+                # backtest/in-memory arm — there is nothing durable to retire.
+                if self.definition_store is not None:
+                    self.definition_store.set_deleted(portfolio_id, True, datetime.now(UTC))
+
+                # Archive portfolio (terminal in-memory state) first
                 portfolio.set_state(PortfolioState.ARCHIVED, "Portfolio deletion")
-                
+
                 # Remove from collection
                 del self._portfolios[portfolio_id]
-                
+
                 self.logger.info(
                     "Portfolio deleted successfully",
                     portfolio_id=portfolio_id,
@@ -482,6 +498,52 @@ class PortfolioHandler:
                 self._publish_error_event(e, "delete_portfolio", correlation_id, portfolio_id)
                 raise
     
+    def deactivate_portfolio(self, portfolio_id: PortfolioId) -> None:
+        """PAUSE a portfolio durably — persist enabled=False, THEN flip in memory (ACCT-10/D-30).
+
+        D-30: the pause is ONE operation — the durable write AND the in-memory
+        ``Portfolio.set_state(INACTIVE)`` flip — performed HERE in the handler, which already
+        owns the definition store, so nothing new is injected. ``Portfolio.set_state`` stays a
+        pure in-memory domain transition holding NO storage (rejected alternatives: a
+        state-change callback on ``Portfolio``, which would put persistence inside the domain
+        object; and an event-driven persist, which is asynchronous relative to the flip and
+        loses the deactivation on a crash between the two — the exact failure ACCT-10 closes).
+
+        ACCT-10 crash-safety ORDERING: persist ``enabled=False`` BEFORE the in-memory flip, so
+        the state that survives ANY crash between the two halves is always "stopped", never
+        "trading". On restart ``rehydrate_portfolios``' present-but-inactive branch
+        reconstructs it INACTIVE from the persisted ``enabled=False`` — a real code path now,
+        not only an out-of-band DB write. Idempotent (ACCT-10): deactivating an already-paused
+        portfolio re-persists ``enabled=False`` and ``set_state(INACTIVE)`` is a no-op, so it
+        does not raise.
+
+        Disabling a portfolio NEVER touches its venue account (D-33): a venue account is a
+        real external thing that outlives any number of internal portfolios. On the
+        backtest/in-memory arm (no definition store) this is the in-memory flip alone.
+        """
+        portfolio = self.get_portfolio(portfolio_id)
+        if self.definition_store is not None:
+            self.definition_store.set_enabled(portfolio_id, False, datetime.now(UTC))
+        portfolio.set_state(PortfolioState.INACTIVE, "operator deactivation (ACCT-10/D-30)")
+
+    def activate_portfolio(self, portfolio_id: PortfolioId) -> None:
+        """RESUME a portfolio durably — flip in memory FIRST, THEN persist enabled=True (ACCT-10/D-30).
+
+        The mirror of ``deactivate_portfolio``, ordered the OTHER way for the SAME reason:
+        ACCT-10 crash-safety means the state surviving any crash must be "stopped", so
+        ``activate`` flips the in-memory state to ACTIVE first and persists ``enabled=True``
+        only after. A crash between the two leaves the durable row still ``enabled=False``, so
+        the next boot rehydrates it INACTIVE (stopped) — never a portfolio that returns
+        trading on a half-completed resume. One operation, handler-owned store, no storage on
+        the domain object, never event-driven (D-30). Idempotent: activating an already-active
+        portfolio re-persists ``enabled=True`` and ``set_state(ACTIVE)`` is a no-op, so it does
+        not raise.
+        """
+        portfolio = self.get_portfolio(portfolio_id)
+        portfolio.set_state(PortfolioState.ACTIVE, "operator activation (ACCT-10/D-30)")
+        if self.definition_store is not None:
+            self.definition_store.set_enabled(portfolio_id, True, datetime.now(UTC))
+
     def get_active_portfolios(self) -> List[Portfolio]:
         """Get all active portfolios."""
         return [p for p in self._portfolios.values() if p.is_active()]

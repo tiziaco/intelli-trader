@@ -28,7 +28,10 @@ names and cash, and only their history is silently gone.
 (created, then ``set_state(PortfolioState.INACTIVE)``), NOT dropped. This mirrors the
 strategy registry's decision and the reasoning carries over with more force: a dropped
 portfolio orphans its open positions and its cash, and makes them unreachable across the
-restart. ``enabled`` is a runtime state, never a load filter.
+restart. ``enabled`` is a runtime state, never a load filter. ``is_deleted`` (D-32 RETIRED)
+IS the load filter, but it is applied ONE layer up in the store's ``read_all`` (11.2-02), so
+a retired row never reaches this function at all — the distinction is deliberate: a PAUSED
+portfolio must return (present-but-inactive), a RETIRED one must not.
 
 **Materialize-only (D-25, 11.2-09).** The definition row already exists, so rehydrate calls
 the handler's public ``materialize`` verb (build the leaf + register) — NOT ``add_portfolio``
@@ -74,10 +77,13 @@ class PortfolioDefinitionReader(Protocol):
     A Protocol, not an import: keeping the store duck-typed means this module pulls no
     SQLAlchemy onto the import graph, and a test can drive it with a plain fake.
 
-    ``read_all()`` returns EVERY definition row — enabled and disabled — ordered by
-    ``portfolio_id`` ASC. That ordering is a documented contract on the store, not an
-    incidental property: it makes the REGISTRATION order of rehydrated portfolios
-    reproducible across runs and dialects.
+    ``read_all()`` returns every LIVE definition row — enabled AND disabled, but NOT
+    ``is_deleted`` (D-32/ACCT-10) — ordered by ``portfolio_id`` ASC. A PAUSED
+    (``enabled=False``) portfolio still rehydrates (present-but-inactive, below); a RETIRED
+    (``is_deleted=True``) one is filtered out at the store so it never comes back with its
+    persisted id and child tables reattached. That ordering is a documented contract on the
+    store, not an incidental property: it makes the REGISTRATION order of rehydrated
+    portfolios reproducible across runs and dialects.
     """
 
     def read_all(self) -> list[Mapping[str, Any]]:
