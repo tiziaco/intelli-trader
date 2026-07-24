@@ -11,6 +11,7 @@ from typing import ClassVar
 import uuid_utils.compat as uuid_compat
 
 from itrader.core.enums import EventType, FillStatus, Side
+from itrader.core.enums.execution import ExecutionErrorCode
 from itrader.core.ids import OrderId, PortfolioId, StrategyId
 from itrader.core.money import to_money
 
@@ -83,6 +84,15 @@ class FillEvent(Event, frozen=True, kw_only=True, gc=False):
     # Default None so backtest/simulated fills take NO new settlement branch and
     # the SMA_MACD oracle stays byte-exact (oracle-dark). Stamped live-only.
     fee_currency: 'str | None' = None
+    # D-42 / ACCT-09: the ExecutionErrorCode naming WHY a REFUSED fill was
+    # refused, carried ON the event so the two admission-time fail-closed
+    # refusals in ``ExecutionHandler.on_order`` (unknown portfolio; unregistered
+    # ``(venue, account_id)`` pair) are distinguishable in the EVENT STREAM
+    # without reading the log — the whole point, since those drops are otherwise
+    # invisible in ``get_status()``. Default None: EXECUTED fills and the
+    # simulated exchange's own REFUSED fills carry no code and take no new
+    # branch, so the SMA_MACD oracle stays byte-exact (oracle-dark).
+    error_code: 'ExecutionErrorCode | None' = None
 
     def __str__(self) -> str:
         return f'{self.type} ({self.ticker}, {self.action}, {round(self.quantity, 4)}, {round(self.price, 4)} $)'
@@ -96,7 +106,8 @@ class FillEvent(Event, frozen=True, kw_only=True, gc=False):
                  commission: 'Decimal | float',
                  time: 'datetime | None' = None,
                  venue_trade_id: 'str | None' = None,
-                 fee_currency: 'str | None' = None) -> 'FillEvent':
+                 fee_currency: 'str | None' = None,
+                 error_code: 'ExecutionErrorCode | None' = None) -> 'FillEvent':
         """
         Generate a complete FillEvent from the originating order.
 
@@ -147,6 +158,11 @@ class FillEvent(Event, frozen=True, kw_only=True, gc=False):
             The venue's fee currency (spot-base-fee-drift-halt) — the ccxt-unified
             ``trade['fee']['currency']``. Defaults to None: backtest/simulated fills
             carry no fee currency and take no new settlement branch (oracle-dark).
+        error_code : `ExecutionErrorCode`, optional (keyword-only)
+            The code naming WHY a REFUSED fill was refused (D-42/ACCT-09), so an
+            admission-time refusal is distinguishable in the event stream without
+            reading the log. Defaults to None: EXECUTED fills and the simulated
+            exchange's own REFUSED fills carry none (oracle-dark).
 
         Returns
         -------
@@ -176,4 +192,7 @@ class FillEvent(Event, frozen=True, kw_only=True, gc=False):
             # spot-base-fee-drift-halt: the venue fee currency (None for
             # backtest/simulated fills — oracle-dark).
             fee_currency=fee_currency,
+            # D-42/ACCT-09: the refusal cause code (None for EXECUTED and
+            # simulated REFUSED fills — oracle-dark).
+            error_code=error_code,
         )

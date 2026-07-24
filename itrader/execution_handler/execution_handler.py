@@ -1,9 +1,11 @@
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from .base import AbstractExecutionHandler
 from .exchanges.base import AbstractExchange
 from itrader.events_handler.bus import EventBus
-from itrader.events_handler.events import BarEvent, OrderEvent
+from itrader.events_handler.events import BarEvent, FillEvent, OrderEvent
+from itrader.core.enums.execution import ExecutionErrorCode
 # Still needed by update_config / validate_config, which isinstance-NARROW against
 # the simulated exchange. Nothing in this module constructs one any more (D-06).
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
@@ -271,27 +273,49 @@ class ExecutionHandler(AbstractExecutionHandler):
 			self.logger.error(
 				'Unknown portfolio %s on order %s %s — order NOT submitted',
 				event.portfolio_id, event.ticker, event.action)
-			return
-
-		if account_id is None:
-			# LOUD REFUSAL (D-27). A live portfolio naming no account has no
-			# session to route through; falling back to the default account
-			# would submit through some other account's credentials. Plan
-			# 11-08 makes account_id mandatory at composition time.
-			self.logger.error(
-				'Portfolio %s names no venue account — order %s %s NOT submitted '
-				'(no default-account fallback: that would route through another '
-				'account\'s session)',
-				event.portfolio_id, event.ticker, event.action)
+			# ACCT-09/D-42: FAIL CLOSED VISIBLY. Emit a REFUSED fill so the drop
+			# is observable in the event stream and reconciles the order mirror
+			# out of PENDING (REFUSED -> REJECTED), instead of vanishing while
+			# get_status() reports RUNNING / errors_count 0. REFUSED carries the
+			# order's OWN Decimal price/quantity, commission Decimal("0") — never
+			# settled, so no float round-trip (the simulated._emit_rejection
+			# analog). The log and the event serve different audiences; keep both.
+			self.global_queue.put(FillEvent.new_fill(
+				'REFUSED', event, price=event.price, quantity=event.quantity,
+				commission=Decimal("0"),
+				error_code=ExecutionErrorCode.UNKNOWN_PORTFOLIO))
 			return
 
 		try:
-			exchange = self.exchanges.get((event.exchange, account_id))
+			# A None account_id (portfolio naming no account) can never match a
+			# (str, str) registry key, so it resolves to no exchange and falls
+			# through to the pair-miss refusal below — the same fail-closed outcome
+			# the deleted middle branch produced, with no dedicated branch and no
+			# DEFAULT_ACCOUNT_ID coercion (that coercion is the MPORT-07 repair).
+			exchange = (self.exchanges.get((event.exchange, account_id))
+						if account_id is not None else None)
 			if not exchange:
 				self.logger.error(
 					'No exchange registered for venue/account (%s, %s) — order %s %s '
 					'NOT submitted', event.exchange, account_id,
 					event.ticker, event.action)
+				# ACCT-09/D-42: FAIL CLOSED VISIBLY — a distinctly-coded REFUSED
+				# fill so the routing miss is observable in the event stream and
+				# reconciles the mirror out of PENDING. Same Decimal price/quantity,
+				# commission Decimal("0"), never-settled shape as above. A None
+				# account_id (a portfolio naming no account) also lands HERE via the
+				# pair-lookup miss, so the dedicated middle branch was redundant and
+				# was deleted: in a correctly-composed LIVE system it is never even
+				# None here, because the ACCT-03 materialize-time guard
+				# (VenueAccountManager.assert_available -> VenueAccountNotProvisioned
+				# Error) is what refuses to bring a portfolio naming no account
+				# online. A bare-venue fallback here would route through another
+				# account's session (MPORT-07); failing closed and signalling is
+				# the whole contract.
+				self.global_queue.put(FillEvent.new_fill(
+					'REFUSED', event, price=event.price, quantity=event.quantity,
+					commission=Decimal("0"),
+					error_code=ExecutionErrorCode.UNREGISTERED_VENUE_ACCOUNT))
 				return
 			exchange.on_order(event)
 		except Exception as e:
