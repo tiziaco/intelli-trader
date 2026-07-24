@@ -785,6 +785,17 @@ Each requirement maps to exactly one phase. The roadmap was created 2026-07-09 w
 | MPORT-05 | P11 | Complete |
 | MPORT-06 | P11 | Complete |
 | MPORT-07 | P11 | Complete |
+| ACCT-01 | P11.2 | Complete |
+| ACCT-02 | P11.2 | Complete |
+| ACCT-03 | P11.2 | Complete |
+| ACCT-04 | P11.2 | Complete |
+| ACCT-05 | P11.2 | Complete |
+| ACCT-06 | P11.2 | Complete |
+| ACCT-07 | P11.2 | Complete |
+| ACCT-08 | P11.2 | Complete |
+| ACCT-09 | P11.2 | Complete |
+| ACCT-10 | P11.2 | Complete |
+| ACCT-11 | P11.3 | Pending |
 | COMP-01 | P12 | Pending |
 | COMP-02 | P12 | Pending |
 | COMP-03 | P12 | Pending |
