@@ -174,9 +174,15 @@ class ExecutionHandler(AbstractExecutionHandler):
 			``account_for(...) or DEFAULT_ACCOUNT_ID``: that is the most
 			natural-looking repair and it reintroduces exactly the MPORT-07
 			vulnerability, routing a live portfolio that names no account
-			through whatever session is registered as the default. Plan 11-08
-			owns the composition-time invariant that makes ``account_id``
-			mandatory in live; until then this refusal IS the guard.
+			through whatever session is registered as the default. What makes
+			``account_id`` a hard precondition in live is the ACCT-03
+			materialize-time guard (``VenueAccountManager.assert_available`` ->
+			``VenueAccountNotProvisionedError``): it refuses to bring a portfolio
+			naming no account online. Plan 11-08's invariant is a DIFFERENT thing
+			— it requires each portfolio to name a DISTINCT account, and it
+			explicitly permits a portfolio to name none. This handler's only job
+			is to fail closed and signal — the composition-time refusal upstream
+			is the guard, not this read.
 
 		Notes
 		-----
