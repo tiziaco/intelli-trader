@@ -1353,8 +1353,20 @@ def _layer_persisted_overrides(
             "stored override is invalid (%s); boot degrades clean", exc)
 
     # (venue) — VenueStore rows push their fee/slippage to the execution handler.
+    # WR-03: the read_all() acquisition keeps its OWN degrade guard (an un-provisioned
+    # schema raises SQLAlchemyError and has no rows to iterate — must not crash boot).
+    # OQ3/F-13: the per-ROW push is then guarded PER ENTRY so one poisoned venue degrades
+    # only that venue. The acquisition guard wraps only the read, not the loop body, so it
+    # is NOT the prohibited surviving whole-loop guard.
     try:
-        for row in venue_store.read_all():
+        venue_rows = venue_store.read_all()
+    except _degrade_clean as exc:
+        logger.warning(
+            "Skipping persisted VENUE-config restart layering — schema unavailable "
+            "(%s); boot degrades clean", exc)
+        venue_rows = []
+    for row in venue_rows:
+        try:
             venue_cfg = row.get("config") or {}
             push = {
                 k: v
@@ -1363,21 +1375,26 @@ def _layer_persisted_overrides(
             }
             if push:
                 execution_handler.update_config(push)
-    except _degrade_clean as exc:
-        logger.warning(
-            "Skipping persisted VENUE-config restart layering — schema unavailable or a "
-            "stored override is invalid (%s); boot degrades clean", exc)
+        except _degrade_clean as exc:
+            logger.warning(
+                "Skipping persisted VENUE-config layering for %s — stored override "
+                "invalid (%s); boot degrades clean", row.get("venue_name"), exc)
 
-    # (portfolio) — each Portfolio's OWN bound store (NOT SystemStore); resolve via the handler.
-    try:
-        for _pid, portfolio in portfolio_handler._portfolios.items():
+    # (portfolio) — each Portfolio's OWN bound store (NOT SystemStore), resolved via the
+    # handler's PUBLIC all_portfolios() surface (ACCT-08 / D-41), never the private registry.
+    # WR-02: the degrade guard is PER ENTRY, not around the whole loop — one poisoned
+    # config_json degrades only that portfolio and the rest still layer. all_portfolios() is
+    # a pure copy (no I/O), so the loop needs no acquisition guard, only the per-entry one.
+    for _pid, portfolio in portfolio_handler.all_portfolios().items():
+        try:
             portfolio_cfg = portfolio.state_storage.load_config()
             if portfolio_cfg:
                 portfolio.update_config(portfolio_cfg)
-    except _degrade_clean as exc:
-        logger.warning(
-            "Skipping persisted PORTFOLIO-config restart layering — schema unavailable or a "
-            "stored override is invalid (%s); boot degrades clean", exc)
+        except _degrade_clean as exc:
+            logger.warning(
+                "Skipping persisted PORTFOLIO-config restart layering for %s — schema "
+                "unavailable or a stored override is invalid (%s); boot degrades clean",
+                _pid, exc)
 
 
 def build_live_system(
