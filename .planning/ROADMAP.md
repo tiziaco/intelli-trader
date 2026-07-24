@@ -693,7 +693,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4)*
 
-- [ ] 11.2-09-PLAN.md — D-25 `create`/`materialize` split, rehydrate materializes only, ACCT-07's early return and the absence gate deleted, and the mandatory WR-11 fixture rewrite (ACCT-03, ACCT-05, ACCT-07)
+- [x] 11.2-09-PLAN.md — D-25 `create`/`materialize` split, rehydrate materializes only, ACCT-07's early return and the absence gate deleted, and the mandatory WR-11 fixture rewrite (ACCT-03, ACCT-05, ACCT-07)
 
 **Wave 6** *(blocked on Wave 5; the two run in parallel)*
 
