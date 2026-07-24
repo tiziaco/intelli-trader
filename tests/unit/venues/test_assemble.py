@@ -152,7 +152,7 @@ def test_assemble_okx_returns_bundle_and_lifecycle() -> None:
 
     connectors = _FakeConnectorProvider()
     bundles = _okx_bundles(connectors)
-    spec = _spec("okx", "okx", account_id=None)
+    spec = _spec("okx", "okx", account_id="acct-a")
 
     bundle, lifecycle = assemble_venue(spec, connectors, bundles)
 
@@ -176,12 +176,13 @@ def test_assemble_okx_borrows_the_memoized_connector() -> None:
 
     connectors = _FakeConnectorProvider()
     bundles = _okx_bundles(connectors)
-    spec = _spec("okx", "okx", account_id=None)
+    spec = _spec("okx", "okx", account_id="acct-a")
 
     bundle, _lifecycle = assemble_venue(spec, connectors, bundles)
 
-    assert connectors.calls == [("okx", "default", spec)]
-    assert bundle.connector is connectors._memo[("okx", "default")]
+    # ACCT-04/WR-03: the memo key is the spec's OWN account_id, uncoerced.
+    assert connectors.calls == [("okx", "acct-a", spec)]
+    assert bundle.connector is connectors._memo[("okx", "acct-a")]
 
 
 def test_assemble_venue_resolves_the_bundle_through_the_shared_memo() -> None:
@@ -281,7 +282,9 @@ def test_assemble_paper_returns_connectorless_bundle_and_no_provider() -> None:
     # paper never touches the ConnectorProvider (D-05) — an exploding one proves it.
     connectors = _ExplodingConnectorProvider()
     bundles = _paper_bundles(connectors, exchange_config)
-    spec = _spec("paper", "replay", account_id=None)
+    # ACCT-04: assemble_venue reads account_id uncoerced, so even the paper path names
+    # its account (a live spec always names one after ACCT-03).
+    spec = _spec("paper", "replay", account_id="acct-a")
 
     bundle, lifecycle = assemble_venue(spec, connectors, bundles)
 
@@ -303,7 +306,9 @@ def test_assemble_unregistered_execution_venue_fails_loud() -> None:
 
     connectors = _FakeConnectorProvider()
     bundles = _okx_bundles(connectors)
-    spec = _spec("binance", "okx", account_id=None)
+    # ACCT-04: name the account so the fail-loud path under test is the VENUE lookup
+    # (KeyError), not the uncoerced-account_id refusal.
+    spec = _spec("binance", "okx", account_id="acct-a")
 
     with pytest.raises(KeyError):
         assemble_venue(spec, connectors, bundles)
@@ -321,4 +326,29 @@ def test_an_unregistered_venue_memoizes_nothing() -> None:
     with pytest.raises(KeyError):
         assemble_venue(_spec("binance", "okx", "acct-a"), connectors, bundles)
 
+    assert bundles._memo == {}
+
+
+def test_assemble_venue_raises_when_the_spec_names_no_account() -> None:
+    """ACCT-04/WR-03: a spec whose ``account_id`` is ``None`` is REFUSED, not defaulted.
+
+    ``assemble_venue`` used to read ``getattr(spec, "account_id", None) or
+    DEFAULT_ACCOUNT_ID`` — coercing an unnamed account onto the ``"default"`` memo key
+    while the exchange registry's write side keyed the same account differently. That is
+    the WR-03 write-only-registry-entry asymmetry: the registered key was unreachable by
+    every reader. After ACCT-03 a live spec always names an account, so a ``None`` here
+    is a wiring bug and must RAISE rather than silently assemble a ``"default"`` account.
+    """
+    import pytest
+
+    from itrader.core.exceptions import ValidationError
+    from itrader.venues.assemble import assemble_venue
+
+    connectors = _FakeConnectorProvider()
+    bundles = _okx_bundles(connectors)
+
+    with pytest.raises(ValidationError):
+        assemble_venue(_spec("okx", "okx", account_id=None), connectors, bundles)
+
+    # The refusal leaves the shared memo untouched — no half-wired venue.
     assert bundles._memo == {}

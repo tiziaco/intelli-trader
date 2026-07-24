@@ -301,20 +301,28 @@ def test_a_missing_account_row_is_a_no_op() -> None:
     assert sink.events == []
 
 
-def test_a_none_account_id_is_normalized_to_the_default_account() -> None:
-    """``VenueSpec.account_id`` is Optional[str]; the guard must NOT write a NULL PK half.
+def test_the_guard_applies_no_account_id_substitution() -> None:
+    """ACCT-04/WR-03: the guard arms against the account id it is GIVEN, verbatim.
 
-    Both plugins apply ``spec.account_id or "default"`` INSIDE ``build_bundle`` — a
-    normalization the lifecycle never sees. Handing the raw ``None`` to the store
-    would write a ``None`` PK half whose row then silently never matches on any later
-    connect, permanently disabling the guard for that account.
+    The guard used to apply ``account_id or DEFAULT_ACCOUNT_ID`` — the same coercion the
+    plugins applied INSIDE ``build_bundle`` — so an unnamed account was recorded under a
+    fabricated ``"default"`` key. That is the WR-03 asymmetry from the read side: the
+    guard silently substituted while the registration side keyed the account differently,
+    so the recorded row was unreachable by every later connect.
+
+    After ACCT-03 the guard is armed from ``bring_online`` with the row's REAL
+    ``account_id``, so no substitution is needed — and none is applied. This test pins the
+    removal: the id the guard is handed is the id it records, with NO ``"default"``
+    substitution in between. (A live ``None`` cannot reach here post-ACCT-03; the value is
+    used verbatim precisely because the guard no longer second-guesses its caller.)
     """
     store = _FakeStore(venue_uid=None)
     sink = _RecordingAlertSink()
 
     _guard(plugin=_FakePlugin("uid-111"), store=store, alert_sink=sink, account_id=None)
 
-    assert store.recorded == [("okx", "default", "uid-111", _AT)]
+    # No ``"default"`` substitution — the given id (here ``None``) is used verbatim.
+    assert store.recorded == [("okx", None, "uid-111", _AT)]
 
 
 # --------------------------------------------------------------------------- #
