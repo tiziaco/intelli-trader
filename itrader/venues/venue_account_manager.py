@@ -155,10 +155,17 @@ class VenueAccountManager:
         per ``(venue, account_id)`` tree-wide.
     connectors :
         The shared ``ConnectorProvider``, threaded verbatim into ``assemble_venue``.
-    execution_handler :
-        The handler whose ``exchanges`` registry ``bring_online`` writes. Typed ``Any``
-        for the reason ``bundles.py`` types its own collaborators ``Any``: naming the
-        concrete handler would drag ``SimulatedExchange`` onto this module's import graph.
+    registry :
+        The composition-root-owned ``(venue_name, account_id) -> exchange`` map (D-43).
+        The SAME object ``ExecutionHandler`` holds and reads on order; ``bring_online``
+        WRITES each brought-online exchange into it under the row's pair. Replacing the
+        former ``execution_handler`` collaborator with the bare map is the D-43 cut:
+        the manager no longer reaches THROUGH the execution handler
+        (``execution_handler.exchanges[...] = ...``), so the false ``VAM ->
+        execution_handler`` construction edge is gone and the four-node LIVE cycle is
+        dissolved. Typed ``Any`` for the reason ``bundles.py`` types its own
+        collaborators ``Any``: naming the concrete registry element type would drag
+        ``AbstractExchange`` onto this module's import graph.
     alert_sink :
         The CRITICAL-escalation egress handed to each ``VenueLifecycle`` so the D-04
         trust-on-first-use venue-identity guard can alert. Required, not optional: an
@@ -179,7 +186,7 @@ class VenueAccountManager:
         store: VenueAccountStore,
         bundles: VenueBundles,
         connectors: ConnectorProvider,
-        execution_handler: Any,
+        registry: Any,
         *,
         alert_sink: Any,
         feed_binder: Any,
@@ -187,7 +194,7 @@ class VenueAccountManager:
         self._store = store
         self._bundles = bundles
         self._connectors = connectors
-        self._execution_handler = execution_handler
+        self._registry = registry
         self._alert_sink = alert_sink
         self._feed_binder = feed_binder
         # Keyed on the PAIR, the same key the exchange registry, the connector memo and
@@ -445,7 +452,11 @@ class VenueAccountManager:
         # registration for a connector-less (paper) bundle, which left a NAMED paper
         # account unroutable: ``on_order`` resolves the portfolio's real account, so the
         # lookup missed and failed closed. Registration here is unconditional.
-        self._execution_handler.exchanges[(venue_name, account_id)] = bundle.exchange
+        #
+        # D-43: write the manager's OWN injected registry — the SAME map object
+        # ``ExecutionHandler`` reads on order — never a reach-in through the handler.
+        # This is the one edge whose extraction dissolves the LIVE construction cycle.
+        self._registry[(venue_name, account_id)] = bundle.exchange
         # (4)
         record = OnlineVenueAccount(spec=spec, bundle=bundle, lifecycle=lifecycle)
         self._online[(venue_name, account_id)] = record
@@ -597,13 +608,57 @@ class VenueAccountManager:
 
     # ------------------------------------------------------------------ resolution
 
+    def assert_available(self, venue_name: str, account_id: str) -> None:
+        """Assert this pair is PROVISIONED and ENABLED — raise otherwise (ACCT-03).
+
+        The VALIDATION half of the venue-account authority, WITHOUT constructing a leaf. It
+        is what delivers ACCT-03 as the RAISE (REQUIREMENTS.md: "a live portfolio naming no
+        venue account RAISES at composition time"): the live ``PortfolioFactory`` authority
+        (``VenueValidatedComputeAuthority``) calls this to GATE portfolio creation /
+        rehydrate, so a portfolio naming NO account, a not-provisioned account, or a DISABLED
+        one RAISES ``VenueAccountNotProvisionedError`` — the durable-invariant guarantee that
+        every live portfolio is backed by a real, enabled ``venue_accounts`` row.
+
+        **Scoped to EXISTS + ENABLED, deliberately NOT "brought online".** Under the owner's
+        wave-5 decision (2026-07-24) the live portfolio sits on a COMPUTE leaf carrying its
+        real pair — the venue-truth ``VenueAccount`` swap is COMP-07 / Phase 12 (a
+        ``VenueAccount`` cannot be the construction-time leaf: its balance raises until the
+        first snapshot, T-05-07, while ``Portfolio.__init__`` reads balance). A compute leaf
+        needs NO assembled venue session, so requiring "brought online" here would be
+        over-strict: it would crash a single-venue live boot on a validly-provisioned
+        FOREIGN-venue portfolio (e.g. a ``binance`` portfolio in an ``okx`` boot, whose venue
+        this process never assembles), which REQUIREMENTS.md does not ask for ("naming NO
+        venue account", not "on the assembled venue"). The ``brought-online`` check therefore
+        lives on ``account_for`` below — the COMP-07 venue-truth seam, where a real session
+        IS a precondition.
+
+        ``account_id`` is matched by EXACT STRING (no case-folding, trimming or coercion).
+        """
+        row = self._store.get(venue_name, account_id)
+        if row is None:
+            raise VenueAccountNotProvisionedError(
+                venue_name, account_id,
+                VenueAccountNotProvisionedError.NOT_PROVISIONED)
+        if not row["enabled"]:
+            raise VenueAccountNotProvisionedError(
+                venue_name, account_id,
+                VenueAccountNotProvisionedError.DISABLED)
+
     def account_for(
         self,
         venue_name: str,
         account_id: str,
         **portfolio_args: Any,
     ) -> Account:
-        """Resolve this pair into a constructed account leaf — the LIVE authority (ACCT-03/D-21).
+        """Resolve this pair into a constructed venue-truth leaf (COMP-07 / Phase 12 seam).
+
+        NOTE (11.2-09, wave 5): this constructs a venue-truth ``VenueAccount`` leaf and is
+        the COMP-07 / Phase-12 seam — it is NOT reached from the live portfolio-creation path
+        in this phase, because a venue-truth leaf cannot be the construction-time leaf
+        (``VenueAccount.balance`` raises until its first snapshot; ``Portfolio.__init__``
+        reads balance). The live ``PortfolioFactory`` authority calls ``assert_available``
+        (the RAISE) and builds a COMPUTE leaf instead. This method stays as the resolution
+        primitive COMP-07 will wire once the snapshot lifecycle lands.
 
         Asserts, in order, that the account EXISTS, is ENABLED, and was brought ONLINE in
         this process, then delegates construction to ``VenueBundles.account_for``. Only
@@ -624,17 +679,19 @@ class VenueAccountManager:
 
         ``portfolio_args`` are forwarded verbatim to the venue plugin's account factory.
         Do NOT pass ``account_id`` among them — it is forwarded from the pair, and the
-        pair is the identity.
+        pair is the identity. ``venue_name`` IS forwarded into the leaf's factory args
+        (11.2-09) so the built leaf CARRIES its real pair: the positional ``venue_name``
+        is the store/memo venue, and the leaf needs it too — ``Portfolio.venue_name`` reads
+        it back off the leaf (D-23). ``VenueBundles.account_for``'s first parameter is
+        ``venue`` (not ``venue_name``), so the keyword lands in the factory's
+        ``portfolio_args`` with no collision.
         """
-        row = self._store.get(venue_name, account_id)
-        if row is None:
-            raise VenueAccountNotProvisionedError(
-                venue_name, account_id,
-                VenueAccountNotProvisionedError.NOT_PROVISIONED)
-        if not row["enabled"]:
-            raise VenueAccountNotProvisionedError(
-                venue_name, account_id,
-                VenueAccountNotProvisionedError.DISABLED)
+        # EXISTS + ENABLED via ``assert_available`` (the shared ACCT-03 gate), then the
+        # ONLINE check here — a venue-truth leaf needs an assembled session, so ``online``
+        # (raising NOT_ONLINE) is a precondition for THIS seam though not for the
+        # compute-leaf authority.
+        self.assert_available(venue_name, account_id)
         record = self.online(venue_name, account_id)
         return self._bundles.account_for(
-            venue_name, account_id, spec=record.spec, **portfolio_args)
+            venue_name, account_id, spec=record.spec,
+            venue_name=venue_name, **portfolio_args)

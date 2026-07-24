@@ -31,12 +31,17 @@ recipe cannot honestly carry all of it:
     ``portfolio.cash`` — the rebuilt portfolio holds a venue-truth account whose ``.cash``
     raises until the first snapshot (D-15/11-09).
 
-**Why paper cannot — and must not pretend to — prove per-account exchange routing (F-3).**
-The live composition root hands the paper plugin the ALREADY-BUILT shared simulated
-exchange, so two paper accounts necessarily resolve to ONE exchange object. A per-account
-routing assertion here would PASS while proving nothing, which is worse than no test. That
-gate lives in ``tests/integration/test_per_account_exchange_routing.py`` (plan 11-06) with
-a FAKE multi-account venue plugin. This file deliberately makes NO routing assertion.
+**Per-account exchanges (WR-11, post-D-43).** Before 11.2-09 the two paper portfolios shared
+``DEFAULT_ACCOUNT_ID`` and therefore ONE exchange object — the account-sharing the
+distinct-account invariant (D-14/D-15) forbids, which only passed because the half-null shape
+made the write path skip the definition row. Post-D-43 each ``(paper, account_id)`` pair gets
+its OWN bundle + ``SimulatedExchange`` through the shared memo, so the fixture now names two
+DISTINCT accounts and registers a per-account exchange for each (the same registration
+``bring_online`` does on the SQL arm), and asserts the two portfolios resolve to two DIFFERENT
+exchange objects — a structural IDENTITY check (D-14/D-15 isolation), not a full end-to-end
+per-account fill-routing proof. That full routing gate still lives in
+``tests/integration/test_per_account_exchange_routing.py`` (plan 11-06) with a FAKE
+multi-account venue plugin driving both accounts' order paths.
 
 **Resting-book interference (flagged for the bracket cases).** Plan 11-07's summary left
 the shared matching-engine question open; plan 11-10 (ITEM 2) recorded the answer:
@@ -63,7 +68,6 @@ from itrader.core.ids import PortfolioId, StrategyId
 from itrader.core.money import to_money
 from itrader.core.sizing import FractionOfCash, TradingDirection
 from itrader.events_handler.events import BarEvent, SignalEvent
-from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
 from itrader.strategy_handler.base import Strategy
 from tests.support.replay_harness import build_paper_replay_system
 
@@ -102,27 +106,58 @@ class _AlwaysBuy(Strategy):
 
 
 class _PaperPair:
-    """Two paper portfolios on ONE offline ``build_paper_replay_system`` engine.
+    """Two paper portfolios naming TWO DISTINCT venue accounts on ONE offline engine (WR-11).
 
-    Both portfolios name ``DEFAULT_ACCOUNT_ID`` and therefore resolve to the single
-    ``('paper', 'default')`` exchange object — the F-3 reality this test is built
-    around, NOT a bug: the per-account routing gate lives elsewhere (see the module
-    docstring). What differs between the two portfolios is their CASH, and each holds its
-    OWN ``SimulatedCashAccount`` compute leaf.
+    Each portfolio names its OWN ``(venue_name='paper', account_id)`` pair and resolves to its
+    OWN registered exchange object — the shape ACCT-03 requires and the distinct-account
+    invariant (D-14/D-15) demands. Before 11.2-09 both portfolios named ``DEFAULT_ACCOUNT_ID``
+    with no ``venue_name`` and shared ONE exchange; that half-null shape is exactly the
+    account-sharing the invariant forbids, and it only passed because the write path skipped
+    the definition row (now deleted, ACCT-07). Post-D-43 each ``(paper, account_id)`` pair gets
+    its OWN bundle + ``SimulatedExchange`` through the shared memo, so this offline harness
+    registers a per-account exchange for each pair — the same registration ``bring_online``
+    performs on the SQL arm, done by hand here because the in-memory arm has no
+    ``VenueAccountManager`` — and the two portfolios provably resolve to two DIFFERENT exchange
+    objects. Each still holds its own ``SimulatedCashAccount`` compute leaf (``.cash`` readable
+    immediately); the venue-truth swap stays COMP-07/Phase 12.
 
     Underscore-prefixed so pytest never collects it.
     """
 
+    _VENUE = "paper"
+    _ACCOUNT_A = "paper-acct-a"
+    _ACCOUNT_B = "paper-acct-b"
+
     def __init__(self, system) -> None:
         self.system = system
-        exchange = system.execution_handler.exchanges[("paper", DEFAULT_ACCOUNT_ID)]
-        exchange.register_symbol(_SYMBOL)
+        # Post-D-43: build a per-account bundle+exchange for each pair through the SAME memo
+        # ``bring_online`` uses, and register it under the account's pair. The offline in-memory
+        # harness has no manager to run ``bring_online``, so the fixture wires the two
+        # per-account exchanges by hand — each a DISTINCT ``SimulatedExchange`` object.
+        bundles = system.portfolio_handler._factory._authority._venue_bundles
+        self._exchanges: dict[str, object] = {}
+        for account_id in (self._ACCOUNT_A, self._ACCOUNT_B):
+            exchange = bundles.get(self._VENUE, account_id, None).exchange
+            # A freshly-built bundle exchange is not yet connected (the seeded default one is
+            # connected by seed_exchange_registry); connect it before it accepts orders.
+            exchange.connect()
+            exchange.register_symbol(_SYMBOL)
+            system.execution_handler.exchanges[(self._VENUE, account_id)] = exchange
+            self._exchanges[account_id] = exchange
         system.feed.bind(system.global_queue, [_SYMBOL])
         self._next_ts = _BASE_MS
+        self._next_account = iter((self._ACCOUNT_A, self._ACCOUNT_B))
 
     def add_portfolio(self, name: str, cash: Decimal) -> PortfolioId:
+        # Each portfolio names its OWN venue account (WR-11) — never a shared default.
+        account_id = next(self._next_account)
         return self.system.portfolio_handler.add_portfolio(
-            name=name, exchange="paper", cash=cash, account_id=DEFAULT_ACCOUNT_ID)
+            name=name, exchange=self._VENUE, cash=cash,
+            account_id=account_id, venue_name=self._VENUE)
+
+    def exchange_for(self, account_id: str):
+        """The DISTINCT exchange object registered for this account's pair (WR-11)."""
+        return self._exchanges[account_id]
 
     def portfolio(self, portfolio_id: PortfolioId):
         return self.system.portfolio_handler.get_portfolio(portfolio_id)
@@ -206,12 +241,15 @@ def paper_pair():
 
 
 def test_two_paper_portfolios_hold_two_distinct_account_objects(paper_pair) -> None:
-    """Two portfolios, two distinct ``SimulatedCashAccount`` leaves.
+    """Two portfolios naming two distinct accounts resolve to two DIFFERENT exchanges (WR-11).
 
-    This is a SECONDARY (deliberately near-vacuous) check: every ``add_portfolio``
-    builds its own account regardless of ``account_id``, so non-identity here proves
-    little on its own. The load-bearing independence proof is the differing order
-    quantities from differing cash in ``test_each_portfolio_sizes_against_its_own_cash``.
+    Each ``add_portfolio`` builds its own ``SimulatedCashAccount``, so distinct account
+    OBJECTS is near-vacuous on its own — the load-bearing independence proof is the differing
+    order quantities from differing cash in ``test_each_portfolio_sizes_against_its_own_cash``.
+    WR-11 adds the STRUCTURAL check the old shared-``DEFAULT_ACCOUNT_ID`` fixture could not
+    make: the two portfolios name DISTINCT ``(paper, account_id)`` pairs and the execution
+    handler resolves each pair to a DIFFERENT exchange object (identity, not a count) — the
+    account-isolation the distinct-account invariant (D-14/D-15) requires.
     """
     pid_a = paper_pair.add_portfolio("pf_a", Decimal("100000"))
     pid_b = paper_pair.add_portfolio("pf_b", Decimal("50000"))
@@ -220,6 +258,16 @@ def test_two_paper_portfolios_hold_two_distinct_account_objects(paper_pair) -> N
     pf_b = paper_pair.portfolio(pid_b)
 
     assert pf_a.account is not pf_b.account
+    # Each names its OWN (paper, account_id) pair — never a shared default.
+    assert pf_a.account_id != pf_b.account_id
+    assert pf_a.venue_name == "paper" and pf_b.venue_name == "paper"
+    # WR-11: each portfolio resolves to its OWN exchange object (identity assertion).
+    exchanges = paper_pair.system.execution_handler.exchanges
+    ex_a = exchanges[("paper", pf_a.account_id)]
+    ex_b = exchanges[("paper", pf_b.account_id)]
+    assert ex_a is not ex_b
+    assert ex_a is paper_pair.exchange_for(pf_a.account_id)
+    assert ex_b is paper_pair.exchange_for(pf_b.account_id)
     # Each holds its OWN starting cash, readable immediately (compute leaf, not venue).
     assert paper_pair.available_cash(pid_a) == Decimal("100000.00")
     assert paper_pair.available_cash(pid_b) == Decimal("50000.00")

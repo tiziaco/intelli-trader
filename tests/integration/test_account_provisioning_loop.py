@@ -100,9 +100,10 @@ def wiring():
     registrar puts the table on the shared MetaData before ``provision_schema`` creates
     it — the stores are schema-pure (WR-03/D-14) and nothing self-creates at runtime.
 
-    ``execution_handler`` is a ``SimpleNamespace`` carrying only ``exchanges``: that dict
-    is the entire surface ``bring_online`` writes, and booting a real handler here would
-    pre-register ``(paper, default)`` and blunt the exact-pair assertion below.
+    D-43: ``exchange_registry`` is the bare ``(venue, account_id) -> exchange`` dict —
+    the composition-root-owned map — that ``bring_online`` writes. It is the entire
+    surface the manager touches, and booting a real handler here would pre-register
+    ``(paper, default)`` and blunt the exact-pair assertion below.
     """
     engine = SqlEngine(SqlSettings.default())
     store = VenueAccountStore(engine)
@@ -116,19 +117,19 @@ def wiring():
     ctx = SimpleNamespace(bus=bus, rng=random.Random(42))
     bundles = VenueBundles(registry, connectors, ctx)
 
-    execution_handler = SimpleNamespace(exchanges={})
+    exchange_registry: dict[tuple[str, str], Any] = {}
     # The paper accounts here carry connector=None (no streaming connection), so the D-36
     # feed binder never has a connection to borrow; a no-op binder satisfies the manager's
     # required-collaborator contract. Feed binding is covered in test_feed_binder.py.
     manager = VenueAccountManager(
-        store, bundles, connectors, execution_handler,
+        store, bundles, connectors, exchange_registry,
         alert_sink=LogAlertSink(),
         feed_binder=SimpleNamespace(feed_provider=None, rebind=lambda available: None),
     )
     try:
         yield SimpleNamespace(
             store=store, manager=manager, plugin=plugin,
-            execution_handler=execution_handler,
+            exchange_registry=exchange_registry,
         )
     finally:
         store.dispose()
@@ -168,9 +169,9 @@ def test_provisioned_row_becomes_a_routable_account_and_resolves_to_a_leaf(wirin
     # T-11.2-05-02 — registered under the EXACT pair, with no coercion. The negative half
     # matters as much as the positive: registering under (venue, 'default') would look
     # fine and route every order for 'acct-1' into a lookup miss.
-    assert (_VENUE, _ACCOUNT) in wiring.execution_handler.exchanges
-    assert (_VENUE, DEFAULT_ACCOUNT_ID) not in wiring.execution_handler.exchanges
-    assert wiring.execution_handler.exchanges[(_VENUE, _ACCOUNT)] is record.bundle.exchange
+    assert (_VENUE, _ACCOUNT) in wiring.exchange_registry
+    assert (_VENUE, DEFAULT_ACCOUNT_ID) not in wiring.exchange_registry
+    assert wiring.exchange_registry[(_VENUE, _ACCOUNT)] is record.bundle.exchange
 
     # T-11.2-05-01 — the row's OWN credential pointer reached the spec, and the spec the
     # PLUGIN saw is the same one (two independent signals).
@@ -205,7 +206,7 @@ def test_account_for_an_unprovisioned_pair_raises_and_never_returns_a_leaf(wirin
         )
     assert excinfo.value.cause == VenueAccountNotProvisionedError.NOT_PROVISIONED
     assert excinfo.value.account_id == "no-such-account"
-    assert (_VENUE, "no-such-account") not in wiring.execution_handler.exchanges
+    assert (_VENUE, "no-such-account") not in wiring.exchange_registry
 
 
 def test_zero_enabled_rows_yields_an_empty_account_set_and_no_error(wiring):

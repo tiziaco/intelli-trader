@@ -34,6 +34,9 @@ from itrader.config.sql import SqlSettings
 from itrader.core.exceptions import PortfolioStateError
 from itrader.core.ids import PortfolioId
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
+from itrader.portfolio_handler.rehydrate.portfolio_rehydrate import (
+    rehydrate_portfolios,
+)
 from itrader.portfolio_handler.storage.sql_storage import SqlPortfolioStateStorage
 from itrader.storage import SqlEngine
 from itrader.storage.portfolio_definition_store import PortfolioDefinitionStore
@@ -129,13 +132,16 @@ def test_initial_cash_round_trips_as_decimal_never_float(wiring) -> None:
 # --------------------------------------------------------------------------- #
 # The absence gate — upsert is a DELETE-then-INSERT
 # --------------------------------------------------------------------------- #
-def test_re_adding_a_persisted_portfolio_never_clobbers_its_config(wiring) -> None:
-    """An EXISTING definition row is left alone — the write is gated on ABSENCE.
+def test_rehydrating_a_persisted_portfolio_never_clobbers_its_config(wiring) -> None:
+    """Rehydrate MATERIALIZES ONLY — it never re-writes the definition row (D-25).
 
-    This is the restart shape: boot 2's rehydrate calls ``add_portfolio`` again for a
-    portfolio whose row already carries a persisted ``config_json``. An unconditional
-    upsert would DELETE-then-INSERT that row and silently drop the operator's config,
-    and the boot would look perfectly healthy while trading on defaults.
+    This is the restart shape: boot 2 REHYDRATES a portfolio whose row already carries a
+    persisted ``config_json``. Before the create/materialize split, rehydrate re-entered
+    ``add_portfolio`` (write + build), which is exactly why the write needed an absence gate
+    — an unconditional DELETE-then-INSERT would drop the operator's config and the boot would
+    look healthy while trading on defaults. Now rehydrate calls the handler's ``materialize``
+    verb (build + register) and performs NO durable write, so the row is left untouched and
+    the absence gate is GONE.
     """
     engine, definitions = wiring
     _seed_account(engine, "acct-cfg")
@@ -149,16 +155,15 @@ def test_re_adding_a_persisted_portfolio_never_clobbers_its_config(wiring) -> No
         {"limits": {"max_positions": 7}}, _AT)
     assert definitions.get(portfolio_id)["config"] == {"limits": {"max_positions": 7}}
 
-    # A SECOND handler over the SAME database re-creating the SAME portfolio (the
-    # rehydrate shape) must not disturb the stored row.
+    # A SECOND handler over the SAME database REHYDRATES the portfolio (the restart shape) —
+    # materialize only, no durable write, so the stored row is left exactly as it was.
     handler2 = _live_handler(engine)
-    handler2.add_portfolio(
-        name="pf-cfg", exchange=_VENUE, cash=Decimal("10000.00"),
-        portfolio_id=portfolio_id, account_id="acct-cfg", venue_name=_VENUE)
+    rehydrate_portfolios(store=definitions, portfolio_handler=handler2)
 
+    assert handler2.has_portfolio(portfolio_id)
     assert definitions.get(portfolio_id)["config"] == {"limits": {"max_positions": 7}}, (
-        "re-creating a persisted portfolio clobbered its config_json — upsert is a "
-        "delete-then-insert, so the write MUST be gated on absence")
+        "rehydrating a persisted portfolio clobbered its config_json — rehydrate must "
+        "materialize only and never re-enter the durable write (D-25)")
     assert len(definitions.read_all()) == 1
 
 
@@ -175,17 +180,25 @@ def test_a_backtest_handler_owns_no_definition_store(wiring) -> None:
     assert definitions.read_all() == []
 
 
-def test_a_portfolio_naming_no_account_writes_no_row(wiring) -> None:
-    """No ``(venue_name, account_id)`` pair means no well-formed definition row.
+def test_a_live_portfolio_naming_no_account_fails_loud_on_the_write(wiring) -> None:
+    """A LIVE portfolio naming no ``(venue_name, account_id)`` now FAILS LOUD (ACCT-07/D-25).
 
     Both halves are NOT NULL and together carry an unconditional composite FK onto
-    ``venue_accounts`` (D-06/D-07). This is the pre-11-05 ``add_portfolio(name=,
-    exchange=, cash=)`` call shape, which stays supported rather than raising.
+    ``venue_accounts`` (D-06/D-07). ACCT-07 DELETED the null-account early return that used to
+    let the write path silently SKIP the row — that skip is exactly what let the write path
+    and ``SqlPortfolioStorage.save_config`` disagree about when a row is required (save_config
+    RAISES on ``rowcount == 0``, the very row the write path had skipped). With the skip gone,
+    ``create`` writes the row or the database refuses it (NOT NULL / FK): the account check
+    lives on the write side and can no longer be silently unreachable. The DELETE-then-INSERT
+    upsert is one transaction, so the refused INSERT rolls back and no partial row remains.
     """
+    from sqlalchemy.exc import IntegrityError
+
     engine, definitions = wiring
     handler = _live_handler(engine)
 
-    handler.add_portfolio(name="pf-unnamed", exchange="paper", cash=Decimal("500"))
+    with pytest.raises(IntegrityError):
+        handler.add_portfolio(name="pf-unnamed", exchange="paper", cash=Decimal("500"))
 
     assert definitions.read_all() == []
 

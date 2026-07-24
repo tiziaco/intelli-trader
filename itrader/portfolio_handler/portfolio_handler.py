@@ -32,12 +32,10 @@ from itrader.events_handler.bus import EventBus
 from itrader.events_handler.events import OrderEvent
 from itrader.core.portfolio_read_model import PositionView
 from itrader.core.money import to_money, quantize
-from itrader.portfolio_handler.storage import PortfolioStateStorageFactory
-# 11.1-09 (D-02/D-05): the ONE home of the compute-venue name and the
-# single-account key half. ``venues/registry`` is import-inert by design (zero
-# runtime imports, the GATE-01 evidence), so this pulls no venue concretion onto
-# the backtest hot path.
-from itrader.venues.registry import COMPUTE_VENUE, DEFAULT_ACCOUNT_ID
+# D-24 (11.2-09): the state-storage seam, the compute-venue name and the
+# single-account key half MOVED to PortfolioFactory / ComputeAccountAuthority — the
+# handler no longer builds leaves or scopes state storage inline, so those imports
+# (PortfolioStateStorageFactory, COMPUTE_VENUE, DEFAULT_ACCOUNT_ID) are gone from here.
 from itrader.portfolio_handler.transaction import Transaction
 from itrader.events_handler.events import BarEvent, FillEvent, PortfolioUpdateEvent, PortfolioErrorEvent
 from itrader.config import PortfolioConfig, get_portfolio_preset
@@ -75,8 +73,7 @@ class PortfolioHandler:
     def __init__(self, global_queue: "EventBus", config_dir: str = "settings",
                  environment: str = "backtest", sql_engine: "Optional[Any]" = None,
                  *,
-                 venue_bundles: "Optional[Any]" = None,
-                 compute_venue: str = COMPUTE_VENUE) -> None:
+                 portfolio_factory: "Optional[Any]" = None) -> None:
         self.global_queue: "EventBus" = global_queue
         self.current_time: Any = 0
 
@@ -92,39 +89,19 @@ class PortfolioHandler:
         self._environment = environment
         self._sql_engine = sql_engine
 
-        # D-08 (11.1-09): the SAME ``VenueBundles`` instance ``ExecutionHandler``
-        # holds — one memo, so the two handlers provably see one exchange and one
-        # account factory per ``(venue, account_id)``. This handler asks it for the
-        # ACCOUNT view; the execution handler asks for the exchange. Typed
-        # ``Optional[Any]`` for the GATE-01 reason ``sql_engine`` is: naming
-        # ``VenueBundles`` concretely would put the venue substrate on this
-        # hot-path module's import graph.
-        #
-        # ``None`` is the DIRECT-CONSTRUCTION arm (focused unit tests that never
-        # call ``add_portfolio``), not a production shape: ``compose_engine``
-        # always injects the built memo. ``add_portfolio`` refuses loudly rather
-        # than falling back to minting an account itself — a fallback would
-        # reinstate the second account-kind selection D-03 exists to delete.
-        self._venue_bundles = venue_bundles
-
-        # D-02/D-03 (11.1-09): the venue whose plugin mints every portfolio's
-        # CONSTRUCTION-TIME account leaf — the COMPUTE leaf, on every path.
-        #
-        # This is deliberately venue-independent of where the portfolio TRADES. A
-        # live portfolio is rehydrated (``portfolio_rehydrate.py``) BEFORE
-        # ``_build_account_specs`` has built its per-account ``VenueSpec``, and a
-        # ``VenueAccount`` needs that spec's ``secret_ref`` to resolve a connector —
-        # so a venue-truth account cannot exist at portfolio-creation time. The
-        # construction-time leaf is therefore always the compute one, which is
-        # exactly what ``_attach_venue_accounts`` already documents that it expects
-        # ("a portfolio naming NO account keeps its construction-time compute leaf",
-        # and a compute-venue lifecycle is skipped outright). That function performs
-        # the live venue-truth swap AFTER assembly and SURVIVES this phase; its
-        # removal — and with it this parameter, which is the seam it needs — is
-        # deferred to Phase 12 as COMP-07 (owner sign-off 2026-07-22).
-        #
-        # Injected rather than hardcoded so there is ONE home for the name.
-        self._compute_venue = compute_venue
+        # D-24 (11.2-09): the SOLE leaf-builder. ``add_portfolio`` builds every
+        # portfolio's runtime graph — its id-scoped ``PortfolioStateStorage`` seam, its
+        # ``Account`` leaf and the ``Portfolio`` over them — THROUGH this injected factory,
+        # never through a handler-held ``VenueBundles`` or an inline compute-account
+        # builder. The factory holds a REAL, mode-agnostic authority at construction (LIVE:
+        # the ``VenueAccountManager`` — ACCT-03 raises on a missing/disabled/not-online
+        # account; BACKTEST: the compute authority — ``account_id`` None, never raises), so
+        # the account-kind selection and the venue-truth authority both live in ONE place.
+        # Typed ``Optional[Any]`` for the GATE-01 reason ``sql_engine`` is: naming
+        # ``PortfolioFactory`` concretely is unnecessary and ``None`` is the
+        # DIRECT-CONSTRUCTION arm (focused unit tests that never call ``add_portfolio``) —
+        # ``compose_engine`` always injects the built factory.
+        self._factory = portfolio_factory
 
         # 11-08 (D-07/D-08): the DEFINITION-row writer. Before this plan nothing in
         # the phase ever wrote the ``portfolios`` table — ``PortfolioDefinitionStore``
@@ -289,95 +266,40 @@ class PortfolioHandler:
 
         with self._operation_context("add_portfolio") as correlation_id:
             try:
-                # Global validations
+                # Global validations (creation-input; rehydrate trusts the store's rows).
                 if cash <= 0:
                     raise PortfolioValidationError(0, "initial_cash", "Initial cash must be positive")
 
                 if not name.strip():
                     raise PortfolioValidationError(0, "name", "Portfolio name cannot be empty")
 
-                # F-1 (11-05): now that ids are supplyable, a duplicate must fail
-                # loud. The store below is an unconditional dict assignment, so
-                # without this guard a re-add would SILENTLY destroy the first
-                # portfolio along with its cash and open positions.
-                if portfolio_id is not None and portfolio_id in self._portfolios:
-                    raise PortfolioValidationError(
-                        portfolio_id, "portfolio_id",
-                        "A portfolio with this id is already registered"
-                    )
-
-                # Check global limits
-                if len(self._portfolios) >= self.max_portfolios:
-                    raise PortfolioConfigurationError("max_portfolios", self.max_portfolios, "maximum portfolios limit reached")
-                
-                # D-02/D-03 (11.1-09): BUILD the account here, through the venue
-                # plugin, and hand it to the portfolio. ``Portfolio`` mints none and
-                # selects no account kind — ``VenuePlugin.new_account`` is the sole
-                # owner of the margin-vs-cash rule.
-                #
-                # The id is resolved BEFORE the portfolio exists because the live
-                # state-storage backend is scoped to it (the SQL store binds
-                # portfolio_id and scopes every query). Omitting it still mints a
-                # UUIDv7 through the single ``idgen`` singleton, exactly as
-                # ``Portfolio`` did — the id is never re-schemed (F-1, 11-05).
+                # D-25 (11.2-09): add_portfolio is CREATE then MATERIALIZE — a durable WRITE
+                # and a runtime BUILD, split into two verbs. The id is resolved HERE so both
+                # the definition row (create) and the runtime graph (materialize) carry the
+                # SAME id; omitting it mints a UUIDv7 through the single idgen, exactly as
+                # before (F-1, 11-05). create runs FIRST: a create that succeeds followed by
+                # a materialize that raises leaves a durable row with no live Portfolio — the
+                # next boot rehydrates it, so the row is not orphaned (T-11.2-09-05 backstop).
                 resolved_id = (
                     portfolio_id if portfolio_id is not None
                     else PortfolioId(idgen.generate_portfolio_id())
                 )
-                # D-07 (05.2-05): the durable state-storage seam. Built HERE rather
-                # than inside ``Portfolio`` so the account — constructed a few lines
-                # below, before any portfolio exists — lands on the SAME instance the
-                # portfolio's three other managers will hold. The live restart path
-                # (``state_storage.rehydrate(account)``) repopulates the reservation
-                # and locked-margin caches on THIS object, so two instances would
-                # silently drop every reservation across a restart while backtest,
-                # which reads those containers nowhere else, stayed byte-exact.
-                state_storage = PortfolioStateStorageFactory.create(
-                    self._environment,
-                    sql_engine=self._sql_engine,
-                    portfolio_id=resolved_id,
-                )
-                # The SAME money value reaches the ledger and the portfolio
-                # (T-11.1-42): computed once, passed to both. ``Portfolio`` re-checks
-                # the two agree and refuses loudly if they ever diverge.
-                opening_cash = to_money(cash)
-                # The config that drives the LEAF SELECTION must be the config the
-                # portfolio itself runs on — mirrors ``Portfolio.__init__``'s own
-                # ``config or get_portfolio_preset('default')`` resolution, so the
-                # margin flag and the portfolio can never disagree.
-                resolved_config = portfolio_config or get_portfolio_preset('default')
-                account = self._new_compute_account(
-                    opening_cash=opening_cash,
-                    enable_margin=resolved_config.trading_rules.enable_margin,
+                self.create(
+                    resolved_id,
+                    name=name,
+                    cash=cash,
                     account_id=account_id,
                     venue_name=venue_name,
-                    state_storage=state_storage,
                 )
-
-                # Create portfolio instance. D-07 (05.2-05): thread the durable
-                # environment + shared backend so the portfolio's state storage
-                # is the live SQL ledger when wired 'live' (default "backtest" =
-                # in-memory, oracle-dark).
-                portfolio = Portfolio(
+                portfolio = self.materialize(
                     name=name,
                     exchange=exchange,
-                    cash=opening_cash,
-                    time=datetime.now(UTC),
+                    cash=cash,
                     config=portfolio_config,
-                    environment=self._environment,
-                    sql_engine=self._sql_engine,
                     portfolio_id=resolved_id,
                     account_id=account_id,
                     venue_name=venue_name,
-                    account=account,
                 )
-                
-                # Store portfolio
-                self._portfolios[portfolio.portfolio_id] = portfolio
-
-                # 11-08 (D-07/D-08): persist the DEFINITION row so this portfolio
-                # rehydrates with the SAME id on the next boot. No-op on backtest.
-                self._persist_definition(portfolio, cash)
 
                 self.logger.info(
                     "Portfolio created successfully",
@@ -386,124 +308,146 @@ class PortfolioHandler:
                     initial_cash=cash,
                     correlation_id=correlation_id
                 )
-                
+
                 return portfolio.portfolio_id
-                
+
             except Exception as e:
                 self._publish_error_event(e, "add_portfolio", correlation_id)
                 raise
-    
-    def _new_compute_account(self, *, opening_cash: Decimal, enable_margin: bool,
-                             account_id: Optional[str],
-                             venue_name: Optional[str] = None,
-                             state_storage: Any) -> Account:
-        """Build ONE portfolio's construction-time account through the venue plugin.
 
-        D-02/D-03 (11.1-09): the account is built by ``VenuePlugin.new_account`` —
-        reached through the ``VenueBundles`` memo ``ExecutionHandler`` also holds
-        (D-08), so both arms provably see one account factory per
-        ``(venue, account_id)``. Nothing here selects an account KIND; the flags are
-        forwarded and the plugin decides, which is what keeps that rule in one place.
-
-        The venue asked for is ``self._compute_venue``, NOT the portfolio's trading
-        venue, and that is deliberate — see the ``__init__`` note: a live portfolio is
-        rehydrated before its per-account ``VenueSpec`` exists, so a venue-truth
-        account cannot be minted at portfolio-creation time. Every portfolio, on
-        every path, gets a compute leaf here; ``_attach_venue_accounts`` performs the
-        live venue-truth swap afterwards (deferred to Phase 12 as COMP-07).
-
-        Refuses loudly when no ``VenueBundles`` was injected. The tempting fallback —
-        minting a ``SimulatedCashAccount`` inline — would reinstate the second
-        account-kind selection D-03 exists to delete, and would do it on a path that
-        only fires in misconfigured wiring, so nothing would go red.
-        """
-        if self._venue_bundles is None:
-            raise PortfolioConfigurationError(
-                "venue_bundles", None,
-                "PortfolioHandler was constructed without a VenueBundles provider, "
-                "so it cannot build this portfolio's account through the venue "
-                "plugin (D-02/D-08). Refusing to mint an account inline — that "
-                "would put account-kind selection back in a second place.",
-            )
-        bundle = self._venue_bundles.get(
-            self._compute_venue, DEFAULT_ACCOUNT_ID, None)
-        # D-23 (11.2-08): the leaf is minted under the compute-venue bundle
-        # (``self._compute_venue`` / ``DEFAULT_ACCOUNT_ID``) but CARRIES the
-        # portfolio's OWN ``(venue_name, account_id)`` — not the compute venue's —
-        # so ``Portfolio.venue_name`` / ``.account_id`` (read-only properties over
-        # this leaf) report the portfolio's real account. On backtest both are the
-        # portfolio's ('paper', None) so behaviour is byte-identical; on a live
-        # portfolio the leaf carries its ('okx', 'acct-…') pair, which is what
-        # ``_persist_definition`` writes to the ``portfolios`` row.
-        account: Account = bundle.account_factory(
-            initial_cash=opening_cash,
-            enable_margin=enable_margin,
-            account_id=account_id,
-            venue_name=venue_name,
-            state_storage=state_storage,
-        )
-        return account
-
-    def _persist_definition(self, portfolio: Portfolio, cash: "float | Decimal") -> None:
-        """Write this portfolio's DEFINITION row (D-07/D-08) — the 11-08 writer.
+    def create(self, portfolio_id: PortfolioId, *, name: str,
+               cash: "float | Decimal", account_id: Optional[str],
+               venue_name: Optional[str]) -> None:
+        """Write this portfolio's DEFINITION row — the durable half of the split (D-25/ACCT-07).
 
         The row records what a portfolio IS (``portfolio_id`` / ``name`` /
-        ``(venue_name, account_id)`` / ``initial_cash``), as opposed to the seven
-        child tables that record what it HAS. It is the SOURCE OF TRUTH that
-        ``rehydrate_portfolios`` reads at the next boot, and the persisted
-        ``portfolio_id`` is what makes those child tables reattach to the RIGHT
-        portfolio across a restart (T-11-41).
+        ``(venue_name, account_id)`` / ``initial_cash``), the SOURCE OF TRUTH
+        ``rehydrate_portfolios`` reads at the next boot; the persisted ``portfolio_id`` is
+        what reattaches the child tables across a restart (T-11-41). It builds no Portfolio
+        and registers nothing — that is ``materialize``'s job.
 
-        Three guards, each load-bearing:
+        D-25: this is the WRITE half of the create/materialize split. Before the split,
+        ``add_portfolio`` conflated the durable write with the runtime build and rehydrate
+        re-entered the WHOLE thing — which is why the write needed an absence gate (skip if
+        the row already exists) so a rehydrate re-write would not WIPE the operator's
+        ``config_json``. Now rehydrate MATERIALIZES ONLY and never re-enters create, so
+        ``create`` runs ONCE per ``portfolio_id`` (``add_portfolio`` refuses a duplicate id
+        via ``materialize``), the INSERT is a first write, and the absence gate is DELETED
+        rather than preserved.
 
-        * **No store** — the backtest/in-memory arm. Nothing to write.
-        * **No account reference** — ``venue_name`` and ``account_id`` are both NOT
-          NULL and together carry an unconditional composite FK onto
-          ``venue_accounts`` (D-06/D-07), so a portfolio that names neither has no
-          well-formed definition row to write. This is the pre-11-05 call shape
-          (``add_portfolio(name=, exchange=, cash=)``) and it stays supported.
-        * **GATED ON ABSENCE** — ``upsert`` is a DELETE-then-INSERT on
-          ``portfolio_id``, so re-writing a row that already exists would WIPE its
-          ``config_json`` (the D-09 home of the per-portfolio config blob). Rehydrate
-          re-enters this method for every persisted portfolio on every boot, so the
-          unconditional form would silently discard the operator's persisted config on
-          the FIRST restart after it was saved. Same discipline, same reason, as
-          11-07's ``_mint_account_rows``.
+        ACCT-07: the null-account early return is DELETED too. It let the write path SKIP the
+        row for a portfolio naming no ``(venue_name, account_id)`` — which then disagreed
+        with ``SqlPortfolioStorage.save_config``, which RAISES ``PortfolioStateError`` on
+        ``rowcount == 0`` (the very row it expected the write path to have made). With the
+        skip gone, the write path either writes the row or fails LOUD on the composite FK
+        onto ``venue_accounts`` (the account check on the write side, D-06/D-07) — it never
+        silently makes ``save_config``'s raise unreachable. The two halves can no longer drift.
 
-        A write failure PROPAGATES (``add_portfolio``'s except arm publishes the error
-        event and re-raises). It is deliberately not degrade-clean: a portfolio whose
-        definition did not persist boots into nothing on the next restart while its
-        positions and cash rows orphan in the child tables — a silent, money-relevant
-        loss, which is exactly the outcome D-19 rates as worse than failing loud. The
-        likely cause is a genuine misconfiguration: a duplicate ``(venue_name,
-        account_id)`` pair (the D-14 unique constraint) or an ``account_id`` with no
-        ``venue_accounts`` parent row.
+        The no-store guard STAYS: on the backtest/in-memory arm there is nothing to write.
+
+        A write failure PROPAGATES (``add_portfolio``'s except arm publishes the error event
+        and re-raises): a definition that did not persist would boot into nothing on the next
+        restart while its positions and cash rows orphan — a silent money loss D-19 rates
+        worse than failing loud.
         """
         if self.definition_store is None:
             return
-        if portfolio.venue_name is None or portfolio.account_id is None:
-            return
-        if self.definition_store.get(portfolio.portfolio_id) is not None:
-            return
         self.definition_store.upsert(
-            portfolio.portfolio_id,
-            name=portfolio.name,
-            venue_name=portfolio.venue_name,
-            account_id=portfolio.account_id,
+            portfolio_id,
+            name=name,
+            venue_name=venue_name,
+            account_id=account_id,
             initial_cash=to_money(cash),
             enabled=True,
-            # The config blob is owned by save_config/load_config on this same row
-            # (D-09); a definition write never authors or overwrites it.
+            # config is owned by save_config/load_config on this row (D-09); a definition
+            # write never authors or overwrites it.
             config=None,
             at=datetime.now(UTC),
         )
+
+    def materialize(self, name: str, exchange: str, cash: "float | Decimal",
+                    config: Optional[PortfolioConfig] = None,
+                    portfolio_id: Optional[PortfolioId] = None,
+                    account_id: Optional[str] = None,
+                    venue_name: Optional[str] = None) -> Portfolio:
+        """Build the runtime Portfolio through the factory and register it — the BUILD half (D-25).
+
+        The runtime half of the create/materialize split: it builds the id-scoped
+        state-storage seam, the ``Account`` leaf and the ``Portfolio`` over them THROUGH the
+        injected factory, then REGISTERS the portfolio. It writes NOTHING durable — the
+        definition row is ``create``'s job. Both ``add_portfolio`` (as create -> materialize)
+        and ``rehydrate_portfolios`` call this, so the duplicate-id guard and the
+        max-portfolios limit live HERE, where registration happens, and both callers inherit
+        them (rehydrate no longer re-enters ``add_portfolio``).
+
+        On the LIVE arm the factory's authority is the ``VenueValidatedComputeAuthority``, so
+        a portfolio naming a not-provisioned / disabled account RAISES here (ACCT-03,
+        ``VenueAccountNotProvisionedError``) rather than silently sitting on a fabricated
+        balance; on backtest the compute authority builds an ``account_id=None`` leaf and
+        never raises. The venue-truth ``VenueAccount`` swap stays COMP-07 / Phase 12.
+        """
+        # A handler built without a factory (the direct-construction unit arm) cannot build
+        # portfolios: refuse LOUDLY rather than minting an account inline (D-24). The tempting
+        # inline ``SimulatedCashAccount(...)`` fallback would reinstate the second
+        # account-kind selection D-03 exists to delete, on a path nothing covers.
+        if self._factory is None:
+            raise PortfolioConfigurationError(
+                "portfolio_factory", None,
+                "PortfolioHandler was constructed without a PortfolioFactory, so it cannot "
+                "build this portfolio's account leaf (D-24). Refusing to mint an account "
+                "inline — that would put account-kind selection back in a second place.",
+            )
+
+        # F-1 (11-05): a duplicate id must fail loud — the registry write below is an
+        # unconditional dict assignment, so without this a re-materialize would SILENTLY
+        # destroy the first portfolio along with its cash and open positions. It lives HERE
+        # (not in add_portfolio) so rehydrate inherits it too (D-25).
+        if portfolio_id is not None and portfolio_id in self._portfolios:
+            raise PortfolioValidationError(
+                portfolio_id, "portfolio_id",
+                "A portfolio with this id is already registered"
+            )
+
+        # WR-08: the global portfolio-count limit, enforced at REGISTRATION so both the add
+        # and the rehydrate path honour it.
+        if len(self._portfolios) >= self.max_portfolios:
+            raise PortfolioConfigurationError(
+                "max_portfolios", self.max_portfolios,
+                "maximum portfolios limit reached")
+
+        # ``self._factory`` is typed ``Any`` (GATE-01), so pin the built object to
+        # ``Portfolio`` — the factory's ``materialize`` is contracted to return one, and the
+        # annotation keeps ``portfolio.portfolio_id`` a real ``PortfolioId``.
+        portfolio: Portfolio = self._factory.materialize(
+            name=name,
+            exchange=exchange,
+            cash=cash,
+            config=config,
+            portfolio_id=portfolio_id,
+            account_id=account_id,
+            venue_name=venue_name,
+        )
+        self._portfolios[portfolio.portfolio_id] = portfolio
+        return portfolio
 
     def get_portfolio(self, portfolio_id: PortfolioId) -> Portfolio:
         """Get portfolio instance."""
         if portfolio_id not in self._portfolios:
             raise PortfolioNotFoundError(portfolio_id)
         return self._portfolios[portfolio_id]
-    
+
+    def has_portfolio(self, portfolio_id: PortfolioId) -> bool:
+        """Whether a portfolio with this id is REGISTERED in this process (D-25).
+
+        The narrowest PUBLIC registration predicate. Added by 11.2-09 so
+        ``rehydrate_portfolios`` can skip an already-registered id WITHOUT reaching the
+        handler's private ``_portfolios`` map (the queue-only / encapsulation seam). D-41
+        (plan 12) gives the handler its full public read surface (``has_portfolio`` /
+        ``all_portfolios``); this is the minimal slice that path needs now, and plan 12
+        should converge it rather than add a second predicate.
+        """
+        return portfolio_id in self._portfolios
+
     def delete_portfolio(self, portfolio_id: PortfolioId, force: bool = False) -> bool:
         """Delete a portfolio with validation."""
         

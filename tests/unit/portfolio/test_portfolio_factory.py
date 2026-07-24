@@ -1,66 +1,83 @@
-"""PortfolioFactory — the composition-owned definition→runtime mapping (D-24, 11.2-08).
+"""PortfolioFactory — the composition-owned definition→runtime mapping (D-24, 11.2-09).
 
-**The oracle CANNOT cover this path.** ``test_backtest_oracle.py`` drives the LEGACY
-construction arm (``scripts/run_backtest.py``), so a factory-only edit goes
-false-green. These tests assert the factory DIRECTLY, with an identity sentinel (the
-exact account object ``VenueBundles.account_for`` returned) rather than a call
-counter, so a materialize that quietly substituted a compute leaf of its own would
-fail here.
+**The oracle CANNOT fully cover this path.** ``test_backtest_oracle.py`` drives the
+LEGACY construction arm, so a factory-only edit could go false-green. These assert the
+factory DIRECTLY, with an identity sentinel (the exact account object the injected
+AUTHORITY returned) rather than a call counter, so a materialize that quietly substituted
+a compute leaf of its own would fail here.
 
 What is pinned:
 
-* ``materialize`` attaches the account resolved through ``VenueBundles.account_for``
-  (D-21) — identity, not just "an account was built".
-* it builds and passes a real id-scoped ``state_storage`` (never omits it — plan 01
-  made that a ``TypeError``).
-* cash enters the Decimal domain at the boundary (``to_money``).
-* an ``account_for`` refusal PROPAGATES — the factory never falls back to a compute
-  leaf of its own (the ACCT-03 posture the plan-09 authority layer builds on).
-* the factory has NO ``Optional`` collaborator: ``venue_bundles`` is a REQUIRED
-  construction dependency, so there is no ``is None`` refusal counterpart.
+* ``materialize`` attaches the account the injected AUTHORITY returned — identity, not
+  just "an account was built" — and forwards the portfolio's REAL ``(venue_name,
+  account_id)`` pair UNCOERCED. There is NO compute-venue resolution and NO
+  ``or DEFAULT_ACCOUNT_ID`` coercion in the factory any more: the authority owns that
+  (the backtest ``ComputeAccountAuthority`` resolves the compute bundle; the live
+  ``VenueAccountManager`` resolves the real pair).
+* it never passes ``spec=`` to the authority — ``VenueAccountManager.account_for`` has no
+  such parameter, so passing one would land in ``portfolio_args`` and collide (concern 3).
+* it builds and passes a real id-scoped ``state_storage`` (never omits it — plan 01 made
+  that a ``TypeError``); cash enters the Decimal domain at the boundary; a supplied id is
+  reattached verbatim.
+* BOTH authority arms: a refusing (live / ACCT-03) authority PROPAGATES — the factory
+  never falls back to a compute leaf of its own; the REAL backtest
+  ``ComputeAccountAuthority`` yields a compute leaf carrying ``account_id=None`` (the
+  oracle invariant) and never raises.
+* the factory has NO ``Optional`` collaborator: ``authority`` is a REQUIRED construction
+  dependency, so there is no ``is None`` refusal counterpart.
+
+This directory is package-less (NO ``__init__.py``). 4-SPACE indentation.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, UTC
 from decimal import Decimal
 from typing import Any
 
 import pytest
 
-from itrader.core.exceptions import ValidationError
+from itrader.core.exceptions import (
+    ValidationError,
+    VenueAccountNotProvisionedError,
+)
+from itrader.portfolio_handler.account import SimulatedCashAccount
 from itrader.portfolio_handler.portfolio import Portfolio
-from itrader.portfolio_handler.portfolio_factory import PortfolioFactory
-from itrader.venues.registry import DEFAULT_ACCOUNT_ID
-from tests.support.venue_wiring import compute_account
+from itrader.portfolio_handler.portfolio_factory import (
+    ComputeAccountAuthority,
+    PortfolioFactory,
+    VenueValidatedComputeAuthority,
+)
+from tests.support.venue_wiring import backtest_venue_bundles, compute_account
 
 
 _CASH = Decimal("100000")
 
 
-class _RecordingBundles:
-    """A ``VenueBundles`` double whose ``account_for`` returns a fixed SENTINEL.
+class _RecordingAuthority:
+    """An account authority double whose ``account_for`` returns a fixed SENTINEL.
 
-    Records every call so the test can prove which ``(venue, account_id)`` the memo
-    was asked for and which portfolio-args were forwarded onto the leaf.
+    Mirrors the mode-agnostic seam ``VenueAccountManager`` / ``ComputeAccountAuthority``
+    both satisfy: ``account_for(venue_name, account_id, **portfolio_args)``. Records every
+    call so the test can prove which pair the factory forwarded and which portfolio-args
+    rode onto the leaf — and, crucially, that ``spec`` is NOT among them.
     """
 
     def __init__(self, account: Any) -> None:
         self._account = account
-        self.calls: list[tuple[str, str, dict[str, Any]]] = []
+        self.calls: list[tuple[Any, Any, dict[str, Any]]] = []
 
     def account_for(
-        self, venue: str, account_id: str, *, spec: Any = None, **portfolio_args: Any
+        self, venue_name: Any, account_id: Any, **portfolio_args: Any
     ) -> Any:
-        self.calls.append((venue, account_id, portfolio_args))
+        self.calls.append((venue_name, account_id, portfolio_args))
         return self._account
 
 
-class _RefusingBundles:
-    """A ``VenueBundles`` double whose ``account_for`` RAISES (the ACCT-03 posture)."""
+class _RefusingAuthority:
+    """A live-arm authority double whose ``account_for`` RAISES (the ACCT-03 posture)."""
 
     def account_for(
-        self, venue: str, account_id: str, *, spec: Any = None, **portfolio_args: Any
+        self, venue_name: Any, account_id: Any, **portfolio_args: Any
     ) -> Any:
         raise ValidationError(
             "account_id", account_id,
@@ -68,56 +85,60 @@ class _RefusingBundles:
         )
 
 
-def _factory(bundles: Any) -> PortfolioFactory:
+def _factory(authority: Any) -> PortfolioFactory:
     return PortfolioFactory(
-        venue_bundles=bundles,
+        authority=authority,
         environment="backtest",
         sql_engine=None,
-        compute_venue="paper",
     )
 
 
 # ---------------------------------------------------------------------------
-# materialize attaches the account_for account — identity sentinel
+# materialize attaches the authority's account — identity sentinel
 # ---------------------------------------------------------------------------
 
 
-def test_materialize_attaches_the_account_from_account_for() -> None:
-    """D-21/D-24: the leaf is the EXACT object ``account_for`` returned, not a fallback."""
+def test_materialize_attaches_the_account_from_the_authority() -> None:
+    """D-24: the leaf is the EXACT object ``authority.account_for`` returned, not a fallback."""
     sentinel = compute_account(_CASH)
-    bundles = _RecordingBundles(sentinel)
+    authority = _RecordingAuthority(sentinel)
 
-    portfolio = _factory(bundles).materialize(
+    portfolio = _factory(authority).materialize(
         name="pf", exchange="paper", cash=_CASH, venue_name="paper")
 
     assert isinstance(portfolio, Portfolio)
     assert portfolio.account is sentinel
 
 
-def test_materialize_resolves_the_compute_venue_and_forwards_the_pair() -> None:
-    """The memo is asked for (compute_venue, account_id); venue_name rides onto the leaf."""
-    sentinel = compute_account(_CASH, account_id="acct-a", venue_name="okx")
-    bundles = _RecordingBundles(sentinel)
+def test_materialize_forwards_the_real_pair_uncoerced_and_no_spec() -> None:
+    """The factory forwards the portfolio's REAL (venue_name, account_id), and no ``spec=``.
 
-    _factory(bundles).materialize(
+    No compute-venue resolution and no ``or DEFAULT_ACCOUNT_ID`` coercion live in the
+    factory now — the authority owns that. And ``spec`` must NOT be forwarded (concern 3):
+    ``VenueAccountManager.account_for`` has no such parameter, so a stray ``spec=`` would
+    land in ``portfolio_args`` and collide.
+    """
+    authority = _RecordingAuthority(compute_account(_CASH, account_id="acct-a", venue_name="okx"))
+
+    _factory(authority).materialize(
         name="pf", exchange="okx", cash=_CASH,
         account_id="acct-a", venue_name="okx")
 
-    assert len(bundles.calls) == 1
-    venue, account_id, portfolio_args = bundles.calls[0]
-    assert venue == "paper"          # the compute venue, not the trading venue
-    assert account_id == "acct-a"    # uncoerced portfolio account id
-    assert portfolio_args["venue_name"] == "okx"
+    assert len(authority.calls) == 1
+    venue_name, account_id, portfolio_args = authority.calls[0]
+    assert venue_name == "okx"        # the portfolio's REAL venue, not the compute venue
+    assert account_id == "acct-a"     # uncoerced
+    assert "spec" not in portfolio_args
 
 
-def test_materialize_normalizes_an_absent_account_id_to_default() -> None:
-    """An unnamed account normalizes to DEFAULT_ACCOUNT_ID in exactly one place."""
-    bundles = _RecordingBundles(compute_account(_CASH))
+def test_materialize_forwards_a_none_account_id_uncoerced() -> None:
+    """An unnamed account is passed to the authority as ``None`` — coercion is the authority's."""
+    authority = _RecordingAuthority(compute_account(_CASH))
 
-    _factory(bundles).materialize(name="pf", exchange="paper", cash=_CASH)
+    _factory(authority).materialize(name="pf", exchange="paper", cash=_CASH, venue_name="paper")
 
-    _, account_id, _ = bundles.calls[0]
-    assert account_id == DEFAULT_ACCOUNT_ID
+    _, account_id, _ = authority.calls[0]
+    assert account_id is None
 
 
 # ---------------------------------------------------------------------------
@@ -125,23 +146,24 @@ def test_materialize_normalizes_an_absent_account_id_to_default() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_materialize_passes_a_real_state_storage_to_the_leaf() -> None:
+def test_materialize_passes_a_real_state_storage_to_the_authority() -> None:
     """Plan 01: the id-scoped state_storage is built and forwarded, never omitted."""
-    bundles = _RecordingBundles(compute_account(_CASH))
+    authority = _RecordingAuthority(compute_account(_CASH))
 
-    _factory(bundles).materialize(name="pf", exchange="paper", cash=_CASH)
+    _factory(authority).materialize(name="pf", exchange="paper", cash=_CASH, venue_name="paper")
 
-    _, _, portfolio_args = bundles.calls[0]
+    _, _, portfolio_args = authority.calls[0]
     assert portfolio_args["state_storage"] is not None
 
 
 def test_materialize_enters_the_decimal_domain_at_the_boundary() -> None:
-    """D-12: cash reaches the leaf resolution as a Decimal produced by to_money."""
-    bundles = _RecordingBundles(compute_account(_CASH))
+    """D-12: cash reaches the authority as a Decimal produced by to_money."""
+    authority = _RecordingAuthority(compute_account(_CASH))
 
-    _factory(bundles).materialize(name="pf", exchange="paper", cash=100000.0)
+    _factory(authority).materialize(
+        name="pf", exchange="paper", cash=100000.0, venue_name="paper")
 
-    _, _, portfolio_args = bundles.calls[0]
+    _, _, portfolio_args = authority.calls[0]
     assert type(portfolio_args["initial_cash"]) is Decimal
 
 
@@ -151,34 +173,161 @@ def test_materialize_reattaches_a_supplied_portfolio_id() -> None:
     from itrader.core.ids import PortfolioId
 
     existing = PortfolioId(idgen.generate_portfolio_id())
-    portfolio = _factory(_RecordingBundles(compute_account(_CASH))).materialize(
-        name="pf", exchange="paper", cash=_CASH, portfolio_id=existing)
+    portfolio = _factory(_RecordingAuthority(compute_account(_CASH))).materialize(
+        name="pf", exchange="paper", cash=_CASH, venue_name="paper", portfolio_id=existing)
 
     assert portfolio.portfolio_id == existing
 
 
 # ---------------------------------------------------------------------------
-# an account_for refusal propagates — no compute-leaf fallback
+# BOTH authority arms
 # ---------------------------------------------------------------------------
 
 
-def test_materialize_propagates_an_account_for_refusal() -> None:
-    """D-21: a refusal from account_for is NOT swallowed into a fallback leaf."""
+def test_a_refusing_authority_propagates_no_fallback_leaf() -> None:
+    """The LIVE / ACCT-03 posture: a refusal from the authority is NOT swallowed.
+
+    The factory never substitutes a compute leaf of its own — a portfolio naming a
+    not-provisioned / disabled / not-online account gets the raise, never a silent
+    ``SimulatedCashAccount`` with ``is_venue_truth=False``.
+    """
     with pytest.raises(ValidationError):
-        _factory(_RefusingBundles()).materialize(
-            name="pf", exchange="paper", cash=_CASH, account_id="ghost")
+        _factory(_RefusingAuthority()).materialize(
+            name="pf", exchange="okx", cash=_CASH,
+            account_id="ghost", venue_name="okx")
+
+
+def test_the_backtest_compute_authority_yields_a_none_account_leaf() -> None:
+    """The BACKTEST arm over the REAL ComputeAccountAuthority: account_id None, no raise.
+
+    The oracle invariant — a backtest portfolio's leaf carries ``account_id=None`` — is
+    proven end to end against the real authority, not a double.
+    """
+    import queue
+
+    authority = ComputeAccountAuthority(
+        venue_bundles=backtest_venue_bundles(queue.Queue()), compute_venue="paper")
+    portfolio = PortfolioFactory(
+        authority=authority, environment="backtest").materialize(
+            name="pf", exchange="paper", cash=_CASH, venue_name="paper")
+
+    assert portfolio.account.account_id is None
+    assert portfolio.account.balance == Decimal("100000.00")
 
 
 # ---------------------------------------------------------------------------
-# no Optional collaborator — venue_bundles is a REQUIRED construction dep
+# VenueValidatedComputeAuthority — the LIVE arm: ACCT-03 raise + compute leaf
+# (venue-truth leaf deferred to COMP-07 / Phase 12, owner decision wave 5)
 # ---------------------------------------------------------------------------
 
 
-def test_venue_bundles_is_a_required_construction_dependency() -> None:
+class _FakeManager:
+    """A VenueAccountManager stand-in exposing only ``assert_available``.
+
+    ``available=False`` reproduces a refused account: the check RAISES with ``cause`` and no
+    leaf is built (ACCT-03). ``available=True`` passes the gate. ``cause`` defaults to
+    NOT_PROVISIONED (the missing-row case) and can be set to DISABLED to model an
+    ``enabled=False`` row — the two causes must stay distinguishable at the factory.
+    """
+
+    def __init__(
+        self, *, available: bool,
+        cause: str = VenueAccountNotProvisionedError.NOT_PROVISIONED,
+    ) -> None:
+        self._available = available
+        self._cause = cause
+        self.checked: list[tuple[str, str]] = []
+
+    def assert_available(self, venue_name: str, account_id: str) -> None:
+        self.checked.append((venue_name, account_id))
+        if not self._available:
+            raise VenueAccountNotProvisionedError(
+                venue_name, account_id, self._cause)
+
+
+def _live_authority(
+    *, available: bool,
+    cause: str = VenueAccountNotProvisionedError.NOT_PROVISIONED,
+) -> tuple[VenueValidatedComputeAuthority, _FakeManager]:
+    import queue
+
+    manager = _FakeManager(available=available, cause=cause)
+    compute = ComputeAccountAuthority(
+        venue_bundles=backtest_venue_bundles(queue.Queue()), compute_venue="paper")
+    return VenueValidatedComputeAuthority(manager=manager, compute=compute), manager
+
+
+def test_live_authority_raises_on_a_missing_account_and_builds_no_leaf() -> None:
+    """ACCT-03: a live portfolio naming a not-provisioned/disabled/not-online account RAISES.
+
+    This is the whole security guarantee — a live portfolio never trades against a
+    fabricated balance. The RAISE comes from the manager's ``assert_available``; no leaf is
+    constructed on the failure path.
+    """
+    authority, manager = _live_authority(available=False)
+
+    with pytest.raises(VenueAccountNotProvisionedError):
+        _factory(authority).materialize(
+            name="pf", exchange="okx", cash=_CASH,
+            account_id="ghost", venue_name="okx")
+
+    # The gate was consulted for the real pair.
+    assert manager.checked == [("okx", "ghost")]
+
+
+def test_live_authority_distinguishes_a_missing_from_a_disabled_account() -> None:
+    """ACCT-03 causes stay distinguishable at the factory: NOT_PROVISIONED != DISABLED.
+
+    A missing row and a deliberately-disabled row are two different operator actions
+    (provision vs re-enable). Collapsing them would send an operator to re-provision an
+    account that already exists — which then refuses as a duplicate (D-11), leaving two
+    contradictory errors and no true one.
+    """
+    for cause in (
+        VenueAccountNotProvisionedError.NOT_PROVISIONED,
+        VenueAccountNotProvisionedError.DISABLED,
+    ):
+        authority, _ = _live_authority(available=False, cause=cause)
+        with pytest.raises(VenueAccountNotProvisionedError) as excinfo:
+            _factory(authority).materialize(
+                name="pf", exchange="okx", cash=_CASH,
+                account_id="acct", venue_name="okx")
+        assert excinfo.value.cause == cause
+
+
+def test_live_authority_builds_a_compute_leaf_carrying_the_real_pair_on_success() -> None:
+    """On a provisioned+enabled+online account, materialize SUCCEEDS on a COMPUTE leaf.
+
+    The venue-truth ``VenueAccount`` leaf is DEFERRED to COMP-07 / Phase 12 (owner decision,
+    wave 5, 2026-07-24) — a venue-truth balance is unreadable at construction. So this
+    asserts the leaf carries the real ``(venue_name, account_id)`` identity and is a compute
+    (``SimulatedCashAccount``) leaf, NOT ``is_venue_truth is True``.
+    """
+    authority, manager = _live_authority(available=True)
+
+    portfolio = _factory(authority).materialize(
+        name="pf", exchange="okx", cash=_CASH,
+        account_id="acct-a", venue_name="okx")
+
+    assert manager.checked == [("okx", "acct-a")]
+    # The compute leaf carries the portfolio's REAL pair (D-23) ...
+    assert portfolio.account_id == "acct-a"
+    assert portfolio.venue_name == "okx"
+    # ... and is a compute leaf (venue-truth swap is COMP-07/Phase 12), balance readable.
+    assert isinstance(portfolio.account, SimulatedCashAccount)
+    assert portfolio.account.balance == Decimal("100000.00")
+
+
+# ---------------------------------------------------------------------------
+# no Optional collaborator — authority is a REQUIRED construction dep
+# ---------------------------------------------------------------------------
+
+
+def test_authority_is_a_required_construction_dependency() -> None:
     """D-24: no Optional collaborator, so there is no `is None` refusal counterpart.
 
-    The factory is built with real deps at composition; a missing ``venue_bundles``
-    is a construction-time ``TypeError``, not a per-call ``is None`` guard.
+    The factory is built with a real authority at composition; a missing ``authority`` is
+    a construction-time ``TypeError``, not a per-call ``is None`` guard.
     """
     with pytest.raises(TypeError):
-        PortfolioFactory(environment="backtest", compute_venue="paper")  # type: ignore[call-arg]
+        PortfolioFactory(environment="backtest")  # type: ignore[call-arg]

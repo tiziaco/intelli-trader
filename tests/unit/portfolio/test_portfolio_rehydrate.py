@@ -19,10 +19,17 @@ from typing import Any, Mapping
 import pytest
 
 from itrader.core.enums import PortfolioState
+from itrader.core.exceptions import VenueAccountNotProvisionedError
 from itrader.core.ids import PortfolioId
+from itrader.portfolio_handler.portfolio_factory import (
+    ComputeAccountAuthority,
+    PortfolioFactory,
+    VenueValidatedComputeAuthority,
+)
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.portfolio_handler.rehydrate.portfolio_rehydrate import rehydrate_portfolios
-from tests.support.venue_wiring import backtest_portfolio_handler
+from itrader.venues.registry import COMPUTE_VENUE
+from tests.support.venue_wiring import backtest_portfolio_handler, backtest_venue_bundles
 
 
 class _FakeDefinitionStore:
@@ -222,11 +229,12 @@ def test_an_enabled_row_loads_active(handler) -> None:
 # Idempotence within a boot
 # --------------------------------------------------------------------------- #
 def test_rehydrating_twice_does_not_duplicate_or_raise(handler) -> None:
-    """A second pass skips already-registered ids.
+    """A second pass skips already-registered ids (via the public has_portfolio predicate).
 
-    ``add_portfolio`` loud-rejects a duplicate id (11-05, so a re-add cannot silently
-    destroy the first portfolio's cash and positions), which means without the skip guard
-    a second rehydrate would RAISE rather than no-op.
+    D-25 (11.2-09): rehydrate materializes only, and ``materialize`` loud-rejects a
+    duplicate id (11-05, so a re-add cannot silently destroy the first portfolio's cash and
+    positions). Without the ``has_portfolio`` skip a second rehydrate would RAISE rather than
+    no-op. The skip reaches the PUBLIC predicate, never the private ``_portfolios`` map.
     """
     persisted = uuid.uuid4()
     store = _FakeDefinitionStore([_row(portfolio_id=persisted)])
@@ -237,6 +245,48 @@ def test_rehydrating_twice_does_not_duplicate_or_raise(handler) -> None:
     assert first == [PortfolioId(persisted)]
     assert second == []
     assert len(handler._portfolios) == 1
+
+
+# --------------------------------------------------------------------------- #
+# ACCT-03 at rehydrate — a disabled account RAISES, never a silent compute leaf
+# --------------------------------------------------------------------------- #
+
+
+class _DisabledAccountManager:
+    """A VenueAccountManager stand-in whose ``assert_available`` reports DISABLED."""
+
+    def assert_available(self, venue_name: str, account_id: str) -> None:
+        raise VenueAccountNotProvisionedError(
+            venue_name, account_id, VenueAccountNotProvisionedError.DISABLED)
+
+
+def test_rehydrating_a_disabled_account_raises_rather_than_a_compute_leaf() -> None:
+    """ACCT-03 at rehydrate: a definition whose venue account is DISABLED RAISES.
+
+    Rehydrate materializes through the handler's injected factory; on the LIVE arm that
+    factory's authority is the ``VenueValidatedComputeAuthority``, which asks the
+    ``VenueAccountManager`` to validate the pair. A disabled account must RAISE
+    ``VenueAccountNotProvisionedError`` (cause DISABLED) — never silently produce a compute
+    leaf a live portfolio would then trade on believing it was the venue's. (The factory-level
+    ACCT-03 pins live in ``tests/unit/portfolio/test_portfolio_factory.py``.)
+    """
+    bus = queue.Queue()
+    authority = VenueValidatedComputeAuthority(
+        manager=_DisabledAccountManager(),
+        compute=ComputeAccountAuthority(
+            venue_bundles=backtest_venue_bundles(bus), compute_venue=COMPUTE_VENUE),
+    )
+    handler = PortfolioHandler(
+        bus, portfolio_factory=PortfolioFactory(
+            authority=authority, environment="backtest"))
+    store = _FakeDefinitionStore([_row(portfolio_id=uuid.uuid4())])
+
+    with pytest.raises(VenueAccountNotProvisionedError) as excinfo:
+        rehydrate_portfolios(store=store, portfolio_handler=handler)
+
+    assert excinfo.value.cause == VenueAccountNotProvisionedError.DISABLED
+    # Nothing was registered — the raise happened at materialize, before registration.
+    assert handler._portfolios == {}
 
 
 # --------------------------------------------------------------------------- #

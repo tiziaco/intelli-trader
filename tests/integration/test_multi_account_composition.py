@@ -214,7 +214,12 @@ def test_a_two_account_boot_builds_exactly_two_bundles(monkeypatch, live_db, okx
         for account_id in ("acct-a", "acct-b"):
             lifecycle = system._venue_lifecycles[account_id]
             assert lifecycle.bundle.exchange is entries[(_VENUE, account_id)]
-            memo = system.execution_handler._venue_bundles._memo
+            # D-43/D-24: neither the execution handler nor the portfolio handler holds the
+            # VenueBundles memo any more (D-43 extracted the exchange registry; D-24 moved leaf
+            # construction into the injected PortfolioFactory). The shared memo is reachable
+            # through the factory's compute authority, which holds the SAME VenueBundles
+            # instance bring_online assembled through.
+            memo = system.portfolio_handler._factory._authority._compute._venue_bundles._memo
             assert memo[(_VENUE, account_id)] is lifecycle.bundle
     finally:
         system.stop()

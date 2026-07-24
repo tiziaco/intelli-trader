@@ -80,9 +80,27 @@ class _RecordingBundles:
 
 
 def _handler() -> tuple[PortfolioHandler, _RecordingBundles]:
+    """A handler whose factory's compute authority wraps a recording ``VenueBundles``.
+
+    D-24 (11.2-09): the handler builds leaves through an injected ``PortfolioFactory``.
+    Its backtest authority is a ``ComputeAccountAuthority`` over the bundle memo — so
+    wrapping THAT memo in ``_RecordingBundles`` still observes every minted account, the
+    identity these tests assert.
+    """
+    from itrader.portfolio_handler.portfolio_factory import (
+        ComputeAccountAuthority,
+        PortfolioFactory,
+    )
+    from itrader.venues.registry import COMPUTE_VENUE
+
     bus = queue.Queue()
     bundles = _RecordingBundles(backtest_venue_bundles(bus))
-    return PortfolioHandler(bus, venue_bundles=bundles), bundles
+    factory = PortfolioFactory(
+        authority=ComputeAccountAuthority(
+            venue_bundles=bundles, compute_venue=COMPUTE_VENUE),
+        environment="backtest",
+    )
+    return PortfolioHandler(bus, portfolio_factory=factory), bundles
 
 
 # ---------------------------------------------------------------------------
@@ -212,11 +230,14 @@ def test_the_margin_flag_reaches_the_plugin_from_the_portfolio_config() -> None:
     assert not isinstance(cash_account, SimulatedMarginAccount)
 
 
-def test_a_handler_without_venue_bundles_refuses_rather_than_minting() -> None:
+def test_a_handler_without_a_factory_refuses_rather_than_minting() -> None:
     """The tempting inline fallback is a second account-kind selection — so: refuse.
 
-    A ``SimulatedCashAccount(...)`` here would only ever run in misconfigured wiring,
-    so it would reinstate the duplicate branch D-03 deleted on a path nothing covers.
+    D-24 (11.2-09): the handler builds leaves through an injected ``PortfolioFactory``. A
+    handler built without one (the direct-construction arm) must REFUSE loudly rather than
+    mint a ``SimulatedCashAccount(...)`` inline — that fallback would only ever run in
+    misconfigured wiring and would reinstate the duplicate account-kind branch D-03
+    deleted on a path nothing covers.
     """
     handler = PortfolioHandler(queue.Queue())
     with pytest.raises(PortfolioConfigurationError):

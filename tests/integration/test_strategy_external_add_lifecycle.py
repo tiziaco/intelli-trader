@@ -29,6 +29,7 @@ exists). SKIPS Dockerless (D-11). Offline replay data provider — no OKX, no ne
 """
 
 import datetime as _dt
+import uuid
 from decimal import Decimal
 from typing import Any
 
@@ -45,10 +46,12 @@ from itrader.events_handler.events import (
     SignalEvent,
     StrategyCommandEvent,
 )
+from itrader.core.ids import PortfolioId
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.price_handler.feed.cache_registration import StrategyWarmupConsumer
 from itrader.storage import SqlEngine
 from itrader.storage.strategy_registry_store import StrategyRegistryStore
+from itrader.storage.venue_account_store import VenueAccountStore
 from itrader.strategy_handler.base import Strategy
 from itrader.strategy_handler.indicators import SMA
 from itrader.strategy_handler.registry import encode_strategy_config
@@ -60,7 +63,7 @@ from itrader.universe.universe import Universe
 from itrader.universe.universe_handler import UniverseHandler, UniverseHandlerConfig
 from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
 from tests.support.replay_harness import TestDataPlugin
-from tests.support.schema import provision_schema, seed_portfolio_definitions
+from tests.support.schema import provision_schema
 
 _SYM = "LIFEUSD"
 _WARMUP = 3
@@ -230,15 +233,28 @@ class _LifecycleSystem:
             stream_recovery=system._stream_recovery,
         ).install(system.event_handler)
 
+        # ACCT-03 (11.2-09): a LIVE portfolio must name a PROVISIONED + enabled venue
+        # account, or composition RAISES (VenueValidatedComputeAuthority.assert_available).
+        # Provision the paper account this portfolio names FIRST, on the SAME Postgres DB
+        # build_live_system built its own engine on, so the durable venue_accounts row is
+        # visible when add_portfolio validates. The account id is the portfolio's own id
+        # (unique per portfolio — the D-14 (venue,account) UNIQUE holds), so a restart's
+        # rehydrated portfolio and a fresh harness portfolio never collide on the pair.
+        portfolio_id = PortfolioId(uuid.uuid4())
+        account_id = str(portfolio_id)
+        VenueAccountStore(
+            SqlEngine(SqlSettings(driver=SqlDriver.POSTGRESQL_PSYCOPG2))
+        ).upsert(
+            "paper", account_id, secret_ref=None, venue_uid=None, enabled=True,
+            config={}, at=_T)
+        # B2 (11-03): the strategy subscription child FKs onto ``portfolios`` with ON DELETE
+        # CASCADE. ``add_portfolio``'s ``_persist_definition`` now writes that durable
+        # definition row itself (11-08 wired PortfolioDefinitionStore), so no hand-seed is
+        # needed — the composite FK onto the venue_accounts row provisioned above is
+        # satisfied, and the row rehydrates the SAME portfolio across a restart.
         self.portfolio_id = system.portfolio_handler.add_portfolio(
-            name="ext_pf", exchange="paper", cash=1_000_000)
-        # B2 (11-03): the subscription child FKs onto ``portfolios`` with ON DELETE CASCADE.
-        # ``add_portfolio`` builds the in-memory runtime portfolio; the durable DEFINITION
-        # row is a separate concern nothing writes until 11-08 wires
-        # PortfolioDefinitionStore, so seed it on the store the factory wired at its gate.
-        registry_store = system.strategies_handler.registry_store
-        if registry_store is not None:
-            seed_portfolio_definitions(registry_store.backend, [self.portfolio_id])
+            name="ext_pf", exchange="paper", cash=1_000_000,
+            portfolio_id=portfolio_id, account_id=account_id, venue_name="paper")
 
         # Flip running so add_event admits; the drain thread is never spawned (synchronous).
         system._running = True

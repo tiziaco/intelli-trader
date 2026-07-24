@@ -24,7 +24,7 @@ from itrader.execution_handler.fee_model.percent_fee_model import PercentFeeMode
 from itrader.execution_handler.slippage_model.linear_slippage_model import LinearSlippageModel
 from itrader.core.exceptions.base import ConfigurationError
 
-from tests.support.venue_wiring import backtest_venue_bundles
+from tests.support.venue_wiring import backtest_exchange_registry
 
 
 @pytest.fixture
@@ -109,7 +109,7 @@ def test_update_config_omitting_supported_symbols_preserves_the_set(exchange):
 @pytest.fixture
 def handler():
     queue = Queue()
-    return ExecutionHandler(queue, venue_bundles=backtest_venue_bundles(queue))
+    return ExecutionHandler(queue, exchange_registry=backtest_exchange_registry(queue))
 
 
 def test_execution_handler_delegates_to_exchange(handler):

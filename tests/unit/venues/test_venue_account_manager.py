@@ -53,6 +53,7 @@ import pytest
 from itrader.config import ExchangeConfig
 from itrader.config.sql import SqlSettings
 from itrader.connectors.provider import ConnectorProvider
+from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.core.exceptions import (
     DuplicateVenueAccountProvisionError,
     UnknownVenueAccountConfigKeyError,
@@ -128,26 +129,30 @@ def _real_bundles() -> VenueBundles:
 
 def _make_manager(
     *, provision: bool = True, bundles: Any = None
-) -> tuple[VenueAccountManager, VenueAccountStore, Any]:
+) -> tuple[VenueAccountManager, VenueAccountStore, dict[tuple[str, str], Any]]:
     """A manager over a REAL in-memory store, optionally with its schema NOT provisioned.
 
     ``provision=False`` reproduces the fresh-deployment state D-34 degrades on: the store
     registers its table on the shared MetaData but nothing creates it (the stores are
     schema-pure — WR-03/D-14).
+
+    D-43: the manager receives a bare ``(venue, account_id) -> exchange`` dict — the
+    composition-root-owned registry — NOT an execution handler. ``bring_online`` writes
+    this map directly, and the tests assert on it.
     """
     store = VenueAccountStore(SqlEngine(SqlSettings.default()))
     if provision:
         provision_schema(store.backend)
-    execution_handler = SimpleNamespace(exchanges={})
+    registry: dict[tuple[str, str], Any] = {}
     manager = VenueAccountManager(
         store,
         bundles if bundles is not None else _real_bundles(),
         ConnectorProvider({}),
-        execution_handler,
+        registry,
         alert_sink=LogAlertSink(),
         feed_binder=_NoopFeedBinder(),
     )
-    return manager, store, execution_handler
+    return manager, store, registry
 
 
 # --------------------------------------------------------------------------- #
@@ -305,30 +310,60 @@ def test_provision_with_a_secret_bearing_config_refuses_and_persists_nothing() -
 
 def test_provision_does_not_bring_the_account_online() -> None:
     """D-27 — two verbs. The durable write alone builds no runtime."""
-    manager, store, execution_handler = _make_manager()
+    manager, store, registry = _make_manager()
     try:
         manager.provision(_VENUE, "acct-1")
         assert manager.is_online(_VENUE, "acct-1") is False
-        assert execution_handler.exchanges == {}
+        assert registry == {}
     finally:
         store.dispose()
 
 
 def test_provision_then_bring_online_makes_the_account_usable_in_this_process() -> None:
     """D-27 — provisioned at runtime, usable with NO restart, through the ONE path."""
-    manager, store, execution_handler = _make_manager()
+    manager, store, registry = _make_manager()
     try:
         row = manager.provision(_VENUE, "acct-1", secret_ref="env:ACCT_1")
         record = manager.bring_online(row)
 
         assert manager.is_online(_VENUE, "acct-1") is True
-        assert execution_handler.exchanges[(_VENUE, "acct-1")] is record.bundle.exchange
+        assert registry[(_VENUE, "acct-1")] is record.bundle.exchange
         assert record.spec.secret_ref == "env:ACCT_1"
 
         account = manager.account_for(
             _VENUE, "acct-1", initial_cash=Decimal("500"),
             enable_margin=False, state_storage=in_memory_state_storage())
         assert account.balance == Decimal("500")
+    finally:
+        store.dispose()
+
+
+# --------------------------------------------------------------------------- #
+# D-43 — the shared exchange registry: one map, both arms
+# --------------------------------------------------------------------------- #
+
+
+def test_the_object_vam_registers_is_the_object_the_handler_resolves() -> None:
+    """D-43 — the exact exchange VAM registers for a pair IS what the handler resolves.
+
+    The identity assertion that proves the extraction handed BOTH handlers the SAME
+    root-owned map. A mis-wire would register into one map and read the other, so every
+    live order would fail closed on a lookup miss behind a green offline suite
+    (T-11.2-09-06). Building a REAL ``ExecutionHandler`` over the SAME registry ``_make_
+    manager`` created, then bringing an account online, exercises the whole cut edge.
+    """
+    manager, store, registry = _make_manager()
+    try:
+        execution_handler = ExecutionHandler(
+            queue.Queue(), exchange_registry=registry)
+        # The handler holds the SAME map object (reference identity, D-43).
+        assert execution_handler.exchanges is registry
+
+        record = manager.bring_online(manager.provision(_VENUE, "acct-1"))
+
+        # The exact object bring_online registered is the object the handler resolves.
+        assert (execution_handler.exchanges[(_VENUE, "acct-1")]
+                is record.bundle.exchange)
     finally:
         store.dispose()
 
@@ -447,7 +482,7 @@ def test_an_unrecognised_config_key_raises_and_brings_nothing_online() -> None:
     already been registered, because the pair would then be routable with a spec built
     from a config the engine refused to understand.
     """
-    manager, store, execution_handler = _make_manager()
+    manager, store, registry = _make_manager()
     try:
         with pytest.raises(UnknownVenueAccountConfigKeyError) as excinfo:
             manager.bring_online(_row({"sandox": True}))
@@ -460,18 +495,18 @@ def test_an_unrecognised_config_key_raises_and_brings_nothing_online() -> None:
             assert legal in message
 
         assert manager.is_online(_VENUE, "acct-1") is False
-        assert execution_handler.exchanges == {}
+        assert registry == {}
     finally:
         store.dispose()
 
 
 def test_an_unrecognised_key_raises_even_beside_valid_ones() -> None:
     """A good key does not buy a bad one a pass — validation precedes the merge."""
-    manager, store, execution_handler = _make_manager()
+    manager, store, registry = _make_manager()
     try:
         with pytest.raises(UnknownVenueAccountConfigKeyError):
             manager.bring_online(_row({"sandbox": True, "market-type": "spot"}))
-        assert execution_handler.exchanges == {}
+        assert registry == {}
     finally:
         store.dispose()
 
@@ -498,13 +533,13 @@ def test_an_out_of_vocabulary_market_type_refuses() -> None:
     needs no equivalent check here — ``OkxSettings.region`` is a ``Literal`` that fails
     loud at build — so the venue keeps ownership of its own vocabulary.
     """
-    manager, store, execution_handler = _make_manager()
+    manager, store, registry = _make_manager()
     try:
         with pytest.raises(ValidationError) as excinfo:
             manager.bring_online(_row({"market_type": "spott"}))
 
         assert "spott" in str(excinfo.value)
-        assert execution_handler.exchanges == {}
+        assert registry == {}
     finally:
         store.dispose()
 
@@ -720,6 +755,9 @@ def test_account_for_delegates_under_the_exact_pair() -> None:
         assert portfolio_args["initial_cash"] == Decimal("7")
         assert portfolio_args["enable_margin"] is True
         assert portfolio_args["state_storage"] is seam
+        # 11.2-09: the live leaf carries its real venue_name (forwarded into the
+        # factory's portfolio_args), so Portfolio.venue_name reports the real pair.
+        assert portfolio_args["venue_name"] == _VENUE
         assert account.account_id == "acct-1"
         assert account.seq == len(bundles.calls)
     finally:
