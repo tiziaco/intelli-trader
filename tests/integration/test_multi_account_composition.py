@@ -214,7 +214,11 @@ def test_a_two_account_boot_builds_exactly_two_bundles(monkeypatch, live_db, okx
         for account_id in ("acct-a", "acct-b"):
             lifecycle = system._venue_lifecycles[account_id]
             assert lifecycle.bundle.exchange is entries[(_VENUE, account_id)]
-            memo = system.execution_handler._venue_bundles._memo
+            # D-43: the execution handler no longer holds the VenueBundles memo (it now
+            # holds only the extracted (venue, account_id) -> exchange registry). The
+            # shared memo is still reachable through the portfolio handler, which holds
+            # the SAME VenueBundles instance bring_online assembled through.
+            memo = system.portfolio_handler._venue_bundles._memo
             assert memo[(_VENUE, account_id)] is lifecycle.bundle
     finally:
         system.stop()

@@ -12,7 +12,6 @@ from itrader.config import ExchangeConfig
 from itrader.core.exceptions.base import ConfigurationError
 from itrader.core.exceptions.portfolio import PortfolioNotFoundError
 from itrader.logger import get_itrader_logger
-from itrader.venues.bundles import VenueBundles
 # 11.1-09 — RE-EXPORTED from the import-inert venue substrate.
 # ``DEFAULT_ACCOUNT_ID`` (the single-account key half, D-27/MPORT-07) and
 # ``COMPUTE_VENUE`` (``'paper'``, D-05) are venue-domain facts that BOTH handlers
@@ -35,7 +34,8 @@ if TYPE_CHECKING:
 
 # mypy --strict disables implicit re-export, so the two venue constants above are
 # named explicitly here to stay importable from this module (their historical home).
-__all__ = ['COMPUTE_VENUE', 'DEFAULT_ACCOUNT_ID', 'ExecutionHandler', 'default_exchange_config']
+__all__ = ['COMPUTE_VENUE', 'DEFAULT_ACCOUNT_ID', 'ExecutionHandler',
+		   'default_exchange_config', 'seed_exchange_registry']
 
 
 def default_exchange_config() -> ExchangeConfig:
@@ -64,6 +64,57 @@ def default_exchange_config() -> ExchangeConfig:
 	return config
 
 
+def seed_exchange_registry(
+	exchange_registry: dict[tuple[str, str], Optional[AbstractExchange]],
+	venue_bundles: Any,
+) -> None:
+	"""Seed the PAPER exchange into the shared registry and connect it (D-43).
+
+	Relocated VERBATIM from the retired ``ExecutionHandler.init_exchanges`` when the
+	``(venue, account_id) -> exchange`` registry became composition-root-owned (D-43).
+	The handler no longer MINTS or RESOLVES its exchange at construction; the
+	composition root seeds the paper arm HERE and hands the SAME map to BOTH
+	``ExecutionHandler`` (which READS it on order) and ``VenueAccountManager`` (whose
+	``bring_online`` WRITES the OKX arm into it). One map, both arms — the D-43 cut
+	edge.
+
+	Only the PAPER arm is seeded. The OKX arm is registered by the live root's
+	per-account ``bring_online`` loop, which knows the account set this seam has no way
+	to enumerate.
+
+	``venue_bundles`` is duck-typed ``Any`` (GATE-01): naming ``VenueBundles`` concretely
+	would drag the venue substrate back onto this module's import graph.
+	"""
+	logger = get_itrader_logger().bind(component="ExecutionHandler")
+	# D-08: ASK the shared memo for the paper bundle. ``spec=None`` because
+	# ``PaperVenuePlugin.build_bundle`` reads no spec field at all. D-05/D-27: the
+	# single-account paper venue pairs with DEFAULT_ACCOUNT_ID; ``'paper'`` is the ONE
+	# name for the simulated fill engine across backtest and live-paper.
+	bundle = venue_bundles.get(COMPUTE_VENUE, DEFAULT_ACCOUNT_ID, None)
+	exchange_registry[(COMPUTE_VENUE, DEFAULT_ACCOUNT_ID)] = bundle.exchange
+
+	# Connect exchanges that support it. Dedup by instance identity: two keys may
+	# resolve to one object (post-D-05 that means two ACCOUNTS on one venue), and
+	# connecting it once avoids a misleading second "Successfully connected" log for
+	# the idempotent no-op call (IN-03).
+	seen_connect: set[int] = set()
+	for exchange_key, exchange in exchange_registry.items():
+		if exchange is None or id(exchange) in seen_connect:
+			continue
+		seen_connect.add(id(exchange))
+		exchange_name = exchange_key[0]
+		try:
+			connection_result = exchange.connect()
+			if connection_result.success:
+				logger.info('Successfully connected to %s exchange', exchange_name)
+			else:
+				logger.warning('Failed to connect to %s exchange: %s',
+							   exchange_name, connection_result.error_message)
+		except AttributeError:
+			# Exchange doesn't support connection management (backward compatibility)
+			logger.debug('Exchange %s does not support connection management', exchange_name)
+
+
 class ExecutionHandler(AbstractExecutionHandler):
 	"""
 	Enhanced execution handler with comprehensive error handling and monitoring.
@@ -80,24 +131,29 @@ class ExecutionHandler(AbstractExecutionHandler):
 	"""
 
 	def __init__(self, global_queue: "EventBus", *,
-				venue_bundles: "VenueBundles",
+				exchange_registry: dict[tuple[str, str], Optional[AbstractExchange]],
 				portfolio_read_model: Optional["PortfolioReadModel"] = None) -> None:
 		"""
 		Parameters
 		----------
 		global_queue: `Queue object`
 			The events queue of the trading system
-		venue_bundles: `VenueBundles`
-			The REQUIRED shared ``(venue, account_id)`` bundle memo (D-08). The
-			handler no longer MINTS an exchange — it ASKS for one, and the venue
-			plugin behind the memo is what builds it (D-06). The same instance is
-			held by the portfolio arm, so both arms see ONE exchange and ONE
-			account factory per venue+account; two independent ``build_bundle``
-			calls would double-spawn a live venue's fill/order streams.
+		exchange_registry: `dict[tuple[str, str], Optional[AbstractExchange]]`
+			The REQUIRED, composition-root-owned ``(venue, account_id) -> exchange``
+			map (D-43). The handler no longer MINTS or RESOLVES its exchange — it is
+			HANDED the map and reads it. The SAME object is held by
+			``VenueAccountManager``, whose ``bring_online`` writes the venue-truth
+			(OKX) arm into it while this handler reads it on order; the composition
+			root seeds the paper arm via ``seed_exchange_registry`` before either
+			handler is built. Because both arms hold ONE map by reference, an account
+			brought online is immediately routable — the D-43 cut that dissolved the
+			four-node LIVE construction cycle (the manager no longer reaches through
+			this handler to register an exchange).
 
-			It is REQUIRED, not ``Optional[...] = None``: a nullable seam here
-			would let a caller silently fall back to a hand-minted exchange, and
-			the two paths would then diverge without anything turning red.
+			It is REQUIRED, not ``Optional[...] = None``: a nullable seam here would
+			let a caller silently hold a private, empty map while the manager wrote a
+			different one, and every live order would then fail closed on a lookup
+			miss without anything turning red.
 		portfolio_read_model: `PortfolioReadModel`, optional
 			The injected read-model used to resolve an order's VENUE ACCOUNT
 			from its portfolio (D-27/MPORT-07). The injection is ASYMMETRIC by
@@ -135,14 +191,15 @@ class ExecutionHandler(AbstractExecutionHandler):
 		self.logger = get_itrader_logger().bind(component="ExecutionHandler")
 
 		self.global_queue = global_queue
-		self._venue_bundles = venue_bundles
 		self._portfolio_read_model = portfolio_read_model
 
-		# Initialize exchanges (requires logger + the bundle memo). Keyed on the
-		# (venue, account_id) PAIR — see DEFAULT_ACCOUNT_ID (D-27/MPORT-07).
-		self.exchanges: dict[tuple[str, str], Optional[AbstractExchange]] = self.init_exchanges()
+		# D-43: HOLD the composition-root-owned registry by reference. Keyed on the
+		# (venue, account_id) PAIR — see DEFAULT_ACCOUNT_ID (D-27/MPORT-07). The same
+		# object VenueAccountManager.bring_online writes into, so a brought-online
+		# account is routable here with no reach-in from the manager to this handler.
+		self.exchanges: dict[tuple[str, str], Optional[AbstractExchange]] = exchange_registry
 
-		self.logger.info('Execution Handler initialized (exchanges resolved via VenueBundles)')
+		self.logger.info('Execution Handler initialized (exchange registry injected)')
 
 	def update_config(self, updates: Dict[str, Any]) -> None:
 		"""Update execution configuration at runtime (D-07/D-08/D-09).
@@ -281,68 +338,6 @@ class ExecutionHandler(AbstractExecutionHandler):
 			except Exception as e:
 				self.logger.error('Error matching resting orders on venue/account %s: %s',
 								 key, str(e), exc_info=True)
-
-	
-	def init_exchanges(self) -> dict[tuple[str, str], Optional[AbstractExchange]]:
-		"""
-		RESOLVE the wired exchanges through ``VenueBundles`` (D-06/D-08).
-
-		The handler MINTS NOTHING. The venue plugin behind the memo builds the
-		exchange from its own run-derived ``ExchangeConfig`` and the shared seeded
-		RNG (D-17/D-07), exactly as the OKX plugin builds its ``OkxExchange``.
-		Each exchange still manages its own fee/slippage models.
-		"""
-		# D-08: ASK the shared memo. ``spec=None`` because ``PaperVenuePlugin.build_bundle``
-		# reads no spec field at all (unlike the OKX arm, which reads spec.account_id) —
-		# passing a synthesized stand-in spec would invent a value nothing consumes.
-		#
-		# Only the PAPER arm is resolved here. The OKX arm is registered by the live
-		# root's per-account loop (``assemble_venues`` + the registration loop in
-		# ``build_live_system``), which knows the account set; this seam has no way to
-		# enumerate accounts and must not guess one.
-		bundle = self._venue_bundles.get(COMPUTE_VENUE, DEFAULT_ACCOUNT_ID, None)
-		simulated = bundle.exchange
-		# D-05: ONE venue name for the simulated fill engine — ``'paper'``.
-		# Backtest and live-paper are the SAME behaviour (a simulated fill
-		# engine over computed accounts), so they carry one name, not a
-		# synonym. The former ``('simulated', ...)``/``('csv', ...)`` alias pair
-		# (two keys, one object) and the dead ``('ccxt', ...): None`` placeholder
-		# are both RETIRED IN FULL — no transitional alias. A portfolio's
-		# ``exchange``/``venue_name`` is ``'paper'`` (D-19), so its orders land
-		# on this single key.
-		#
-		# D-27: keyed on the (venue, account_id) PAIR. The paper venue is
-		# single-account, so it pairs with DEFAULT_ACCOUNT_ID. Only the venue
-		# half changed here; the key SHAPE is untouched.
-		exchanges: dict[tuple[str, str], Optional[AbstractExchange]] = {
-			(COMPUTE_VENUE, DEFAULT_ACCOUNT_ID): simulated,
-		}
-
-		# Connect to exchanges that support it. Dedup by instance identity: two
-		# keys may resolve to one exchange object (post-D-05 that means two
-		# ACCOUNTS on one venue, never two venue names), and connecting it once
-		# avoids a misleading second "Successfully connected" log for the
-		# idempotent no-op call (IN-03).
-		# D-27: identity-based for the same reason as the on_market_data dedup —
-		# it collapses shared objects, never distinct per-account exchanges.
-		seen_connect: set[int] = set()
-		for exchange_key, exchange in exchanges.items():
-			if exchange is None or id(exchange) in seen_connect:
-				continue
-			seen_connect.add(id(exchange))
-			exchange_name = exchange_key[0]
-			try:
-				connection_result = exchange.connect()
-				if connection_result.success:
-					self.logger.info('Successfully connected to %s exchange', exchange_name)
-				else:
-					self.logger.warning('Failed to connect to %s exchange: %s',
-									   exchange_name, connection_result.error_message)
-			except AttributeError:
-				# Exchange doesn't support connection management (backward compatibility)
-				self.logger.debug('Exchange %s does not support connection management', exchange_name)
-		
-		return exchanges
 
 	def get_exchange_health(self, exchange_name: Optional[str] = None) -> dict[str, Any]:
 		"""

@@ -52,6 +52,7 @@ from itrader.events_handler.full_event_handler import EventHandler
 from itrader.execution_handler.execution_handler import (
 	COMPUTE_VENUE,
 	ExecutionHandler,
+	seed_exchange_registry,
 )
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
@@ -73,6 +74,9 @@ if TYPE_CHECKING:
 	# pulled onto this module's import graph; the annotation is a string
 	# forward-ref and stays unevaluated at runtime.
 	from itrader.execution_handler.fee_model.base import FeeModel
+	# D-43: the registry ELEMENT type, for the ``exchange_registry`` annotation only.
+	# Guarded so ``AbstractExchange`` stays off this module's runtime import graph.
+	from itrader.execution_handler.exchanges.base import AbstractExchange
 
 
 @dataclass
@@ -121,6 +125,7 @@ def compose_engine(
 	system_store: Optional[Any] = None,
 	error_policy: Optional[Any] = None,
 	strategy_catalog: Optional[Any] = None,
+	exchange_registry: Optional[dict[tuple[str, str], "Optional[AbstractExchange]"]] = None,
 	route_orders_by_account: bool = False) -> Engine:
 	"""Wire the shared component graph from a SPEC-FREE infra ``ctx`` (D-01/D-04).
 
@@ -206,6 +211,16 @@ def compose_engine(
 		the caller and no concrete type may land on this module's import graph.
 		``None`` (the backtest default) leaves the D-10 LOUD-reject on a catalog-less
 		``add`` reachable, so no external payload can be instantiated.
+	exchange_registry : Optional[dict[tuple[str, str], Optional[AbstractExchange]]]
+		The composition-root-owned ``(venue, account_id) -> exchange`` map (D-43). On the
+		backtest / in-memory default it is ``None`` and CREATED here; the live root passes
+		its OWN reference so ``VenueAccountManager.bring_online`` writes the SAME map
+		``ExecutionHandler`` reads. Either way the paper arm is seeded (and connected)
+		through ``seed_exchange_registry`` — the execution-domain helper the retired
+		``ExecutionHandler.init_exchanges`` became — so the handler no longer privately
+		owns the registry. This is the D-43 cut edge: extracting this map dissolves the
+		four-node LIVE construction cycle without churning the ~10 tree-wide
+		``.exchanges`` reader sites, since it stays a plain dict.
 	"""
 	# D-01/D-04: store + feed are INJECTED on ctx by the mode factory — compose reads
 	# them uniformly (backtest: real CsvPriceStore + BacktestBarFeed; live: store=None
@@ -243,8 +258,17 @@ def compose_engine(
 	# and reaches the exchange through the PLUGIN (which the memo calls), so the
 	# handler no longer carries an rng of its own — the ctx object itself is what
 	# flows, never a fresh equal-seeded one: identity is the contract.
+	#
+	# D-43: the (venue, account_id) -> exchange registry is composition-root-owned.
+	# On the backtest / in-memory default it is CREATED here; the live root passes its
+	# OWN reference so VenueAccountManager.bring_online writes the SAME map this handler
+	# reads. Either way the paper arm is seeded (and connected) through the shared
+	# execution-domain helper before the handler is built over the map.
+	if exchange_registry is None:
+		exchange_registry = {}
+	seed_exchange_registry(exchange_registry, venue_bundles)
 	execution_handler = ExecutionHandler(
-		ctx.bus, venue_bundles=venue_bundles,
+		ctx.bus, exchange_registry=exchange_registry,
 		portfolio_read_model=portfolio_handler if route_orders_by_account else None)
 
 	# Fee-model PROVIDER for the admission cash-reservation gate (D-04/D-18/D-39).

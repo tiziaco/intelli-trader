@@ -57,6 +57,32 @@ def backtest_venue_bundles(
     return VenueBundles(registry, ConnectorProvider({}), ctx)
 
 
+def backtest_exchange_registry(
+    bus: Any,
+    *,
+    exchange_config: Optional[Any] = None,
+    rng: Optional[random.Random] = None,
+) -> Any:
+    """Build the backtest-shaped ``(venue, account_id) -> exchange`` registry (D-43).
+
+    ``ExecutionHandler`` no longer builds/holds its own registry — the map is
+    composition-root-owned and injected (D-43). Every direct-construction test site that
+    builds an ``ExecutionHandler`` therefore needs the SAME seed production uses: build the
+    backtest bundles, then seed the paper exchange into a fresh dict through the shared
+    ``seed_exchange_registry`` helper (the execution-domain function the retired
+    ``init_exchanges`` became). This is the exact recipe ``compose_engine`` runs, so a
+    directly-built handler resolves the identical paper exchange under the same pair key.
+    """
+    from itrader.execution_handler.execution_handler import seed_exchange_registry
+
+    registry: dict[tuple[str, str], Any] = {}
+    seed_exchange_registry(
+        registry,
+        backtest_venue_bundles(bus, exchange_config=exchange_config, rng=rng),
+    )
+    return registry
+
+
 def in_memory_state_storage() -> Any:
     """A throwaway in-memory ``PortfolioStateStorage`` for a leaf-focused test.
 

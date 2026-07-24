@@ -155,10 +155,17 @@ class VenueAccountManager:
         per ``(venue, account_id)`` tree-wide.
     connectors :
         The shared ``ConnectorProvider``, threaded verbatim into ``assemble_venue``.
-    execution_handler :
-        The handler whose ``exchanges`` registry ``bring_online`` writes. Typed ``Any``
-        for the reason ``bundles.py`` types its own collaborators ``Any``: naming the
-        concrete handler would drag ``SimulatedExchange`` onto this module's import graph.
+    registry :
+        The composition-root-owned ``(venue_name, account_id) -> exchange`` map (D-43).
+        The SAME object ``ExecutionHandler`` holds and reads on order; ``bring_online``
+        WRITES each brought-online exchange into it under the row's pair. Replacing the
+        former ``execution_handler`` collaborator with the bare map is the D-43 cut:
+        the manager no longer reaches THROUGH the execution handler
+        (``execution_handler.exchanges[...] = ...``), so the false ``VAM ->
+        execution_handler`` construction edge is gone and the four-node LIVE cycle is
+        dissolved. Typed ``Any`` for the reason ``bundles.py`` types its own
+        collaborators ``Any``: naming the concrete registry element type would drag
+        ``AbstractExchange`` onto this module's import graph.
     alert_sink :
         The CRITICAL-escalation egress handed to each ``VenueLifecycle`` so the D-04
         trust-on-first-use venue-identity guard can alert. Required, not optional: an
@@ -179,7 +186,7 @@ class VenueAccountManager:
         store: VenueAccountStore,
         bundles: VenueBundles,
         connectors: ConnectorProvider,
-        execution_handler: Any,
+        registry: Any,
         *,
         alert_sink: Any,
         feed_binder: Any,
@@ -187,7 +194,7 @@ class VenueAccountManager:
         self._store = store
         self._bundles = bundles
         self._connectors = connectors
-        self._execution_handler = execution_handler
+        self._registry = registry
         self._alert_sink = alert_sink
         self._feed_binder = feed_binder
         # Keyed on the PAIR, the same key the exchange registry, the connector memo and
@@ -445,7 +452,11 @@ class VenueAccountManager:
         # registration for a connector-less (paper) bundle, which left a NAMED paper
         # account unroutable: ``on_order`` resolves the portfolio's real account, so the
         # lookup missed and failed closed. Registration here is unconditional.
-        self._execution_handler.exchanges[(venue_name, account_id)] = bundle.exchange
+        #
+        # D-43: write the manager's OWN injected registry — the SAME map object
+        # ``ExecutionHandler`` reads on order — never a reach-in through the handler.
+        # This is the one edge whose extraction dissolves the LIVE construction cycle.
+        self._registry[(venue_name, account_id)] = bundle.exchange
         # (4)
         record = OnlineVenueAccount(spec=spec, bundle=bundle, lifecycle=lifecycle)
         self._online[(venue_name, account_id)] = record

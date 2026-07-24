@@ -1625,10 +1625,19 @@ def build_live_system(
     # (venue, account_id) — two OkxExchange objects per account would double-spawn that
     # account's fill/order streams.
     venue_bundles = VenueBundles(exec_registry, connectors, ctx)
+    # D-43: the ONE composition-root-owned (venue, account_id) -> exchange map, created
+    # HERE — BEFORE compose — so BOTH the execution handler (built inside compose, reads
+    # it on order) and VenueAccountManager (built below, writes each brought-online
+    # exchange into it) hold the SAME object. This is the map that replaces VAM's former
+    # reach-in through ``execution_handler.exchanges`` — the D-43 cut that dissolves the
+    # four-node LIVE construction cycle. Distinct from ``exec_registry`` above (the venue
+    # PLUGIN registry the bundle memo builds over); this is the exchange OBJECT registry.
+    exchange_registry: Dict[tuple, Any] = {}
     engine = compose_engine(
         ctx, venue_bundles=venue_bundles, results_store=None,
         alert_sink=alert_sink, system_store=system_store, error_policy=error_policy,
         strategy_catalog=strategy_catalog,
+        exchange_registry=exchange_registry,
         # D-27/MPORT-07: LIVE resolves each order's venue account from its
         # portfolio through the injected read-model, so an account's orders can
         # never be submitted through another account's authenticated session.
@@ -1719,11 +1728,14 @@ def build_live_system(
         # store contract (D-21) holds. It shares the ONE ``venue_bundles`` memo and the ONE
         # ``connectors`` provider the execution arm holds (D-08), so one exchange and one
         # connector exist per (venue, account_id) tree-wide.
+        # D-43: it receives the shared ``exchange_registry`` (the SAME map compose handed
+        # the execution handler), NOT the execution handler itself. ``bring_online`` writes
+        # that map directly, so the false ``VAM -> execution_handler`` edge is gone.
         venue_manager = VenueAccountManager(
             venue_account_store,
             venue_bundles,
             connectors,
-            execution_handler,
+            exchange_registry,
             alert_sink=alert_sink,
             feed_binder=feed_binder,
         )

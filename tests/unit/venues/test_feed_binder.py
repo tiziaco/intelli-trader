@@ -215,7 +215,7 @@ def _streaming_manager() -> tuple[VenueAccountManager, VenueAccountStore, _Recor
         store,
         _StreamingBundles(),
         ConnectorProvider({}),
-        SimpleNamespace(exchanges={}),
+        {},  # D-43: the bare (venue, account_id) -> exchange registry
         alert_sink=LogAlertSink(),
         feed_binder=binder,
     )
