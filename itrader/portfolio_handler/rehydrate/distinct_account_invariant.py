@@ -78,6 +78,17 @@ def assert_distinct_accounts(
     Zero and one portfolio both pass vacuously; that is the MPORT-03 empty edge, and it is
     today's behaviour for every live boot in the suite.
 
+    RETIRED rows never reach here (D-32/ACCT-10). The only production caller feeds this
+    ``read_all()`` (``live_trading_system`` boot), and ``read_all`` already filters
+    ``is_deleted`` at the store (11.2-02), so a retired portfolio has already released its
+    ``(venue_name, account_id)`` pair before this check runs — its successor can claim the
+    account WITHOUT tripping the distinct-account invariant. No ``is_deleted`` logic is added
+    HERE deliberately: it would be dead code that never sees a retired row, and a second
+    filter is a second place the rule could drift from the store's. A PAUSED
+    (``enabled=False``) portfolio, by contrast, IS returned by ``read_all`` and DOES still
+    claim its account here — correctly, per D-32: pausing keeps the account, so re-enabling
+    can never collide with a successor.
+
     The persisted x persisted layer stands over the database's own
     ``UniqueConstraint('venue_name', 'account_id')`` as belt-and-braces: the DB binds
     out-of-band writers this code never sees, and this layer turns a raw ``IntegrityError``
