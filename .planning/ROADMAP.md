@@ -702,7 +702,7 @@ Plans:
 
 **Wave 7** *(blocked on Wave 6; the two run in parallel)*
 
-- [ ] 11.2-12-PLAN.md — ACCT-08 `all_portfolios()`/`has_portfolio()`, the surviving `_portfolios` reach-in converted, and WR-02's degrade guard moved inside **both** `_layer_persisted_overrides` loops (ACCT-08)
+- [x] 11.2-12-PLAN.md — ACCT-08 `all_portfolios()`/`has_portfolio()`, the surviving `_portfolios` reach-in converted, and WR-02's degrade guard moved inside **both** `_layer_persisted_overrides` loops (ACCT-08)
 - [x] 11.2-13-PLAN.md — ACCT-09 `FillEvent(REFUSED)` on both surviving fail-closed paths with two new `ExecutionErrorCode` members (D-42), the unreachable branch deleted, and ACCT-06's **three** phantom-invariant docstrings corrected (ACCT-06, ACCT-09)
 
 **Wave 8** *(blocked on Wave 7)*
