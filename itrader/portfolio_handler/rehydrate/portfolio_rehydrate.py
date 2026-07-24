@@ -30,21 +30,23 @@ strategy registry's decision and the reasoning carries over with more force: a d
 portfolio orphans its open positions and its cash, and makes them unreachable across the
 restart. ``enabled`` is a runtime state, never a load filter.
 
-**Idempotent within a boot.** A portfolio whose id is already registered is skipped rather
-than re-created — ``add_portfolio`` loud-rejects a duplicate id (11-05), so without this
-guard a second call would raise instead of no-op'ing.
+**Materialize-only (D-25, 11.2-09).** The definition row already exists, so rehydrate calls
+the handler's public ``materialize`` verb (build the leaf + register) — NOT ``add_portfolio``
+and NOT ``create``. It never re-enters the durable write, and never reaches the handler's
+private ``_portfolios`` registry. The duplicate-id guard lives in ``materialize`` now, so a
+genuinely duplicate id still fails loud; within one boot ``read_all`` returns each id once.
 
 **Money** enters the Decimal domain through ``to_money`` on the stored value. The store
 already reads ``initial_cash`` back as ``Decimal`` (a ``Numeric`` column), so this is a
 re-entry rather than a conversion — but it is written explicitly so no future edit
 "simplifies" it into a float constructor.
 
-**FLAGGED — the portfolio-count limit now applies to rehydrated portfolios.**
-``add_portfolio`` enforces ``max_portfolios`` (default 50), and rehydrate routes through
-it deliberately (a second creation path would drift from the first). A restart with more
-persisted portfolios than the limit therefore fails LOUD partway through, leaving a
-PARTIAL set registered. Accepted at this phase's realistic count of two, and recorded here
-rather than silently accepted.
+**FLAGGED — the portfolio-count limit still applies to rehydrated portfolios.**
+``materialize`` enforces ``max_portfolios`` (default 50) at registration, and rehydrate
+routes through it (the same verb ``add_portfolio`` composes), so the limit is not a second
+copy that could drift. A restart with more persisted portfolios than the limit therefore
+fails LOUD partway through, leaving a PARTIAL set registered. Accepted at this phase's
+realistic count of two, and recorded here rather than silently accepted.
 
 **D-05/GATE-01** — this module is reached only from inside ``build_live_system``'s
 ``system_store is not None`` gate and is never barrel-exported, so the backtest import path
@@ -89,11 +91,12 @@ def rehydrate_portfolios(
 ) -> list[PortfolioId]:
     """Recreate every persisted portfolio on ``portfolio_handler`` (D-08).
 
-    Each row becomes an ``add_portfolio`` call carrying the row's ``portfolio_id``,
+    Each row becomes a ``materialize`` call (D-25) carrying the row's ``portfolio_id``,
     ``account_id`` and ``venue_name``, so the rebuilt portfolio reattaches to its own
-    child-table state. ``exchange`` is passed as the row's ``venue_name`` because D-07
-    makes ``venue_name`` the single source of truth for a portfolio's venue — there is
-    deliberately no ``exchange`` column to drift apart from it.
+    child-table state — a runtime BUILD only, never a durable re-write. ``exchange`` is
+    passed as the row's ``venue_name`` because D-07 makes ``venue_name`` the single source
+    of truth for a portfolio's venue — there is deliberately no ``exchange`` column to drift
+    apart from it.
 
     Returns
     -------
@@ -119,15 +122,27 @@ def rehydrate_portfolios(
     for row in rows:
         portfolio_id = PortfolioId(row["portfolio_id"])
 
-        # Idempotent within a boot: add_portfolio loud-rejects a duplicate id (11-05),
-        # so a second pass must skip rather than raise.
-        if portfolio_id in portfolio_handler._portfolios:
+        # Idempotent within a boot: a portfolio whose id is already registered is skipped,
+        # through the PUBLIC ``has_portfolio`` predicate (D-25/D-41) rather than the private
+        # ``_portfolios`` map. ``materialize`` loud-rejects a duplicate id, so without this a
+        # second pass (or a portfolio already present) would RAISE instead of no-op'ing.
+        if portfolio_handler.has_portfolio(portfolio_id):
             logger.debug(
                 "Portfolio %s is already registered — skipping its definition row",
                 portfolio_id)
             continue
 
-        portfolio_handler.add_portfolio(
+        # D-25 (11.2-09): rehydrate MATERIALIZES ONLY. The definition row already exists, so
+        # it must NOT re-enter creation — before the create/materialize split, rehydrate
+        # re-entered ``add_portfolio`` (write + build), which is the exact reason the write
+        # path needed an absence gate (skip if the row exists) to avoid a DELETE-then-INSERT
+        # wiping the operator's ``config_json`` on the first restart. It now calls the
+        # handler's PUBLIC ``materialize`` verb (build the leaf through the factory + register),
+        # never ``add_portfolio``, never ``create``, and never the private ``_portfolios``
+        # registry. The duplicate-id guard moved INTO ``materialize`` (D-25), so a genuinely
+        # duplicate id still fails loud there; within one boot ``read_all`` returns each id
+        # once, so it never fires here.
+        portfolio_handler.materialize(
             name=row["name"],
             # D-07: venue_name is the source of truth; `exchange` is derived from it.
             exchange=row["venue_name"],
