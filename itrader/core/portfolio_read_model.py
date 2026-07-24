@@ -223,11 +223,16 @@ class PortfolioReadModel(Protocol):
         handler import.
 
         Returns ``None`` when the portfolio names no account. The type is
-        ``str | None`` because ``Portfolio.account_id`` is optional: the default
-        exists ONLY so the byte-exact backtest composition-root call stays
-        untouched, and the composition-time invariant (plan 11-08) is what
-        refuses to start a LIVE system whose portfolios do not each name a
-        distinct account.
+        ``str | None`` because ``Portfolio.account_id`` is genuinely optional:
+        the default exists so the byte-exact backtest composition-root call
+        stays untouched, and the distinct-account invariant (plan 11-08) itself
+        explicitly PERMITS a portfolio to name no account — it refuses only to
+        start a LIVE system whose portfolios do not each name a DISTINCT
+        account, which is a different guarantee from requiring every portfolio
+        to name one. What actually requires a live order's portfolio to name a
+        provisioned account is resolved at the venue layer (the ACCT-03
+        materialize-time guard); when this returns ``None`` the order is
+        refused, never coerced to a default.
 
         Parameters
         ----------

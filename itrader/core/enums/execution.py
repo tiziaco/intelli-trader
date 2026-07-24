@@ -36,6 +36,19 @@ class ExecutionErrorCode(Enum):
     # Referenced by ExecutionTimeoutError; previously missing (would AttributeError
     # at raise-time). Added to back the existing timeout error path.
     TIMEOUT = "timeout"
+    # D-42 / ACCT-09: the order names a portfolio the engine does not know
+    # (``account_for`` -> ``get_portfolio`` raised ``PortfolioNotFoundError``).
+    # Operator fix: the order's ``portfolio_id`` is wrong or that portfolio was
+    # never registered — reconcile the caller's portfolio set with the engine's.
+    # A distinct code (not the ``INVALID_ORDER`` misnomer) so this class of
+    # 100%-silent-drop is greppable in the event stream and the mirror.
+    UNKNOWN_PORTFOLIO = "unknown_portfolio"
+    # D-42 / ACCT-09: no exchange is registered for this ``(venue, account_id)``
+    # pair, so the order cannot be routed to a session. Operator fix: bring the
+    # account online / seed the exchange registry for that venue before trading
+    # it — the routing map is misconfigured, not the order. Distinct from the
+    # ``EXCHANGE_ERROR`` misnomer (which means the venue itself failed).
+    UNREGISTERED_VENUE_ACCOUNT = "unregistered_venue_account"
 
 
 class ExchangeConnectionStatus(Enum):
