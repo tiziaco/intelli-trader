@@ -422,6 +422,137 @@ def test_upsert_defaults_is_deleted_to_false_and_exposes_it() -> None:
 
 
 # --------------------------------------------------------------------------------------
+# ACCT-10 / D-32 / D-33 — targeted set_enabled / set_deleted writers + the D-33 live read
+# --------------------------------------------------------------------------------------
+
+
+_AT2 = datetime(2026, 2, 2, 9, 0, 0, tzinfo=UTC)
+
+
+def _seed_portfolio(
+    portfolios: PortfolioDefinitionStore,
+    accounts: VenueAccountStore,
+    portfolio_id: UUID,
+    *,
+    venue: str = "okx",
+    account_id: str = "main",
+    enabled: bool = True,
+    config: object = None,
+) -> None:
+    """A parent account + one LIVE portfolio definition row for the lifecycle-writer tests."""
+    _seed_account(accounts, venue, account_id)
+    portfolios.upsert(
+        portfolio_id,
+        name="lifecycle",
+        venue_name=venue,
+        account_id=account_id,
+        initial_cash=Decimal("1000"),
+        enabled=enabled,
+        config=config,
+        at=_AT,
+    )
+
+
+def test_set_enabled_updates_only_enabled_and_leaves_every_other_column() -> None:
+    """ACCT-10/D-32 — set_enabled(False) is a TARGETED update; operator columns untouched."""
+    portfolios, accounts = _make_stores()
+    try:
+        config = {"type": "spot", "leverage": 3}
+        _seed_portfolio(portfolios, accounts, _PID_A, config=config)
+        before = portfolios.get(_PID_A)
+        assert before is not None
+
+        portfolios.set_enabled(_PID_A, False, _AT2)
+
+        after = portfolios.get(_PID_A)
+        assert after is not None
+        assert after["enabled"] is False
+        # Every OTHER column is byte-identical (the DELETE-then-INSERT upsert would clobber).
+        assert after["config"] == config
+        assert after["venue_name"] == before["venue_name"]
+        assert after["account_id"] == before["account_id"]
+        assert after["initial_cash"] == before["initial_cash"]
+        assert after["is_deleted"] is False
+        assert after["updated_at"] == _AT2
+    finally:
+        portfolios.dispose()
+
+
+def test_set_enabled_is_idempotent_and_never_raises() -> None:
+    """ACCT-10 idempotency — pausing twice leaves the row identical and does not raise."""
+    portfolios, accounts = _make_stores()
+    try:
+        _seed_portfolio(portfolios, accounts, _PID_A)
+        portfolios.set_enabled(_PID_A, False, _AT2)
+        portfolios.set_enabled(_PID_A, False, _AT2)
+        row = portfolios.get(_PID_A)
+        assert row is not None and row["enabled"] is False
+    finally:
+        portfolios.dispose()
+
+
+def test_set_deleted_true_removes_the_row_from_read_all_but_keeps_it_in_get() -> None:
+    """ACCT-10/D-32 — set_deleted(True) RETIRES: gone from rehydrate, still in the audit read."""
+    portfolios, accounts = _make_stores()
+    try:
+        config = {"type": "margin"}
+        _seed_portfolio(portfolios, accounts, _PID_A, config=config)
+
+        portfolios.set_deleted(_PID_A, True, _AT2)
+
+        assert portfolios.read_all() == []  # invisible to rehydrate
+        row = portfolios.get(_PID_A)  # SOFT: id-addressed read still sees it
+        assert row is not None
+        assert row["is_deleted"] is True
+        # Targeted: config survives the retire.
+        assert row["config"] == config
+        assert row["enabled"] is True
+        assert row["updated_at"] == _AT2
+    finally:
+        portfolios.dispose()
+
+
+def test_set_enabled_and_set_deleted_on_unknown_id_are_silent_no_ops() -> None:
+    """Both writers agree: an unknown portfolio_id matches zero rows and does not raise."""
+    portfolios, _accounts = _make_stores()
+    try:
+        portfolios.set_enabled(_PID_A, False, _AT2)
+        portfolios.set_deleted(_PID_A, True, _AT2)
+        assert portfolios.get(_PID_A) is None
+    finally:
+        portfolios.dispose()
+
+
+def test_live_portfolio_ids_for_account_returns_only_active_claimants() -> None:
+    """D-33 — the disable-refusal read: enabled AND NOT is_deleted; paused/retired excluded."""
+    portfolios, accounts = _make_stores()
+    try:
+        _seed_account(accounts, "okx", "shared")
+        _seed_account(accounts, "okx", "other")
+        # A LIVE portfolio on ('okx','shared').
+        portfolios.upsert(
+            _PID_A, name="live", venue_name="okx", account_id="shared",
+            initial_cash=Decimal("1000"), enabled=True, config=None, at=_AT)
+        # A portfolio on a DIFFERENT account — must not be reported for ('okx','shared').
+        portfolios.upsert(
+            _PID_B, name="elsewhere", venue_name="okx", account_id="other",
+            initial_cash=Decimal("1000"), enabled=True, config=None, at=_AT)
+
+        assert portfolios.live_portfolio_ids_for_account("okx", "shared") == [_PID_A]
+
+        # PAUSE it → no longer a live claimant (pausing releases the block, D-33).
+        portfolios.set_enabled(_PID_A, False, _AT2)
+        assert portfolios.live_portfolio_ids_for_account("okx", "shared") == []
+
+        # Re-enable then RETIRE → still not a live claimant (retired released its pair).
+        portfolios.set_enabled(_PID_A, True, _AT2)
+        portfolios.set_deleted(_PID_A, True, _AT2)
+        assert portfolios.live_portfolio_ids_for_account("okx", "shared") == []
+    finally:
+        portfolios.dispose()
+
+
+# --------------------------------------------------------------------------------------
 # D-32 partial-unique-index MECHANISM spike (11.2-02 task 1)
 # --------------------------------------------------------------------------------------
 #

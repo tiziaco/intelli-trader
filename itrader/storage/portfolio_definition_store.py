@@ -82,6 +82,7 @@ from sqlalchemy import (
     delete,
     insert,
     select,
+    update,
 )
 from sqlalchemy.engine import Engine, RowMapping
 
@@ -287,6 +288,106 @@ class PortfolioDefinitionStore:
         with self.engine.connect() as connection:
             rows = connection.execute(statement).mappings().all()
         return [self._row_to_dict(row) for row in rows]
+
+    def set_enabled(self, portfolio_id: UUID, enabled: bool, at: datetime) -> None:
+        """PAUSE / RESUME one portfolio — a TARGETED UPDATE of ``enabled`` only (ACCT-10/D-32).
+
+        ``enabled`` is D-32's **PAUSED** flag: a paused portfolio KEEPS its
+        ``(venue_name, account_id)`` account, so re-enabling it always works and can never
+        collide with a successor (contrast ``set_deleted`` — RETIRED — which releases the
+        pair). This writer is what makes an operator's deliberate pause DURABLE: before it,
+        the ``enabled=True`` hardcode in the ``upsert`` create path was the only writer of
+        the column, so a paused portfolio came back ACTIVE and trading on the next boot
+        (ACCT-10 / WR-04). ``rehydrate_portfolios``' present-but-inactive branch is reachable
+        by a real code path only once this persists ``enabled=False``.
+
+        A TARGETED UPDATE of ``enabled`` (and ``updated_at``) only, leaving ``config_json``,
+        ``venue_name``, ``account_id``, ``initial_cash`` and ``is_deleted`` UNTOUCHED. Like
+        ``VenueAccountStore.record_venue_uid``, it must NOT travel through the
+        operator-authored ``upsert`` path: ``upsert`` is a DELETE-then-INSERT (`:226`) and
+        would restate — and therefore be able to clobber — every operator-authored column,
+        wiping ``config_json`` on a mere pause.
+
+        Clock-free (D-07): the write timestamp is caller-supplied, matching every other
+        durable-write verb in the tree. ``portfolio_id`` is matched EXACTLY. A portfolio_id
+        with no row is a silent no-op (zero rows matched) — consistent with ``set_deleted``
+        and with ``record_venue_uid``'s sibling contract; the ACCT-10 lifecycle callers
+        (``deactivate_portfolio`` / ``activate_portfolio``) only reach this for a portfolio
+        that already has a definition row, so the no-match case is purely defensive.
+        Idempotent: calling it twice with the same value leaves the row byte-identical and
+        never raises. Parameterized Core against the constant ``Table`` (SEC-01).
+        """
+        with self.engine.begin() as connection:
+            connection.execute(
+                update(self.portfolios)
+                .where(self.portfolios.c.portfolio_id == portfolio_id)
+                .values(enabled=enabled, updated_at=at)
+            )
+
+    def set_deleted(self, portfolio_id: UUID, is_deleted: bool, at: datetime) -> None:
+        """RETIRE one portfolio — a TARGETED UPDATE of ``is_deleted`` only (ACCT-10/D-32).
+
+        ``is_deleted`` is D-32's **RETIRED** flag: a retired portfolio RELEASES its
+        ``(venue_name, account_id)`` pair (it leaves the partial unique index's live set) so a
+        SUCCESSOR portfolio can take the real venue account over — the exact SEQUENTIAL reuse
+        the plain constraint blocked. Deletion is SOFT: the row, its history and its seven
+        child tables all SURVIVE and stay reachable through ``get``; ``read_all`` (the
+        rehydrate read) is what stops a retired portfolio returning as a live one on the next
+        boot. This is deliberately NOT the same as ``set_enabled`` (PAUSED, keeps its
+        account) — collapsing the two flags (the superseded D-31) would make a paused
+        portfolio release its account and a re-enable then collide with whatever took it.
+
+        This writer is what ``delete_portfolio`` calls: before it, ``delete_portfolio``
+        flipped the in-memory state to ARCHIVED and dropped the registry entry but NEVER
+        touched the definition store, so a "deleted" portfolio returned with its persisted id
+        and its child tables reattached on restart (ACCT-10 / WR-04 — the real defect closed).
+
+        A TARGETED UPDATE of ``is_deleted`` (and ``updated_at``) only, leaving every other
+        column untouched — same reasoning as ``set_enabled``: never route through the
+        DELETE-then-INSERT ``upsert`` (would clobber ``config_json``). Clock-free (D-07),
+        exact-match ``portfolio_id``, silent no-op on no match (consistent with
+        ``set_enabled``), idempotent, parameterized Core (SEC-01).
+        """
+        with self.engine.begin() as connection:
+            connection.execute(
+                update(self.portfolios)
+                .where(self.portfolios.c.portfolio_id == portfolio_id)
+                .values(is_deleted=is_deleted, updated_at=at)
+            )
+
+    def live_portfolio_ids_for_account(
+        self, venue_name: str, account_id: str
+    ) -> list[UUID]:
+        """The LIVE portfolios claiming one ``(venue_name, account_id)`` pair (D-33/ACCT-10).
+
+        A "live" portfolio is one whose row has ``enabled = True AND NOT is_deleted`` — the
+        durable equivalent of an ACTIVE in-memory portfolio. This is the read D-33's
+        account-disable refusal resolves against: ``VenueAccountManager.set_enabled(...,
+        False)`` refuses while ANY live portfolio still references the account, and this read
+        is what tells it which ones. Resolving the refusal against the DURABLE store — rather
+        than a live in-memory portfolio collaborator — is deliberate: pause and retire are
+        durable, so the block a disable must respect is durable too, and the manager stays
+        free of a portfolio-handler back-reference (the one-directional layering).
+
+        A PAUSED portfolio (``enabled=False``) is deliberately EXCLUDED — pausing is D-33's
+        own sanctioned way to release the block — and so is a RETIRED one
+        (``is_deleted=True``), which has already released its pair. Ordered ``portfolio_id``
+        ASC so the refusal message lists the blocking ids reproducibly. Parameterized Core
+        (SEC-01).
+        """
+        statement = (
+            select(self.portfolios.c.portfolio_id)
+            .where(
+                self.portfolios.c.venue_name == venue_name,
+                self.portfolios.c.account_id == account_id,
+                self.portfolios.c.enabled.is_(True),
+                ~self.portfolios.c.is_deleted,
+            )
+            .order_by(self.portfolios.c.portfolio_id.asc())
+        )
+        with self.engine.connect() as connection:
+            rows = connection.execute(statement).all()
+        return [row[0] for row in rows]
 
     def _select_columns(self) -> Any:
         """The shared column projection every read uses (one place to keep them in sync)."""
