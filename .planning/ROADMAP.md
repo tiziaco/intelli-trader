@@ -697,13 +697,13 @@ Plans:
 
 **Wave 6** *(blocked on Wave 5; the two run in parallel)*
 
-- [ ] 11.2-10-PLAN.md — ACCT-04: all **eight** live-path `or DEFAULT_ACCOUNT_ID` sites dispositioned explicitly, plus a two-halved static gate covering the deletions and the KEPT backtest identity (ACCT-04)
-- [ ] 11.2-11-PLAN.md — ACCT-10 lifecycle persistence: targeted `set_enabled`/`set_deleted`, `deactivate_portfolio`/`activate_portfolio` (D-30), `delete_portfolio` writes `is_deleted` (D-32), and D-33's account-disable refusal (ACCT-10)
+- [x] 11.2-10-PLAN.md — ACCT-04: all **eight** live-path `or DEFAULT_ACCOUNT_ID` sites dispositioned explicitly, plus a two-halved static gate covering the deletions and the KEPT backtest identity (ACCT-04)
+- [x] 11.2-11-PLAN.md — ACCT-10 lifecycle persistence: targeted `set_enabled`/`set_deleted`, `deactivate_portfolio`/`activate_portfolio` (D-30), `delete_portfolio` writes `is_deleted` (D-32), and D-33's account-disable refusal (ACCT-10)
 
 **Wave 7** *(blocked on Wave 6; the two run in parallel)*
 
 - [ ] 11.2-12-PLAN.md — ACCT-08 `all_portfolios()`/`has_portfolio()`, the surviving `_portfolios` reach-in converted, and WR-02's degrade guard moved inside **both** `_layer_persisted_overrides` loops (ACCT-08)
-- [ ] 11.2-13-PLAN.md — ACCT-09 `FillEvent(REFUSED)` on both surviving fail-closed paths with two new `ExecutionErrorCode` members (D-42), the unreachable branch deleted, and ACCT-06's **three** phantom-invariant docstrings corrected (ACCT-06, ACCT-09)
+- [x] 11.2-13-PLAN.md — ACCT-09 `FillEvent(REFUSED)` on both surviving fail-closed paths with two new `ExecutionErrorCode` members (D-42), the unreachable branch deleted, and ACCT-06's **three** phantom-invariant docstrings corrected (ACCT-06, ACCT-09)
 
 **Wave 8** *(blocked on Wave 7)*
 
