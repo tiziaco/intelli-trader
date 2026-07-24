@@ -224,26 +224,34 @@ def test_the_backtest_compute_authority_yields_a_none_account_leaf() -> None:
 class _FakeManager:
     """A VenueAccountManager stand-in exposing only ``assert_available``.
 
-    ``available=False`` reproduces a not-provisioned / disabled / not-online account: the
-    check RAISES and no leaf is built (ACCT-03). ``available=True`` passes the gate.
+    ``available=False`` reproduces a refused account: the check RAISES with ``cause`` and no
+    leaf is built (ACCT-03). ``available=True`` passes the gate. ``cause`` defaults to
+    NOT_PROVISIONED (the missing-row case) and can be set to DISABLED to model an
+    ``enabled=False`` row — the two causes must stay distinguishable at the factory.
     """
 
-    def __init__(self, *, available: bool) -> None:
+    def __init__(
+        self, *, available: bool,
+        cause: str = VenueAccountNotProvisionedError.NOT_PROVISIONED,
+    ) -> None:
         self._available = available
+        self._cause = cause
         self.checked: list[tuple[str, str]] = []
 
     def assert_available(self, venue_name: str, account_id: str) -> None:
         self.checked.append((venue_name, account_id))
         if not self._available:
             raise VenueAccountNotProvisionedError(
-                venue_name, account_id,
-                VenueAccountNotProvisionedError.NOT_PROVISIONED)
+                venue_name, account_id, self._cause)
 
 
-def _live_authority(*, available: bool) -> tuple[VenueValidatedComputeAuthority, _FakeManager]:
+def _live_authority(
+    *, available: bool,
+    cause: str = VenueAccountNotProvisionedError.NOT_PROVISIONED,
+) -> tuple[VenueValidatedComputeAuthority, _FakeManager]:
     import queue
 
-    manager = _FakeManager(available=available)
+    manager = _FakeManager(available=available, cause=cause)
     compute = ComputeAccountAuthority(
         venue_bundles=backtest_venue_bundles(queue.Queue()), compute_venue="paper")
     return VenueValidatedComputeAuthority(manager=manager, compute=compute), manager
@@ -265,6 +273,26 @@ def test_live_authority_raises_on_a_missing_account_and_builds_no_leaf() -> None
 
     # The gate was consulted for the real pair.
     assert manager.checked == [("okx", "ghost")]
+
+
+def test_live_authority_distinguishes_a_missing_from_a_disabled_account() -> None:
+    """ACCT-03 causes stay distinguishable at the factory: NOT_PROVISIONED != DISABLED.
+
+    A missing row and a deliberately-disabled row are two different operator actions
+    (provision vs re-enable). Collapsing them would send an operator to re-provision an
+    account that already exists — which then refuses as a duplicate (D-11), leaving two
+    contradictory errors and no true one.
+    """
+    for cause in (
+        VenueAccountNotProvisionedError.NOT_PROVISIONED,
+        VenueAccountNotProvisionedError.DISABLED,
+    ):
+        authority, _ = _live_authority(available=False, cause=cause)
+        with pytest.raises(VenueAccountNotProvisionedError) as excinfo:
+            _factory(authority).materialize(
+                name="pf", exchange="okx", cash=_CASH,
+                account_id="acct", venue_name="okx")
+        assert excinfo.value.cause == cause
 
 
 def test_live_authority_builds_a_compute_leaf_carrying_the_real_pair_on_success() -> None:
