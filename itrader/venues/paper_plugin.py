@@ -170,11 +170,18 @@ class PaperVenuePlugin:
         # leaf quantizes at its own ledger boundary; ``to_money`` is idempotent for a
         # Decimal, so this is value-inert for every caller that already passes one.
         initial_cash = to_money(config.initial_cash)
+        # D-23 (11.2-08): the compute leaf CARRIES the (venue_name, account_id) pair
+        # so ``Portfolio.venue_name`` / ``.account_id`` read it back from the ONE
+        # storage site. The paper arm still never USES ``account_id`` for wiring (a
+        # simulated leaf computes its own truth), but it now RECORDS the identity so
+        # the portfolio and its leaf can never disagree about which account this is.
         if config.enable_margin:
             return SimulatedMarginAccount(
-                initial_cash=initial_cash, state_storage=state_storage)
+                initial_cash=initial_cash, state_storage=state_storage,
+                account_id=config.account_id, venue_name=config.venue_name)
         return SimulatedCashAccount(
-            initial_cash=initial_cash, state_storage=state_storage)
+            initial_cash=initial_cash, state_storage=state_storage,
+            account_id=config.account_id, venue_name=config.venue_name)
 
     def build_bundle(self, ctx: Any, spec: Any, connectors: Any) -> VenueBundle:
         """Build the paper ``VenueBundle`` over a freshly-minted ``SimulatedExchange``.
@@ -204,6 +211,7 @@ class PaperVenuePlugin:
             enable_margin: bool,
             account_id: str | None,
             state_storage: Any,
+            venue_name: str | None = None,
         ) -> Account:
             # 11-07: a thin adapter DELEGATING to the typed `new_account`, so the
             # bundle field and the Protocol method can never mint different accounts.
@@ -227,6 +235,7 @@ class PaperVenuePlugin:
             # a plausible-looking account nobody chose, opened at a float zero.
             return self.new_account(VenueAccountConfig(
                 account_id=account_id,
+                venue_name=venue_name,
                 initial_cash=initial_cash,
                 enable_margin=enable_margin,
                 state_storage=state_storage,

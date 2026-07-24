@@ -79,6 +79,7 @@ class VenueAccount(Account):
         quote_currency: str = "USDT",
         *,
         account_id: str,
+        venue_name: str | None = None,
         market_type: Literal["spot", "derivative"] = "derivative",
         symbol: str | None = None,
     ) -> None:
@@ -146,6 +147,11 @@ class VenueAccount(Account):
         # D-11: the venue account this leaf is scoped to (the account half of the
         # ``(venue_name, account_id)`` reference the rest of the phase keys on).
         self.account_id = account_id
+        # D-23 (11.2-08): the venue half of that same pair — the ONE storage site
+        # read back through ``Portfolio.venue_name``. Optional here because this
+        # phase does not yet re-wire the live venue-truth swap (that is deferred);
+        # the caller that builds this leaf under a known venue threads it in.
+        self.venue_name = venue_name
 
         # D-03: per-market-type venue-truth channel. ``_base`` is the base-currency
         # key read out of ``total`` for spot position truth (left leg of the pair).

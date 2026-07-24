@@ -112,6 +112,8 @@ class SimulatedCashAccount(Account):
         initial_cash: float | Decimal = 0.0,
         *,
         state_storage: "PortfolioStateStorage",
+        account_id: str | None = None,
+        venue_name: str | None = None,
     ) -> None:
         """Construct a spot cash leaf from cash alone (D-01, 11.1-03).
 
@@ -145,6 +147,16 @@ class SimulatedCashAccount(Account):
         """
         # D-19: lock removed — single-writer contract, see Portfolio docstring.
         self.logger = get_itrader_logger().bind(component="SimulatedCashAccount")
+
+        # D-23 (11.2-08): the (venue_name, account_id) identity this compute leaf
+        # belongs to — the ONE storage site for the pair, read back through the
+        # ``Portfolio.venue_name`` / ``.account_id`` properties. Optional (default
+        # None) because the byte-exact backtest oracle leaf names no account; the
+        # caller that DOES know the pair (``PortfolioHandler.add_portfolio`` via
+        # the paper plugin, or the ``PortfolioFactory``) threads it in so the leaf
+        # and the portfolio can never disagree about which account this is.
+        self.account_id = account_id
+        self.venue_name = venue_name
 
         # Cash balance with high precision (D-04 string entry via to_money;
         # quantize to the cash scale at this ledger boundary, D-03 HALF_UP).
@@ -706,6 +718,8 @@ class SimulatedMarginAccount(SimulatedCashAccount):
         initial_cash: float | Decimal = 0.0,
         *,
         state_storage: "PortfolioStateStorage",
+        account_id: str | None = None,
+        venue_name: str | None = None,
     ) -> None:
         """Construct a margin leaf from cash alone (D-01, 11.1-03).
 
@@ -722,7 +736,9 @@ class SimulatedMarginAccount(SimulatedCashAccount):
             on the seam, so a restart would drop locked margin as well as
             reservations.
         """
-        super().__init__(initial_cash, state_storage=state_storage)
+        super().__init__(
+            initial_cash, state_storage=state_storage,
+            account_id=account_id, venue_name=venue_name)
         # The Universe read-model used to resolve per-symbol Instruments for the
         # margin/liquidation math. Wired by the runner via ``set_universe`` (the
         # math-pulldown moves the universe seam with it); 01-03 re-points the

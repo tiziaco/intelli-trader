@@ -836,5 +836,7 @@ def test_okx_account_factory_is_keyword_only_and_has_no_catch_all() -> None:
         parameter.kind is inspect.Parameter.KEYWORD_ONLY
         for parameter in parameters.values()
     ), f"account_factory must be keyword-only: {parameters!r}"
+    # D-23 (11.2-08): ``venue_name`` joins the fixed set (carried onto the leaf).
     assert set(parameters) == {
-        "initial_cash", "enable_margin", "account_id", "state_storage"}
+        "initial_cash", "enable_margin", "account_id", "venue_name",
+        "state_storage"}

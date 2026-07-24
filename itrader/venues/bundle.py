@@ -62,6 +62,11 @@ class VenueAccountConfig:
       from here and from nowhere else. There is still NO fallback for an absent id —
       minting an unnamed account under whichever account a bundle happens to be for
       is precisely the conflation D-11 exists to prevent, so the venue arm RAISES.
+    * ``venue_name`` — D-23 (11.2-08): the venue half of the ``(venue_name,
+      account_id)`` pair, carried onto the built ``Account`` leaf so it is the ONE
+      storage site for the identity ``Portfolio.venue_name`` reads back. Optional
+      because the byte-exact backtest leaf names no venue; the caller that knows the
+      pair threads it in.
     * ``connectors`` / ``spec`` — the shared ``ConnectorProvider`` memo and the venue
       spec, so ``new_account`` resolves the connector for ITS OWN
       ``(venue, account_id)`` pair (D-12). Because the memo is pair-keyed, the
@@ -100,6 +105,7 @@ class VenueAccountConfig:
     """
 
     account_id: str | None = None
+    venue_name: str | None = None
     connectors: Any = None
     spec: Any = None
     quote_currency: str = "USDT"
