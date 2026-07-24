@@ -157,19 +157,57 @@ def compute_account(
     )
 
 
+def backtest_portfolio_factory(
+    bus: Any,
+    *,
+    environment: str = "backtest",
+    sql_engine: Any = None,
+    exchange_config: Optional[Any] = None,
+    rng: Any = None,
+) -> Any:
+    """A backtest-shaped ``PortfolioFactory`` over a ``ComputeAccountAuthority`` (D-24).
+
+    ``PortfolioHandler`` now builds every portfolio's account leaf THROUGH an injected
+    ``PortfolioFactory`` (D-24), whose account authority on the backtest arm is the
+    bundles-backed ``ComputeAccountAuthority`` (``account_id`` None, never raises). Every
+    direct-construction test site that creates portfolios needs the same recipe; this is
+    it. ``environment`` / ``sql_engine`` thread the durable state-storage selectors so the
+    factory scopes state storage exactly as the handler expects.
+    """
+    from itrader.portfolio_handler.portfolio_factory import (
+        ComputeAccountAuthority,
+        PortfolioFactory,
+    )
+
+    authority = ComputeAccountAuthority(
+        venue_bundles=backtest_venue_bundles(
+            bus, exchange_config=exchange_config, rng=rng),
+        compute_venue=COMPUTE_VENUE,
+    )
+    return PortfolioFactory(
+        authority=authority, environment=environment, sql_engine=sql_engine)
+
+
 def backtest_portfolio_handler(bus: Optional[Any] = None, **kwargs: Any) -> Any:
-    """A ``PortfolioHandler`` wired to a backtest-shaped ``VenueBundles`` (11.1-09).
+    """A ``PortfolioHandler`` wired to a backtest-shaped ``PortfolioFactory`` (D-24).
 
-    ``add_portfolio`` now builds each portfolio's account through the venue plugin
-    (D-02/D-08), so a handler constructed without the shared bundle memo REFUSES
-    rather than minting one inline. Every direct-construction test site that creates
-    portfolios needs the same recipe; this is it.
+    ``add_portfolio`` now builds each portfolio's account leaf THROUGH the injected
+    factory (D-24), so a handler constructed without one REFUSES rather than minting one
+    inline. Every direct-construction test site that creates portfolios needs the same
+    recipe; this is it.
 
-    The memo is built over the bus so the exchange the paper plugin mints publishes
-    onto the same queue the handler does — the shape production wires. The queue may
-    arrive positionally or as ``global_queue=``; both call shapes exist in the tree.
+    The factory's authority is built over the bus so the exchange the paper plugin mints
+    publishes onto the same queue the handler does — the shape production wires. The queue
+    may arrive positionally or as ``global_queue=``; both call shapes exist in the tree.
+    ``environment`` / ``sql_engine`` (if supplied) are threaded into the factory too so its
+    state-storage selectors match the handler's.
     """
     if bus is None:
         bus = kwargs.pop('global_queue')
-    kwargs.setdefault('venue_bundles', backtest_venue_bundles(bus))
+    if 'portfolio_factory' not in kwargs:
+        kwargs['portfolio_factory'] = backtest_portfolio_factory(
+            bus,
+            environment=kwargs.get('environment', 'backtest'),
+            sql_engine=kwargs.get('sql_engine'),
+        )
     return PortfolioHandler(bus, **kwargs)

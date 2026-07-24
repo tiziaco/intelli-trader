@@ -32,12 +32,10 @@ from itrader.events_handler.bus import EventBus
 from itrader.events_handler.events import OrderEvent
 from itrader.core.portfolio_read_model import PositionView
 from itrader.core.money import to_money, quantize
-from itrader.portfolio_handler.storage import PortfolioStateStorageFactory
-# 11.1-09 (D-02/D-05): the ONE home of the compute-venue name and the
-# single-account key half. ``venues/registry`` is import-inert by design (zero
-# runtime imports, the GATE-01 evidence), so this pulls no venue concretion onto
-# the backtest hot path.
-from itrader.venues.registry import COMPUTE_VENUE, DEFAULT_ACCOUNT_ID
+# D-24 (11.2-09): the state-storage seam, the compute-venue name and the
+# single-account key half MOVED to PortfolioFactory / ComputeAccountAuthority — the
+# handler no longer builds leaves or scopes state storage inline, so those imports
+# (PortfolioStateStorageFactory, COMPUTE_VENUE, DEFAULT_ACCOUNT_ID) are gone from here.
 from itrader.portfolio_handler.transaction import Transaction
 from itrader.events_handler.events import BarEvent, FillEvent, PortfolioUpdateEvent, PortfolioErrorEvent
 from itrader.config import PortfolioConfig, get_portfolio_preset
@@ -75,8 +73,7 @@ class PortfolioHandler:
     def __init__(self, global_queue: "EventBus", config_dir: str = "settings",
                  environment: str = "backtest", sql_engine: "Optional[Any]" = None,
                  *,
-                 venue_bundles: "Optional[Any]" = None,
-                 compute_venue: str = COMPUTE_VENUE) -> None:
+                 portfolio_factory: "Optional[Any]" = None) -> None:
         self.global_queue: "EventBus" = global_queue
         self.current_time: Any = 0
 
@@ -92,39 +89,19 @@ class PortfolioHandler:
         self._environment = environment
         self._sql_engine = sql_engine
 
-        # D-08 (11.1-09): the SAME ``VenueBundles`` instance ``ExecutionHandler``
-        # holds — one memo, so the two handlers provably see one exchange and one
-        # account factory per ``(venue, account_id)``. This handler asks it for the
-        # ACCOUNT view; the execution handler asks for the exchange. Typed
-        # ``Optional[Any]`` for the GATE-01 reason ``sql_engine`` is: naming
-        # ``VenueBundles`` concretely would put the venue substrate on this
-        # hot-path module's import graph.
-        #
-        # ``None`` is the DIRECT-CONSTRUCTION arm (focused unit tests that never
-        # call ``add_portfolio``), not a production shape: ``compose_engine``
-        # always injects the built memo. ``add_portfolio`` refuses loudly rather
-        # than falling back to minting an account itself — a fallback would
-        # reinstate the second account-kind selection D-03 exists to delete.
-        self._venue_bundles = venue_bundles
-
-        # D-02/D-03 (11.1-09): the venue whose plugin mints every portfolio's
-        # CONSTRUCTION-TIME account leaf — the COMPUTE leaf, on every path.
-        #
-        # This is deliberately venue-independent of where the portfolio TRADES. A
-        # live portfolio is rehydrated (``portfolio_rehydrate.py``) BEFORE
-        # ``_build_account_specs`` has built its per-account ``VenueSpec``, and a
-        # ``VenueAccount`` needs that spec's ``secret_ref`` to resolve a connector —
-        # so a venue-truth account cannot exist at portfolio-creation time. The
-        # construction-time leaf is therefore always the compute one, which is
-        # exactly what ``_attach_venue_accounts`` already documents that it expects
-        # ("a portfolio naming NO account keeps its construction-time compute leaf",
-        # and a compute-venue lifecycle is skipped outright). That function performs
-        # the live venue-truth swap AFTER assembly and SURVIVES this phase; its
-        # removal — and with it this parameter, which is the seam it needs — is
-        # deferred to Phase 12 as COMP-07 (owner sign-off 2026-07-22).
-        #
-        # Injected rather than hardcoded so there is ONE home for the name.
-        self._compute_venue = compute_venue
+        # D-24 (11.2-09): the SOLE leaf-builder. ``add_portfolio`` builds every
+        # portfolio's runtime graph — its id-scoped ``PortfolioStateStorage`` seam, its
+        # ``Account`` leaf and the ``Portfolio`` over them — THROUGH this injected factory,
+        # never through a handler-held ``VenueBundles`` or an inline compute-account
+        # builder. The factory holds a REAL, mode-agnostic authority at construction (LIVE:
+        # the ``VenueAccountManager`` — ACCT-03 raises on a missing/disabled/not-online
+        # account; BACKTEST: the compute authority — ``account_id`` None, never raises), so
+        # the account-kind selection and the venue-truth authority both live in ONE place.
+        # Typed ``Optional[Any]`` for the GATE-01 reason ``sql_engine`` is: naming
+        # ``PortfolioFactory`` concretely is unnecessary and ``None`` is the
+        # DIRECT-CONSTRUCTION arm (focused unit tests that never call ``add_portfolio``) —
+        # ``compose_engine`` always injects the built factory.
+        self._factory = portfolio_factory
 
         # 11-08 (D-07/D-08): the DEFINITION-row writer. Before this plan nothing in
         # the phase ever wrote the ``portfolios`` table — ``PortfolioDefinitionStore``
@@ -310,68 +287,45 @@ class PortfolioHandler:
                 if len(self._portfolios) >= self.max_portfolios:
                     raise PortfolioConfigurationError("max_portfolios", self.max_portfolios, "maximum portfolios limit reached")
                 
-                # D-02/D-03 (11.1-09): BUILD the account here, through the venue
-                # plugin, and hand it to the portfolio. ``Portfolio`` mints none and
-                # selects no account kind — ``VenuePlugin.new_account`` is the sole
-                # owner of the margin-vs-cash rule.
-                #
-                # The id is resolved BEFORE the portfolio exists because the live
-                # state-storage backend is scoped to it (the SQL store binds
-                # portfolio_id and scopes every query). Omitting it still mints a
-                # UUIDv7 through the single ``idgen`` singleton, exactly as
-                # ``Portfolio`` did — the id is never re-schemed (F-1, 11-05).
-                resolved_id = (
-                    portfolio_id if portfolio_id is not None
-                    else PortfolioId(idgen.generate_portfolio_id())
-                )
-                # D-07 (05.2-05): the durable state-storage seam. Built HERE rather
-                # than inside ``Portfolio`` so the account — constructed a few lines
-                # below, before any portfolio exists — lands on the SAME instance the
-                # portfolio's three other managers will hold. The live restart path
-                # (``state_storage.rehydrate(account)``) repopulates the reservation
-                # and locked-margin caches on THIS object, so two instances would
-                # silently drop every reservation across a restart while backtest,
-                # which reads those containers nowhere else, stayed byte-exact.
-                state_storage = PortfolioStateStorageFactory.create(
-                    self._environment,
-                    sql_engine=self._sql_engine,
-                    portfolio_id=resolved_id,
-                )
-                # The SAME money value reaches the ledger and the portfolio
-                # (T-11.1-42): computed once, passed to both. ``Portfolio`` re-checks
-                # the two agree and refuses loudly if they ever diverge.
-                opening_cash = to_money(cash)
-                # The config that drives the LEAF SELECTION must be the config the
-                # portfolio itself runs on — mirrors ``Portfolio.__init__``'s own
-                # ``config or get_portfolio_preset('default')`` resolution, so the
-                # margin flag and the portfolio can never disagree.
-                resolved_config = portfolio_config or get_portfolio_preset('default')
-                account = self._new_compute_account(
-                    opening_cash=opening_cash,
-                    enable_margin=resolved_config.trading_rules.enable_margin,
-                    account_id=account_id,
-                    venue_name=venue_name,
-                    state_storage=state_storage,
-                )
+                # A handler built without a factory (the direct-construction unit arm)
+                # cannot create portfolios: refuse LOUDLY rather than minting an account
+                # inline (D-24). ``compose_engine`` always injects the built factory, so
+                # this only fires in misconfigured wiring — where the tempting inline
+                # ``SimulatedCashAccount(...)`` fallback would reinstate the second
+                # account-kind selection D-03 exists to delete, invisibly.
+                if self._factory is None:
+                    raise PortfolioConfigurationError(
+                        "portfolio_factory", None,
+                        "PortfolioHandler was constructed without a PortfolioFactory, so "
+                        "it cannot build this portfolio's account leaf (D-24). Refusing to "
+                        "mint an account inline — that would put account-kind selection "
+                        "back in a second place.",
+                    )
 
-                # Create portfolio instance. D-07 (05.2-05): thread the durable
-                # environment + shared backend so the portfolio's state storage
-                # is the live SQL ledger when wired 'live' (default "backtest" =
-                # in-memory, oracle-dark).
-                portfolio = Portfolio(
+                # D-24 (11.2-09): BUILD the whole runtime graph — the id-scoped
+                # state-storage seam, the ``Account`` leaf and the ``Portfolio`` over them —
+                # THROUGH the injected factory, the SOLE leaf-builder. The handler mints no
+                # account and selects no account kind; the factory's authority owns that.
+                # On the LIVE arm that authority is the ``VenueAccountManager``, so a
+                # portfolio naming a not-provisioned / disabled / not-online account RAISES
+                # here (ACCT-03, ``VenueAccountNotProvisionedError``) rather than silently
+                # sitting on a compute leaf with ``is_venue_truth=False``; on backtest the
+                # compute authority builds an ``account_id=None`` leaf and never raises. The
+                # factory resolves the id (minting a UUIDv7 when ``portfolio_id`` is None,
+                # exactly as before — F-1, 11-05) and scopes the durable state storage to it.
+                # ``self._factory`` is typed ``Any`` (GATE-01), so pin the built object to
+                # ``Portfolio`` here — ``materialize`` is contracted to return one, and the
+                # annotation keeps ``portfolio.portfolio_id`` a real ``PortfolioId``.
+                portfolio: Portfolio = self._factory.materialize(
                     name=name,
                     exchange=exchange,
-                    cash=opening_cash,
-                    time=datetime.now(UTC),
+                    cash=cash,
                     config=portfolio_config,
-                    environment=self._environment,
-                    sql_engine=self._sql_engine,
-                    portfolio_id=resolved_id,
+                    portfolio_id=portfolio_id,
                     account_id=account_id,
                     venue_name=venue_name,
-                    account=account,
                 )
-                
+
                 # Store portfolio
                 self._portfolios[portfolio.portfolio_id] = portfolio
 
@@ -393,57 +347,6 @@ class PortfolioHandler:
                 self._publish_error_event(e, "add_portfolio", correlation_id)
                 raise
     
-    def _new_compute_account(self, *, opening_cash: Decimal, enable_margin: bool,
-                             account_id: Optional[str],
-                             venue_name: Optional[str] = None,
-                             state_storage: Any) -> Account:
-        """Build ONE portfolio's construction-time account through the venue plugin.
-
-        D-02/D-03 (11.1-09): the account is built by ``VenuePlugin.new_account`` —
-        reached through the ``VenueBundles`` memo ``ExecutionHandler`` also holds
-        (D-08), so both arms provably see one account factory per
-        ``(venue, account_id)``. Nothing here selects an account KIND; the flags are
-        forwarded and the plugin decides, which is what keeps that rule in one place.
-
-        The venue asked for is ``self._compute_venue``, NOT the portfolio's trading
-        venue, and that is deliberate — see the ``__init__`` note: a live portfolio is
-        rehydrated before its per-account ``VenueSpec`` exists, so a venue-truth
-        account cannot be minted at portfolio-creation time. Every portfolio, on
-        every path, gets a compute leaf here; ``_attach_venue_accounts`` performs the
-        live venue-truth swap afterwards (deferred to Phase 12 as COMP-07).
-
-        Refuses loudly when no ``VenueBundles`` was injected. The tempting fallback —
-        minting a ``SimulatedCashAccount`` inline — would reinstate the second
-        account-kind selection D-03 exists to delete, and would do it on a path that
-        only fires in misconfigured wiring, so nothing would go red.
-        """
-        if self._venue_bundles is None:
-            raise PortfolioConfigurationError(
-                "venue_bundles", None,
-                "PortfolioHandler was constructed without a VenueBundles provider, "
-                "so it cannot build this portfolio's account through the venue "
-                "plugin (D-02/D-08). Refusing to mint an account inline — that "
-                "would put account-kind selection back in a second place.",
-            )
-        bundle = self._venue_bundles.get(
-            self._compute_venue, DEFAULT_ACCOUNT_ID, None)
-        # D-23 (11.2-08): the leaf is minted under the compute-venue bundle
-        # (``self._compute_venue`` / ``DEFAULT_ACCOUNT_ID``) but CARRIES the
-        # portfolio's OWN ``(venue_name, account_id)`` — not the compute venue's —
-        # so ``Portfolio.venue_name`` / ``.account_id`` (read-only properties over
-        # this leaf) report the portfolio's real account. On backtest both are the
-        # portfolio's ('paper', None) so behaviour is byte-identical; on a live
-        # portfolio the leaf carries its ('okx', 'acct-…') pair, which is what
-        # ``_persist_definition`` writes to the ``portfolios`` row.
-        account: Account = bundle.account_factory(
-            initial_cash=opening_cash,
-            enable_margin=enable_margin,
-            account_id=account_id,
-            venue_name=venue_name,
-            state_storage=state_storage,
-        )
-        return account
-
     def _persist_definition(self, portfolio: Portfolio, cash: "float | Decimal") -> None:
         """Write this portfolio's DEFINITION row (D-07/D-08) — the 11-08 writer.
 

@@ -1633,11 +1633,93 @@ def build_live_system(
     # four-node LIVE construction cycle. Distinct from ``exec_registry`` above (the venue
     # PLUGIN registry the bundle memo builds over); this is the exchange OBJECT registry.
     exchange_registry: Dict[tuple, Any] = {}
+
+    # D-43/D-24 (the 11.2-09 keystone): build the account AUTHORITY the PortfolioFactory
+    # holds, and the factory itself, BEFORE compose — with a REAL collaborator at
+    # construction, no late-init, no Optional[VenueAccountManager], no post-construction
+    # attribute set (the exact anti-pattern this phase deletes). The mode difference lives
+    # ONLY here, in WHICH authority the root injects:
+    #   * SQL arm       -> VenueValidatedComputeAuthority: it asks the real
+    #                      VenueAccountManager to VALIDATE the pair (exists + enabled +
+    #                      brought-online) and RAISES VenueAccountNotProvisionedError on any
+    #                      failure (ACCT-03 — the security guarantee), then builds a COMPUTE
+    #                      leaf carrying the real pair. The venue-truth VenueAccount leaf
+    #                      cannot be the construction-time leaf (its balance raises until the
+    #                      first snapshot, T-05-07; Portfolio.__init__ reads balance), so that
+    #                      swap stays COMP-07 / Phase 12 (owner decision, wave 5, 2026-07-24).
+    #                      The manager no longer needs the execution handler (D-43 cut that
+    #                      edge), so it is built HERE, above compose, cycle-free.
+    #   * in-memory arm -> the bundles-backed compute authority (``account_id`` None, no
+    #                      validation, never raises), so an in-memory live boot that builds no
+    #                      manager is never stranded.
+    # The manager's ``_online`` map fills between here and the FIRST ``assert_available`` at
+    # rehydrate (the assembly loop below runs BEFORE rehydrate, D-20) — ordinary object
+    # lifecycle, not deferred wiring.
+    from itrader.portfolio_handler.portfolio_factory import (
+        ComputeAccountAuthority,
+        PortfolioFactory,
+        VenueValidatedComputeAuthority,
+    )
+
+    venue_manager: Optional[Any] = None
+    # 11.2-07 (D-36): the ONE feed's connection binder — "primary account" is deleted; the
+    # feed borrows the first available venue CONNECTION and re-borrows when that account is
+    # retired/disabled. It owns the provider build, the feed wiring and the re-borrow rule;
+    # the manager DRIVES it from bring_online. None on the in-memory arm (no store, no venue
+    # accounts) — the facade's feed-provider reads None-guard it.
+    feed_binder: Optional[Any] = None
+    if system_db_backend is not None:
+        from itrader.venues.feed_binder import FeedConnectionBinder
+        from itrader.venues.venue_account_manager import VenueAccountManager
+
+        feed_binder = FeedConnectionBinder(
+            feed=feed,
+            data_registry=data_registry,
+            ctx=ctx,
+            connectors=connectors,
+            global_queue=global_queue,
+        )
+        # The venue-ACCOUNT domain owner (D-21/D-26/D-27). It EXCLUSIVELY owns the durable
+        # ``venue_accounts`` store (non-None on this arm, gated exactly like ``system_store``
+        # — the D-21 non-Optional store contract holds), and shares the ONE ``venue_bundles``
+        # memo + ``connectors`` provider the execution arm holds (D-08). D-43: it receives
+        # the shared ``exchange_registry`` (the SAME map compose hands the execution handler),
+        # NOT the execution handler itself — ``bring_online`` writes that map directly, which
+        # is the cut that lets it be built here, above compose.
+        venue_manager = VenueAccountManager(
+            venue_account_store,
+            venue_bundles,
+            connectors,
+            exchange_registry,
+            alert_sink=alert_sink,
+            feed_binder=feed_binder,
+        )
+        # ACCT-03: validate through the manager (raise on missing/disabled/not-online), build
+        # a compute leaf carrying the real pair. Venue-truth leaf stays COMP-07 / Phase 12.
+        account_authority: Any = VenueValidatedComputeAuthority(
+            manager=venue_manager,
+            compute=ComputeAccountAuthority(
+                venue_bundles=venue_bundles, compute_venue=COMPUTE_VENUE),
+        )
+    else:
+        account_authority = ComputeAccountAuthority(
+            venue_bundles=venue_bundles, compute_venue=COMPUTE_VENUE)
+
+    # The sole leaf-builder ``PortfolioHandler`` constructs every portfolio through (D-24),
+    # holding its REAL authority at construction. ``environment`` / ``system_db_backend``
+    # select the durable state-storage backend the factory scopes per portfolio_id.
+    portfolio_factory = PortfolioFactory(
+        authority=account_authority,
+        environment=environment,
+        sql_engine=system_db_backend,
+    )
+
     engine = compose_engine(
         ctx, venue_bundles=venue_bundles, results_store=None,
         alert_sink=alert_sink, system_store=system_store, error_policy=error_policy,
         strategy_catalog=strategy_catalog,
         exchange_registry=exchange_registry,
+        portfolio_factory=portfolio_factory,
         # D-27/MPORT-07: LIVE resolves each order's venue account from its
         # portfolio through the injected read-model, so an account's orders can
         # never be submitted through another account's authenticated session.
@@ -1661,7 +1743,7 @@ def build_live_system(
     event_handler = engine.event_handler
 
     # ------------------------------------------------------------------
-    # PORTFOLIO + VENUE BOOTSTRAP (11.2-07, D-20/D-35 — the store-derived boot).
+    # PORTFOLIO + VENUE BOOTSTRAP (11.2-07/09, D-20/D-24/D-35 — the store-derived boot).
     #
     # 11.2-07 hands the boot to VenueAccountManager (built in 11.2-05/06) and DELETES the
     # six helpers that used to derive and mint account identity in this file
@@ -1671,28 +1753,22 @@ def build_live_system(
     # never re-derived from the spec. The CR-01 venue filter went with _account_ids_for_spec
     # / _attach_venue_accounts — ``read_enabled_for`` is already venue-scoped.
     #
-    # D-20 reorders the boot to: distinct-account check -> venue assembly -> rehydrate. Only
-    # ASSEMBLY moves (venue REGISTRATION was hoisted above compose by 11.1-07).
+    # D-20 reorders the boot to: distinct-account check -> venue assembly -> rehydrate. The
+    # feed_binder + VenueAccountManager are now built ABOVE compose (11.2-09/D-43/D-24: the
+    # manager no longer needs the execution handler, so the PortfolioFactory can hold it as a
+    # REAL authority at construction); only the ASSEMBLY (bring_online) + rehydrate run here.
+    #
+    # 11.2-09 (ACCT-03): with the factory holding the real VenueAccountManager, ``materialize``
+    # reaches ``account_for`` and a portfolio naming a not-provisioned / disabled / not-online
+    # account RAISES rather than silently sitting on a compute leaf. The assembly loop runs
+    # BEFORE rehydrate so the ``_online`` map is full when rehydrate materializes each row.
     #
     # venue_lifecycles / venue_accounts are declared here so the facade construction, the
     # StreamRecoveryHandler and the halt-signal wiring below see them on EVERY path. A boot
     # with no SQL spine (the in-memory fallback) has no store and therefore no manager and
     # no venue accounts — it comes up RUNNING and empty (D-09).
-    #
-    # venue_accounts stays EMPTY this plan. The per-portfolio account attach (the old
-    # ``_attach_venue_accounts``) is DELETED without a replacement HERE: wiring venue-truth
-    # account leaves onto portfolios is plan 11.2-08's PortfolioFactory ->
-    # VenueAccountManager.account_for work (COMP-07, owner sign-off), and the ACCT-03 raise
-    # is plan 11.2-09's. Until then live portfolios sit on their construction-time COMPUTE
-    # leaves (``is_venue_truth=False``) — a DELIBERATE, transient window, not a regression.
-    # The StreamRecoveryHandler's ``venue_accounts`` callable therefore refreshes nothing
-    # yet (it returns []).
     venue_lifecycles: Dict[str, Any] = {}
     venue_accounts: Dict[str, Any] = {}
-    # 11.2-07 (D-36): the feed-connection binder, built inside the store gate below with
-    # the manager it belongs to. None on the in-memory arm (no store, no venue accounts),
-    # exactly like ``venue_account_store`` — the facade's feed-provider reads None-guard it.
-    feed_binder: Optional[Any] = None
 
     if system_db_backend is not None:
         from sqlalchemy import inspect as _sa_inspect
@@ -1702,42 +1778,6 @@ def build_live_system(
         )
         from itrader.portfolio_handler.rehydrate.portfolio_rehydrate import (
             rehydrate_portfolios,
-        )
-        from itrader.venues.feed_binder import FeedConnectionBinder
-        from itrader.venues.venue_account_manager import VenueAccountManager
-
-        # 11.2-07 (D-36): the ONE feed's connection binder. "Primary account" is deleted —
-        # the feed borrows the first available venue CONNECTION and re-borrows when that
-        # account is retired or disabled. It owns the provider build (the SAME
-        # data_registry.build_provider path the root used), the feed wiring and the
-        # re-borrow rule; the manager DRIVES it from bring_online. Built here so the manager
-        # can hold it; it reads the same ctx / data_registry / connectors / feed / bus the
-        # rest of the boot already resolved.
-        feed_binder = FeedConnectionBinder(
-            feed=feed,
-            data_registry=data_registry,
-            ctx=ctx,
-            connectors=connectors,
-            global_queue=global_queue,
-        )
-
-        # The venue-ACCOUNT domain owner (D-21/D-26/D-27), built HERE — above the
-        # bootstrap — so assembly can run before rehydrate (D-20). It EXCLUSIVELY owns the
-        # durable ``venue_accounts`` store, and ``venue_account_store`` is non-None on this
-        # arm (gated exactly like ``system_store`` above), so the manager's non-Optional
-        # store contract (D-21) holds. It shares the ONE ``venue_bundles`` memo and the ONE
-        # ``connectors`` provider the execution arm holds (D-08), so one exchange and one
-        # connector exist per (venue, account_id) tree-wide.
-        # D-43: it receives the shared ``exchange_registry`` (the SAME map compose handed
-        # the execution handler), NOT the execution handler itself. ``bring_online`` writes
-        # that map directly, so the false ``VAM -> execution_handler`` edge is gone.
-        venue_manager = VenueAccountManager(
-            venue_account_store,
-            venue_bundles,
-            connectors,
-            exchange_registry,
-            alert_sink=alert_sink,
-            feed_binder=feed_binder,
         )
 
         # The store the handler already OWNS (DECOMP-01a). One instance, so the rehydrate

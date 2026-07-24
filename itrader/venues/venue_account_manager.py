@@ -608,13 +608,57 @@ class VenueAccountManager:
 
     # ------------------------------------------------------------------ resolution
 
+    def assert_available(self, venue_name: str, account_id: str) -> None:
+        """Assert this pair is PROVISIONED and ENABLED — raise otherwise (ACCT-03).
+
+        The VALIDATION half of the venue-account authority, WITHOUT constructing a leaf. It
+        is what delivers ACCT-03 as the RAISE (REQUIREMENTS.md: "a live portfolio naming no
+        venue account RAISES at composition time"): the live ``PortfolioFactory`` authority
+        (``VenueValidatedComputeAuthority``) calls this to GATE portfolio creation /
+        rehydrate, so a portfolio naming NO account, a not-provisioned account, or a DISABLED
+        one RAISES ``VenueAccountNotProvisionedError`` — the durable-invariant guarantee that
+        every live portfolio is backed by a real, enabled ``venue_accounts`` row.
+
+        **Scoped to EXISTS + ENABLED, deliberately NOT "brought online".** Under the owner's
+        wave-5 decision (2026-07-24) the live portfolio sits on a COMPUTE leaf carrying its
+        real pair — the venue-truth ``VenueAccount`` swap is COMP-07 / Phase 12 (a
+        ``VenueAccount`` cannot be the construction-time leaf: its balance raises until the
+        first snapshot, T-05-07, while ``Portfolio.__init__`` reads balance). A compute leaf
+        needs NO assembled venue session, so requiring "brought online" here would be
+        over-strict: it would crash a single-venue live boot on a validly-provisioned
+        FOREIGN-venue portfolio (e.g. a ``binance`` portfolio in an ``okx`` boot, whose venue
+        this process never assembles), which REQUIREMENTS.md does not ask for ("naming NO
+        venue account", not "on the assembled venue"). The ``brought-online`` check therefore
+        lives on ``account_for`` below — the COMP-07 venue-truth seam, where a real session
+        IS a precondition.
+
+        ``account_id`` is matched by EXACT STRING (no case-folding, trimming or coercion).
+        """
+        row = self._store.get(venue_name, account_id)
+        if row is None:
+            raise VenueAccountNotProvisionedError(
+                venue_name, account_id,
+                VenueAccountNotProvisionedError.NOT_PROVISIONED)
+        if not row["enabled"]:
+            raise VenueAccountNotProvisionedError(
+                venue_name, account_id,
+                VenueAccountNotProvisionedError.DISABLED)
+
     def account_for(
         self,
         venue_name: str,
         account_id: str,
         **portfolio_args: Any,
     ) -> Account:
-        """Resolve this pair into a constructed account leaf — the LIVE authority (ACCT-03/D-21).
+        """Resolve this pair into a constructed venue-truth leaf (COMP-07 / Phase 12 seam).
+
+        NOTE (11.2-09, wave 5): this constructs a venue-truth ``VenueAccount`` leaf and is
+        the COMP-07 / Phase-12 seam — it is NOT reached from the live portfolio-creation path
+        in this phase, because a venue-truth leaf cannot be the construction-time leaf
+        (``VenueAccount.balance`` raises until its first snapshot; ``Portfolio.__init__``
+        reads balance). The live ``PortfolioFactory`` authority calls ``assert_available``
+        (the RAISE) and builds a COMPUTE leaf instead. This method stays as the resolution
+        primitive COMP-07 will wire once the snapshot lifecycle lands.
 
         Asserts, in order, that the account EXISTS, is ENABLED, and was brought ONLINE in
         this process, then delegates construction to ``VenueBundles.account_for``. Only
@@ -635,17 +679,19 @@ class VenueAccountManager:
 
         ``portfolio_args`` are forwarded verbatim to the venue plugin's account factory.
         Do NOT pass ``account_id`` among them — it is forwarded from the pair, and the
-        pair is the identity.
+        pair is the identity. ``venue_name`` IS forwarded into the leaf's factory args
+        (11.2-09) so the built leaf CARRIES its real pair: the positional ``venue_name``
+        is the store/memo venue, and the leaf needs it too — ``Portfolio.venue_name`` reads
+        it back off the leaf (D-23). ``VenueBundles.account_for``'s first parameter is
+        ``venue`` (not ``venue_name``), so the keyword lands in the factory's
+        ``portfolio_args`` with no collision.
         """
-        row = self._store.get(venue_name, account_id)
-        if row is None:
-            raise VenueAccountNotProvisionedError(
-                venue_name, account_id,
-                VenueAccountNotProvisionedError.NOT_PROVISIONED)
-        if not row["enabled"]:
-            raise VenueAccountNotProvisionedError(
-                venue_name, account_id,
-                VenueAccountNotProvisionedError.DISABLED)
+        # EXISTS + ENABLED via ``assert_available`` (the shared ACCT-03 gate), then the
+        # ONLINE check here — a venue-truth leaf needs an assembled session, so ``online``
+        # (raising NOT_ONLINE) is a precondition for THIS seam though not for the
+        # compute-leaf authority.
+        self.assert_available(venue_name, account_id)
         record = self.online(venue_name, account_id)
         return self._bundles.account_for(
-            venue_name, account_id, spec=record.spec, **portfolio_args)
+            venue_name, account_id, spec=record.spec,
+            venue_name=venue_name, **portfolio_args)

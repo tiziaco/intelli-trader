@@ -755,6 +755,9 @@ def test_account_for_delegates_under_the_exact_pair() -> None:
         assert portfolio_args["initial_cash"] == Decimal("7")
         assert portfolio_args["enable_margin"] is True
         assert portfolio_args["state_storage"] is seam
+        # 11.2-09: the live leaf carries its real venue_name (forwarded into the
+        # factory's portfolio_args), so Portfolio.venue_name reports the real pair.
+        assert portfolio_args["venue_name"] == _VENUE
         assert account.account_id == "acct-1"
         assert account.seq == len(bundles.calls)
     finally:
