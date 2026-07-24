@@ -31,7 +31,8 @@ from .portfolio import (
     DuplicateVenueAccountError,
     DuplicateVenueAccountProvisionError,
     UnknownVenueAccountConfigKeyError,
-    VenueAccountNotProvisionedError
+    VenueAccountNotProvisionedError,
+    VenueAccountInUseError
 )
 
 # Order exceptions
@@ -91,6 +92,7 @@ __all__ = [
     'DuplicateVenueAccountProvisionError',
     'UnknownVenueAccountConfigKeyError',
     'VenueAccountNotProvisionedError',
+    'VenueAccountInUseError',
 
     # Order exceptions
     'OrderError',
