@@ -155,9 +155,15 @@ class Portfolio(object):
 			else PortfolioId(idgen.generate_portfolio_id())
 		)
 		self.name = name
-		self.account_id = account_id
+		# D-23 (11.2-08): ``account_id`` / ``venue_name`` are NO LONGER stored on the
+		# portfolio. They are read-only PROPERTIES over ``self.account`` (below) — the
+		# account leaf is the ONE storage site for the pair, so the portfolio's idea of
+		# its account can never drift from the leaf's own. The account is built with
+		# this identity by ``PortfolioHandler.add_portfolio`` (via the paper plugin) /
+		# the ``PortfolioFactory``; the ``account_id`` / ``venue_name`` constructor
+		# parameters survive only so existing call sites keep passing them, and the
+		# ``venue_name`` param still seeds the legacy ``exchange`` derivation (D-07).
 		# D-07: venue_name WINS when supplied; `exchange` is the legacy fallback.
-		self.venue_name = venue_name
 		self.exchange = venue_name if venue_name is not None else exchange
 		self.creation_time = time
 		self.current_time = time
@@ -243,6 +249,30 @@ class Portfolio(object):
 		self.transaction_manager = TransactionManager(self)
 		self.position_manager = PositionManager(self)
 		self.metrics_manager = MetricsManager(self)
+
+	@property
+	def venue_name(self) -> Optional[str]:
+		"""D-23 (11.2-08): the venue this portfolio's account belongs to.
+
+		A READ-ONLY property over ``self.account`` — the account leaf is the ONE
+		storage site for the ``(venue_name, account_id)`` pair. Two storage sites
+		for one identity is how a portfolio's idea of its account drifts from the
+		account leaf's own; a single source makes that drift structurally
+		impossible rather than merely guarded. No setter, on purpose — assigning
+		to it raises ``AttributeError``. Every prior reader
+		(``reconciliation_coordinator``, ``_persist_definition``) keeps working
+		because the attribute name survives.
+		"""
+		return self.account.venue_name
+
+	@property
+	def account_id(self) -> Optional[str]:
+		"""D-23 (11.2-08): the venue account this portfolio's orders reach.
+
+		Read-only over ``self.account`` (the single storage site for the pair) —
+		see ``venue_name`` for the drift rationale. No setter.
+		"""
+		return self.account.account_id
 
 	def _validate_initial_state(self, cash: float | Decimal) -> None:
 		"""Validate initial portfolio state.

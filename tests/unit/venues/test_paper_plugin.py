@@ -364,8 +364,11 @@ def test_paper_account_factory_is_keyword_only_and_has_no_catch_all() -> None:
         parameter.kind is inspect.Parameter.KEYWORD_ONLY
         for parameter in parameters.values()
     ), f"account_factory must be keyword-only: {parameters!r}"
+    # D-23 (11.2-08): ``venue_name`` joins the fixed set — the compute leaf carries
+    # the (venue_name, account_id) pair so ``Portfolio.venue_name`` reads it back.
     assert set(parameters) == {
-        "initial_cash", "enable_margin", "account_id", "state_storage"}
+        "initial_cash", "enable_margin", "account_id", "venue_name",
+        "state_storage"}
 
 
 def test_paper_account_factory_carries_every_knob_through_to_the_leaf() -> None:
@@ -386,7 +389,7 @@ def test_paper_account_factory_carries_every_knob_through_to_the_leaf() -> None:
 
     account = bundle.account_factory(
         initial_cash=4200.0, enable_margin=True, account_id=None,
-        state_storage=seam)
+        venue_name=None, state_storage=seam)
 
     assert isinstance(account, SimulatedMarginAccount)
     assert account._storage is seam
@@ -417,13 +420,21 @@ def test_paper_account_factory_has_no_defaulted_parameter() -> None:
         _fake_ctx(), _fake_spec(), _ExplodingConnectorProvider())
     parameters = inspect.signature(bundle.account_factory).parameters
 
+    # D-23 (11.2-08): ``venue_name`` is EXEMPT from the WR-08 no-default rule. That
+    # rule guards the four fail-loud knobs (cash / margin / account_id / persistence
+    # seam) whose absence is a SILENT SUBSTITUTION — a plausible account nobody chose.
+    # ``venue_name`` is pure identity carried onto the leaf: a ``None`` default is the
+    # honest "this leaf names no venue" (the byte-exact backtest case), NOT a
+    # fabricated value, so defaulting it is correct rather than a WR-08 defect.
     defaulted = [
         name for name, parameter in parameters.items()
         if parameter.default is not inspect.Parameter.empty
+        and name != "venue_name"
     ]
     assert not defaulted, (
-        "account_factory must carry NO defaults — a defaulted cash / margin / "
-        f"account-id / persistence seam is WR-08's defect: {defaulted!r}"
+        "account_factory must carry NO defaults on its fail-loud knobs — a defaulted "
+        "cash / margin / account-id / persistence seam is WR-08's defect: "
+        f"{defaulted!r}"
     )
 
 
@@ -493,9 +504,12 @@ def test_paper_new_account_enters_the_decimal_domain_before_the_leaf(
     real_cash_account = account_module.SimulatedCashAccount
 
     class _RecordingCashAccount(real_cash_account):  # type: ignore[valid-type,misc]
-        def __init__(self, initial_cash: Any = 0.0, *, state_storage: Any) -> None:
+        def __init__(self, initial_cash: Any = 0.0, *, state_storage: Any,
+                     account_id: Any = None, venue_name: Any = None) -> None:
             captured.append(initial_cash)
-            super().__init__(initial_cash, state_storage=state_storage)
+            super().__init__(
+                initial_cash, state_storage=state_storage,
+                account_id=account_id, venue_name=venue_name)
 
     monkeypatch.setattr(
         account_module, "SimulatedCashAccount", _RecordingCashAccount)

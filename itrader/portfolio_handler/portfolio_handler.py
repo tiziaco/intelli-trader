@@ -350,6 +350,7 @@ class PortfolioHandler:
                     opening_cash=opening_cash,
                     enable_margin=resolved_config.trading_rules.enable_margin,
                     account_id=account_id,
+                    venue_name=venue_name,
                     state_storage=state_storage,
                 )
 
@@ -394,6 +395,7 @@ class PortfolioHandler:
     
     def _new_compute_account(self, *, opening_cash: Decimal, enable_margin: bool,
                              account_id: Optional[str],
+                             venue_name: Optional[str] = None,
                              state_storage: Any) -> Account:
         """Build ONE portfolio's construction-time account through the venue plugin.
 
@@ -425,10 +427,19 @@ class PortfolioHandler:
             )
         bundle = self._venue_bundles.get(
             self._compute_venue, DEFAULT_ACCOUNT_ID, None)
+        # D-23 (11.2-08): the leaf is minted under the compute-venue bundle
+        # (``self._compute_venue`` / ``DEFAULT_ACCOUNT_ID``) but CARRIES the
+        # portfolio's OWN ``(venue_name, account_id)`` — not the compute venue's —
+        # so ``Portfolio.venue_name`` / ``.account_id`` (read-only properties over
+        # this leaf) report the portfolio's real account. On backtest both are the
+        # portfolio's ('paper', None) so behaviour is byte-identical; on a live
+        # portfolio the leaf carries its ('okx', 'acct-…') pair, which is what
+        # ``_persist_definition`` writes to the ``portfolios`` row.
         account: Account = bundle.account_factory(
             initial_cash=opening_cash,
             enable_margin=enable_margin,
             account_id=account_id,
+            venue_name=venue_name,
             state_storage=state_storage,
         )
         return account

@@ -330,6 +330,9 @@ class OkxVenuePlugin:
             connector,
             config.quote_currency,
             account_id=account_id,
+            # D-23 (11.2-08): carry the venue half of the pair onto the leaf so it is
+            # the ONE storage site ``Portfolio.venue_name`` reads back.
+            venue_name=getattr(config, "venue_name", None) or "okx",
             market_type=config.market_type,
             symbol=config.symbol,
         )
@@ -375,6 +378,7 @@ class OkxVenuePlugin:
         # call site mints THIS bundle's account rather than an unscoped one.
         account_config = VenueAccountConfig(
             account_id=account_id,
+            venue_name="okx",
             connectors=connectors,
             spec=spec,
             quote_currency=quote,
@@ -388,6 +392,7 @@ class OkxVenuePlugin:
             enable_margin: bool = False,
             account_id: str | None = None,
             state_storage: Any = None,
+            venue_name: str | None = None,
         ) -> Account:
             # 11-07: the former `(*args, **kwargs)` catch-all — which absorbed a
             # portfolio argument and returned ONE shared unscoped account with no

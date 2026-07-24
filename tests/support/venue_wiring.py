@@ -79,6 +79,8 @@ def compute_account(
     *,
     enable_margin: bool = False,
     state_storage: Optional[Any] = None,
+    account_id: Optional[str] = None,
+    venue_name: Optional[str] = None,
 ) -> Any:
     """The compute ``Account`` the paper plugin would mint for these settings (11.1-09).
 
@@ -118,6 +120,13 @@ def compute_account(
             initial_cash=initial_cash,
             enable_margin=enable_margin,
             state_storage=seam,
+            # D-23 (11.2-08): the compute leaf is the ONE storage site for the
+            # (venue_name, account_id) pair. A direct-construction test that wants
+            # its Portfolio to REPORT an identity must build the account with it —
+            # ``Portfolio.venue_name`` / ``.account_id`` now read the leaf, not a
+            # second copy the portfolio used to store.
+            account_id=account_id,
+            venue_name=venue_name,
         )
     )
 
