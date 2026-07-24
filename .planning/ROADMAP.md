@@ -689,7 +689,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3)*
 
-- [ ] 11.2-08-PLAN.md — D-23 one storage site for `(venue_name, account_id)` + D-24 `PortfolioFactory` owns the definition→runtime-graph mapping, wired at all three composition roots (ACCT-05)
+- [x] 11.2-08-PLAN.md — D-23 one storage site for `(venue_name, account_id)` + D-24 `PortfolioFactory` owns the definition→runtime-graph mapping, wired at all three composition roots (ACCT-05)
 
 **Wave 5** *(blocked on Wave 4)*
 
