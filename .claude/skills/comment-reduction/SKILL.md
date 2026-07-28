@@ -47,6 +47,8 @@ Real examples worth keeping:
 - **`Parameters` / `Returns` on `__init__` and every public method.** Reference material
   for a human reader at the call site. `Returns` should enumerate *why* a falsy value
   comes back when there are several paths — that is the part not derivable from the body.
+  A `Returns` block that only echoes the annotation (`Returns: Decimal` on `-> Decimal`)
+  is category 1: delete it. Keep `Raises`, which is never in the signature.
 - The failure mode a guard exists to prevent, especially when fail-fast does NOT trip.
 - Ordering constraints ("assert BEFORE release", "warmup BEFORE subscribe").
 - Thread-affinity rules and what breaks if violated.
