@@ -1,57 +1,49 @@
-"""VenueAccountManager — the venue-ACCOUNT domain owner (11.2-05, ACCT-01/02/03, D-21/26/27/34).
+"""VenueAccountManager — the venue-ACCOUNT domain owner.
 
 One durable ``venue_accounts`` row travels end to end through this class and nowhere
 else: ``provision`` writes it, ``bring_online`` turns it into a live runtime (a
 ``VenueSpec``, an assembled bundle, a registered exchange under the exact
 ``(venue_name, account_id)`` pair), and ``account_for`` resolves it into a constructed
-account leaf. Four properties are load-bearing; each is a defect if inverted.
+account leaf.
 
-**WHY ``bring_online`` has exactly ONE implementation, with boot as its bulk case
-(D-27).** An account provisioned at runtime must be usable in the SAME process, with no
-restart. The natural wrong shape is a boot-time assembly path plus a second "also
-assemble this new one" path beside it — two implementations that agree on the day they
-are written and diverge on every change after. Boot is instead
-``for row in read_enabled_for(venue): bring_online(row)``: the bulk case of the one
-operation. A half-built runtime is therefore not representable, and a provision
-interrupted between the durable write and ``bring_online`` leaves an enabled row the next
-boot brings online through that same single path.
+**WHY ``bring_online`` has exactly ONE implementation, with boot as its bulk case.** An
+account provisioned at runtime must be usable in the SAME process, with no restart. The
+natural wrong shape is a boot-time assembly path plus a second "also assemble this new
+one" path beside it — two implementations that agree the day they are written and diverge
+on every change after. Boot is instead
+``for row in read_enabled_for(venue): bring_online(row)``. A half-built runtime is not
+representable, and a provision interrupted between the durable write and ``bring_online``
+leaves an enabled row the next boot brings online through that same single path.
 
-**WHY provisioning lives HERE and not on the live facade (D-26).** It is reached as
+**WHY provisioning lives HERE and not on the live facade.** It is reached as
 ``system.venue_accounts.provision(...)``, mirroring how scripts already reach
-``system.portfolio_handler.add_portfolio(...)``. There is no
-``LiveTradingSystem.provision_venue_account`` and this milestone adds ZERO lines to
-``live_trading_system.py`` — that file may only shrink (D-35). ``bring_online`` is a
-DIRECT inline call with the same threading posture ``add_portfolio`` already has (D-28),
-never a queued CONTROL event: a queued provision would return before the account was
-usable and reintroduce the two-step timing this class exists to remove.
+``system.portfolio_handler.add_portfolio(...)``. ``bring_online`` is a DIRECT inline call
+with the same threading posture ``add_portfolio`` has, never a queued CONTROL event: a
+queued provision would return before the account was usable, reintroducing the two-step
+timing this class exists to remove.
 
-**WHY the degrade policy lives in the MANAGER, not the store (D-34).** A missing
+**WHY the degrade policy lives in the MANAGER, not the store.** A missing
 ``venue_accounts`` table is the fresh-deployment state, not a fault, so
 ``read_enabled_for`` warns and returns ``[]``. ANY other fault propagates LOUD. The probe
 is deliberately narrow — it tests for the TABLE and nothing else — because under
 DB-as-sole-truth a swallowed read means zero accounts, and every persisted portfolio then
-fails ACCT-03: N derived errors hiding one real cause. Keeping the whole policy here (and
-not in ``VenueAccountStore``) is what makes it unit-testable without booting a system.
+refuses: N derived errors hiding one real cause. Keeping the policy here rather than in
+``VenueAccountStore`` also makes it unit-testable without booting a system.
 
 **WHY it is not in the barrel.** ``venues/__init__.py`` is the GATE-01 acceptance
-evidence — it "imports NO concretion … so importing ``itrader.venues`` pulls nothing
-heavy". This module is imported DIRECTLY
-(``from itrader.venues.venue_account_manager import VenueAccountManager``) and is
-deliberately absent from that barrel, mirroring ``bundles.py`` and
-``connectors/provider.py``. It composes SQLAlchemy (through the store) and reaches
-``trading_system`` for the spec builder, so a barrel entry would put both on the backtest
-import graph the inertness gate protects. Every SQL / ``trading_system`` import below is
-LAZY and in-body for the same reason.
+evidence: it imports no concretion, so importing ``itrader.venues`` pulls nothing heavy.
+This module is imported DIRECTLY and is deliberately absent from that barrel, mirroring
+``bundles.py`` and ``connectors/provider.py``. It composes SQLAlchemy through the store
+and reaches ``trading_system`` for the spec builder, so a barrel entry would put both on
+the backtest import graph the inertness gate protects. Every SQL / ``trading_system``
+import below is LAZY and in-body for the same reason.
 
-Manager convention (``order_manager.py``): EXCLUSIVE ownership of its storage, no
-back-reference to a handler, and NO events-queue access — layering is one-directional
-(facade → manager → storage). Collaborators are RECEIVED at construction, never minted,
-and never ``Optional``: D-21 rejects ``VenueAccountManager(store=None)`` by name, which is
-why the mode-agnostic CONSTRUCTION primitive is ``VenueBundles.account_for`` (both
+Manager convention: EXCLUSIVE ownership of its storage, no back-reference to a handler,
+and NO events-queue access — layering is one-directional (facade → manager → storage).
+Collaborators are RECEIVED at construction, never minted, and never ``Optional``, which
+is why the mode-agnostic CONSTRUCTION primitive is ``VenueBundles.account_for`` (both
 backtest arms already build a ``VenueBundles``) and this class is the LIVE AUTHORITY over
 it.
-
-Indentation: 4-SPACE (``venues/`` package convention). ``mypy --strict`` applies.
 """
 
 from __future__ import annotations
@@ -81,46 +73,42 @@ if TYPE_CHECKING:
     from itrader.venues.lifecycle import VenueLifecycle
     from itrader.venues.venue_uid_guard import VenueUidGuardOutcome
 
-#: The one table name the D-34 fresh-deployment probe tests for. Narrow BY DESIGN.
+#: The one table name the fresh-deployment probe tests for. Narrow BY DESIGN.
 _ACCOUNTS_TABLE = "venue_accounts"
 
 #: The EXHAUSTIVE set of ``venue_accounts.config_json`` keys ``bring_online`` merges
-#: onto an account's ``VenueSpec`` (11.2-06, D-38/D-12).
+#: onto an account's ``VenueSpec``.
 #:
-#: **An EXPLICIT ALLOWLIST, and an unrecognised key RAISES.** These three keys are the
-#: ones that decide where an account's money goes. ``sandbox`` and ``region`` select the
-#: HOST an authenticated session reaches — ``region`` picks the regional entity (an
-#: EEA-issued key answers 50119 on the global host) and ``sandbox`` picks demo vs
-#: PRODUCTION — and ``market_type`` reaches ``VenueAccount``, where
-#: ``_cash_stream_nets_holds = market_type != "spot"`` changes how cash is netted. So a
-#: silently-dropped ``sandox`` typo does not degrade to a harmless default: it leaves the
+#: **An EXPLICIT ALLOWLIST, and an unrecognised key RAISES.** These are the keys that
+#: decide where an account's money goes: ``sandbox`` and ``region`` select the HOST an
+#: authenticated session reaches (``region`` picks the regional entity — an EEA-issued key
+#: answers 50119 on the global host — and ``sandbox`` picks demo vs PRODUCTION), while
+#: ``market_type`` reaches ``VenueAccount`` and changes how cash is netted. So a
+#: silently-dropped ``sandox`` typo does NOT degrade to a harmless default: it leaves the
 #: account on whatever the ambient process environment says, routing a live order to the
-#: production host while the operator believes the account is pinned to demo. The raise
-#: IS the control (T-11.2-06-01); accepting a key that changes nothing would be worse
-#: still (T-11.2-06-02), which is why the ``market_type='spot'`` hardcode in
-#: ``okx_plugin.build_bundle`` was cleared in the same plan.
+#: production host while the operator believes the account is pinned to demo. The raise IS
+#: the control; accepting a key that changes nothing would be worse still.
 #:
 #: PRECEDENCE is one-directional: the ACCOUNT overrides the venue, and a key the account
-#: does not name leaves the venue/bundle default in force. A venue value is never
-#: restored over an explicit account value.
+#: does not name leaves the venue/bundle default in force. A venue value is never restored
+#: over an explicit account value.
 _MERGEABLE_CONFIG_KEYS = frozenset({"sandbox", "region", "market_type"})
 
 #: The VENUE-LEVEL baseline the account's own config is merged ONTO. Every value is
-#: ``None`` — "this account names no override" — because ``VenueSpec`` deliberately
-#: carries no concrete defaults: the real defaults live with each venue's own plugin and
-#: settings model, and restating them here would be a second home for them that drifts.
+#: ``None`` — "this account names no override" — because the real defaults live with each
+#: venue's own plugin and settings model; restating them here would be a second home that
+#: drifts.
 _VENUE_LEVEL_CONFIG: dict[str, Any] = {
     "sandbox": None,
     "region": None,
     "market_type": None,
 }
 
-#: The shared market-type vocabulary (``VenueAccountConfig.market_type``). Validated
-#: HERE, unlike ``region``, because a bad value fails SILENTLY rather than loudly:
-#: ``"spott"`` is not ``"spot"``, so ``_cash_stream_nets_holds`` flips and the account's
-#: CASH ACCOUNTING changes with nothing raising. ``region``'s vocabulary belongs to the
-#: VENUE (``OkxSettings.region`` is a ``Literal`` that fails loud at build time), so it
-#: is deliberately NOT restated here — a second copy would drift from the venue's own.
+#: The shared market-type vocabulary. Validated HERE, unlike ``region``, because a bad
+#: value fails SILENTLY: ``"spott"`` is not ``"spot"``, so ``_cash_stream_nets_holds``
+#: flips and the account's CASH ACCOUNTING changes with nothing raising. ``region``'s
+#: vocabulary belongs to the VENUE (``OkxSettings.region`` is a ``Literal`` that fails
+#: loud at build time), so a second copy here would only drift from it.
 _LEGAL_MARKET_TYPES = ("spot", "derivative")
 
 
@@ -128,12 +116,10 @@ _LEGAL_MARKET_TYPES = ("spot", "derivative")
 class OnlineVenueAccount:
     """What ``bring_online`` built for one ``(venue_name, account_id)`` pair.
 
-    Held so the runtime pieces of an account stay together under the pair that owns
-    them, rather than being shattered into parallel scalar maps (the shape 11.1-08
-    removed at the composition root, where one lifecycle had been split into six
-    aliases). ``spec`` is kept alongside the bundle because it carries the account's
-    ``secret_ref`` — the ONE record of which credentials this account's session was
-    built with.
+    Held together under the pair that owns them rather than shattered into parallel
+    scalar maps, which is how one lifecycle ends up split across several aliases that
+    disagree. ``spec`` rides alongside the bundle because it carries the account's
+    ``secret_ref`` — the ONE record of which credentials this session was built with.
     """
 
     spec: VenueSpec
@@ -142,44 +128,37 @@ class OnlineVenueAccount:
 
 
 class VenueAccountManager:
-    """Owns the venue-ACCOUNT domain: provision, bring online, resolve (D-21/26/27).
+    """Owns the venue-ACCOUNT domain: provision, bring online, resolve.
 
     Parameters
     ----------
     store :
-        The durable ``VenueAccountStore``. EXCLUSIVELY owned and never ``None`` — the
-        rejected manager-only design in D-21 needed a ``store=None`` arm on the backtest
-        path, which is the ``Optional``-collaborator shape this milestone deletes.
+        The durable ``VenueAccountStore``, EXCLUSIVELY owned and never ``None``.
     bundles :
-        The shared ``VenueBundles`` memo (D-08) — the same object ``ExecutionHandler``
-        and the portfolio arm hold, so exactly one exchange and one account factory exist
-        per ``(venue, account_id)`` tree-wide.
+        The shared ``VenueBundles`` memo — the same object ``ExecutionHandler`` and the
+        portfolio arm hold, so exactly one exchange and one account factory exist per
+        ``(venue, account_id)`` tree-wide.
     connectors :
         The shared ``ConnectorProvider``, threaded verbatim into ``assemble_venue``.
     registry :
-        The composition-root-owned ``(venue_name, account_id) -> exchange`` map (D-43).
-        The SAME object ``ExecutionHandler`` holds and reads on order; ``bring_online``
-        WRITES each brought-online exchange into it under the row's pair. Replacing the
-        former ``execution_handler`` collaborator with the bare map is the D-43 cut:
-        the manager no longer reaches THROUGH the execution handler
-        (``execution_handler.exchanges[...] = ...``), so the false ``VAM ->
-        execution_handler`` construction edge is gone and the four-node LIVE cycle is
-        dissolved. Typed ``Any`` for the reason ``bundles.py`` types its own
-        collaborators ``Any``: naming the concrete registry element type would drag
-        ``AbstractExchange`` onto this module's import graph.
+        The composition-root-owned ``(venue_name, account_id) -> exchange`` map — the SAME
+        object ``ExecutionHandler`` reads on order, which ``bring_online`` WRITES into
+        under the row's pair. Injecting the bare map rather than the execution handler is
+        what keeps the manager from reaching THROUGH it, dissolving the false
+        ``VAM -> execution_handler`` construction edge. Typed ``Any`` because naming the
+        concrete element type would drag ``AbstractExchange`` onto this import graph.
     alert_sink :
-        The CRITICAL-escalation egress handed to each ``VenueLifecycle`` so the D-04
+        The CRITICAL-escalation egress handed to each ``VenueLifecycle`` so the
         trust-on-first-use venue-identity guard can alert. Required, not optional: an
         account brought online with nowhere to escalate a venue-identity mismatch is a
         silently-disarmed guard.
     feed_binder :
-        11.2-07 (D-36): the ``FeedConnectionBinder`` this manager DRIVES. "Primary
-        account" is deleted as a concept — the ONE feed borrows the first available
-        venue CONNECTION and re-borrows when that account is retired or disabled.
-        ``bring_online`` and ``rebind_feed`` re-evaluate the binding through it; the
-        binder owns the provider build, the feed wiring and the re-borrow rule. Required,
-        not optional: a manager that could bring an account online without a feed to
-        connect it to would silently ship a live boot that receives no bars.
+        The ``FeedConnectionBinder`` this manager DRIVES; it owns the provider build, the
+        feed wiring and the re-borrow rule. There is no "primary account" — the ONE feed
+        borrows the first available venue CONNECTION and re-borrows when that account is
+        retired or disabled. Required, not optional: a manager that could bring an account
+        online with no feed to connect it to would silently ship a live boot that receives
+        no bars.
     """
 
     def __init__(
@@ -198,55 +177,46 @@ class VenueAccountManager:
         self._registry = registry
         self._alert_sink = alert_sink
         self._feed_binder = feed_binder
-        # D-33/ACCT-10: the DURABLE read backing the account-disable refusal. Built HERE over
-        # the SAME shared ``SqlEngine`` this manager's ``VenueAccountStore`` already owns
-        # (``store.backend``), so the constructor signature is UNCHANGED — no new injected
-        # collaborator, and nothing to re-thread through the composition root. It is a
-        # READ-ONLY view (``live_portfolio_ids_for_account``): pause and retire are durable, so
-        # the block a disable must respect is durable too, and the manager stays free of a
-        # portfolio-handler back-reference (the one-directional layering, facade → manager →
-        # storage). ``build_portfolio_definition_tables`` registers idempotently on the shared
-        # MetaData, so a second store view over the same spine is safe. GATE-01: the store
-        # import is LAZY and in-body, like every other SQL name this module touches — this
-        # class is never on the backtest import graph, but the file keeps SQL one import away
-        # from anything that reaches the venue substrate.
+        # The DURABLE read backing the account-disable refusal, built over the SAME shared
+        # ``SqlEngine`` this manager's store already owns — no new injected collaborator to
+        # re-thread through the composition root. A READ-ONLY view: reading the block here
+        # keeps the manager free of a portfolio-handler back-reference, preserving the
+        # one-directional layering. ``build_portfolio_definition_tables`` registers
+        # idempotently on the shared MetaData, so a second view over the same spine is safe.
         from itrader.storage.portfolio_definition_store import PortfolioDefinitionStore
 
         self._portfolio_definitions = PortfolioDefinitionStore(store.backend)
-        # Keyed on the PAIR, the same key the exchange registry, the connector memo and
-        # the bundle memo all use. A second memo on any other key is how those registries
-        # end up disagreeing about an account (the defect D-08 exists to prevent), so this
-        # map holds ONLY what bring_online built and never re-derives a bundle itself.
+        # Keyed on the PAIR, the same key the exchange registry, the connector memo and the
+        # bundle memo all use. A second memo on any other key is how those registries end up
+        # disagreeing about an account, so this map holds ONLY what bring_online built and
+        # never re-derives a bundle itself.
         self._online: dict[tuple[str, str], OnlineVenueAccount] = {}
         self.logger = get_itrader_logger().bind(component="VenueAccountManager")
 
     # ------------------------------------------------------------------ reads
 
     def read_enabled_for(self, venue_name: str) -> list[Mapping[str, Any]]:
-        """This venue's ENABLED account rows, or ``[]`` on a fresh deployment (ACCT-01/D-34).
+        """This venue's ENABLED account rows, or ``[]`` on a fresh deployment.
 
-        The account SET is STORE-DERIVED and VENUE-SCOPED: it is read off durable rows
-        rather than re-derived from a spec, and one venue never sees another's accounts
-        (``account_id`` alone cannot derive its venue — D-01). Ordering is the store's
-        ``venue_name`` ASC / ``account_id`` ASC contract, so bring-up order is
-        reproducible across runs and dialects. Zero enabled rows is a SUPPORTED state, not
-        an error: a fresh deployment comes up RUNNING and empty (D-09).
+        The account SET is STORE-DERIVED and VENUE-SCOPED: read off durable rows rather
+        than re-derived from a spec, and one venue never sees another's accounts
+        (``account_id`` alone cannot derive its venue). Ordering follows the store's
+        ``venue_name`` / ``account_id`` ASC contract, so bring-up order is reproducible
+        across runs and dialects. Zero enabled rows is a SUPPORTED state: a fresh
+        deployment comes up RUNNING and empty.
 
-        D-34's degrade is deliberately narrow. A missing ``venue_accounts`` TABLE is the
-        fresh-deployment state (a new database, or an Alembic chain that has not run):
-        warn and return ``[]``. Every other fault PROPAGATES. Widening this to a catch-all
-        handler over the base exception type would convert one real cause — an unreachable
-        database, a permissions error — into zero accounts, and then into an ACCT-03
-        refusal for every persisted portfolio: N derived errors burying the one that
+        The degrade is deliberately narrow. A missing ``venue_accounts`` TABLE is the
+        fresh-deployment state — a new database, or an Alembic chain that has not run —
+        so warn and return ``[]``. Every other fault PROPAGATES. Widening this to a
+        catch-all over the base exception type would convert one real cause (an
+        unreachable database, a permissions error) into zero accounts, and from there into
+        a refusal for every persisted portfolio: N derived errors burying the one that
         matters.
 
         The warning goes through the bound structlog logger, never the stdlib warnings
-        module: the suite runs under ``filterwarnings=["error"]``, so a stdlib warning on
-        the fresh-deployment path would fail every test that exercised it.
+        module — the suite runs under ``filterwarnings=["error"]``, so a stdlib warning on
+        the fresh-deployment path would fail every test that reached it.
         """
-        # GATE-01: the SQLAlchemy import is LAZY and in-body. This module is never
-        # barrel-exported, but a module-top sqlalchemy import here would still put SQL one
-        # import away from anything that reaches for the venue substrate.
         from sqlalchemy import inspect as sa_inspect
 
         if not sa_inspect(self._store.engine).has_table(_ACCOUNTS_TABLE):
@@ -265,23 +235,19 @@ class VenueAccountManager:
     def venue_uid_guard_active(
         self,
     ) -> dict[tuple[str, str], "VenueUidGuardOutcome"]:
-        """The D-04 UID-guard outcome for EVERY online pair (11.2-06, D-15/D-40).
+        """The UID-guard outcome for EVERY online pair.
 
-        D-15 named a ``venue_uid_guard_active`` flag; D-40 makes it carry OUTCOME +
-        REASON per ``(venue_name, account_id)``, because a bare boolean tells an operator
-        the guard is off but not WHICH of its six holes they have — and the holes need
-        six different fixes.
+        Carries OUTCOME + REASON per ``(venue_name, account_id)`` rather than a bare
+        boolean, because a boolean tells an operator the guard is off but not WHICH of its
+        holes they have — and the holes need different fixes.
 
-        The map is built LIVE from each online record's lifecycle rather than cached at
-        ``bring_online``, which is the deliberate reading of D-15's own condition that
-        the flag reflect the guard's ACTUAL outcome. Arming is a CONNECT-time event
-        (``VenueLifecycle.start()`` runs the guard post-connect), and ``bring_online``
-        does not connect — so a value frozen at bring-up would report every pair as
-        unarmed forever. Reading through the lifecycle means the surface tracks the guard
-        as sessions actually start, and the lifecycle is the single owner of that
-        outcome (no second copy to drift, D-08's own discipline).
+        Built LIVE from each online record's lifecycle rather than cached at
+        ``bring_online``. Arming is a CONNECT-time event (``VenueLifecycle.start()`` runs
+        the guard post-connect) and ``bring_online`` does not connect, so a value frozen at
+        bring-up would report every pair as unarmed forever. Reading through the lifecycle
+        also leaves it the single owner of that outcome, with no second copy to drift.
 
-        In-memory only; nothing new is persisted (D-40).
+        In-memory only; nothing is persisted.
         """
         return {
             pair: record.lifecycle.venue_uid_guard_outcome
@@ -291,8 +257,8 @@ class VenueAccountManager:
     def online(self, venue_name: str, account_id: str) -> OnlineVenueAccount:
         """The runtime ``bring_online`` built for this pair; refuses when there is none.
 
-        Fails loud with the ACCT-03 refusal rather than returning ``None`` — a caller that
-        can silently receive "no runtime" is a caller that will proceed without one.
+        Fails loud rather than returning ``None`` — a caller that can silently receive "no
+        runtime" is a caller that will proceed without one.
         """
         key = (venue_name, account_id)
         if key not in self._online:
@@ -311,43 +277,32 @@ class VenueAccountManager:
         secret_ref: Optional[str] = None,
         config: Optional[dict[str, Any]] = None,
     ) -> Mapping[str, Any]:
-        """CREATE one durable ``venue_accounts`` row and return it (ACCT-02, D-11/D-26).
-
-        Provisioning lives HERE and only here. It is reached as
-        ``system.venue_accounts.provision(...)``, mirroring how scripts already reach
-        ``system.portfolio_handler.add_portfolio(...)``; there is no
-        ``LiveTradingSystem.provision_venue_account`` and this milestone adds no lines to
-        that file (D-26/D-35).
+        """CREATE one durable ``venue_accounts`` row and return it.
 
         Create-only. A second ``provision`` of the same pair raises
         ``DuplicateVenueAccountProvisionError`` and writes NOTHING — the database's
         composite primary key is the arbiter and its ``IntegrityError`` is classified on
         the ERROR path. There is deliberately no pre-check ``SELECT``: a pre-check is
-        TOCTOU and, decisively, does not bind the out-of-band writers a durable table
-        always has. The same argument is already recorded for the sibling
-        ``portfolio_definition_store``.
+        TOCTOU and, decisively, cannot bind the out-of-band writers a durable table always
+        has.
 
         It does NOT bring the account online. ``provision`` (the durable write) and
-        ``bring_online`` (the runtime build) are two verbs by design (D-27): a caller that
-        wants the account usable in this process performs both, explicitly, with no restart
-        between them. The split is also what makes an interrupted provision safe — an
-        enabled row with no runtime is exactly what the next boot brings online, through
-        that same single path.
+        ``bring_online`` (the runtime build) are two verbs by design: a caller wanting the
+        account usable in this process performs both, explicitly, with no restart between.
+        The split is also what makes an interrupted provision safe — an enabled row with no
+        runtime is exactly what the next boot brings online.
 
-        The secret-key denylist is NOT re-implemented here. ``VenueAccountStore`` already
-        runs the single recursive guard (REUSED from ``venue_store``) as the first
-        statement of its write, before any transaction opens, so a ``config`` carrying a
-        secret-looking key persists nothing. A second denylist in this class would be a
-        drifting duplicate of the one control, which the store module forbids by name —
-        membership is EXACT, so ``"credential"`` is denied while ``"credentials"`` passes
-        by one letter.
+        The secret-key denylist is NOT re-implemented here. ``VenueAccountStore`` runs the
+        single recursive guard as the first statement of its write, before any transaction
+        opens, so a ``config`` carrying a secret-looking key persists nothing. A second
+        denylist here would be a drifting duplicate of the one control — membership is
+        EXACT, so ``"credential"`` is denied while ``"credentials"`` passes by one letter.
 
         ``secret_ref`` is a POINTER at wherever the credential lives (``env:<PREFIX>``),
         never a credential itself.
         """
-        # The write timestamp is minted at the CALL SITE: the store is clock-free by
-        # decision (D-07) and takes a caller-supplied ``at``. This is the same idiom every
-        # other durable-write caller in the tree uses.
+        # The write timestamp is minted at the CALL SITE: the store is clock-free and takes
+        # a caller-supplied ``at``, the same idiom every durable-write caller uses.
         self._create_row(
             venue_name,
             account_id,
@@ -375,12 +330,10 @@ class VenueAccountManager:
     ) -> None:
         """Delegate the create-only write and CLASSIFY the database's duplicate refusal.
 
-        The classification sits on the ERROR path rather than in front of the write, which
-        is the whole of D-11: the uniqueness decision belongs to the database, the one
-        participant that sees every writer.
+        The classification sits on the ERROR path rather than in front of the write: the
+        uniqueness decision belongs to the database, the one participant that sees every
+        writer.
         """
-        # GATE-01: the SQLAlchemy exception type is LAZY-imported in-body, like every other
-        # SQL name this module touches.
         from sqlalchemy.exc import IntegrityError
 
         try:
@@ -398,40 +351,32 @@ class VenueAccountManager:
                 venue_name, account_id) from exc
 
     def set_enabled(self, venue_name: str, account_id: str, enabled: bool) -> None:
-        """Enable/disable a venue account durably, REFUSING a disable a live portfolio needs (D-33).
+        """Enable/disable a venue account durably, REFUSING a disable a live portfolio needs.
 
-        The account-level enable flag, and the D-33 refusal that guards it. Disabling an
-        account no live portfolio references succeeds; disabling one a LIVE portfolio still
-        depends on raises ``VenueAccountInUseError`` naming the account, the blocking
-        portfolio ids, and the remediation (pause or retire them first). A disable that
-        raises writes NOTHING — the check runs BEFORE the store write, so the account row is
-        left byte-identical.
+        Disabling an account no live portfolio references succeeds; disabling one a LIVE
+        portfolio still depends on raises ``VenueAccountInUseError`` naming the account,
+        the blocking portfolio ids, and the remediation. A disable that raises writes
+        NOTHING — the check runs BEFORE the store write.
 
-        **"Live" is resolved against the DURABLE store, not live in-memory portfolio state.**
-        A blocking portfolio is one whose definition row has ``enabled = True AND NOT
-        is_deleted`` (``PortfolioDefinitionStore.live_portfolio_ids_for_account``). This is
-        deliberate: pause and retire are DURABLE (ACCT-10), so the block a disable must
-        respect is durable too, and reading it here keeps the manager free of a
-        portfolio-handler back-reference — the one-directional layering (facade → manager →
-        storage) is preserved, and this stays cleanly parallel with the portfolio-handler
-        work. A PAUSED portfolio (``enabled=False``) does NOT block, which is precisely why
-        pausing is D-33's sanctioned way to release the block; a RETIRED one
-        (``is_deleted=True``) has already released its pair.
+        **"Live" is resolved against the DURABLE store, not in-memory portfolio state.** A
+        blocking portfolio is one whose definition row has ``enabled = True AND NOT
+        is_deleted``. Pause and retire are DURABLE, so the block a disable must respect is
+        durable too, and reading it here keeps the manager free of a portfolio-handler
+        back-reference. A PAUSED portfolio does NOT block — which is exactly why pausing is
+        the sanctioned way to release the block — and a RETIRED one has already released
+        its pair.
 
-        **Independence (D-33).** Account-``enabled`` and portfolio-``enabled`` are independent.
-        Disabling a PORTFOLIO must NEVER touch its account — a venue account is a real
-        external thing that outlives any number of internal portfolios — and, symmetrically,
+        **Independence.** Account-``enabled`` and portfolio-``enabled`` are independent.
+        Disabling a PORTFOLIO must NEVER touch its account (a venue account is a real
+        external thing outliving any number of internal portfolios), and symmetrically
         disabling the ACCOUNT is refused while a live portfolio needs it.
 
-        **Out-of-band case.** If an account instead arrives disabled behind the engine's back
-        (a future integrations page writing the row directly, which this in-band refusal
-        cannot bind), it is simply not brought online — ``read_enabled_for`` skips it and
-        ``assert_available`` raises DISABLED — so its portfolios hit the composition-time
-        ACCT-03 refusal and the boot fails LOUD rather than trading against a leaf with no
-        venue truth. Enabling (``enabled=True``) is never refused.
-
-        Clock-free write timestamp minted at the call site (D-07), the same idiom
-        ``provision`` uses.
+        **Out-of-band case.** An account disabled behind the engine's back — a future
+        integrations page writing the row directly, which this in-band refusal cannot bind
+        — is simply never brought online: ``read_enabled_for`` skips it and
+        ``assert_available`` raises DISABLED, so its portfolios hit the composition-time
+        refusal and the boot fails LOUD rather than trading against a leaf with no venue
+        truth. Enabling is never refused.
         """
         if not enabled:
             blocking = self._portfolio_definitions.live_portfolio_ids_for_account(
@@ -443,52 +388,43 @@ class VenueAccountManager:
             "Set venue account (%s, %s) enabled=%s", venue_name, account_id, enabled)
 
     def bring_online(self, row: Mapping[str, Any]) -> OnlineVenueAccount:
-        """Turn ONE durable account row into a live, routable venue account (D-27).
+        """Turn ONE durable account row into a live, routable venue account.
 
         The single implementation. Boot is its bulk case
-        (``for row in read_enabled_for(venue): bring_online(row)``), and a runtime
-        provision is the same call on one row — there is no second assembly path to drift
-        from this one.
-
-        Four steps:
+        (``for row in read_enabled_for(venue): bring_online(row)``) and a runtime provision
+        is the same call on one row, so there is no second assembly path to drift from
+        this one.
 
         1. Build this account's ``VenueSpec``, carrying the ``secret_ref`` AND the
-           allowlisted ``config_json`` overrides read off ITS OWN row (D-38 — see
-           ``_merge_account_config``). This is the relocated
-           ``_read_account_secret_ref`` logic and it is the
-           highest-consequence line in the method: without it every NAMED account silently
-           reverts to the ambient ``OKX_API_*`` credentials, so two accounts authenticate
-           as one — the fail-open composite ACCT-02/WR-05 exists to close. A NULL
-           ``secret_ref`` still means "this account has no per-account credentials" (the
-           D-06 paper shape), which is a supported state and NOT the fail-open case: a
-           well-formed pointer that resolves to no material raises inside the resolver and
-           is never degraded here.
-        2. Delegate to ``assemble_venue`` — the existing per-account primitive. Assembly is
-           NOT re-implemented; asking the shared memo is what keeps one exchange per pair.
+           allowlisted ``config_json`` overrides read off ITS OWN row. This is the
+           highest-consequence step: without it every NAMED account silently reverts to
+           the ambient ``OKX_API_*`` credentials and two accounts authenticate as one. A
+           NULL ``secret_ref`` is NOT that fail-open case — it means "this account has no
+           per-account credentials", the supported paper shape. A well-formed pointer
+           resolving to no material raises inside the resolver and is never degraded here.
+        2. Delegate to ``assemble_venue``. Assembly is NOT re-implemented; asking the
+           shared memo is what keeps one exchange per pair.
         3. Register the exchange under the row's ``account_id`` VERBATIM, never falling
            back to the single-account default. This key must be byte-identical to the one
-           ``ExecutionHandler._resolve_account_id`` constructs when reading, or the venue
+           ``ExecutionHandler._resolve_account_id`` builds when reading, or the venue
            registers an account the order path can never reach.
         4. Record the runtime under the same pair.
 
         Returns the ``OnlineVenueAccount`` so a caller can drive the lifecycle it built.
         """
-        # The spec builder lives in ``trading_system`` (it is the live venue-selection
-        # trio ``assemble_venue`` reads) and is LAZY-imported in-body: importing it eagerly
-        # would put the ``trading_system`` package — whose barrel pulls the backtest
-        # composition root — on this module's import graph.
+        # LAZY in-body: importing the spec builder eagerly would put the
+        # ``trading_system`` package — whose barrel pulls the backtest composition root —
+        # on this module's import graph.
         from itrader.trading_system.venue_spec import build_venue_spec
 
         venue_name = str(row["venue_name"])
         account_id = str(row["account_id"])
-        # (1) The account's OWN credential pointer, off its OWN row (ACCT-02 / D-02).
+        # (1) The account's OWN credential pointer, off its OWN row.
         secret_ref = row.get("secret_ref")
-        # 11.2-06 (D-38): the account's own ``config_json`` overrides, validated and
-        # merged onto the venue-level baseline BEFORE the spec is built. It happens HERE
-        # — the account-domain owner, one place — matching where every other account
-        # decision landed, and it happens BEFORE any assembly so a refused config brings
-        # NOTHING online (a refusal that had already registered the exchange would leave
-        # the pair routable with a config the engine declined to understand).
+        # The account's own ``config_json`` overrides, validated and merged onto the
+        # venue-level baseline BEFORE any assembly — so a refused config brings NOTHING
+        # online. A refusal that had already registered the exchange would leave the pair
+        # routable with a config the engine declined to understand.
         overrides = self._merge_account_config(
             venue_name, account_id, row.get("config"))
         spec = build_venue_spec(
@@ -498,10 +434,8 @@ class VenueAccountManager:
             **overrides,
         )
 
-        # (2) The existing per-account assembly primitive. ``provider`` is left at its
-        # default: D-36 deletes "primary account" as a concept and moves feed binding out
-        # of the composition root, so no account is privileged with the one data provider
-        # here.
+        # (2) ``provider`` is left at its default: there is no "primary account", so no
+        # account is privileged with the one data provider here.
         bundle, lifecycle = assemble_venue(
             spec,
             self._connectors,
@@ -509,35 +443,32 @@ class VenueAccountManager:
             account_store=self._store,
             alert_sink=self._alert_sink,
         )
-        # (3) The row's account id VERBATIM — no coercion. The legacy boot loop skipped
-        # registration for a connector-less (paper) bundle, which left a NAMED paper
-        # account unroutable: ``on_order`` resolves the portfolio's real account, so the
-        # lookup missed and failed closed. Registration here is unconditional.
+        # (3) The row's account id VERBATIM, no coercion, and registration is
+        # UNCONDITIONAL: skipping it for a connector-less (paper) bundle leaves a NAMED
+        # paper account unroutable, because ``on_order`` resolves the portfolio's real
+        # account and the lookup then misses and fails closed.
         #
-        # D-43: write the manager's OWN injected registry — the SAME map object
+        # Written into the manager's OWN injected registry — the SAME map object
         # ``ExecutionHandler`` reads on order — never a reach-in through the handler.
-        # This is the one edge whose extraction dissolves the LIVE construction cycle.
         self._registry[(venue_name, account_id)] = bundle.exchange
         # (4)
         record = OnlineVenueAccount(spec=spec, bundle=bundle, lifecycle=lifecycle)
         self._online[(venue_name, account_id)] = record
         self.logger.info(
             "Brought venue account (%s, %s) online", venue_name, account_id)
-        # (5) 11.2-07 (D-36): re-evaluate the ONE feed's borrowed connection. A runtime
-        # provision-then-bring_online binds the feed with no restart (D-09); a boot's
-        # per-row bring_online binds on the first streaming account and no-ops on the
-        # rest. The feed is bound to a CONNECTION, so this is not privileging an account.
+        # (5) Re-evaluate the ONE feed's borrowed connection, so a runtime
+        # provision-then-bring_online binds the feed with no restart. A boot's per-row
+        # bring_online binds on the first streaming account and no-ops on the rest. The
+        # feed binds to a CONNECTION, so this privileges no account.
         self.rebind_feed()
         return record
 
     def rebind_feed(self) -> None:
-        """Re-point the ONE live feed at a valid venue connection (11.2-07, D-36).
+        """Re-point the ONE live feed at a valid venue connection.
 
-        Delegates to the ``FeedConnectionBinder`` with THIS process's currently-available
-        streaming connections. Called from ``bring_online`` (so a runtime provision binds
-        without a restart) and once by the boot after its bring-up loop (so a zero-account
-        boot logs the unbound-feed warning). Idempotent — a valid, unchanged binding is a
-        no-op.
+        Called from ``bring_online``, so a runtime provision binds without a restart, and
+        once by the boot after its bring-up loop, so a zero-account boot still logs the
+        unbound-feed warning. Idempotent — a valid, unchanged binding is a no-op.
         """
         self._feed_binder.rebind(self._streaming_available())
 
@@ -545,10 +476,10 @@ class VenueAccountManager:
         """The online accounts whose connection the feed may borrow, in bring-up order.
 
         A candidate is an online pair whose execution bundle carries a live CONNECTOR
-        (paper carries ``connector=None`` and is not a streaming connection) AND whose
-        durable row is still ENABLED — a disabled account is retired, so the feed must
-        re-borrow off it. Insertion order is preserved (``dict`` order = bring-up order =
-        the store's ``account_id`` ASC), so the borrowed connection is reproducible.
+        (paper carries ``connector=None``) AND whose durable row is still ENABLED — a
+        disabled account is retired, so the feed must re-borrow off it. Insertion order is
+        preserved (dict order = bring-up order = the store's ``account_id`` ASC), so the
+        borrowed connection is reproducible.
         """
         available: list[tuple[str, str, "VenueSpec"]] = []
         for (venue_name, account_id), record in self._online.items():
@@ -562,12 +493,12 @@ class VenueAccountManager:
 
     @property
     def feed_provider(self) -> Any:
-        """The provider currently bound to the ONE feed, or ``None`` (D-36 passthrough).
+        """The provider currently bound to the ONE feed, or ``None``.
 
-        Read by the composition root's facade-dependent halt-signal wiring and by the
-        live session's warmup/subscribe step, so the account domain stays the single
-        answer to "which connection is the feed on". Both readers None-guard it (a
-        zero-account boot leaves it None).
+        Read by the composition root's halt-signal wiring and by the live session's
+        warmup/subscribe step, so the account domain stays the single answer to "which
+        connection is the feed on". Both readers None-guard it — a zero-account boot
+        leaves it None.
         """
         return self._feed_binder.feed_provider
 
@@ -577,31 +508,28 @@ class VenueAccountManager:
         account_id: str,
         config: Optional[Mapping[str, Any]],
     ) -> dict[str, Any]:
-        """Validate and merge one account's ``config_json`` overrides (11.2-06, D-38/D-12).
+        """Validate and merge one account's ``config_json`` overrides.
 
-        The account-level half of D-12's precedence rule, and the ONLY reader
-        ``venue_accounts.config_json`` has. Three steps, in this order:
+        The ONLY reader ``venue_accounts.config_json`` has. Three steps, in this order:
 
-        1. **REFUSE any key outside the allowlist.** See ``_MERGEABLE_CONFIG_KEYS`` for
+        1. **REFUSE any key outside the allowlist** — see ``_MERGEABLE_CONFIG_KEYS`` for
            why a silently-dropped ``sandox`` typo is a live-order misroute rather than a
            harmless default. Validation happens BEFORE the merge, so a refused config
            produces no spec and therefore nothing online.
         2. **REFUSE an out-of-vocabulary value** for the keys whose bad value would fail
            SILENTLY (``_assert_config_values``).
-        3. **MERGE, account over venue.** Through the shared
-           ``outils/dict_merge.py::recursive_merge`` helper — never a hand-rolled merge.
-           The overlay is flat today, but the helper is the tree's ONE merge mechanism
-           and re-deriving a second one per caller is exactly the drift it was promoted
-           to prevent.
+        3. **MERGE, account over venue**, through the shared ``recursive_merge`` helper.
+           The overlay is flat today, but that helper is the tree's ONE merge mechanism and
+           hand-rolling a second is exactly the drift it was promoted to prevent.
 
         ``None`` (an out-of-band writer left ``config_json`` NULL) and ``{}``
-        (``provision``'s normalization) are INDISTINGUISHABLE here: both mean "this
-        account names no overrides", both leave every venue default in force, and
-        neither raises. Making one of them an error would make a valid row un-bringable
-        depending on which writer created it.
+        (``provision``'s normalization) are INDISTINGUISHABLE here: both mean "this account
+        names no overrides", both leave every venue default in force, and neither raises.
+        Making one an error would render a valid row un-bringable depending on which writer
+        created it.
 
-        Returns the keyword overrides for ``build_venue_spec``, every unnamed key
-        carrying ``None`` — the spec's own "no override" value.
+        Returns the keyword overrides for ``build_venue_spec``, every unnamed key carrying
+        ``None`` — the spec's own "no override" value.
         """
         account_config = dict(config) if config else {}
         unknown = set(account_config) - _MERGEABLE_CONFIG_KEYS
@@ -619,26 +547,24 @@ class VenueAccountManager:
         account_id: str,
         account_config: dict[str, Any],
     ) -> None:
-        """Refuse an allowlisted key whose VALUE would fail silently (11.2-06, D-38).
+        """Refuse an allowlisted key whose VALUE would fail silently.
 
         The allowlist stops a key the engine does not understand; this stops a key it
-        understands carrying something it cannot act on correctly. Only the two keys
-        whose bad value is SILENT are checked here — a loud failure downstream is a
-        better guard than a duplicated one:
+        understands carrying something it cannot act on. Only the keys whose bad value is
+        SILENT are checked — a loud failure downstream is a better guard than a duplicated
+        one:
 
         * ``market_type`` — ``VenueAccount`` derives
-          ``_cash_stream_nets_holds = market_type != "spot"``, so ``"spott"`` sails
-          through AS a derivative and changes the account's CASH ACCOUNTING with nothing
-          raising anywhere.
+          ``_cash_stream_nets_holds = market_type != "spot"``, so ``"spott"`` sails through
+          AS a derivative and changes the account's CASH ACCOUNTING with nothing raising.
         * ``sandbox`` — a JSON column holds the STRING ``"false"`` happily, and every
-          truthiness test in Python then reads it as ``True``, flipping an account
-          between the demo and the PRODUCTION host.
+          Python truthiness test then reads it as ``True``, flipping an account between the
+          demo and the PRODUCTION host.
 
         ``region`` is deliberately NOT checked: its vocabulary belongs to the venue
-        (``OkxSettings.region`` is a ``Literal`` that raises a pydantic
-        ``ValidationError`` on anything else), and restating an OKX-specific entity list
-        in the venue-agnostic account domain is a copy that drifts the day a venue adds
-        a region.
+        (``OkxSettings.region`` is a ``Literal`` that raises on anything else), and
+        restating an OKX-specific entity list in the venue-agnostic account domain is a
+        copy that drifts the day a venue adds a region.
         """
         market_type = account_config.get("market_type")
         if market_type is not None and market_type not in _LEGAL_MARKET_TYPES:
@@ -670,28 +596,21 @@ class VenueAccountManager:
     # ------------------------------------------------------------------ resolution
 
     def assert_available(self, venue_name: str, account_id: str) -> None:
-        """Assert this pair is PROVISIONED and ENABLED — raise otherwise (ACCT-03).
+        """Assert this pair is PROVISIONED and ENABLED — raise otherwise.
 
-        The VALIDATION half of the venue-account authority, WITHOUT constructing a leaf. It
-        is what delivers ACCT-03 as the RAISE (REQUIREMENTS.md: "a live portfolio naming no
-        venue account RAISES at composition time"): the live ``PortfolioFactory`` authority
-        (``VenueValidatedComputeAuthority``) calls this to GATE portfolio creation /
-        rehydrate, so a portfolio naming NO account, a not-provisioned account, or a DISABLED
-        one RAISES ``VenueAccountNotProvisionedError`` — the durable-invariant guarantee that
-        every live portfolio is backed by a real, enabled ``venue_accounts`` row.
+        The VALIDATION half of the venue-account authority, WITHOUT constructing a leaf.
+        The live ``PortfolioFactory`` authority (``VenueValidatedComputeAuthority``) calls
+        this to GATE portfolio creation and rehydrate, so a portfolio naming no account, a
+        not-provisioned account, or a DISABLED one raises — the durable-invariant guarantee
+        that every live portfolio is backed by a real, enabled ``venue_accounts`` row.
 
-        **Scoped to EXISTS + ENABLED, deliberately NOT "brought online".** Under the owner's
-        wave-5 decision (2026-07-24) the live portfolio sits on a COMPUTE leaf carrying its
-        real pair — the venue-truth ``VenueAccount`` swap is COMP-07 / Phase 12 (a
-        ``VenueAccount`` cannot be the construction-time leaf: its balance raises until the
-        first snapshot, T-05-07, while ``Portfolio.__init__`` reads balance). A compute leaf
-        needs NO assembled venue session, so requiring "brought online" here would be
+        **Scoped to EXISTS + ENABLED, deliberately NOT "brought online".** The live
+        portfolio sits on a COMPUTE leaf carrying its real pair, and a compute leaf needs no
+        assembled venue session. Requiring "brought online" here would therefore be
         over-strict: it would crash a single-venue live boot on a validly-provisioned
-        FOREIGN-venue portfolio (e.g. a ``binance`` portfolio in an ``okx`` boot, whose venue
-        this process never assembles), which REQUIREMENTS.md does not ask for ("naming NO
-        venue account", not "on the assembled venue"). The ``brought-online`` check therefore
-        lives on ``account_for`` below — the COMP-07 venue-truth seam, where a real session
-        IS a precondition.
+        FOREIGN-venue portfolio — a ``binance`` portfolio in an ``okx`` boot, whose venue
+        this process never assembles. The brought-online check lives on ``account_for``
+        instead, where a real session IS a precondition.
 
         ``account_id`` is matched by EXACT STRING (no case-folding, trimming or coercion).
         """
@@ -711,46 +630,39 @@ class VenueAccountManager:
         account_id: str,
         **portfolio_args: Any,
     ) -> Account:
-        """Resolve this pair into a constructed venue-truth leaf (COMP-07 / Phase 12 seam).
+        """Resolve this pair into a constructed venue-truth leaf.
 
-        NOTE (11.2-09, wave 5): this constructs a venue-truth ``VenueAccount`` leaf and is
-        the COMP-07 / Phase-12 seam — it is NOT reached from the live portfolio-creation path
-        in this phase, because a venue-truth leaf cannot be the construction-time leaf
-        (``VenueAccount.balance`` raises until its first snapshot; ``Portfolio.__init__``
-        reads balance). The live ``PortfolioFactory`` authority calls ``assert_available``
-        (the RAISE) and builds a COMPUTE leaf instead. This method stays as the resolution
-        primitive COMP-07 will wire once the snapshot lifecycle lands.
+        NOT yet reached from the live portfolio-creation path: a venue-truth leaf cannot be
+        the construction-time leaf, because ``VenueAccount.balance`` raises until its first
+        snapshot while ``Portfolio.__init__`` reads balance. The live ``PortfolioFactory``
+        authority calls ``assert_available`` and builds a COMPUTE leaf instead. This stays
+        as the resolution primitive to wire once the snapshot lifecycle lands.
 
         Asserts, in order, that the account EXISTS, is ENABLED, and was brought ONLINE in
         this process, then delegates construction to ``VenueBundles.account_for``. Only
         this class can tell those three apart — "no such account" from "deliberately
         disabled" from "provisioned after boot, never assembled" — which is why the
-        authority lives here and the construction primitive lives one layer down where
+        authority lives here while the construction primitive lives one layer down, where
         both backtest arms can also reach it.
 
-        Fail-loud, never a fallback: it raises ``VenueAccountNotProvisionedError`` and
-        NEVER returns a compute leaf. A compute leaf carries ``is_venue_truth=False``,
-        which silently disables the venue snapshot, the fill/order streams,
-        ``VenueReconciler`` and the unexplained-residual HALT — the portfolio would trade
-        against computed balances believing they were the venue's.
+        Fail-loud, never a fallback: it raises and NEVER returns a compute leaf. A compute
+        leaf carries ``is_venue_truth=False``, which silently disables the venue snapshot,
+        the fill/order streams, ``VenueReconciler`` and the unexplained-residual HALT — the
+        portfolio would trade against computed balances believing they were the venue's.
 
-        ``account_id`` is matched by EXACT STRING: no case-folding, no trimming, no
-        Unicode normalization, and no coercion of a missing id to a default. ``' okx-1'``
-        and ``'okx-1'`` are different accounts and neither resolves to the other.
+        ``account_id`` is matched by EXACT STRING: no case-folding, no trimming, no Unicode
+        normalization, and no coercion of a missing id to a default. ``' okx-1'`` and
+        ``'okx-1'`` are different accounts and neither resolves to the other.
 
-        ``portfolio_args`` are forwarded verbatim to the venue plugin's account factory.
-        Do NOT pass ``account_id`` among them — it is forwarded from the pair, and the
-        pair is the identity. ``venue_name`` IS forwarded into the leaf's factory args
-        (11.2-09) so the built leaf CARRIES its real pair: the positional ``venue_name``
-        is the store/memo venue, and the leaf needs it too — ``Portfolio.venue_name`` reads
-        it back off the leaf (D-23). ``VenueBundles.account_for``'s first parameter is
-        ``venue`` (not ``venue_name``), so the keyword lands in the factory's
-        ``portfolio_args`` with no collision.
+        ``portfolio_args`` are forwarded verbatim to the venue plugin's account factory. Do
+        NOT pass ``account_id`` among them — it comes from the pair, and the pair is the
+        identity. ``venue_name`` IS forwarded into the factory args so the built leaf
+        CARRIES its real pair (``Portfolio.venue_name`` reads it back off the leaf);
+        ``VenueBundles.account_for``'s first parameter is ``venue``, not ``venue_name``, so
+        the keyword lands in ``portfolio_args`` with no collision.
         """
-        # EXISTS + ENABLED via ``assert_available`` (the shared ACCT-03 gate), then the
-        # ONLINE check here — a venue-truth leaf needs an assembled session, so ``online``
-        # (raising NOT_ONLINE) is a precondition for THIS seam though not for the
-        # compute-leaf authority.
+        # EXISTS + ENABLED via the shared gate, then the ONLINE check — a venue-truth leaf
+        # needs an assembled session, which the compute-leaf authority does not.
         self.assert_available(venue_name, account_id)
         record = self.online(venue_name, account_id)
         return self._bundles.account_for(
