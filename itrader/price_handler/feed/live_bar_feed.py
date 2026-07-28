@@ -13,17 +13,15 @@ reserved TIME route wired.
 
 The logic with no backtest analog is the monotonic guard in ``update()``: every
 incoming bar is classified against the last-delivered stamp ``L`` per ``(symbol,
-timeframe)`` — in-sequence deliver, gap backfill-and-replay, duplicate drop,
-revision forward-only WARN+drop, stale reject. An out-of-order or replayed bar can
-never rewind indicator state.
+timeframe)``, so an out-of-order or replayed bar can never rewind indicator state.
 
 All ``update()`` calls stay on the single connector asyncio thread (single-writer
 ring and guard); only the MPSC-safe ``queue.Queue.put`` crosses to the engine
 thread, so no lock is needed.
 
-This module is LAZY-imported inside ``LiveTradingSystem.__init__`` only and MUST
-NOT reach the backtest hot path — it is deliberately NOT re-exported from the
-``feed`` package barrel. Indentation is 4 SPACES, NO tabs.
+LAZY-imported inside ``LiveTradingSystem.__init__`` only and deliberately NOT
+re-exported from the ``feed`` barrel, so it never reaches the backtest hot path.
+Indentation is 4 SPACES, NO tabs.
 """
 
 from __future__ import annotations
@@ -93,29 +91,18 @@ class LiveBarFeed(BarFeed):
         self._last_delivered: dict[tuple[str, str], pd.Timestamp] = {}
         # Newest-bar provision, written by every delivery.
         self._newest_bars: dict[str, Bar] = {}
-        # Re-entrancy guard for a loop-native backfill replay: if update() detects a
-        # gap WHILE a replay is in progress (an under-returning venue page with a hole
-        # inside the replayed range), it fails loud instead of spawning a
-        # nested/overlapping backfill.
-        #
-        # PER-THREAD via threading.local — it encodes "THIS thread's replay is active."
-        # A plain instance bool would be correct only while replay and its nested
-        # update() calls stayed on the connector-loop thread; but update() is also
-        # reachable from the ENGINE thread (warmup / backfill_on_resume), so an
-        # engine-thread gap arriving mid connector-loop replay would read the
-        # connector's True, be misclassified as a nested in-replay gap, and spuriously
-        # HALT the connector. Exposed through the ``_replaying_backfill`` property.
+        # PER-THREAD via threading.local, encoding "THIS thread's replay is active." A
+        # plain instance bool would be correct only while replay and its nested update()
+        # calls stayed on the connector-loop thread; but update() is also reachable from
+        # the ENGINE thread, so an engine-thread gap arriving mid connector-loop replay
+        # would read the connector's True, be misclassified as a nested in-replay gap,
+        # and spuriously HALT the connector.
         self._replay_local = threading.local()
-        # The thread ident that OWNS an in-flight LOOP-NATIVE backfill replay, or None.
-        # Unlike ``_replaying_backfill`` (thread-local, "IS THIS thread replaying"), this
-        # is a SHARED instance attr readable from ANY thread, so the ring-writer path
-        # (_deliver) can fail loud if a DIFFERENT (engine) thread reaches the ring append
-        # while the connector loop owns a backfill. Set on the connector-loop replay
-        # thread in _spawn_loop_native_gap_backfill and cleared in its finally. A plain
-        # attribute read/write is a GIL-atomic tripwire — a fail-loud assertion, not a
-        # correctness lock. The feed is single-writer by contract; this catches a
-        # violation loudly rather than letting concurrent writers silently corrupt the
-        # bar stream.
+        # The thread ident OWNING an in-flight loop-native replay, or None. Unlike
+        # ``_replaying_backfill`` this is SHARED and readable from ANY thread, so the
+        # ring-writer path can fail loud when a DIFFERENT thread reaches the ring append
+        # while the connector loop owns a backfill. A plain attribute read/write is a
+        # GIL-atomic tripwire — a fail-loud assertion, not a correctness lock.
         self._loop_backfill_owner: Optional[int] = None
         # Run-path bindings (mirror BacktestBarFeed.__init__); set via bind().
         self.global_queue: "Optional[queue.Queue[Any]]" = None
@@ -128,11 +115,10 @@ class LiveBarFeed(BarFeed):
     def base_timeframe(self) -> timedelta:
         """The base-bar cadence of the subscribed stream (``tf_base``).
 
-        Read-only: fixed at construction, since the rings and their ``_base_alias``
-        keys derive from it. Read by ``SessionInitializer`` to derive the warmup ring
-        depth in BASE-bar units — the ring holds base bars while ``strategy.warmup``
-        counts strategy-timeframe bars (see
-        ``cache_registration.required_base_depth``).
+        Read-only: fixed at construction, since the rings and their ``_base_alias`` keys
+        derive from it. ``SessionInitializer`` reads it to size warmup in BASE-bar units,
+        the ring holding base bars while ``strategy.warmup`` counts strategy-timeframe
+        ones.
         """
         return self._base_timeframe
 
@@ -142,12 +128,9 @@ class LiveBarFeed(BarFeed):
     def _replaying_backfill(self) -> bool:
         """True iff the CURRENT thread is inside a loop-native backfill replay.
 
-        Backed by ``threading.local``: the setter stashes ``active`` on the calling
-        thread, and the getter defaults to ``False`` on any thread that never set it,
-        so the engine thread reads its OWN False even while the connector thread has
-        set True. This keeps the interior-hole guard correct without a lock and
-        without cross-thread poison — a backfill on one symbol/thread never
-        misclassifies a legitimate gap on another.
+        The getter defaults to ``False`` on any thread that never set it, so the engine
+        thread reads its OWN False even while the connector thread has set True — the
+        interior-hole guard stays correct without a lock and without cross-thread poison.
         """
         return getattr(self._replay_local, "active", False)
 
@@ -160,11 +143,14 @@ class LiveBarFeed(BarFeed):
     def set_provider(self, provider: Any) -> None:
         """Inject the data provider post-construction (the ONLY public write path).
 
-        The composition root constructs the OKX provider AFTER the feed and wires it
-        here. ``update()`` / warmup / gap-backfill read the PRIVATE
-        ``self._provider``; there is deliberately NO public ``provider`` attribute
-        (a bare ``feed.provider = x`` would create a dead attribute and leave
-        ``self._provider`` ``None``).
+        The composition root constructs the OKX provider AFTER the feed. There is
+        deliberately NO public ``provider`` attribute: a bare ``feed.provider = x`` would
+        create a dead attribute and leave ``self._provider`` ``None``.
+
+        Parameters
+        ----------
+        provider : Any
+            The data provider; see the class docstring for the required surface.
         """
         self._provider = provider
 
@@ -172,7 +158,12 @@ class LiveBarFeed(BarFeed):
              membership: list[str]) -> None:
         """Bind the run-path event sink + membership (mirror ``BacktestBarFeed.bind``).
 
-        ``update()`` needs ``self.global_queue`` to ``put`` the ``BarEvent``.
+        Parameters
+        ----------
+        global_queue : queue.Queue | None
+            The sink ``update()`` puts each ``BarEvent`` on. ``_emit`` raises when unbound.
+        membership : list[str]
+            The subscribed symbol set.
         """
         self.global_queue = global_queue
         self.membership = membership
@@ -183,13 +174,10 @@ class LiveBarFeed(BarFeed):
     def _build_bar(t: pd.Timestamp, cb: "ClosedBar") -> Bar:
         """Build a ``Bar`` straight from the Decimal ``ClosedBar`` fields.
 
-        The OHLCV are ALREADY ``Decimal`` (the provider crossed the edge via
-        ``to_money``) — never re-cast through float / ``Bar.from_row``.
-
-        Self-less, hence a ``@staticmethod``: it is the ONE canonical ``ClosedBar`` →
-        ``Bar`` conversion, reused read-only by ``OkxDataProvider.spawn_warmup`` so the
-        warmup bulk-transport path and the live ``update()`` path build byte-identical
-        ``Bar`` facts — never a second bulk conversion.
+        The OHLCV are ALREADY ``Decimal`` — never re-cast through float /
+        ``Bar.from_row``. The ONE canonical ``ClosedBar`` → ``Bar`` conversion, reused
+        read-only by ``OkxDataProvider.spawn_warmup`` so the warmup bulk-transport path
+        and the live ``update()`` path build byte-identical facts.
         """
         return Bar(time=t, open=cb["open"], high=cb["high"], low=cb["low"],
                    close=cb["close"], volume=cb["volume"])
@@ -210,12 +198,16 @@ class LiveBarFeed(BarFeed):
         - ``t > L + tf`` (gap) → backfill the interior range ``[L+tf .. t-tf]``
           and replay each bar through ``update()``, THEN deliver ``t``.
 
-        Every incoming bar AND every replayed backfill bar takes this one path —
-        there is no bulk fast-path. The gap recursion terminates because each
-        replayed bar advances ``L`` by exactly one ``tf`` (no nested gap; a boundary
-        re-send is absorbed by the duplicate branch). Stale / duplicate / revision
-        are LOGGED, never raised — they are legitimate venue events. ``t`` is the
-        venue open-time only (never ``datetime.now()``).
+        Every incoming bar AND every replayed backfill bar takes this one path — there
+        is no bulk fast-path. The gap recursion terminates because each replayed bar
+        advances ``L`` by exactly one ``tf``, a boundary re-send being absorbed by the
+        duplicate branch. Stale / duplicate / revision are LOGGED, never raised: they
+        are legitimate venue events. ``t`` is the venue open-time only.
+
+        Parameters
+        ----------
+        closed_bar : ClosedBar
+            One confirm-gated bar, carrying its own ``symbol`` / ``timeframe`` / ``ts``.
         """
         sym = closed_bar["symbol"]
         tf_str = closed_bar["timeframe"]
@@ -230,19 +222,12 @@ class LiveBarFeed(BarFeed):
             return self._duplicate_or_revision(sym, tf_str, t, closed_bar)
         if t > last + tf:
             if self._replaying_backfill:
-                # A gap detected WHILE a loop-native backfill replay is in progress
-                # means the venue page under-returned (a hole INSIDE the replayed
-                # range). Fail loud instead of spawning a nested/overlapping backfill —
-                # the shape-independent structural stop against recursion. The raise
-                # escalates through the provider's supervised-backfill error path
-                # (_run_gap_backfill -> _on_gap_backfill_done -> connector halt).
-                # `_replaying_backfill` is thread-local, so it reads "THIS thread's
-                # replay is active": a legitimate engine-thread gap (warmup /
-                # backfill_on_resume) arriving mid connector-loop replay sees its OWN
-                # False and is not misclassified as a nested in-replay gap. Both
-                # {expected, got} coordinates ride along so an operator triaging a
-                # connector-fatal halt sees where the hole is without cross-referencing
-                # logs (integer-ms, secret-free).
+                # A gap detected WHILE a loop-native replay is in progress means the
+                # venue page under-returned — a hole INSIDE the replayed range. Fail
+                # loud instead of spawning a nested backfill; the raise escalates
+                # through the provider's supervised-backfill path to a connector halt.
+                # Both {expected, got} coordinates ride along so an operator triaging
+                # that halt sees where the hole is without cross-referencing logs.
                 raise MalformedDataError(
                     f"gap-backfill:{sym}/{tf_str}",
                     "gap detected during an in-progress backfill replay "
@@ -268,17 +253,21 @@ class LiveBarFeed(BarFeed):
                depth: int | None = None) -> None:
         """Live-start warmup: REST-fetch ``depth`` bars and replay each via ``update()``.
 
-        When ``depth`` is not given it resolves to ``self.cache_capacity() +
-        config.feed_provider.warmup_margin`` — the derived ring depth plus a FIXED
-        additive margin. The margin is what makes warmup useful: fetch too few bars
-        and stateful indicators never warm, ``on_bar`` short-circuits, and the run
-        produces zero trades.
+        Every fetched bar is replayed one-by-one through the SAME ``update()`` guard, so
+        each advances ``L`` by one ``tf`` and no spurious gap fires. There is
+        deliberately NO bulk fast-path: a second state-building path would diverge and
+        re-open the parity gate. Timestamps come from the venue bars only.
 
-        Every fetched ``ClosedBar`` is replayed one-by-one through the SAME
-        ``update()`` guard (each advances ``L`` by one ``tf`` → no spurious gap) —
-        there is deliberately NO bulk ``warmup_from`` fast-path: a second
-        state-building path would diverge and re-open the parity gate. Timestamps
-        come from the venue bars only (never ``datetime.now()``).
+        Parameters
+        ----------
+        symbol : str
+        timeframe : str
+            The venue timeframe string, which also keys the ring.
+        depth : int | None
+            Bars to fetch. Defaults to ``cache_capacity() + warmup_margin`` — the
+            derived ring depth plus a FIXED additive margin. That margin is what makes
+            warmup useful: fetch too few bars and stateful indicators never warm,
+            ``on_bar`` short-circuits, and the run produces zero trades.
         """
         if depth is None:
             from itrader import config
@@ -315,23 +304,24 @@ class LiveBarFeed(BarFeed):
         cold ring / unset ``L`` would starve ``window()`` and mis-sequence the first live
         bar).
 
-        Bars arrive already built (from the ``BarsLoaded`` payload), so ``_build_bar`` is
-        skipped. This is a controlled single-purpose absorb, NOT a second state path: the
-        ring-append / ``L``-advance is byte-identical to ``_deliver``; only the emit is
-        suppressed. ``window()`` still RAISES ``MissingPriceDataError`` for an unknown
-        ticker — never softened to return-empty.
+        Bars arrive already built, so ``_build_bar`` is skipped. A controlled
+        single-purpose absorb, NOT a second state path: the ring-append / ``L``-advance
+        is byte-identical to ``_deliver``, only the emit is suppressed.
+
+        Parameters
+        ----------
+        symbol : str
+        timeframe : str
+        bars : tuple[Bar, ...]
+            Pre-built warmup bars, absorbed in order.
         """
         for bar in bars:
-            # Reuse the EXISTING _last_delivered cursor _deliver already honors, so a
-            # re-delivered warmup window (a next-poll FAILED-retry re-fetch of a largely
-            # overlapping REST window) is IDEMPOTENT. Reject bar.time <= cursor BEFORE
-            # ring.append so the ring never gains a duplicate bar.time and L never rewinds
-            # off an overlapping re-warm. This is the SAME `<=` monotonic contract update()
-            # enforces via _reject_stale (strict `<` warns) and _duplicate_or_revision
-            # (`==` silent). A first clean warmup is unaffected (cursor unset -> last is
-            # None -> every bar passes), so absorb stays byte-identical to _deliver on the
-            # cold path. The cursor STAYS pd.Timestamp — the ring/window() model is
-            # pandas-native; the de-pandas migration is a deferred todo.
+            # Reuse the EXISTING _last_delivered cursor so a re-delivered warmup window
+            # (a retry re-fetch of a largely overlapping REST window) is IDEMPOTENT.
+            # Reject bar.time <= cursor BEFORE ring.append, so the ring never gains a
+            # duplicate bar.time and L never rewinds off an overlapping re-warm. A first
+            # clean warmup is unaffected, leaving absorb byte-identical to _deliver on
+            # the cold path.
             last = self._last_delivered.get((symbol, timeframe))
             if last is not None:
                 bt = pd.Timestamp(bar.time)
@@ -388,9 +378,9 @@ class LiveBarFeed(BarFeed):
                            latest_completed_ts: int) -> None:
         """Reconnect recovery: boundary-gated REST backfill replayed via ``update()``.
 
-        Recovery is a completed-bar BOUNDARY check, NOT raw outage duration — a short
-        drop can still straddle a bar close (e.g. a 30 s outage across the 1d midnight
-        boundary). On resume:
+        Recovery is a completed-bar BOUNDARY check, NOT raw outage duration: a short
+        drop can still straddle a bar close, e.g. a 30 s outage across the 1d midnight
+        boundary. On resume:
 
         - ``L is None`` (no bar delivered yet) → no-op; warmup owns cold start.
         - ``latest_completed_ts <= L`` → no boundary crossed → no-op.
@@ -399,8 +389,13 @@ class LiveBarFeed(BarFeed):
           path. Composes with the resumed stream: a re-sent bar lands on the
           ``update()`` duplicate branch, so there is no double-delivery.
 
-        ``latest_completed_ts`` is the venue completed-bar open-time in ms (business
-        time), never the process wall-clock.
+        Parameters
+        ----------
+        symbol : str
+        timeframe : str
+        latest_completed_ts : int
+            The venue completed-bar open-time in ms — BUSINESS time, never the process
+            wall-clock.
         """
         last = self._last_delivered.get((symbol, timeframe))
         if last is None:
@@ -612,18 +607,14 @@ class LiveBarFeed(BarFeed):
     def _assert_ring_writer_single_thread(self, sym: str, tf_str: str) -> None:
         """Fail loud on an engine-thread ring write during a loop-native backfill.
 
-        The single-writer ring contract: while a LOOP-NATIVE backfill replay is in flight
-        (owned by the connector loop thread, ``_loop_backfill_owner`` set), the ONLY thread
-        permitted to write the ring is that owning loop thread. If the current thread
-        differs, a second concurrent writer has reached the ring append — an engine-thread
-        path racing the loop-native backfill would interleave appends and corrupt the
-        monotonic bar stream. Raise a typed, secret-free ``StateError`` rather than let it
-        corrupt state silently.
+        While a loop-native replay is in flight, the ONLY thread permitted to write the
+        ring is the owning loop thread. A different one means a second concurrent writer
+        reached the ring append, and an engine-thread path racing the backfill would
+        interleave appends and corrupt the monotonic bar stream.
 
-        Cheap and side-effect-free on the happy path: with no loop-native backfill active
-        (every engine-thread warmup / synchronous ``backfill_on_resume`` / offline-replay
-        path, and the parity gate) this is a single ``is None`` check; on the loop-native
-        path the replayed writes run on the owning thread, so the idents match.
+        Cheap on the happy path: with no loop-native backfill active this is a single
+        ``is None`` check, and on the loop-native path the replayed writes run on the
+        owning thread, so the idents match.
         """
         owner = self._loop_backfill_owner
         if owner is not None and threading.get_ident() != owner:
@@ -708,11 +699,20 @@ class LiveBarFeed(BarFeed):
         """Return the last ``max_window`` COMPLETED bars visible at ``asof``.
 
         Mirrors the ``BacktestBarFeed`` rule-4 cutoff
-        (``cutoff = asof - timeframe + base_timeframe``, degenerating to ``asof``
-        when ``timeframe == base_timeframe``): a bucket stamped ``B`` is included
-        iff ``B <= cutoff`` (``searchsorted`` side ``"right"``). For a coarser
-        ``timeframe`` the base ring is resampled (``label='left', closed='left'``,
-        ``_offset_alias`` — never the legacy ``time_parser`` string).
+        (``cutoff = asof - timeframe + base_timeframe``, degenerating to ``asof`` when
+        the timeframes match): a bucket stamped ``B`` is included iff ``B <= cutoff``.
+        For a coarser ``timeframe`` the base ring is resampled via ``_offset_alias`` —
+        never the legacy ``time_parser`` string.
+
+        Parameters
+        ----------
+        ticker : str
+        timeframe : timedelta
+            The requested bucket size; coarser than base triggers a resample.
+        max_window : int
+            Maximum buckets returned, counting back from the cutoff.
+        asof : datetime
+            Must be tz-aware.
 
         Raises
         ------
