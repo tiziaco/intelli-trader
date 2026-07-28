@@ -1,12 +1,11 @@
-"""Trust-on-first-use venue-UID assertion — alert on mismatch, NEVER halt (11-04, D-04, MPORT-01).
+"""Trust-on-first-use venue-UID assertion — alert on mismatch, never halt.
 
-**Why this exists in THIS phase.** Per-account credentials are what make the misroute
-REACHABLE: a mistyped ``secret_ref`` or a swapped vault entry means an ``account_id``
-connects with a DIFFERENT account's keys. Orders then route to the wrong REAL account
-and reconciliation succeeds cleanly against it — a silent, money-losing failure that
-only exists once multi-account exists (T-11-15, the only high-severity spoofing threat
-in this plan). The venue's self-reported account UID is the ONLY external evidence that
-the session belongs to the account the engine thinks it does.
+**Why this exists.** Per-account credentials are what make the misroute reachable: a
+mistyped ``secret_ref`` or a swapped vault entry means an ``account_id`` connects with a
+different account's keys. Orders then route to the wrong real account and
+reconciliation succeeds cleanly against it — a silent, money-losing failure that only
+exists once multi-account exists. The venue's self-reported account UID is the only
+external evidence that the session belongs to the account the engine thinks it does.
 
 **Trust on first use.** The FIRST connect for a ``(venue_name, account_id)`` pair
 RECORDS the observed UID; every later connect ASSERTS against it. The rejected
@@ -15,10 +14,10 @@ mistype, and a wrong expected value would block a correctly-configured account. 
 removes the operator from the loop entirely, so there is no typo surface at all.
 
 **Observe-only, by explicit decision.** A mismatch fires a CRITICAL alert through the
-existing sink and RETURNS NORMALLY. It does NOT halt (T-11-19: a venue reporting its UID
+existing sink and RETURNS NORMALLY. It does NOT halt (a venue reporting its UID
 differently across endpoints must not take a correctly-configured account offline) and it
-does NOT overwrite the stored value (T-11-20: overwriting would make the guard
-self-healing — it would alert once and then accept the impostor forever).
+does NOT overwrite the stored value (overwriting would make the guard self-healing — it
+would alert once and then accept the impostor forever).
 
 **Fail-safe, but never fail-SILENT.** Store failures are swallowed so the guard cannot
 break an otherwise healthy connect. That fail-safety is also a hazard: a renamed venue
@@ -49,12 +48,10 @@ if TYPE_CHECKING:
 # unvetted content into the egress channel.
 VENUE_UID_MISMATCH_REASON = "venue-uid-mismatch"
 
-# ---------------------------------------------------------------- D-40 outcome
-# 11.2-06 (D-15/D-40): the guard now REPORTS its outcome AND reason instead of only
-# performing a side effect. D-15's condition is that the ``venue_uid_guard_active``
-# flag reflect the guard's ACTUAL outcome — a bare boolean tells an operator the guard
-# is off but not WHICH of its holes they have, and the paths below need SIX different
-# operator fixes.
+# ---------------------------------------------------------------- guard outcome
+# The guard reports its outcome AND reason rather than only performing a side effect: a
+# bare boolean tells an operator the guard is off but not WHICH of its six holes they
+# have, and each needs a different operator fix.
 
 #: The two top-level outcomes. ``armed`` means the guard is actually protecting this
 #: session (it recorded on first connect, asserted a match, or DETECTED a mismatch — a
@@ -70,9 +67,8 @@ REASON_RECORDED_FIRST_CONNECT = "recorded-first-connect"
 REASON_ASSERTED_MATCH = "asserted-match"
 REASON_MISMATCH_ALERTED = "mismatch-alerted"
 
-#: The SIX inert paths, enumerated from THIS module's own code (not re-counted from a
-#: decision doc). Each needs a DIFFERENT operator investigation, so none may collapse
-#: into another:
+#: The six inert paths. Each needs a DIFFERENT operator investigation, so none may
+#: collapse into another:
 #:  1. the plugin's ``fetch_venue_uid`` RAISED — a third-party plugin broke its
 #:     no-raise contract; fix the plugin.
 REASON_FETCH_RAISED = "fetch-raised"
@@ -93,13 +89,12 @@ REASON_RECORD_WRITE_FAILED = "record-write-failed"
 
 @dataclass(frozen=True)
 class VenueUidGuardOutcome:
-    """What the D-04 UID guard did for one connect — outcome AND reason (D-15/D-40).
+    """What the UID guard did for one connect — outcome AND reason.
 
-    Frozen so a recorded outcome cannot be mutated after the fact. ``armed`` is the
-    boolean D-15 originally named, but it never travels ALONE — ``outcome`` and
-    ``reason`` carry the WHICH-hole detail a bare boolean cannot, which is the entire
-    point of D-40. Two guards that are both ``armed is False`` for different reasons
-    (a paper no-op vs a database outage) are NOT the same operational state.
+    Frozen so a recorded outcome cannot be mutated after the fact. ``outcome`` and
+    ``reason`` carry the WHICH-hole detail a bare ``armed`` boolean cannot: two guards
+    that are both ``armed is False`` for different reasons (a paper no-op vs a database
+    outage) are NOT the same operational state.
     """
 
     armed: bool
@@ -130,7 +125,7 @@ def assert_venue_uid(
     alert_sink: Any,
     at: datetime,
 ) -> VenueUidGuardOutcome:
-    """Record (first connect) or assert (later connects) the venue's account UID (D-04).
+    """Record (first connect) or assert (later connects) the venue's account UID.
 
     Parameters
     ----------
@@ -141,33 +136,24 @@ def assert_venue_uid(
     connector :
         The freshly-connected ``LiveConnector`` session to interrogate.
     venue_name, account_id :
-        The composite natural key of the ``venue_accounts`` row. ACCT-04/WR-03: the guard
-        is armed from ``bring_online`` with the row's REAL ``account_id`` and uses it
-        VERBATIM — it applies NO ``or DEFAULT_ACCOUNT_ID`` substitution. Substituting here
-        (as the deleted coercion did) is the read-side half of the WR-03 asymmetry: the
-        guard would record an unnamed account under a fabricated key while the registration
-        side keyed it differently, so the recorded row was unreachable by any later
-        connect.
+        The composite natural key of the ``venue_accounts`` row, used VERBATIM — no
+        ``or DEFAULT_ACCOUNT_ID`` substitution. Substituting here would let the guard
+        record an unnamed account under a fabricated key while the registration side
+        keyed it differently, leaving the recorded row unreachable by any later connect.
     store :
         The ``VenueAccountStore`` holding the recorded ``venue_uid``.
     alert_sink :
-        The existing CRITICAL egress seam. D-04 needs no new channel.
+        The existing CRITICAL egress seam.
     at :
-        The business timestamp for the record write (the store is clock-free, D-07).
+        The business timestamp for the record write (the store is clock-free).
 
     Returns
     -------
     VenueUidGuardOutcome
-        The armed/inert outcome AND its reason (D-15/D-40). This function never raises
-        into the caller and never halts — an inert outcome is how every degraded path
-        reports itself, so the caller can surface WHICH hole it has.
+        The armed/inert outcome and its reason. This function never raises into the
+        caller and never halts — an inert outcome is how every degraded path reports
+        itself, so the caller can surface WHICH hole it has.
     """
-    # ACCT-04/WR-03: NO substitution. ``build_bundle`` no longer coerces an unnamed
-    # account onto ``"default"`` (it RAISES), so the guard must not either — after ACCT-03
-    # the ``account_id`` it is armed with is the row's real id. The deleted
-    # ``account_id or DEFAULT_ACCOUNT_ID`` here was the read-side half of the asymmetry:
-    # substituting a default while the registration side keyed the account differently is
-    # how the recorded row became unreachable by every later connect.
     uid, fetch_inert_reason = _fetch_uid(
         plugin, connector, venue_name, account_id)
     if uid is None:
@@ -179,8 +165,8 @@ def assert_venue_uid(
     try:
         row = store.get(venue_name, account_id)
     except Exception:
-        # Path 4. T-11-19: a storage outage must not abort a healthy connect. Logged
-        # loudly because it means the spoofing detector is inert for this session.
+        # Path 4. A storage outage must not abort a healthy connect. Logged loudly
+        # because it means the spoofing detector is inert for this session.
         _logger.error(
             "venue-uid guard could not read the account row; the D-04 spoofing "
             "guard is inert for this connect",
@@ -191,9 +177,8 @@ def assert_venue_uid(
         return VenueUidGuardOutcome.inert_with(REASON_STORE_READ_FAILED)
 
     if row is None:
-        # Path 5. No row for this pair yet — account MINTING is plan 11-07's job, and
-        # this guard deliberately does not create rows (it would invent an operator
-        # record from a connect-time code path).
+        # Path 5. No row for this pair yet — this guard deliberately does not create
+        # rows (it would invent an operator record from a connect-time code path).
         _logger.warning(
             "venue-uid guard found no account row; nothing recorded or asserted",
             venue_name=venue_name,
@@ -213,7 +198,7 @@ def assert_venue_uid(
     if recorded == uid:
         return VenueUidGuardOutcome.armed_with(REASON_ASSERTED_MATCH)
 
-    # THE detection (T-11-15). Alert; do NOT overwrite (T-11-20); return (T-11-19).
+    # THE detection. Alert; do NOT overwrite; return without halting.
     _emit_mismatch_alert(
         alert_sink,
         venue_name,
@@ -228,7 +213,7 @@ def assert_venue_uid(
 def _fetch_uid(
     plugin: Any, connector: Any, venue_name: str, account_id: str | None
 ) -> tuple[str | None, str | None]:
-    """The plugin's venue UID, or ``(None, inert_reason)`` (D-04/D-40).
+    """The plugin's venue UID, or ``(None, inert_reason)``.
 
     Returns ``(uid, None)`` on success, or ``(None, reason)`` naming WHICH of the three
     no-uid paths produced it so the caller can keep them distinct:
@@ -243,7 +228,7 @@ def _fetch_uid(
         uid = plugin.fetch_venue_uid(connector)
     except Exception:
         # Path 1. The Protocol says fetch_venue_uid must not raise; belt-and-braces so a
-        # third-party plugin cannot break a healthy connect either (T-11-19).
+        # third-party plugin cannot break a healthy connect either.
         _logger.error(
             "venue-uid fetch raised; the D-04 spoofing guard is inert for this connect",
             venue_name=venue_name,
@@ -272,7 +257,7 @@ def _fetch_uid(
 def _record_uid(
     store: Any, venue_name: str, account_id: str | None, uid: str, at: datetime
 ) -> bool:
-    """Trust-on-first-use write; a store failure is logged and swallowed (T-11-19).
+    """Trust-on-first-use write; a store failure is logged and swallowed.
 
     Returns ``True`` when the write landed, ``False`` when it failed — the caller turns
     a ``False`` into the ``REASON_RECORD_WRITE_FAILED`` inert outcome (path 6), kept
@@ -310,7 +295,7 @@ def _emit_mismatch_alert(
 
     The payload carries the pair and BOTH UIDs so an operator can act, and NOTHING
     else: no credential material and no ``secret_ref`` value ever reach the egress
-    channel (T-11-17).
+    channel.
     """
     from itrader.core.enums import ErrorSeverity
     from itrader.events_handler.events import ErrorEvent
@@ -337,8 +322,8 @@ def _emit_mismatch_alert(
             )
         )
     except Exception:
-        # Even the egress cannot be allowed to abort the connect (T-11-19). Logged at
-        # CRITICAL so the detection is not lost with the alert.
+        # Even the egress cannot be allowed to abort the connect. Logged at CRITICAL
+        # so the detection is not lost with the alert.
         _logger.critical(
             "venue-uid MISMATCH detected but the alert sink failed",
             venue_name=venue_name,

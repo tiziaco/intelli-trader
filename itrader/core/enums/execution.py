@@ -1,12 +1,7 @@
-"""
-Execution-related enums for the iTrader system.
-"""
-
 from enum import Enum
 
 
 class ExecutionStatus(Enum):
-    """Execution status codes for order processing."""
     SUCCESS = "success"
     PARTIAL_FILL = "partial_fill"
     REJECTED = "rejected"
@@ -18,7 +13,6 @@ class ExecutionStatus(Enum):
 
 
 class ExecutionErrorCode(Enum):
-    """Standardized error codes for execution operations."""
     NO_ERROR = "no_error"
     INVALID_ORDER = "invalid_order"
     INSUFFICIENT_FUNDS = "insufficient_funds"
@@ -33,26 +27,22 @@ class ExecutionErrorCode(Enum):
     EXCHANGE_MAINTENANCE = "exchange_maintenance"
     AUTHENTICATION_ERROR = "authentication_error"
     PERMISSION_DENIED = "permission_denied"
-    # Referenced by ExecutionTimeoutError; previously missing (would AttributeError
-    # at raise-time). Added to back the existing timeout error path.
     TIMEOUT = "timeout"
-    # D-42 / ACCT-09: the order names a portfolio the engine does not know
-    # (``account_for`` -> ``get_portfolio`` raised ``PortfolioNotFoundError``).
-    # Operator fix: the order's ``portfolio_id`` is wrong or that portfolio was
-    # never registered — reconcile the caller's portfolio set with the engine's.
-    # A distinct code (not the ``INVALID_ORDER`` misnomer) so this class of
-    # 100%-silent-drop is greppable in the event stream and the mirror.
+    # The order names a portfolio the engine does not know (``account_for`` ->
+    # ``get_portfolio`` raised ``PortfolioNotFoundError``). Operator fix: the
+    # order's ``portfolio_id`` is wrong or that portfolio was never registered.
+    # A distinct code (not the ``INVALID_ORDER`` misnomer) keeps this class of
+    # silent-drop greppable in the event stream and the mirror.
     UNKNOWN_PORTFOLIO = "unknown_portfolio"
-    # D-42 / ACCT-09: no exchange is registered for this ``(venue, account_id)``
-    # pair, so the order cannot be routed to a session. Operator fix: bring the
-    # account online / seed the exchange registry for that venue before trading
-    # it — the routing map is misconfigured, not the order. Distinct from the
-    # ``EXCHANGE_ERROR`` misnomer (which means the venue itself failed).
+    # No exchange is registered for this ``(venue, account_id)`` pair, so the
+    # order cannot be routed to a session. Operator fix: bring the account
+    # online / seed the exchange registry for that venue — the routing map is
+    # misconfigured, not the order. Distinct from the ``EXCHANGE_ERROR``
+    # misnomer (which means the venue itself failed).
     UNREGISTERED_VENUE_ACCOUNT = "unregistered_venue_account"
 
 
 class ExchangeConnectionStatus(Enum):
-    """Exchange connection status states."""
     CONNECTED = "connected"
     DISCONNECTED = "disconnected"
     CONNECTING = "connecting"
@@ -62,7 +52,6 @@ class ExchangeConnectionStatus(Enum):
 
 
 class ExchangeType(Enum):
-    """Types of exchanges supported."""
     SIMULATED = "simulated"
     LIVE = "live"
     PAPER = "paper"
@@ -73,15 +62,8 @@ class FillStatus(Enum):
     """Execution-truth fill status emitted by the exchange.
 
     Kept DISTINCT from ``OrderStatus`` (the order mirror): the
-    ``FillStatus.EXECUTED -> OrderStatus.FILLED`` mapping in
-    ``order_manager`` is the intended exchange-truth -> mirror reconciliation
-    (D-04) and must be preserved. (The former portfolio transaction-state
-    lifecycle enum died with the saga machinery — Plan 05-05 D-11.)
-
-    Member values are explicit uppercase strings, preserving the exact member
-    names of the prior functional ``Enum("FillStatus", "EXECUTED REFUSED
-    CANCELLED")`` definition. No code relies on the ``.value`` being an int
-    (verified), so explicit string values are safe and clearer.
+    ``FillStatus.EXECUTED -> OrderStatus.FILLED`` mapping in the reconcile module
+    is the intended exchange-truth -> mirror reconciliation and must be preserved.
     """
     EXECUTED = "EXECUTED"
     REFUSED = "REFUSED"
@@ -92,9 +74,7 @@ class FillStatus(Enum):
     def _missing_(cls, value: object) -> "FillStatus":
         """Case-insensitive string parse; raise a clear f-string error.
 
-        Invoked by ``FillStatus(value)`` on lookup failure. Replaces the
-        scattered ``fill_status_map.get(status)`` dict pattern and the buggy
-        ``raise ValueError('Value %s', x)`` printf-tuple form (D-04).
+        Invoked by ``FillStatus(value)`` on lookup failure.
         """
         if isinstance(value, str):
             for member in cls:

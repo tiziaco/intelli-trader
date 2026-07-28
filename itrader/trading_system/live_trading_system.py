@@ -13,8 +13,7 @@ from itrader.trading_system.alert_sink import LogAlertSink
 from itrader.trading_system.venue_spec import build_venue_spec
 # Only PURE imports belong at module top: no ccxt.pro, SQL, or venue substrate. Every
 # heavy import MUST stay lazy inside a function body, or importing this module drags it
-# onto the backtest import graph. tests/integration/test_okx_inertness.py is the gate,
-# and this rule is why every in-body import below is where it is.
+# onto the backtest import graph. tests/integration/test_okx_inertness.py is the gate.
 from itrader.trading_system.session_initializer import SessionInitializer
 from itrader.trading_system.engine_context import EngineContext
 from itrader.universe import Universe
@@ -29,13 +28,12 @@ if TYPE_CHECKING:
     from itrader.trading_system.compose import Engine
     from itrader.venues.lifecycle import VenueLifecycle
 
-# Live drain-loop timing knobs, injected into the LiveRunner (which owns the loop).
+# Live drain-loop timing knobs, injected into the LiveRunner.
 _LIVE_QUEUE_TIMEOUT = 1.0   # queue poll
 _LIVE_MAX_IDLE_TIME = 300.0  # idle-warn window
 
-# ``add_event``'s default-deny allowlist: the engine's only external/web ingress. Every
-# other type, including every internal-fact type, is rejected. Internal flow is
-# unaffected — handlers put onto ``global_queue`` directly, never through ``add_event``.
+# ``add_event``'s default-deny allowlist. Internal flow is unaffected — handlers put
+# onto ``global_queue`` directly, never through ``add_event``.
 _EXTERNALLY_ADMISSIBLE = frozenset(
     {EventType.SIGNAL, EventType.STRATEGY_COMMAND, EventType.CONFIG_UPDATE}
 )
@@ -83,7 +81,6 @@ class LiveTradingSystem:
         self.logger = get_itrader_logger().bind(component="LiveTradingSystem")
         self.status_callback = status_callback
 
-        # Handlers/feed/storages are sourced OFF the engine, never duplicated as fields.
         self._engine = engine
         self.exchange = exchange
         self.global_queue = engine.global_queue
@@ -136,8 +133,6 @@ class LiveTradingSystem:
         self._stats = {
             'events_processed': 0,
             'orders_executed': 0,
-            # A throttle-REFUSED order never reached execution, so counting it in
-            # orders_executed would over-report submissions.
             'orders_throttle_rejected': 0,
             'last_event_time': None,
             'uptime_start': None,
@@ -162,7 +157,7 @@ class LiveTradingSystem:
         """Every assembled lifecycle whose bundle carries a live connector.
 
         ``bundle.connector is not None`` is the streaming-venue discriminator (paper
-        carries a lifecycle with no connector); keeping it here keeps it in one place.
+        carries a lifecycle with no connector).
         """
         return [
             lifecycle for lifecycle in self._venue_lifecycles.values()
@@ -245,12 +240,7 @@ class LiveTradingSystem:
         return self._safety.reset_halt()
 
     def is_halted(self) -> bool:
-        """Whether the engine is in the latched HALTED state.
-
-        Returns
-        -------
-        bool
-        """
+        """Whether the engine is in the latched HALTED state."""
         return self._safety.is_halted()
 
     def pause_submission(self, reason: str) -> None:
@@ -556,9 +546,6 @@ class LiveTradingSystem:
             for lifecycle in self._venue_lifecycles.values():
                 lifecycle.start()
 
-            # Warm the LIVE feed BEFORE the socket goes live, so every update() stays on
-            # one thread until the stream starts (single-writer ring guard).
-
             streaming = self._streaming_lifecycles()
             data_provider = (
                 self._feed_binder.feed_provider
@@ -566,7 +553,9 @@ class LiveTradingSystem:
             if data_provider is not None:
                 # Subscription set is SOURCED FROM MEMBERSHIP. Per member: warm the feed
                 # FIRST (REST replay sets the ring), THEN subscribe the live socket.
-                # Never reorder — subscribing first races the ring's first write.
+                # Never reorder — subscribing first races the ring's first write, and
+                # warming before the socket is live keeps every update() on one thread
+                # (single-writer ring guard).
                 from itrader import config as _system_config
                 members = self.universe.members if self.universe is not None else []
                 for sym in members:
@@ -638,8 +627,8 @@ class LiveTradingSystem:
         # status inspection, GC) must still cancel every spawned stream task and close the
         # ccxt/native sessions, or an authenticated socket leaks — a dangling venue
         # connection in production, and a ResourceWarning (a hard failure) under
-        # filterwarnings=["error"]. Hence the finally, covering every return path including
-        # the early "not running" exit, over EVERY account symmetric with start().
+        # filterwarnings=["error"]. The finally covers every return path, over EVERY
+        # account, symmetric with start().
         # Snapshot into a list, not a live view, so a teardown that mutates the map cannot
         # raise "dictionary changed size during iteration"; it sits BEFORE the try so the
         # finally holds the full map on every path. getattr because stop() must survive a
@@ -751,12 +740,7 @@ class LiveTradingSystem:
             }
     
     def get_queue_size(self) -> int:
-        """The current depth of the global event queue.
-
-        Returns
-        -------
-        int
-        """
+        """The current depth of the global event queue."""
         return self.global_queue.qsize()
 
     def get_signal_records(self):
@@ -916,7 +900,7 @@ class LiveTradingSystem:
         import pydantic
 
         try:
-            candidate = model_cls()  # fresh default — never the shared live sub-model
+            candidate = model_cls()
             setattr(candidate, key, value)
         except pydantic.ValidationError:
             self.logger.warning(
@@ -943,7 +927,7 @@ def _layer_persisted_overrides(
 ) -> None:
     """Boot restart-layering: apply each scope's persisted config from its OWN store.
 
-    The sequence is ``defaults <- YAML <- env <- persisted``. Frozen base params
+    The sequence is ``defaults <- env <- persisted``. Frozen base params
     (``rng_seed`` / ``environment`` / identity) resolve at CONSTRUCTION and are never
     persisted-overridden. Each scope is read back from its OWNING module store — system
     from ``SystemStore``, order from the ORDER store, venue from ``VenueStore``, portfolio
@@ -1188,7 +1172,6 @@ def build_live_system(
         venue_account_store = None
     credential_resolver = EnvCredentialResolver()
 
-    # Store-only: no build*() runs, so this pulls no ccxt.
     exec_registry = ExecutionVenueRegistry()
     data_registry = DataProviderRegistry()
     connectors = ConnectorProvider(
@@ -1303,8 +1286,6 @@ def build_live_system(
         # another account's authenticated session. Backtest deliberately leaves it False.
         route_orders_by_account=True)
 
-    # Only the three handles the remaining wiring touches are taken here; the facade
-    # sources the FULL graph off the engine in __init__.
     execution_handler = engine.execution_handler
     portfolio_handler = engine.portfolio_handler
     event_handler = engine.event_handler
@@ -1473,7 +1454,7 @@ def build_live_system(
                 alert_sink=alert_sink,
             )
 
-    # The four safety collaborators. Each is a plain injected collaborator with NO facade
+    # The safety collaborators. Each is a plain injected collaborator with NO facade
     # back-reference beyond the callbacks it is handed.
     from itrader.core.clock import WallClock
     from itrader.trading_system.safety.pre_trade_throttle import PreTradeThrottle
@@ -1516,7 +1497,6 @@ def build_live_system(
     facade._safety = safety
     facade._stream_recovery = stream_recovery
     facade._throttle = throttle
-    # The feed-connection binder the live session reads its bound data provider through.
     facade._feed_binder = feed_binder
 
     # Read-model sinks: the durable KV (state.last_started_at at start();

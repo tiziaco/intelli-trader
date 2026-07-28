@@ -1,37 +1,23 @@
-"""The composition-time distinct-account invariant (D-14/D-15, MPORT-02).
+"""The composition-time distinct-account invariant.
 
-**Identity is the PAIR.** A portfolio's venue account is ``(venue_name, account_id)``, never
-``account_id`` alone. The same account-id STRING on two different venues names two different
-real accounts and is perfectly legitimate; the same string on the same venue names ONE real
-account, and two portfolios pointing at it is the T-11-38 collision.
+Identity is the PAIR ``(venue_name, account_id)``, never ``account_id`` alone: the same
+account-id string on two different venues names two different real accounts, while the
+same string on the same venue names one account that two portfolios must not share.
 
-**Why this runs over the persisted rows (11.2-07, ACCT-01/D-20).** The account set is now
-STORE-DERIVED: the live boot no longer computes account identity from the spec, so the
-spec-derived arm this check used to carry — a ``spec_portfolios`` list paired with the booted
-``venue_name`` — is GONE. The only source of portfolio pairs left is the persisted definition
-rows, and this layer stands over the database's ``UniqueConstraint('venue_name',
-'account_id')`` (plan 11-01) as belt-and-braces:
+This stands over the database's own uniqueness constraint on the pair as belt-and-braces:
+the DB binds out-of-band writers this code never sees, while this layer turns an opaque
+``IntegrityError`` into a readable, actionable refusal before the engine assembles around
+the collision — matching the justified-overlap posture already pinned for the order
+validators.
 
-* persisted x persisted — the DB constraint binds out-of-band writers this code never sees;
-  this layer turns the DB's raw ``IntegrityError`` into a readable, actionable refusal
-  BEFORE the engine assembles around the collision.
+The failure mode is REFUSE TO START, before any account is minted: two portfolios sharing
+one venue account would conflate buying power into a balance the venue cannot split back
+out, so there is no safe way to pick which portfolio keeps the account. This is
+deliberately not the per-instance quarantine a bad strategy row gets — a skipped strategy
+is harmless, a skipped portfolio may hold open positions.
 
-**D-14 — the two-layer overlap is deliberate, not redundant.** It matches the justified-
-overlap posture the conventions document already pins for the order validators: the DB layer
-binds out-of-band writers (a future integrations page) that never reach this code, and this
-layer produces a readable, actionable refusal instead of an opaque ``IntegrityError``.
-
-**D-15 — the failure is REFUSE TO START, before any account is minted.** Two portfolios on
-one venue account conflate buying power into a single balance the venue cannot split back
-out, so there is no safe way to pick which portfolio the account belongs to. This is
-deliberately NOT the per-instance quarantine treatment a bad strategy row gets: a skipped
-strategy is harmless, whereas a skipped portfolio may hold open positions. The caller must
-therefore invoke this BEFORE minting accounts — after minting, the required-argument guard
-plan 11-07 added has already been satisfied by a colliding pair and the damage is structural.
-
-**D-05/GATE-01** — reached only from inside ``build_live_system``'s durable-store gate, via a
-lazy import, and never barrel-exported. It imports no store and no spec class: both sides
-arrive as duck-typed handles.
+Reached only from inside ``build_live_system``'s durable-store gate (GATE-01), via a lazy
+import: it imports no store and no spec class, so both sides arrive as duck-typed handles.
 
 4-space indentation.
 """
@@ -49,12 +35,6 @@ def assert_distinct_accounts(
 ) -> None:
     """Raise unless every portfolio names a DISTINCT ``(venue_name, account_id)`` pair.
 
-    11.2-07 (ACCT-01/D-20): the account set is now STORE-DERIVED. The spec-derived arm —
-    a ``spec_portfolios`` list paired with the booted ``venue_name`` — is GONE: the live
-    boot no longer computes account identity from the spec, so the only source of
-    portfolio pairs left is the persisted definition rows, each carrying its OWN
-    ``venue_name``. The ``venue_name`` argument left with the spec arm it served.
-
     Parameters
     ----------
     persisted:
@@ -70,29 +50,13 @@ def assert_distinct_accounts(
 
     Notes
     -----
-    Portfolios that name NO account are skipped rather than grouped together. An unset
-    ``account_id`` is "this portfolio has no venue account" — the legacy single-account
-    shape — and treating several of them as colliding on a ``None`` key would refuse to
-    start on a configuration that has always been valid.
-
-    Zero and one portfolio both pass vacuously; that is the MPORT-03 empty edge, and it is
-    today's behaviour for every live boot in the suite.
-
-    RETIRED rows never reach here (D-32/ACCT-10). The only production caller feeds this
-    ``read_all()`` (``live_trading_system`` boot), and ``read_all`` already filters
-    ``is_deleted`` at the store (11.2-02), so a retired portfolio has already released its
-    ``(venue_name, account_id)`` pair before this check runs — its successor can claim the
-    account WITHOUT tripping the distinct-account invariant. No ``is_deleted`` logic is added
-    HERE deliberately: it would be dead code that never sees a retired row, and a second
-    filter is a second place the rule could drift from the store's. A PAUSED
-    (``enabled=False``) portfolio, by contrast, IS returned by ``read_all`` and DOES still
-    claim its account here — correctly, per D-32: pausing keeps the account, so re-enabling
-    can never collide with a successor.
-
-    The persisted x persisted layer stands over the database's own
-    ``UniqueConstraint('venue_name', 'account_id')`` as belt-and-braces: the DB binds
-    out-of-band writers this code never sees, and this layer turns a raw ``IntegrityError``
-    into a readable, actionable refusal before the engine assembles around the collision.
+    A RETIRED row never reaches here: ``read_all`` already filters ``is_deleted`` at the
+    store, so a retired portfolio's pair is released before this check runs and a
+    successor can claim it without tripping the invariant. No ``is_deleted`` logic is
+    added here deliberately — it would never see a retired row, and a second filter is a
+    second place the rule could drift from the store's. A PAUSED (``enabled=False``)
+    portfolio, by contrast, is still returned by ``read_all`` and still claims its account
+    here: pausing keeps the account, so re-enabling can never collide with a successor.
     """
     seen: dict[tuple[str, str], str] = {}
 
@@ -114,8 +78,8 @@ def _claim(
 ) -> None:
     """Record one portfolio's claim on a pair, raising when the pair is already claimed."""
     if venue_name is None or account_id is None:
-        # No account reference — nothing to collide with. See the Notes above for why
-        # these are skipped individually rather than grouped under a shared None key.
+        # Skipped individually, not grouped under a shared None key: an unset
+        # account_id means "no venue account", and several of those are not a collision.
         return
     key = (venue_name, account_id)
     incumbent = seen.get(key)

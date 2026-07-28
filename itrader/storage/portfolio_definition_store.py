@@ -1,16 +1,15 @@
-"""Durable portfolio DEFINITIONS — what a portfolio IS (D-07/D-08/D-14, MPORT-02).
+"""Durable portfolio DEFINITIONS — what a portfolio IS.
 
-The finding that motivated Phase 11: seven portfolio-scoped child tables all record what a
+The finding that motivated this module: seven portfolio-scoped child tables all record what a
 portfolio HAS (positions, cash operations, transactions, account state, …) and none record
 what it IS. This module adds that missing definition row on the shared ``SqlEngine`` spine.
 
-**Shape (D-07).** ``portfolios`` is keyed on ``portfolio_id`` (``Uuid``, matching
-``orders.portfolio_id`` and ``portfolio_account_state.portfolio_id`` — the handle stays the
-UUIDv7 the id generator mints and is never re-schemed) and carries ``name``, the
-``(venue_name, account_id)`` account reference, ``initial_cash``, ``enabled``,
-``is_deleted``, ``config_json`` and ``updated_at``.
+``portfolios`` is keyed on ``portfolio_id`` (``Uuid``, matching ``orders.portfolio_id`` and
+``portfolio_account_state.portfolio_id`` — the handle stays the UUIDv7 the id generator mints
+and is never re-schemed) and carries ``name``, the ``(venue_name, account_id)`` account
+reference, ``initial_cash``, ``enabled``, ``is_deleted``, ``config_json`` and ``updated_at``.
 
-**TWO lifecycle flags, not one (D-32).** They are deliberately NOT collapsed:
+**TWO lifecycle flags, not one.** They are deliberately NOT collapsed:
 
 * ``enabled`` = **PAUSED**. The portfolio KEEPS its venue account, so re-enabling it always
   works and can never collide with anything.
@@ -18,31 +17,31 @@ UUIDv7 the id generator mints and is never re-schemed) and carries ``name``, the
   so a successor can take the account over. Deletion is SOFT — the row, its history and its
   seven child tables all survive.
 
-Collapsing them into one flag (the superseded D-31) would make a merely PAUSED portfolio
-release its account, and re-enabling it could then collide with whatever took the account.
+Collapsing them into one flag would make a merely PAUSED portfolio release its account, and
+re-enabling it could then collide with whatever took the account.
 
-**There is deliberately NO ``exchange`` column (D-07).** A portfolio's venue is the
-``venue_name`` half of its account reference; storing it a second time creates two sources of
-truth that can drift apart, and the drifted pair has no tiebreaker.
+**There is deliberately NO ``exchange`` column.** A portfolio's venue is the ``venue_name``
+half of its account reference; storing it a second time creates two sources of truth that can
+drift apart, and the drifted pair has no tiebreaker.
 
 **Two table-level guarantees.** The FK requires the TABLE-level form because the key is
 composite (a column-level ``ForeignKey`` cannot express a two-column reference):
 
 * ``ForeignKeyConstraint(['venue_name','account_id']) -> venue_accounts`` — UNCONDITIONAL,
-  which D-06's NOT NULL ``account_id`` is what makes possible: paper portfolios get real
+  which the NOT NULL ``account_id`` makes possible: paper portfolios get real
   ``venue_accounts`` rows rather than NULLs, so there is no partial case to special-case.
-* ``Index('uq_portfolios_live_account', 'venue_name', 'account_id', unique=True)`` — the
-  D-14 DB half, now **PARTIAL over the LIVE rows** (``WHERE NOT is_deleted``) per D-32.
+* ``Index('uq_portfolios_live_account', 'venue_name', 'account_id', unique=True)`` — now
+  **PARTIAL over the LIVE rows** (``WHERE NOT is_deleted``).
 
-  **Why partial is still the same guarantee.** The D-14 rationale is about **SIMULTANEOUS**
-  sharing: two portfolios trading one venue account at once would conflate buying power the
-  venue cannot split back out — a money-losing wrong answer (T-11-02). The partial index
-  refuses that case unchanged, because both rows would be live and therefore both indexed. A
-  merely PAUSED portfolio (``enabled=False``) is still live for this purpose and still holds
-  its account. What D-32 newly permits is only **SEQUENTIAL** reuse: once a portfolio is
-  RETIRED it leaves the indexed set, and a successor may take the account over. The index is
-  self-enforcing in both directions — un-retiring a row while a successor holds the pair
-  violates it exactly as a fresh insert would.
+  **Why partial is still the same guarantee.** The plain-index rationale was about
+  **SIMULTANEOUS** sharing: two portfolios trading one venue account at once would conflate
+  buying power the venue cannot split back out — a money-losing wrong answer. The partial
+  index refuses that case unchanged, because both rows would be live and therefore both
+  indexed. A merely PAUSED portfolio (``enabled=False``) is still live for this purpose and
+  still holds its account. What the partial form newly permits is only **SEQUENTIAL** reuse:
+  once a portfolio is RETIRED it leaves the indexed set, and a successor may take the account
+  over. The index is self-enforcing in both directions — un-retiring a row while a successor
+  holds the pair violates it exactly as a fresh insert would.
 
   **The "binds out-of-band writers" half survives intact.** Uniqueness is still a DATABASE
   constraint, not an application check, so a writer that never reaches the application (the
@@ -57,12 +56,9 @@ composite (a column-level ``ForeignKey`` cannot express a two-column reference):
 A disciplined clone of the spine store template, with the multi-table registrar shape of
 ``build_strategy_registry_tables``: composes ``SqlEngine`` by reference, owns
 ``build_portfolio_definition_tables`` (single source of truth for BOTH the test-path
-provisioning helper and ``migrations/env.py``), schema-pure (WR-03/D-14 — this module never
-creates its own schema at runtime; Alembic-owned in production, ``provision_schema`` in
-tests), caller-supplied ``at`` via ``UtcIsoText`` (D-07 — clock-free), parameterized Core only
-(SEC-01).
-
-4-space indentation (matches the ``itrader/storage`` spine layer).
+provisioning helper and ``migrations/env.py``), schema-pure (this module never creates its own
+schema at runtime; Alembic-owned in production, ``provision_schema`` in tests),
+caller-supplied ``at`` via ``UtcIsoText`` (clock-free), parameterized Core only.
 """
 
 from datetime import datetime
@@ -119,25 +115,22 @@ def build_portfolio_definition_tables(metadata: MetaData) -> dict[str, Table]:
         portfolios = Table(
             "portfolios",
             metadata,
-            # The durable handle, matching orders.portfolio_id / portfolio_account_state.
             Column("portfolio_id", Uuid(as_uuid=True), primary_key=True),
             Column("name", String, nullable=False),
-            # The (venue_name, account_id) account reference — D-01's pair. NOT NULL on both
-            # halves (D-06) is what makes the FK unconditional and lets the unique index be
-            # partial on is_deleted alone rather than on a nullable pair.
+            # The (venue_name, account_id) account reference. NOT NULL on both halves is
+            # what makes the FK unconditional and lets the unique index be partial on
+            # is_deleted alone rather than on a nullable pair.
             Column("venue_name", String, nullable=False),
             Column("account_id", String, nullable=False),
             # Money — read back as Decimal (Numeric), never float.
             Column("initial_cash", Numeric, nullable=False),
-            # D-32's TWO lifecycle flags. enabled = PAUSED (keeps its account, so re-enabling
-            # always works); is_deleted = RETIRED (releases the pair for a successor).
             Column("enabled", Boolean, nullable=False),
             # NO server_default here, deliberately: the migration adds one only to backfill
             # existing rows and then drops it inside batch_alter_table, so the deployed schema
             # and this registrar agree. A default left on one side is exactly the silent
             # test-path/prod split the create_all-vs-migration parity gate exists to catch.
             Column("is_deleted", Boolean, nullable=False),
-            # D-09's destination for the per-portfolio config blob; nullable because
+            # Destination for the per-portfolio config blob; nullable because
             # load_config() explicitly handles None.
             Column("config_json", json_variant(), nullable=True),
             Column("updated_at", UtcIsoText, nullable=False),
@@ -147,15 +140,9 @@ def build_portfolio_definition_tables(metadata: MetaData) -> dict[str, Table]:
                 ["venue_accounts.venue_name", "venue_accounts.account_id"],
             ),
         )
-        # D-14 / T-11-02 / D-32 — PARTIAL over the LIVE rows. SIMULTANEOUS sharing (two live
-        # portfolios on one venue account, buying power the venue cannot split back out) is
-        # still refused by the DB, which is what the original PLAIN constraint was for;
-        # SEQUENTIAL reuse after a retirement is what becomes possible. Declared AFTER the
-        # Table so the predicate can name the real bound Column; an Index built from a
-        # table's own columns attaches itself to that table, so create_all still emits it.
-        #
-        # BOTH dialect predicates: the suite runs SQLite, production runs Postgres, and a
-        # single-dialect predicate degrades SILENTLY to a plain index on the other engine.
+        # PARTIAL over the LIVE rows (see module docstring). Declared AFTER the Table so
+        # the predicate can name the real bound Column; an Index built from a table's own
+        # columns attaches itself to that table, so create_all still emits it.
         Index(
             "uq_portfolios_live_account",
             portfolios.c.venue_name,
@@ -170,14 +157,14 @@ def build_portfolio_definition_tables(metadata: MetaData) -> dict[str, Table]:
 
 
 class PortfolioDefinitionStore:
-    """Portfolio definition rows — upsert / get / read-all (D-07/D-08).
+    """Portfolio definition rows — upsert / get / read-all.
 
     Parameters
     ----------
     sql_engine:
         The shared spine (Engine + MetaData). The driver/URL is config-selected at wiring;
         this store registers its tables on ``sql_engine.metadata`` but does NOT create them
-        — the durable schema is Alembic-owned in production (WR-03/D-14) and provisioned by
+        — the durable schema is Alembic-owned in production and provisioned by
         the shared ``provision_schema`` test fixture in tests.
     """
 
@@ -186,12 +173,10 @@ class PortfolioDefinitionStore:
         self.engine: Engine = sql_engine.engine
         tables = build_portfolio_definition_tables(sql_engine.metadata)
         self.portfolios: Table = tables["portfolios"]
-        # WR-03/D-14 — schema-pure: register the tables, never create them here
-        # (Alembic-owned in production; tests provision via provision_schema).
         self.logger = get_itrader_logger().bind(component="PortfolioDefinitionStore")
 
     def dispose(self) -> None:
-        """Dispose the shared backend engine (WR-03 — delegate, never engine.dispose())."""
+        """Dispose the shared backend engine (delegate, never engine.dispose())."""
         self.backend.dispose()
 
     def upsert(
@@ -213,15 +198,14 @@ class PortfolioDefinitionStore:
         portfolio replaces its row rather than duplicating it. ``initial_cash`` enters the
         Decimal domain via ``to_money`` — never ``Decimal(float)``. A duplicate LIVE
         ``(venue_name, account_id)`` or a missing ``venue_accounts`` parent raises
-        ``IntegrityError`` from the DB (D-14/D-32 / the composite FK). Parameterized Core
-        (SEC-01).
+        ``IntegrityError`` from the DB (the composite FK). Parameterized Core.
 
-        ``is_deleted`` defaults to ``False`` (D-32): defining a portfolio makes it LIVE, and
+        ``is_deleted`` defaults to ``False``: defining a portfolio makes it LIVE, and
         every existing caller therefore keeps its current meaning unchanged. The column is
         written explicitly rather than left to a server default — the registrar declares no
         server_default, so an omitted key would fail the NOT NULL. Retiring an EXISTING
-        portfolio is a lifecycle transition, not a redefinition, and gets its own writer in
-        the ACCT-10 wave; this parameter exists so the definition of a portfolio is complete
+        portfolio is a lifecycle transition, not a redefinition, and gets its own writer
+        (``set_deleted``); this parameter exists so the definition of a portfolio is complete
         at the point it is written.
         """
         with self.engine.begin() as connection:
@@ -267,14 +251,13 @@ class PortfolioDefinitionStore:
     def read_all(self) -> list[Mapping[str, Any]]:
         """Every LIVE portfolio definition — the rehydrate read.
 
-        LIVE-ONLY (D-32): rows with ``is_deleted`` true are omitted, because this read is what
+        LIVE-ONLY: rows with ``is_deleted`` true are omitted, because this read is what
         rehydrate builds the running system from. A retired portfolio must NOT come back on
-        the next boot with its persisted id and its child tables reattached — that resurrection
-        is the exact defect D-32 closes. Deletion stays SOFT (the row and its history survive
-        and remain reachable through ``get``); it is only invisible to rehydrate. This also
-        keeps the read aligned with the partial unique index: a successor may now hold the same
-        ``(venue_name, account_id)`` pair, so returning both rows would hand rehydrate two
-        portfolios on one account.
+        the next boot with its persisted id and its child tables reattached. Deletion stays
+        SOFT (the row and its history survive and remain reachable through ``get``); it is
+        only invisible to rehydrate. This also keeps the read aligned with the partial unique
+        index: a successor may now hold the same ``(venue_name, account_id)`` pair, so
+        returning both rows would hand rehydrate two portfolios on one account.
 
         ORDERING CONTRACT: ``portfolio_id`` ASC. Explicit rather than driver-dependent, so
         the rehydrate REGISTRATION order is reproducible across runs and dialects (an
@@ -290,32 +273,31 @@ class PortfolioDefinitionStore:
         return [self._row_to_dict(row) for row in rows]
 
     def set_enabled(self, portfolio_id: UUID, enabled: bool, at: datetime) -> None:
-        """PAUSE / RESUME one portfolio — a TARGETED UPDATE of ``enabled`` only (ACCT-10/D-32).
+        """PAUSE / RESUME one portfolio — a TARGETED UPDATE of ``enabled`` only.
 
-        ``enabled`` is D-32's **PAUSED** flag: a paused portfolio KEEPS its
+        ``enabled`` is the **PAUSED** flag: a paused portfolio KEEPS its
         ``(venue_name, account_id)`` account, so re-enabling it always works and can never
         collide with a successor (contrast ``set_deleted`` — RETIRED — which releases the
-        pair). This writer is what makes an operator's deliberate pause DURABLE: before it,
-        the ``enabled=True`` hardcode in the ``upsert`` create path was the only writer of
-        the column, so a paused portfolio came back ACTIVE and trading on the next boot
-        (ACCT-10 / WR-04). ``rehydrate_portfolios``' present-but-inactive branch is reachable
-        by a real code path only once this persists ``enabled=False``.
+        pair). This writer is what makes an operator's deliberate pause DURABLE — without it,
+        a paused portfolio would come back ACTIVE and trading on the next boot, since nothing
+        else persists ``enabled=False``. ``rehydrate_portfolios``' present-but-inactive branch
+        is reachable by a real code path only once this persists ``enabled=False``.
 
         A TARGETED UPDATE of ``enabled`` (and ``updated_at``) only, leaving ``config_json``,
         ``venue_name``, ``account_id``, ``initial_cash`` and ``is_deleted`` UNTOUCHED. Like
         ``VenueAccountStore.record_venue_uid``, it must NOT travel through the
-        operator-authored ``upsert`` path: ``upsert`` is a DELETE-then-INSERT (`:226`) and
-        would restate — and therefore be able to clobber — every operator-authored column,
-        wiping ``config_json`` on a mere pause.
+        operator-authored ``upsert`` path: ``upsert`` is a DELETE-then-INSERT and would
+        restate — and therefore be able to clobber — every operator-authored column, wiping
+        ``config_json`` on a mere pause.
 
-        Clock-free (D-07): the write timestamp is caller-supplied, matching every other
-        durable-write verb in the tree. ``portfolio_id`` is matched EXACTLY. A portfolio_id
-        with no row is a silent no-op (zero rows matched) — consistent with ``set_deleted``
-        and with ``record_venue_uid``'s sibling contract; the ACCT-10 lifecycle callers
-        (``deactivate_portfolio`` / ``activate_portfolio``) only reach this for a portfolio
-        that already has a definition row, so the no-match case is purely defensive.
-        Idempotent: calling it twice with the same value leaves the row byte-identical and
-        never raises. Parameterized Core against the constant ``Table`` (SEC-01).
+        Clock-free: the write timestamp is caller-supplied, matching every other durable-write
+        verb in the tree. ``portfolio_id`` is matched EXACTLY. A portfolio_id with no row is a
+        silent no-op (zero rows matched) — consistent with ``set_deleted`` and with
+        ``record_venue_uid``'s sibling contract; the lifecycle callers (``deactivate_portfolio``
+        / ``activate_portfolio``) only reach this for a portfolio that already has a definition
+        row, so the no-match case is purely defensive. Idempotent: calling it twice with the
+        same value leaves the row byte-identical and never raises. Parameterized Core against
+        the constant ``Table``.
         """
         with self.engine.begin() as connection:
             connection.execute(
@@ -325,28 +307,25 @@ class PortfolioDefinitionStore:
             )
 
     def set_deleted(self, portfolio_id: UUID, is_deleted: bool, at: datetime) -> None:
-        """RETIRE one portfolio — a TARGETED UPDATE of ``is_deleted`` only (ACCT-10/D-32).
+        """RETIRE one portfolio — a TARGETED UPDATE of ``is_deleted`` only.
 
-        ``is_deleted`` is D-32's **RETIRED** flag: a retired portfolio RELEASES its
+        ``is_deleted`` is the **RETIRED** flag: a retired portfolio RELEASES its
         ``(venue_name, account_id)`` pair (it leaves the partial unique index's live set) so a
-        SUCCESSOR portfolio can take the real venue account over — the exact SEQUENTIAL reuse
-        the plain constraint blocked. Deletion is SOFT: the row, its history and its seven
-        child tables all SURVIVE and stay reachable through ``get``; ``read_all`` (the
-        rehydrate read) is what stops a retired portfolio returning as a live one on the next
-        boot. This is deliberately NOT the same as ``set_enabled`` (PAUSED, keeps its
-        account) — collapsing the two flags (the superseded D-31) would make a paused
-        portfolio release its account and a re-enable then collide with whatever took it.
+        SUCCESSOR portfolio can take the real venue account over. Deletion is SOFT: the row,
+        its history and its seven child tables all SURVIVE and stay reachable through ``get``;
+        ``read_all`` (the rehydrate read) is what stops a retired portfolio returning as a live
+        one on the next boot. This is deliberately NOT the same as ``set_enabled`` (PAUSED,
+        keeps its account) — collapsing the two flags would make a paused portfolio release
+        its account and a re-enable then collide with whatever took it.
 
-        This writer is what ``delete_portfolio`` calls: before it, ``delete_portfolio``
-        flipped the in-memory state to ARCHIVED and dropped the registry entry but NEVER
-        touched the definition store, so a "deleted" portfolio returned with its persisted id
-        and its child tables reattached on restart (ACCT-10 / WR-04 — the real defect closed).
+        This writer is what ``delete_portfolio`` calls, so a retired portfolio's persisted id
+        and child tables stay RELEASED rather than reattaching to a resurrected row on restart.
 
         A TARGETED UPDATE of ``is_deleted`` (and ``updated_at``) only, leaving every other
         column untouched — same reasoning as ``set_enabled``: never route through the
-        DELETE-then-INSERT ``upsert`` (would clobber ``config_json``). Clock-free (D-07),
+        DELETE-then-INSERT ``upsert`` (would clobber ``config_json``). Clock-free,
         exact-match ``portfolio_id``, silent no-op on no match (consistent with
-        ``set_enabled``), idempotent, parameterized Core (SEC-01).
+        ``set_enabled``), idempotent, parameterized Core.
         """
         with self.engine.begin() as connection:
             connection.execute(
@@ -358,22 +337,20 @@ class PortfolioDefinitionStore:
     def live_portfolio_ids_for_account(
         self, venue_name: str, account_id: str
     ) -> list[UUID]:
-        """The LIVE portfolios claiming one ``(venue_name, account_id)`` pair (D-33/ACCT-10).
+        """The LIVE portfolios claiming one ``(venue_name, account_id)`` pair.
 
         A "live" portfolio is one whose row has ``enabled = True AND NOT is_deleted`` — the
-        durable equivalent of an ACTIVE in-memory portfolio. This is the read D-33's
-        account-disable refusal resolves against: ``VenueAccountManager.set_enabled(...,
-        False)`` refuses while ANY live portfolio still references the account, and this read
-        is what tells it which ones. Resolving the refusal against the DURABLE store — rather
-        than a live in-memory portfolio collaborator — is deliberate: pause and retire are
-        durable, so the block a disable must respect is durable too, and the manager stays
-        free of a portfolio-handler back-reference (the one-directional layering).
+        durable equivalent of an ACTIVE in-memory portfolio. This is the read
+        ``VenueAccountManager.set_enabled(..., False)`` resolves its refusal against: it
+        refuses while ANY live portfolio still references the account, and this read is what
+        tells it which ones. Resolving against the DURABLE store — rather than a live
+        in-memory portfolio collaborator — keeps the manager free of a portfolio-handler
+        back-reference (the one-directional layering).
 
-        A PAUSED portfolio (``enabled=False``) is deliberately EXCLUDED — pausing is D-33's
-        own sanctioned way to release the block — and so is a RETIRED one
-        (``is_deleted=True``), which has already released its pair. Ordered ``portfolio_id``
-        ASC so the refusal message lists the blocking ids reproducibly. Parameterized Core
-        (SEC-01).
+        A PAUSED portfolio (``enabled=False``) is deliberately EXCLUDED — pausing is the
+        sanctioned way to release the block — and so is a RETIRED one (``is_deleted=True``),
+        which has already released its pair. Ordered ``portfolio_id`` ASC so the refusal
+        message lists the blocking ids reproducibly. Parameterized Core.
         """
         statement = (
             select(self.portfolios.c.portfolio_id)
@@ -412,8 +389,9 @@ class PortfolioDefinitionStore:
             "venue_name": row["venue_name"],
             "account_id": row["account_id"],
             "initial_cash": to_money(row["initial_cash"]),
-            # Both D-32 flags are coerced to real bools: SQLite stores Boolean as INTEGER,
-            # so an uncoerced value would be 0/1 and `is False` identity checks would fail.
+            # Both lifecycle flags are coerced to real bools: SQLite stores Boolean as
+            # INTEGER, so an uncoerced value would be 0/1 and `is False` identity checks
+            # would fail.
             "enabled": bool(row["enabled"]),
             "is_deleted": bool(row["is_deleted"]),
             "config": row["config_json"],

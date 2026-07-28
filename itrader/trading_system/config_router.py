@@ -1,60 +1,22 @@
-"""Engine-thread runtime-config router — validate -> persist -> apply -> push (RTCFG-02/04/05).
+"""Engine-thread runtime-config router for ``ConfigUpdateEvent``.
 
-The single-writer CONTROL-plane consumer of ``ConfigUpdateEvent`` (D-23). Runs ENTIRELY on the
-engine thread (LR-12 single-writer contract): a dequeued ``ConfigUpdateEvent(scope, key, value)``
-is routed by a default-deny scope->owner dispatch (D-11/D-21), validated by Pydantic
-``validate_assignment`` / ``model_validate`` (D-13), persisted to the OWNING module store (D-25),
-then applied to the live mutable config sub-model + pushed through the owning handler's existing
-``update_config(...)`` (D-01). Ordering is validate -> persist -> apply (D-15): a persist failure
-rejects and applies NOTHING live, so the DB and the in-memory config never diverge in the
-applied-but-not-persisted direction.
+Runs entirely on the engine thread: a dequeued ``ConfigUpdateEvent(scope, key, value)`` is
+routed by a default-deny scope->owner dispatch, validated by Pydantic ``validate_assignment``
+/ ``model_validate``, persisted to the owning module's store, then applied to the live mutable
+config sub-model and pushed through the owning handler's ``update_config(...)``. Ordering is
+validate -> persist -> apply: a persist failure rejects and applies nothing live, so the store
+and the in-memory config can never diverge in the applied-but-not-persisted direction.
 
-There is NO standalone allowlist artifact (D-11). The mutation boundary IS the config structure:
-  * the FROZEN ``ITraderConfig`` base blocks immutable determinism/identity keys (rng_seed,
-    environment, IDs) — they are not fields on any mutable sub-model, so no routable (scope,key)
-    exists for them and default-deny rejects them STRUCTURALLY (RTCFG-04);
-  * the router's scope->owner map is the routable-scope set; and
-  * the target sub-model's ``model_fields`` (introspected, NOT hardcoded) IS the per-scope key
-    allowlist — a key that is not a real field on the owning sub-model is default-deny rejected
-    (D-12). Because the allowlist is the live model structure, it can never drift from the model.
+There is no standalone allowlist artifact: the FROZEN ``ITraderConfig`` base blocks immutable
+determinism/identity keys structurally (they are not fields on any mutable sub-model, so no
+routable scope/key exists for them), and each target sub-model's ``model_fields``
+(introspected, not hardcoded) IS the per-scope key allowlist — it can never drift from the
+model it allows.
 
-D-21/D-25 — each MODULE owns its config; config is NEVER centralized into SystemStore:
-  * ``system``          -> SystemStore  (system-global lifecycle + universe knobs)
-  * ``order``           -> the ORDER store via ``order_handler.storage.save_config`` (one global
-                          singleton OrderConfig record, NOT SystemStore)
-  * ``venue:{name}``    -> VenueStore    (per-venue config + enabled; secret-scrub guarded)
-  * ``portfolio:{id}``  -> the resolved Portfolio's OWN bound ``PortfolioStateStorage.save_config``
-                          (already portfolio_id-scoped, NOT SystemStore)
-
-Inventory pass (WARNING-2 / D-12, A1-style re-grep 2026-07-16 — the router routes ONLY to fields
-that actually exist on the target sub-models; every other (scope,key) is default-deny rejected):
-  * ``system`` scope keys -> resolve dynamically against ``SystemSettings.model_fields``
-    (``enable_auto_restart`` / ``auto_restart_delay_seconds`` / ``enable_graceful_shutdown`` /
-    ``shutdown_timeout_seconds`` — the idle/timeout knobs) AND ``UniverseConfig.model_fields``
-    (``poll_cadence_s`` / ``remove_policy`` — the universe poll cadence + remove policy). Per
-    RTCFG-02 both the system idle/timeout knobs AND the universe poll_cadence/remove_policy live
-    under the single ``system`` scope (scopes are locked to {system, order, venue, portfolio}, D-21).
-  * ``order`` scope keys  -> ``OrderConfig.model_fields`` == {``market_execution``} ONLY today. The
-    RTCFG-02 "order trail/TIF defaults" fields do NOT exist on ``OrderConfig`` and the D-08/D-09
-    restructure does NOT add them — so the router routes the order scope to ``market_execution`` and
-    lets default-deny reject the rest. NOT fabricated (no speculative trail/TIF field is invented),
-    NOT dropped (the order scope stays fully routable). Making trail/TIF runtime-mutable would be a
-    config-model addition surfaced as a finding, out of P9's locked restructure (WARNING-2 / D-12).
-  * ``venue:{name}`` keys -> {``fee_model``, ``slippage_model``, ``enabled``}; ``fee_model`` /
-    ``slippage_model`` are gated by the venue-kind predicate (D-14/RTCFG-05 — simulated-only).
-  * ``portfolio:{id}`` keys -> resolve dynamically against the mutable sections of ``PortfolioConfig``
-    (``limits`` / ``risk_management`` / ``trading_rules``) — the risk limits + sizing defaults.
-
-Rejection surfacing (D-16): any rejection (unrouted scope, non-field key, unknown portfolio id,
-validation failure, live-venue fee/slippage, persist failure) emits a deduped/rate-limited
-WARNING-severity ``ErrorEvent`` (the P7 ``warn_min_interval_s`` min-interval dedup pattern, reused)
-and records ``self.last_error`` — nothing is applied live. Only FIXED literals + the (non-secret)
-scope/key are bound to the ErrorEvent; the ``value`` (the sole secret-carrying field, V7) is NEVER
-stringified into a log or an event.
-
-No copy-on-write / atomic-swap snapshot machinery (D-03): the config is a plain engine-thread-owned
-mutable object (single writer + single live reader, both on this thread). 4-space indentation
-(matches ``route_registrar.py`` / the live CONTROL-plane siblings this router is wired alongside).
+Each scope persists to its OWNING module's store, never centralized (see the scope -> store
+map in the ``__init__`` Parameters below). The config object itself is a plain engine-thread-
+owned mutable value with a single writer and a single live reader, both on this thread, so no
+copy-on-write / atomic-swap snapshot machinery is needed.
 """
 
 from __future__ import annotations
@@ -83,31 +45,31 @@ from itrader.core.ids import PortfolioId
 from itrader.events_handler.events import ConfigUpdateEvent, ErrorEvent
 from itrader.logger import get_itrader_logger
 
-# --- Rejection reason categories (fixed literals — never derived from the value, V7) ---------
+# --- Rejection reason categories: fixed literals, never derived from the value --------------
 _REASON_UNROUTED_SCOPE = "unrouted-scope"
 _REASON_UNKNOWN_KEY = "unknown-key"
 _REASON_UNKNOWN_PORTFOLIO = "unknown-portfolio"
 _REASON_VALIDATION_FAILED = "validation-failed"
 _REASON_VENUE_KIND = "venue-kind-live-fee-slippage"
 _REASON_PERSIST_FAILED = "persist-failed"
-# 11.1-REVIEW CR-02: the key is a real field on a mutable section, but is DELIBERATELY not
-# runtime-mutable — a distinct category from ``unknown-key`` (which means "no such field").
+# A real field on a mutable section that is deliberately not runtime-mutable — distinct
+# from ``unknown-key`` (no such field on the model at all).
 _REASON_IMMUTABLE_KEY = "immutable-key"
-# WR-02: a store read / handler push / model-validate failure that escaped the per-scope
-# guards (NOT a _RejectedUpdate) — surfaced as a deduped WARNING rejection, never an escape.
+# A store-read / handler-push / model-validate failure that escaped the per-scope guards
+# (not a ``_RejectedUpdate``) — surfaced as a deduped WARNING rejection, never an escape.
 _REASON_APPLY_FAILED = "apply-failed"
 
-# --- WARNING ErrorEvent fixed egress literals (mirrors the PreTradeThrottle D-09 pattern) ----
+# --- WARNING ErrorEvent fixed egress literals (same dedup pattern as PreTradeThrottle) -------
 _ERROR_SOURCE = "config_router"
 _ERROR_TYPE = "ConfigUpdateRejected"
 _ERROR_MESSAGE = "runtime config update rejected"
 _ERROR_OPERATION = "config_update"
 
-# --- Venue-scope allowlist (D-14/RTCFG-05) ---------------------------------------------------
+# --- Venue-scope allowlist --------------------------------------------------------------------
 _VENUE_FEE_SLIPPAGE_KEYS = frozenset({"fee_model", "slippage_model"})
 _VENUE_KEYS = frozenset({"fee_model", "slippage_model", "enabled"})
 
-# --- Portfolio-scope mutable sections (D-21 — the risk limits + sizing defaults) -------------
+# --- Portfolio-scope mutable sections: the risk limits + sizing defaults ---------------------
 _PORTFOLIO_MUTABLE_SECTIONS = ("limits", "risk_management", "trading_rules")
 
 
@@ -122,23 +84,21 @@ class _RejectedUpdate(Exception):
 class ConfigRouter:
     """Engine-thread router: validate -> persist -> apply -> push, default-deny dispatch.
 
-    Constructed with the deps it needs (all injected by ``build_live_system`` in Wave 3), each
-    MODULE'S OWN store per D-21/D-25 — the persistence target is the owning module store, NEVER
-    centralized into SystemStore. The collaborators are typed ``Any`` where their config surface
-    (``save_config`` on the order/portfolio stores) is finalized in Wave 3.
+    Each scope's persistence target is its OWNING module store, never centralized into
+    SystemStore — see the scope -> store mapping below.
 
     Parameters
     ----------
     config:
-        The process ``ITraderConfig`` singleton — the live mutable apply target (D-06/D-07). The
-        FROZEN base blocks immutable keys structurally (RTCFG-04); the router setattrs only the
-        mutable sub-models.
+        The process ``ITraderConfig`` singleton — the live mutable apply target. The FROZEN
+        base blocks immutable keys structurally; the router setattrs only the mutable
+        sub-models.
     system_store:
-        ``SystemStore`` — the ``system`` scope persist target ONLY (D-21/D-25). ``upsert(key,
-        value, at)`` with a namespaced ``config.<sub>.<field>`` key.
+        ``SystemStore`` — the ``system`` scope persist target ONLY. ``upsert(key, value, at)``
+        with a namespaced ``config.<sub>.<field>`` key.
     venue_store:
         ``VenueStore`` — the ``venue:{name}`` scope persist target. ``upsert(venue_name, config,
-        enabled, at)`` with the recursive secret-denylist guard (V7).
+        enabled, at)`` with a recursive secret-denylist guard.
     order_handler:
         The order handler; ``order_handler.storage.save_config`` is the ``order`` scope persist
         target (the ORDER store, NOT SystemStore) and ``order_handler.update_config`` the push.
@@ -148,17 +108,18 @@ class ConfigRouter:
         ``state_storage.save_config`` (the portfolio scope persist target) + ``update_config`` push.
     execution_handler:
         The venue-scope push target for fee/slippage on a simulated venue (``update_config`` ->
-        the simulated exchange, D-01).
+        the simulated exchange).
     venue_kind:
         A resolver ``(venue_name) -> bool`` — ``True`` when the venue's execution arm is a
         ``SimulatedExchange`` (fee/slippage runtime-mutable), ``False`` for a live venue (reject).
     bus:
-        The event bus; only ``.put`` is used — the deduped WARNING ``ErrorEvent`` egress (D-16).
+        The event bus; only ``.put`` is used, to emit the deduped WARNING ``ErrorEvent`` on
+        rejection.
     clock:
         The injected determinism clock (``now()``) — the persist ``at`` + the WARNING dedup read
         (never wall clock).
     warn_min_interval_s:
-        The min-interval (seconds) between WARNING ErrorEvent emissions (P7 dedup, default 5.0).
+        The min-interval (seconds) between WARNING ErrorEvent emissions (default 5.0).
     """
 
     def __init__(
@@ -186,20 +147,19 @@ class ConfigRouter:
         self._bus = bus
         self._clock = clock
         self._warn_min_interval_s = warn_min_interval_s
-        # D-16: last WARNING emission time (injected clock) for the min-interval dedup.
+        # Last WARNING emission time (injected clock) for the min-interval dedup.
         self._last_warn: Optional[datetime] = None
-        # D-19: the last rejection reason (Plan 04's read-model reads state.last_error; here the
-        # router just exposes it — the state-store write lands in Wave 3).
+        # Last rejection reason, exposed for read-model / diagnostic access.
         self.last_error: Optional[str] = None
 
     # -- Public entry ------------------------------------------------------------------------
 
     def apply(self, event: ConfigUpdateEvent) -> None:
-        """Route + apply one ``ConfigUpdateEvent`` (validate -> persist -> apply -> push, D-15).
+        """Route + apply one ``ConfigUpdateEvent`` (validate -> persist -> apply -> push).
 
-        Default-deny scope dispatch (D-11): scope matching is EXACT-string (no case-folding / no
-        normalization) — a mis-cased or differently-encoded scope is unrouted -> rejected. Any
-        rejection surfaces a deduped WARNING ``ErrorEvent`` and applies NOTHING live (D-16).
+        Scope matching is EXACT-string (no case-folding / no normalization) — a mis-cased or
+        differently-encoded scope is unrouted and rejected. Any rejection surfaces a deduped
+        WARNING ``ErrorEvent`` and applies nothing live.
         """
         now = self._clock.now()
         scope = event.scope
@@ -223,37 +183,32 @@ class ConfigRouter:
         except _RejectedUpdate as rejected:
             self._surface_rejection(event, rejected.reason, now)
         except ImmutableConfigKeyError:
-            # 11.1-REVIEW CR-02: the immutable-key refusal is a TYPED DOMAIN exception (so a
-            # direct caller of Portfolio.update_config gets a remediation-bearing message), but
-            # ``ImmutableConfigKeyError`` is a ``PortfolioError(ITraderError)`` — NOT a
-            # ``_RejectedUpdate`` and NOT in the known-failure tuple below. Without this arm it
-            # would ESCAPE apply() to the engine error boundary, turning a refused operator knob
-            # into an ErrorEvent / handler-error path in live mode. Caught here so the refusal
-            # surfaces as the SAME deduped WARNING rejection as every other default-deny.
+            # ``ImmutableConfigKeyError`` is a ``PortfolioError``, not a ``_RejectedUpdate`` —
+            # without this arm it would escape ``apply()`` to the engine error boundary, turning
+            # a refused operator knob into a handler-error/live ErrorEvent instead of the same
+            # deduped WARNING rejection every other default-deny gets.
             self._surface_rejection(event, _REASON_IMMUTABLE_KEY, now)
         except (SQLAlchemyError, ConfigurationError, pydantic.ValidationError) as exc:
-            # WR-02/D-16: a KNOWN store-read / handler-push / model-validate failure that
-            # escaped the per-scope guards (e.g. an out-of-``_persist`` venue ``get``, a
-            # portfolio-store read error, a post-persist push raise) is converted into the
-            # SAME deduped WARNING rejection rather than escaping ``apply()`` to the
-            # engine-boundary error policy. NOT a bare ``except Exception`` — a genuine
-            # programming error (AttributeError/TypeError) still surfaces.
+            # A known store-read / handler-push / model-validate failure that escaped the
+            # per-scope guards is converted into the same deduped WARNING rejection rather than
+            # escaping to the engine-boundary error policy. Not a bare ``except Exception`` — a
+            # genuine programming error (AttributeError/TypeError) still surfaces.
             self.logger.warning(
                 "ConfigUpdate store/push error (scope=%s, key=%s): %s",
                 event.scope, event.key, exc)
             self._surface_rejection(event, _REASON_APPLY_FAILED, now)
 
-    # -- Scope handlers (each owns the full validate -> persist -> apply D-15 ordering) -------
+    # -- Scope handlers (each owns the full validate -> persist -> apply ordering) ------------
 
     def _apply_system(self, key: str, value: Any, now: datetime) -> None:
-        """``system`` scope -> SystemStore (D-21/D-25). Idle/timeout knobs + universe knobs.
+        """``system`` scope -> SystemStore. Idle/timeout knobs + universe knobs.
 
-        The owning sub-model is resolved by introspecting the live model structure (D-12 — the
-        structure IS the allowlist): a key on ``SystemSettings`` owns ``config.system``; a key on
-        ``UniverseConfig`` owns ``config.universe``; any other key is default-deny rejected. There
-        is no dedicated ``update_config`` push handler for system-global config — the universe poll
-        timer + lifecycle logic read ``config.<sub>.<field>`` live off the single mutable object
-        (D-03), so the apply step is the ``setattr`` alone.
+        The owning sub-model is resolved by introspecting the live model structure: a key on
+        ``SystemSettings`` owns ``config.system``; a key on ``UniverseConfig`` owns
+        ``config.universe``; any other key is default-deny rejected. There is no dedicated
+        push handler here — the universe poll timer and lifecycle logic read
+        ``config.<sub>.<field>`` live off the single mutable object, so the apply step is the
+        ``setattr`` alone.
         """
         if key in SystemSettings.model_fields:
             sub_attr = "system"
@@ -265,7 +220,7 @@ class ConfigRouter:
         sub_model = getattr(self._config, sub_attr)
         coerced = getattr(self._dry_validate_copy(sub_model, key, value), key)
 
-        # PERSIST (D-15) — namespaced KV key on the SYSTEM store (system-global config only).
+        # PERSIST — namespaced KV key on the SYSTEM store (system-global config only).
         self._persist(
             lambda: self._system_store.upsert(
                 f"config.{sub_attr}.{key}", {"value": coerced}, now
@@ -276,105 +231,101 @@ class ConfigRouter:
         setattr(sub_model, key, value)
 
     def _apply_order(self, key: str, value: Any, now: datetime) -> None:
-        """``order`` scope -> the ORDER store (D-21/D-25), NOT SystemStore.
+        """``order`` scope -> the ORDER store, NOT SystemStore.
 
-        ``OrderConfig`` carries ``market_execution`` only today; a non-field key is default-deny
-        rejected (WARNING-2 / D-12 — the order trail/TIF fields do not exist and are not
-        fabricated). Persists the coerced single-global OrderConfig record via the order store's
-        ``save_config`` and pushes the change through ``order_handler.update_config`` (D-01).
+        ``OrderConfig`` carries ``market_execution`` only; a non-field key is default-deny
+        rejected rather than fabricated — no speculative trail/TIF field is invented to widen
+        the allowlist. Persists the coerced OrderConfig record via the order store's
+        ``save_config`` and pushes the change through ``order_handler.update_config``.
         """
         if key not in OrderConfig.model_fields:
             raise _RejectedUpdate(_REASON_UNKNOWN_KEY)
 
-        # Dry-validate a throwaway copy so nothing persists on invalid input (D-15 ordering).
+        # Dry-validate a throwaway copy so nothing persists on invalid input.
         candidate = self._dry_validate_copy(self._config.order, key, value)
 
-        # PERSIST — the single global OrderConfig record on the ORDER store (D-25).
+        # PERSIST — the single global OrderConfig record on the ORDER store.
         self._persist(
             lambda: self._order_handler.storage.save_config(
                 candidate.model_dump(mode="json"), now
             )
         )
 
-        # APPLY + PUSH (D-01) — mutate the live sub-model, then the owning handler's push.
+        # APPLY + PUSH — mutate the live sub-model, then the owning handler's push.
         setattr(self._config.order, key, value)
         self._order_handler.update_config({key: value})
 
     def _apply_venue(self, venue_name: str, key: str, value: Any, now: datetime) -> None:
         """``venue:{name}`` scope -> VenueStore. Fee/slippage gated by the venue-kind predicate.
 
-        RTCFG-05/D-14: ``fee_model`` / ``slippage_model`` are runtime-mutable ONLY for a simulated
-        venue — a live venue's fee/slippage is rejected (real-venue fees come from actual fills,
-        not engine config). ``enabled`` is allowed regardless of venue kind. The secret-scrub is
-        enforced inside ``VenueStore.upsert`` (V7) — a credential-carrying value is rejected at the
+        ``fee_model`` / ``slippage_model`` are runtime-mutable only for a simulated venue — a
+        live venue's fee/slippage is rejected, since real-venue fees come from actual fills, not
+        engine config. ``enabled`` is allowed regardless of venue kind. The secret-scrub is
+        enforced inside ``VenueStore.upsert``: a credential-carrying value is rejected at the
         write boundary and surfaces here as a persist failure (nothing applied).
         """
         if key not in _VENUE_KEYS:
             raise _RejectedUpdate(_REASON_UNKNOWN_KEY)
 
-        # WR-01: ``enabled`` is a REAL boolean flag, not a truthy coercion. A non-bool value
-        # (e.g. the string "false", which ``bool(...)`` would evaluate to True and silently
-        # ENABLE a venue the caller meant to disable) is rejected BEFORE any persist.
+        # ``enabled`` is a real boolean flag, not a truthy coercion: a non-bool value (e.g. the
+        # string "false", which ``bool(...)`` would evaluate to True and silently enable a venue
+        # the caller meant to disable) is rejected before any persist.
         if key == "enabled" and not isinstance(value, bool):
             raise _RejectedUpdate(_REASON_VALIDATION_FAILED)
 
-        # Venue-kind predicate (D-14) — checked at apply time on the venue's execution arm.
         if key in _VENUE_FEE_SLIPPAGE_KEYS and not self._venue_kind(venue_name):
             raise _RejectedUpdate(_REASON_VENUE_KIND)
 
-        # CR-02/D-15 — DRY-validate the fee/slippage value BEFORE persisting (restores the
-        # validate -> persist -> apply -> push ordering the venue scope was missing). The
-        # push (``execution_handler.update_config``) is the ONLY validator of a venue
-        # fee/slippage value; running its dry twin FIRST means an invalid value NEVER lands
-        # in VenueStore (a poisoned row would otherwise brick the next boot's layering).
+        # DRY-validate the fee/slippage value before persisting. ``execution_handler.update_config``
+        # is the only validator of a venue fee/slippage value; running its dry twin first means
+        # an invalid value never lands in VenueStore — a poisoned row would otherwise brick the
+        # next boot's config layering.
         if key in _VENUE_FEE_SLIPPAGE_KEYS:
             try:
                 self._execution_handler.validate_config({key: value})
             except ConfigurationError as exc:
                 raise _RejectedUpdate(_REASON_VALIDATION_FAILED) from exc
 
-        # Merge onto the existing persisted venue row so a single-field update does not drop the
-        # sibling config keys / enabled flag (last-writer-wins per field, D-15 arrival order).
+        # Merge onto the existing persisted venue row so a single-field update does not drop
+        # the sibling config keys / enabled flag (last-writer-wins per field).
         existing = self._venue_store.get(venue_name)
         config: dict[str, Any] = dict(existing["config"]) if existing else {}
         enabled: bool = bool(existing["enabled"]) if existing else True
         if key == "enabled":
-            enabled = value  # already checked to be a real bool (WR-01)
+            enabled = value  # already checked to be a real bool
         else:
             config[key] = value
 
-        # PERSIST — VenueStore.upsert runs its recursive secret-denylist guard FIRST (V7).
+        # PERSIST — VenueStore.upsert runs its recursive secret-denylist guard first.
         self._persist(
             lambda: self._venue_store.upsert(venue_name, config, enabled, now)
         )
 
-        # APPLY + PUSH — a simulated-venue fee/slippage change pushes to the execution handler
-        # (-> the simulated exchange, D-01). ``enabled`` is a persist-only operational flag here.
+        # APPLY + PUSH — a simulated-venue fee/slippage change pushes to the execution handler.
+        # ``enabled`` is a persist-only operational flag with no push here.
         if key in _VENUE_FEE_SLIPPAGE_KEYS:
             self._execution_handler.update_config({key: value})
 
     def _apply_portfolio(self, pid: str, key: str, value: Any, now: datetime) -> None:
-        """``portfolio:{id}`` scope -> the resolved Portfolio's OWN bound store (D-21/D-25).
+        """``portfolio:{id}`` scope -> the resolved Portfolio's OWN bound store, NOT SystemStore.
 
         Resolves the target ``Portfolio`` via ``portfolio_handler.get_portfolio(id)`` — an unknown
         id raises ``PortfolioNotFoundError`` -> default-deny reject (no persist, no apply). The key
         is resolved to its owning ``PortfolioConfig`` section (``limits`` / ``risk_management`` /
-        ``trading_rules``) by introspecting the live model structure (D-12). Dry-validates the
-        candidate config (mirrors ``Portfolio.update_config``) so nothing persists on invalid
-        input, persists to the Portfolio's OWN ``state_storage.save_config`` (already
-        portfolio_id-scoped — NOT SystemStore, NO id-keying), then applies via
-        ``portfolio.update_config`` (recursive_merge -> validate -> atomic-swap push, D-01).
+        ``trading_rules``) by introspecting the live model structure. Dry-validates the candidate
+        config so nothing persists on invalid input, persists to the Portfolio's own
+        ``state_storage.save_config`` (already portfolio_id-scoped), then applies via
+        ``portfolio.update_config``.
 
-        11.1-REVIEW CR-02: a key in ``IMMUTABLE_PORTFOLIO_CONFIG_KEYS`` is refused FIRST — before
-        the id resolves, before any store is read, and before any merge — so nothing is even
-        partially applied. The check is KEY-scoped, NOT section-scoped: ``trading_rules`` stays in
-        ``_PORTFOLIO_MUTABLE_SECTIONS`` and every other field in it stays routable. Removing the
-        whole section would ban fields the owner never asked to freeze.
+        A key in ``IMMUTABLE_PORTFOLIO_CONFIG_KEYS`` is refused FIRST — before the id resolves,
+        before any store is read, and before any merge — so nothing is even partially applied.
+        The check is KEY-scoped, not section-scoped: ``trading_rules`` stays in
+        ``_PORTFOLIO_MUTABLE_SECTIONS`` and every other field in it stays routable — banning the
+        whole section would freeze fields nobody asked to freeze.
         """
-        # 11.1-REVIEW CR-02 — immutable-key default-deny (a TIGHTENING of the router's access
-        # control). Placed above the id resolution because immutability is a property of the KEY,
-        # not of the addressed portfolio; ``_resolve_portfolio_section`` keeps its documented
-        # ``Optional[str]`` return-None-for-default-deny contract and does no raising.
+        # Checked before id resolution because immutability is a property of the KEY, not of
+        # the addressed portfolio. ``_resolve_portfolio_section`` keeps returning ``None`` for
+        # default-deny rather than raising.
         if key in IMMUTABLE_PORTFOLIO_CONFIG_KEYS:
             raise ImmutableConfigKeyError(key=key, scope=f"portfolio:{pid}")
 
@@ -393,7 +344,7 @@ class ConfigRouter:
             raise _RejectedUpdate(_REASON_UNKNOWN_KEY)
         update = {section: {key: value}}
 
-        # Dry-validate the merged candidate (D-13/D-15) — nothing persists on invalid input.
+        # Dry-validate the merged candidate — nothing persists on invalid input.
         try:
             validated = PortfolioConfig.model_validate(
                 recursive_merge(portfolio.config.model_dump(), update)
@@ -408,14 +359,14 @@ class ConfigRouter:
             )
         )
 
-        # APPLY + PUSH — Portfolio.update_config does recursive_merge -> validate -> atomic swap (D-01).
+        # APPLY + PUSH — delegates to ``Portfolio.update_config``.
         portfolio.update_config(update)
 
     # -- Helpers -----------------------------------------------------------------------------
 
     @staticmethod
     def _resolve_portfolio_section(config: PortfolioConfig, key: str) -> Optional[str]:
-        """The mutable ``PortfolioConfig`` section owning ``key`` (D-12 structural allowlist).
+        """The mutable ``PortfolioConfig`` section owning ``key``.
 
         Introspects the live sub-model ``model_fields`` so the routable-key set can never drift
         from the model. Returns ``None`` (default-deny) when no mutable section owns the key.
@@ -430,12 +381,13 @@ class ConfigRouter:
     def _dry_validate_copy(sub_model: Any, key: str, value: Any) -> Any:
         """Dry-validate ``value`` against ``sub_model.key`` on a throwaway copy; return the copy.
 
-        The copy's ``validate_assignment=True`` re-runs the field's coercion + ``Field(...)``
-        constraints WITHOUT touching the live object (D-13/D-15 — validate before persist). Raises
-        ``_RejectedUpdate(validation-failed)`` on a bad type/range. Returns the validated candidate
-        copy so callers can read the coerced field (``getattr(candidate, key)``) or dump the whole
-        record (``candidate.model_dump(...)``) — the shared setattr-on-copy path for the ``system``
-        and ``order`` scopes (``portfolio`` deliberately uses a whole-model merge-validate instead).
+        The copy's ``validate_assignment=True`` re-runs the field's coercion and ``Field(...)``
+        constraints without touching the live object. Raises
+        ``_RejectedUpdate(validation-failed)`` on a bad type/range. Returns the validated
+        candidate so callers can read the coerced field (``getattr(candidate, key)``) or dump
+        the whole record (``candidate.model_dump(...)``) — the shared setattr-on-copy path for
+        the ``system`` and ``order`` scopes (``portfolio`` deliberately uses a whole-model
+        merge-validate instead).
         """
         candidate = sub_model.model_copy()
         try:
@@ -446,22 +398,22 @@ class ConfigRouter:
 
     @staticmethod
     def _persist(write: Callable[[], None]) -> None:
-        """Run the owning store's write; a persist failure rejects (D-15 — apply NOTHING live)."""
+        """Run the owning store's write; a persist failure rejects so nothing applies live."""
         try:
             write()
         except _RejectedUpdate:
             raise
-        except Exception as exc:  # noqa: BLE001 — any store failure is a persist rejection (D-15)
+        except Exception as exc:  # noqa: BLE001 — any store failure is a persist rejection
             raise _RejectedUpdate(_REASON_PERSIST_FAILED) from exc
 
     def _surface_rejection(
         self, event: ConfigUpdateEvent, reason: str, now: datetime
     ) -> None:
-        """Record ``last_error`` + emit a deduped WARNING ``ErrorEvent`` (D-16). Applies nothing.
+        """Record ``last_error`` and emit a deduped WARNING ``ErrorEvent``. Applies nothing.
 
-        The min-interval dedup (P7 ``warn_min_interval_s`` pattern) throttles a rejected-update
-        flood off the injected clock. Only FIXED literals + the (non-secret) scope/key are bound —
-        the ``value`` (the sole secret-carrying field, V7) is NEVER stringified into the log/event.
+        The min-interval dedup throttles a rejected-update flood off the injected clock. Only
+        fixed literals and the (non-secret) scope/key are bound — the ``value`` (the sole
+        secret-carrying field) is never stringified into the log or the event.
         """
         self.last_error = reason
         self.logger.warning(

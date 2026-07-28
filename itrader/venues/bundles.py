@@ -1,43 +1,37 @@
-"""VenueBundles — the shared (venue, account_id) bundle memo (11.1-05, VENUE-07, D-08).
+"""VenueBundles — the shared (venue, account_id) bundle memo.
 
 One small memoized provider over ``(registry, connectors, ctx)`` that both
 ``ExecutionHandler`` and ``PortfolioHandler`` hold, each asking it for the view it
-needs — the ``exchange``, or the ``account_factory``. Four properties are
-load-bearing; each is a defect if inverted.
+needs — the ``exchange``, or the ``account_factory``.
 
 **WHY a memo and not build-per-caller.** ``ExecutionHandler`` and
 ``PortfolioHandler`` both need a view of the SAME bundle for one
-``(venue, account_id)``. Two independent ``build_bundle`` calls produce two
+``(venue, account_id)``. Two independent ``build_bundle`` calls would produce two
 ``OkxExchange`` instances per account, and ``OkxExchange.connect()`` is the SOLE
-spawn site for ``_stream_fills`` / ``_stream_orders`` — so a second bundle
-double-spawns the fill/order streams for one authenticated account. The memo is
-the mitigation for that duplicate-session defect (D-08), not an optimization; it
-is the stated reason D-08 rejected the registry-per-handler form.
+spawn site for ``_stream_fills`` / ``_stream_orders`` — so a second bundle would
+double-spawn the fill/order streams for one authenticated account. The memo exists
+to prevent that duplicate-session defect, not to optimize.
 
 **WHY it sits one layer ABOVE ``ConnectorProvider`` and shares its key.** The
 connector memo (``connectors/provider.py``) keys ``(venue, account_id)``. A bundle
 memo on any other key (a bare ``account_id``, a bare ``venue``) lets the two drift:
 two venues sharing one ``account_id`` would collapse onto one bundle while still
 holding two connectors. The memo shape here is copied structurally from
-``ConnectorProvider.get`` for exactly that reason — a divergent second memo
-re-opens the bug this class exists to prevent.
+``ConnectorProvider.get`` for exactly that reason.
 
 **WHY the lookup is fail-loud.** ``get`` resolves the plugin through
 ``ExecutionVenueRegistry.get``, whose bare ``self._plugins[name]`` subscript raises
-``KeyError`` on an unknown venue (``venues/registry.py``). It is never wrapped in a
-soft ``.get(...) or default`` lookup: a wiring path that answers "here is some
-exchange" when asked for one that was never registered routes real orders to the
-wrong venue, and does it without raising.
+``KeyError`` on an unknown venue. It is never wrapped in a soft ``.get(...) or
+default`` lookup: a wiring path that answers "here is some exchange" when asked
+for one that was never registered routes real orders to the wrong venue, and does
+it without raising.
 
-**WHY it is not in the barrel.** ``venues/__init__.py`` is the GATE-01 acceptance
-evidence — it "imports NO concretion … so importing ``itrader.venues`` pulls
-nothing heavy". This module is imported DIRECTLY
+**WHY it is not in the barrel.** ``venues/__init__.py`` is the GATE-01 inertness
+acceptance evidence: it imports no concretion, so importing ``itrader.venues``
+pulls nothing heavy. This module is imported DIRECTLY
 (``from itrader.venues.bundles import VenueBundles``) and is deliberately absent
-from that barrel, mirroring ``connectors/provider.py``. Adding a name to the barrel
-invites a future module-level concretion import that the inertness gate would then
-have to be weakened to accommodate.
-
-Indentation: 4-SPACE (``venues/`` package convention). ``mypy --strict`` applies.
+from that barrel — adding it invites a future module-level concretion import that
+the inertness gate would then have to be weakened to accommodate.
 """
 
 from __future__ import annotations
@@ -53,7 +47,7 @@ if TYPE_CHECKING:
 
 
 class VenueBundles:
-    """Owns the ``(venue, account_id)`` bundle memo over the venue registry (D-08).
+    """Owns the ``(venue, account_id)`` bundle memo over the venue registry.
 
     ``get`` builds-once-then-memoizes on the ``(venue, account_id)`` key so the
     execution and portfolio arms share ONE bundle — and therefore one exchange and
@@ -79,10 +73,10 @@ class VenueBundles:
 
         Fails loud with ``KeyError`` when ``venue`` has no registered plugin.
 
-        ``account_id`` is REQUIRED, not defaulted: callers apply
-        ``spec.account_id or DEFAULT_ACCOUNT_ID`` before calling, the same rule
-        ``assemble_venue`` follows. Normalizing in two places is how the exchange
-        registry and the connector memo end up disagreeing about an unnamed account.
+        ``account_id`` is REQUIRED, not defaulted: it is read UNCOERCED here, with no
+        ``or DEFAULT_ACCOUNT_ID`` fallback applied. Normalizing an absent id in more
+        than one place is how the exchange registry and the connector memo end up
+        disagreeing about the same unnamed account.
         """
         key = (venue, account_id)
         if key not in self._memo:
@@ -99,26 +93,24 @@ class VenueBundles:
         spec: Any = None,
         **portfolio_args: Any,
     ) -> Account:
-        """Construct THIS ``(venue, account_id)``'s account leaf (11.2-05, D-21).
+        """Construct THIS ``(venue, account_id)``'s account leaf.
 
         The mode-agnostic construction primitive: it resolves the shared bundle through
         ``get`` above and calls that bundle's ``account_factory``. Both backtest arms
-        already build a ``VenueBundles``, so this needs no mode branch — which is exactly
-        why the layer split in D-21 puts CONSTRUCTION here and AUTHORITY
-        (does this account exist, and is it enabled?) in ``VenueAccountManager``. A
-        manager-only design would need a ``VenueAccountManager(store=None)`` on the
-        backtest arm, the ``Optional``-collaborator shape this milestone is deleting.
+        already build a ``VenueBundles``, so this needs no mode branch — the layer split
+        puts CONSTRUCTION here and AUTHORITY (does this account exist, and is it
+        enabled?) in ``VenueAccountManager``. A manager-only design would need a
+        ``VenueAccountManager(store=None)`` on the backtest arm, the Optional-collaborator
+        shape this codebase avoids.
 
-        ``account_id`` is REQUIRED and UNCOERCED, exactly like ``get``: callers apply
-        ``spec.account_id or DEFAULT_ACCOUNT_ID`` before calling. Normalizing in two
-        places is how the exchange registry and the connector memo end up disagreeing
-        about an unnamed account.
+        ``account_id`` is REQUIRED and UNCOERCED, exactly like ``get``: no fallback is
+        applied here either.
 
-        It is also FORWARDED to the factory as ``account_id=``, because under D-21 the
-        pair IS the account's identity — the memo key and the account the leaf is minted
-        for are the same thing, and letting them be supplied separately is how they drift.
-        Callers therefore MUST NOT repeat ``account_id`` inside ``portfolio_args`` (Python
-        raises ``TypeError`` for the duplicate, which is the intended loud failure).
+        It is also FORWARDED to the factory as ``account_id=``, because the pair IS the
+        account's identity — the memo key and the account the leaf is minted for are the
+        same thing, and letting them be supplied separately is how they drift. Callers
+        therefore MUST NOT repeat ``account_id`` inside ``portfolio_args`` (Python raises
+        ``TypeError`` for the duplicate, which is the intended loud failure).
 
         ``spec`` is the build-time spec ``get`` forwards to the plugin on a memo MISS. The
         expected case is a memo HIT — the bundle was built by
@@ -136,13 +128,13 @@ class VenueBundles:
     def plugin_for(self, venue: str) -> VenuePlugin:
         """Return the plugin registered for ``venue`` — METADATA only, never to build.
 
-        11.1-08 (D-08/D-14): ``assemble_venue`` needs the venue's PLUGIN OBJECT for the
-        D-04 venue-UID guard (``VenueLifecycle`` calls ``plugin.venue_uid(connector)``),
-        while its BUNDLE must come from ``get`` above so exactly one exchange exists per
-        ``(venue, account_id)``. Exposing this narrow read — rather than threading a
-        second ``ExecutionVenueRegistry`` argument alongside the memo — is what makes a
-        divergent registry unrepresentable: the guard's plugin and the bundle's builder
-        are provably the same object.
+        ``assemble_venue`` needs the venue's PLUGIN OBJECT for the venue-UID guard
+        (which calls ``plugin.fetch_venue_uid(connector)``), while its BUNDLE must come
+        from ``get`` above so exactly one exchange exists per ``(venue, account_id)``.
+        Exposing this narrow read — rather than threading a second
+        ``ExecutionVenueRegistry`` argument alongside the memo — makes a divergent
+        registry unrepresentable: the guard's plugin and the bundle's builder are
+        provably the same object.
 
         Callers MUST NOT call ``build_bundle`` on the returned plugin. That is the
         memo-bypass this class exists to prevent (it is how a boot ends up with two

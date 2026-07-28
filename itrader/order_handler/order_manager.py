@@ -1,16 +1,4 @@
-"""
-Order Manager - Enhanced order orchestration engine for OrderHandler.
-
-Centralizes all order operations including:
-- Signal processing with smart order creation/modification
-- Stop/Limit order trigger evaluation
-- Market order execution with configurable timing
-- Order lifecycle management (create, modify, cancel)
-- State management and OrderEvent generation
-
-Provides the business logic layer between OrderHandler (interface)
-and order storage/execution systems.
-"""
+"""Order orchestration engine — the business logic layer behind OrderHandler."""
 
 from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional
@@ -39,17 +27,12 @@ from ..universe import Universe
 
 class OrderManager:
 	"""
-	Enhanced order orchestration engine for OrderHandler.
-	
-	Centralizes all order operations including:
-	- Signal processing with smart order creation/modification
-	- Stop/Limit order trigger evaluation  
-	- Market order execution with configurable timing
-	- Order lifecycle management (create, modify, cancel)
-	- State management and OrderEvent generation
-	
-	Provides the business logic layer between OrderHandler (interface)
-	and order storage/execution systems.
+	Order orchestration engine — the business logic layer behind OrderHandler.
+
+	Coordinator over four collaborators: signal→order admission, order
+	lifecycle (modify/cancel/expire), bracket assembly, and fill reconciliation.
+	It declares brackets but never matches orders — the exchange holds the
+	resting book and is the source of truth for fills.
 	"""
 	
 	def __init__(self, order_storage: OrderStorage, logger: Any,
@@ -62,56 +45,44 @@ class OrderManager:
 		"""
 		Initialize the OrderManager.
 
-		D-18: the manager has EXCLUSIVE ownership of the order storage and no
+		The manager has EXCLUSIVE ownership of the order storage and no
 		back-reference to OrderHandler — layering is one-directional
-		(facade -> manager -> storage). The manager never touches the events
-		queue: it returns OperationResults carrying OrderEvents and the
-		handler performs all queue puts.
+		(facade -> manager -> storage). It never touches the events queue: it
+		returns OperationResults carrying OrderEvents and the handler performs
+		all queue puts.
 
 		Parameters
 		----------
 		order_storage : OrderStorage
-			Storage interface for order operations (manager-owned, D-18)
+			Storage interface for order operations (manager-owned)
 		logger : Logger
 			Logger instance for order processing events
 		order_config : OrderConfig, optional
-			Order-domain config (D-05) carrying ``market_execution``. The
-			str->enum coercion now lives in ``OrderConfig`` validation
-			(``model_validate`` on a plain Enum field), replacing the loose
-			ctor-boundary ``MarketExecution(market_execution)`` parse. None
-			defaults to ``OrderConfig.default()`` ("immediate").
+			Order-domain config carrying ``market_execution``; the str->enum
+			coercion lives in ``OrderConfig`` validation. None defaults to
+			``OrderConfig.default()`` ("immediate").
 		market_execution : str | MarketExecution, optional
-			DEPRECATED backward-compat override (D-05): when provided it builds
-			an ``OrderConfig`` with this ``market_execution`` (still coerced via
-			OrderConfig validation), so existing ``market_execution=`` callers
-			keep working until Wave 4 migrates them to ``order_config``:
+			DEPRECATED backward-compat override: when provided it builds an
+			``OrderConfig`` with this ``market_execution``.
 			- "immediate": Execute market orders immediately (live trading)
 			- "next_bar": Execute market orders on next bar (realistic backtesting)
 		portfolio_handler : PortfolioReadModel, optional
-			Narrow portfolio read boundary for position-aware operations
-			(D-16: the concrete handler conforms structurally)
+			Narrow portfolio read boundary for position-aware operations; the
+			concrete handler conforms structurally.
 		fee_model_provider : FeeModelProvider, optional
-			Returns the CURRENT fee model of the exchange serving an order's
-			``(venue, account_id)`` pair —
-			``(venue, account_id) -> FeeModel | None`` — feeding the admission
-			reservation amount (Plan 05-06, D-04/D-18/D-39).
-			INJECTED at wiring time as a typed read-model seam — order_manager
-			never imports across the execution boundary (RESEARCH Pattern 1).
-			D-18 narrowed this from the old ``(quantity, price) -> Decimal``
-			estimator: the ``side="buy", order_type="market"`` admission
-			convention is admission POLICY and now lives in ``AdmissionManager``,
-			leaving only the WIRING half here. D-39/WR-01 then made the seam
-			PAIR-KEYED: as a zero-arg provider it could only ever answer for the
-			one exchange the wiring captured. ``None`` (or a provider returning
-			``None``) means a zero estimate, which reproduces the pre-reservation
-			funds-check math exactly (the golden run pins fees 0).
+			``(venue, account_id) -> FeeModel | None`` — the CURRENT fee model of
+			the exchange serving an order's pair, feeding the admission
+			reservation amount. Injected at wiring time as a typed read-model
+			seam so this module never imports across the execution boundary.
+			Pair-keyed on purpose: a zero-arg provider could only ever answer for
+			the one exchange the wiring captured. The side/order-type convention
+			the estimate is read at is admission POLICY and lives in
+			``AdmissionManager``. ``None`` (or a provider returning ``None``)
+			means a zero estimate, reproducing the pre-reservation funds-check
+			math exactly.
 		"""
 		self.order_storage = order_storage
 		self.logger = logger
-		# D-05: the str->enum coercion lives in OrderConfig validation now. A
-		# loose market_execution= override (backward-compat) builds an OrderConfig
-		# from it; otherwise order_config (default "immediate") is used. The
-		# stored member is byte-identical to the old MarketExecution() ctor parse.
 		if order_config is None:
 			order_config = (
 				OrderConfig(market_execution=MarketExecution(market_execution))
@@ -122,148 +93,135 @@ class OrderManager:
 		self.portfolio_handler = portfolio_handler
 		self.fee_model_provider = fee_model_provider
 
-		# Initialize validator if portfolio_handler is available
-		# Plan 02-03 (D-08/D-09): thread enable_margin so the validator defers its
-		# full-notional cash-cost check to the AdmissionManager reservation gate in
-		# margin mode (the reservation reserves notional/L, the over-margin REJECT
-		# routes via the audited CASH_RESERVATION path). Default False → byte-exact.
+		# enable_margin makes the validator DEFER its full-notional cash-cost check
+		# to the AdmissionManager reservation gate, which reserves notional/L; see
+		# EnhancedOrderValidator._check_cash_availability for why the full-notional
+		# verdict is the wrong authority under margin.
 		self.order_validator = EnhancedOrderValidator(portfolio_handler, enable_margin=enable_margin) if portfolio_handler else None
 
-		# The ONE sizing resolver (D-01, M5-06): dispatches on the signal's
-		# DECLARED SizingPolicy. Same optionality pattern as the read model —
-		# constructed only when a read model is present (resolution reads
-		# portfolio state exclusively through the Protocol).
+		# The ONE sizing resolver: dispatches on the signal's DECLARED SizingPolicy.
+		# Optional for the same reason the read model is — resolution reads portfolio
+		# state exclusively through the Protocol, so there is nothing to build without one.
 		self.sizing_resolver = SizingResolver(portfolio_handler) if portfolio_handler else None
 
-		# D-13 PercentFromFill pending brackets (RESEARCH Pattern 5 Option B):
-		# parent order id -> the context needed to create the fill-anchored
-		# children in on_fill. Entries are discarded when the parent reaches
-		# CANCELLED/REJECTED without executing (T-07-15 — no orphans possible:
-		# the children were never created).
+		# The shared pending-bracket book, owned here and injected into every
+		# collaborator that touches it — a second copy would let a fill-anchored
+		# child be built from a bracket another bucket already discarded.
 		self._brackets = BracketBook()
 
-		# D-04/D-09 coordinator-owned star: construct the bracket-assembly
-		# collaborator ONCE, injecting the dep subset (order_storage, logger)
-		# plus the shared BracketBook. The assembly/fill-anchored call sites
-		# below delegate into it (mirror portfolio._init_managers).
+		# Construction order matters below: bracket_manager must exist before the
+		# admission and reconcile collaborators, which take it as an injected dep.
 		self.bracket_manager = BracketManager(order_storage, logger, self._brackets)
 
-		# D-04/D-09 coordinator-owned star: construct the signal→order admission
-		# collaborator ONCE — AFTER self._brackets and self.bracket_manager, since
-		# admission reaches bracket assembly through the injected BracketManager
-		# (D-08, the assembly seam) and holds NO reconcile/lifecycle ref. The
-		# public process_signal delegates into it.
 		self.admission_manager = AdmissionManager(
 			order_storage, logger, self.order_validator, self.sizing_resolver,
 			portfolio_handler, fee_model_provider, self._brackets,
 			self.bracket_manager, enable_margin=enable_margin,
 			portfolio_max_leverage=portfolio_max_leverage)
 
-		# D-04/D-09 coordinator-owned star: construct the modify/cancel lifecycle
-		# collaborator ONCE, injecting the dep subset (order_storage, logger,
-		# order_validator, portfolio_handler for release) plus the shared
-		# BracketBook. modify_order / cancel_order below delegate into it (D-07).
-		# It holds NO sibling reconcile/admission ref (D-08); on_fill's terminal
-		# orphaned-child cancel routes through the OrderManager.cancel_order
-		# delegation (preserving the star; the reconcile→lifecycle seam is wired
-		# through the coordinator in plan 05, not via a direct sibling edge).
 		self.lifecycle_manager = LifecycleManager(
 			order_storage, logger, self.order_validator, portfolio_handler,
 			self._brackets)
 
-		# D-04/D-09 coordinator-owned star: construct the FRAGILE fill-reconcile
-		# collaborator ONCE — AFTER self.bracket_manager and self.cancel_order
-		# (the plan-04 lifecycle delegation) resolve. on_fill's two cross-bucket
-		# calls route through the injected coordinator-owned BracketManager
-		# (fill-anchored children) and the self.cancel_order coordinator callback
-		# (WR-05 orphaned-child cancel), preserving the D-04 star with NO sibling
-		# reconcile→lifecycle/brackets edge and no circular import (D-08). on_fill
-		# below is a 1-line delegation into it (D-07).
+		# Reconcile's orphaned-child cancel arrives as the `self.cancel_order`
+		# coordinator callback rather than a direct LifecycleManager reference:
+		# collaborators stay siblings-unaware, so the reconcile bucket cannot
+		# reach past the coordinator into lifecycle state.
 		self.reconcile_manager = ReconcileManager(
 			order_storage, logger, portfolio_handler, self._brackets,
 			self.bracket_manager, self.cancel_order)
 
 	@property
 	def _pending_brackets(self) -> BracketBook:
-		"""Read-only accessor for the pending-bracket owner (D-05).
+		"""Read-only accessor for the pending-bracket owner.
 
-		Exposes the BracketBook under the legacy attribute name so the
-		internal-attribute-coupled test_sltp_policy.py reaches it unchanged;
-		the book's dict-compat dunders make its `== {}` / `in` assertions
-		pass byte-equal (Pitfall 2 option a). Single owner — no second raw
-		dict is kept alongside (Pitfall 2 option c forbidden, D-05).
+		Exposes the BracketBook under the legacy attribute name that
+		``test_sltp_policy.py`` couples to; the book's dict-compat dunders make
+		its ``== {}`` / ``in`` assertions pass. It is an alias, not a copy — a
+		second raw dict alongside would let the two owners diverge.
 		"""
 		return self._brackets
 
 	def update_config(self, updates: dict[str, Any]) -> None:
-		"""Update order-domain configuration at runtime (D-05/D-07/D-08/D-09).
+		"""Update order-domain configuration at runtime.
 
-		Canonical contract over ``OrderConfig``: recursive_merge -> model_validate ->
-		atomic-swap, wrapping pydantic ``ValidationError`` (which also rejects
-		unknown keys via ``extra="forbid"``) into ``ConfigurationError``. Returns
-		``None`` and RAISES on failure. After the swap the cached
-		``self.market_execution`` is re-derived from the new config (Pitfall 1).
+		recursive_merge -> model_validate -> atomic swap. Validation runs against
+		the MERGED config before anything is stored, so a rejected update leaves
+		the live config untouched; ``self.market_execution`` is re-derived only
+		after the swap.
+
+		Raises
+		------
+		ConfigurationError
+			Wrapping the pydantic ``ValidationError``, which also rejects unknown
+			keys via ``extra="forbid"``.
 		"""
 		merged = recursive_merge(self.order_config.model_dump(), updates)
 		try:
 			new_config = OrderConfig.model_validate(merged)
 		except pydantic.ValidationError as e:
 			raise ConfigurationError(reason=str(e)) from e
-		self.order_config = new_config  # atomic GIL-safe reference swap (D-11)
+		self.order_config = new_config  # atomic GIL-safe reference swap
 		self.market_execution = self.order_config.market_execution
 
 	def on_fill(self, fill_event: FillEvent) -> List[OrderEvent]:
-		"""Delegate fill reconciliation to ReconcileManager (D-07)."""
+		"""Delegate fill reconciliation to ReconcileManager."""
 		return self.reconcile_manager.on_fill(fill_event)
 
 	def seed_applied_trades(self, keys: Iterable[str]) -> None:
-		"""Restart-seed the reconcile dedup ring (D-22 — the composition-root sink).
+		"""Restart-seed the reconcile dedup ring.
 
-		The wiring seam ``PortfolioHandler.rehydrate`` drives into: it forwards the
-		durable ``f"{ticker}:{venue_trade_id}"`` history into
-		``ReconcileManager.seed_applied_trades`` so the order-mirror dedup arm is
-		restart-seeded SYMMETRICALLY with the portfolio ledger. Live-path-only
-		(backtest never rehydrates — oracle-dark).
+		``PortfolioHandler.rehydrate`` forwards the durable
+		``f"{ticker}:{venue_trade_id}"`` history here so the order-mirror dedup arm
+		is seeded SYMMETRICALLY with the portfolio ledger — seeding one side only
+		would let a redelivered fill re-apply against the unseeded side.
+		Live-path only; the backtest never rehydrates.
 		"""
 		self.reconcile_manager.seed_applied_trades(keys)
 
 	def process_signal(self, signal_event: SignalEvent) -> List[OperationResult]:
-		"""Delegate the signal→order pipeline to AdmissionManager (D-07)."""
+		"""Delegate the signal→order pipeline to AdmissionManager."""
 		return self.admission_manager.process_signal(signal_event)
 
 	def set_universe(self, universe: "Universe") -> None:
-		"""Forward the Trap-4 Universe injection to AdmissionManager (Plan 02-03).
+		"""Forward the Universe injection to AdmissionManager.
 
 		The runner builds the ``Universe`` after the order domain is constructed,
 		so the seam is set late (mirrors ``SimulatedExchange.set_universe``). The
-		order/risk leverage cap (D-04) reads ``Instrument.max_leverage`` through it.
+		order/risk leverage cap reads ``Instrument.max_leverage`` through it.
 		"""
 		self.admission_manager.set_universe(universe)
 
 	def modify_order(self, order_id: OrderId, new_price: Optional[Decimal] = None, new_quantity: Optional[Decimal] = None,
 	                portfolio_id: Optional[PortfolioId] = None, reason: str = "user modification") -> OperationResult:
-		"""Delegate order modification to LifecycleManager (D-07)."""
+		"""Delegate order modification to LifecycleManager."""
 		return self.lifecycle_manager.modify_order(order_id, new_price, new_quantity, portfolio_id, reason)
 
 	def cancel_order(self, order_id: OrderId, portfolio_id: Optional[PortfolioId] = None,
 	                reason: str = "user cancellation") -> OperationResult:
-		"""Delegate order cancellation to LifecycleManager (D-07)."""
+		"""Delegate order cancellation to LifecycleManager."""
 		return self.lifecycle_manager.cancel_order(order_id, portfolio_id, reason)
 
 	def expire_all_resting(self) -> List[OperationResult]:
-		"""Delegate the run-end time-in-force sweep to LifecycleManager (D-07)."""
+		"""Delegate the run-end time-in-force sweep to LifecycleManager."""
 		return self.lifecycle_manager.expire_all_resting()
 
 	def stamp_venue_order_id(self, order_id: OrderId, venue_order_id: str,
 	                         portfolio_id: Optional[PortfolioId] = None) -> bool:
-		"""Persist the venue ack onto the stored order mirror (D-06 / V17-02).
+		"""Persist the venue ack onto the stored order mirror.
 
 		Driven by ``OrderHandler.on_order_ack`` off a queued ORDER-ACK event: look up
 		the stored order, stamp ``venue_order_id``, and persist via
-		``order_storage.update_order``. The persisted id is the precondition that lets
-		the post-restart reconciler match its working-set orders to venue fills by id
-		(the in-memory VenueCorrelationIndex is lost across a restart). Returns False
-		if the order is unknown (e.g. an ack for an order pruned from the mirror).
+		``order_storage.update_order``. The id must be PERSISTED, not just held in
+		memory: the ``VenueCorrelationIndex`` is lost across a restart, so the
+		stored id is the only way the post-restart reconciler can match its
+		working-set orders to venue fills.
+
+		Returns
+		-------
+		bool
+			False if the order is unknown (e.g. an ack for an order already pruned
+			from the mirror) or if the storage write did not take.
 		"""
 		order = self.order_storage.get_order_by_id(order_id, portfolio_id)
 		if order is None:
@@ -273,22 +231,17 @@ class OrderManager:
 			return False
 		order.venue_order_id = venue_order_id
 		stamped = self.order_storage.update_order(order)
-		# D-15 (V17-13): drop the local pending overlay for this order on the ack
-		# through the SAME injected read-model seam the admission path uses for
-		# reserve/release — the venue now owns the real reservation, so keeping the
-		# local overlay to terminal release double-counts the hold and understates
-		# buying power. Routed only with a read model + portfolio_id present
-		# (queue-only cross-domain write via the injected model, not a direct account
-		# call); the handler getattr-guards it, so a non-VenueAccount portfolio is a
-		# clean skip. Runs only on a successful stamp (an unknown order returned False
-		# above never had a live overlay).
+		# Once the venue acks, IT owns the real reservation: holding the local
+		# pending overlay until terminal release would double-count the hold and
+		# understate buying power. Dropped through the same injected read-model seam
+		# admission uses for reserve/release, and only on a successful stamp — an
+		# unknown order returned False above and never had a live overlay.
 		if stamped and self.portfolio_handler is not None and portfolio_id is not None:
 			self.portfolio_handler.drop_pending(portfolio_id, order_id)
 		return stamped
 
-	# --- Read interface (D-18) -------------------------------------------------
+	# --- Read interface --------------------------------------------------------
 	# The manager owns the storage; OrderHandler read methods delegate here.
-	# Pure pass-through layer: same names, same signatures as the facade.
 
 	def get_order_by_id(self, order_id: OrderId, portfolio_id: Optional[PortfolioId] = None) -> Optional[Order]:
 		"""Get an order by its ID from the manager-owned storage."""
