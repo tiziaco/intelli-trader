@@ -51,8 +51,8 @@
 - Files: `itrader/connectors/base.py`.
 - Not re-audited line-by-line this pass; carried forward from 2026-07-07 pending explicit reverification.
 
-**`D-03a` dual-validator note in `CONVENTIONS.md` — RESOLVED.**
-- The `D-03a` paragraph in `CONVENTIONS.md`/`CLAUDE.md` now correctly documents the dual-layer validator overlap as justified-by-decision (defense-in-depth boundary gate), and explicitly notes the original "live bypass" premise is now obsolete post-D-10. No open doc-consistency gap.
+**Dual-validator note in `CONVENTIONS.md` — RESOLVED.**
+- The dual-layer validator paragraph in `CONVENTIONS.md`/`CLAUDE.md` documents the overlap as justified-by-decision (defense-in-depth boundary gate) and states the rationale positively: there is no bypass, because `add_event` is fail-closed and SIGNAL-form. The earlier "the original bypass premise is now obsolete" framing was dropped in the 2026-07-28 tag cleanup — it narrated a superseded rationale rather than stating current truth. No open doc-consistency gap.
 
 **Legacy `my_strategies/` and provider TODOs — STILL OPEN, unchanged.**
 - Issue: Scattered `TODO`/`FIXME` markers, several in Italian, confirmed still present verbatim:

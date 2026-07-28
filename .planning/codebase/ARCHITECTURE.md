@@ -77,13 +77,13 @@ the backtest per-tick path stays inert (`tests/integration/test_okx_inertness.py
 | `TradingSystem` | Backtest composition root; owns the golden-run wiring on top of `compose_engine` | `itrader/trading_system/backtest_trading_system.py` |
 | `BacktestRunner` | Drives the synchronous fail-fast `for` loop over `TimeGenerator` | `itrader/trading_system/backtest_runner.py` |
 | `TimeGenerator` | Yield `TimeEvent`s across a pinned bar-date grid | `itrader/trading_system/simulation/time_generator.py` |
-| `LiveTradingSystem` | Live composition-root facade: `add_event` fail-closed ingress (D-10), lifecycle (`start`/`stop`/status latch), delegates run-loop ownership to `LiveRunner` | `itrader/trading_system/live_trading_system.py` |
+| `LiveTradingSystem` | Live composition-root facade: `add_event` fail-closed ingress, lifecycle (`start`/`stop`/status latch), delegates run-loop ownership to `LiveRunner` | `itrader/trading_system/live_trading_system.py` |
 | `build_live_system` | Live-mode factory (module-level function in `live_trading_system.py`) selecting concrete live backends (SQL/in-memory storage, connectors, safety, config router) and injecting them into `compose_engine` | `itrader/trading_system/live_trading_system.py` |
 | `SessionInitializer` | Builds live-only collaborators (`StrategiesHandler`, `UniverseHandler`, etc.) consumed by `LiveRouteRegistrar` | `itrader/trading_system/session_initializer.py` |
 | `LiveRouteRegistrar` | THE single declarative live/BUSINESS route table; installs live-only routes into the one shared `EventHandler.routes` dict once, never mutated again | `itrader/trading_system/route_registrar.py` |
 | `LiveRunner` | Owns the live background drain loop (queue timeout / idle-warn), started/stopped by `LiveTradingSystem` | `itrader/trading_system/live_runner.py` |
 | `WorkerSupervisor` | Supervises live worker thread(s)/tasks lifecycle | `itrader/trading_system/worker_supervisor.py` |
-| `ConfigRouter` | Engine-thread runtime-config actuator: validate → persist → apply → push for scoped `ConfigUpdateEvent`s (RTCFG-02/D-23) | `itrader/trading_system/config_router.py` |
+| `ConfigRouter` | Engine-thread runtime-config actuator: validate → persist → apply → push for scoped `ConfigUpdateEvent`s | `itrader/trading_system/config_router.py` |
 | `SafetyController` | Halt / pause-submission safety latch, CRITICAL alert escalation, durable halt-record persistence | `itrader/trading_system/safety/safety_controller.py` |
 | `StreamRecoveryHandler` | Reconnect-resume collaborator: missed-fill catch-up + REST snapshot + all-streams-healthy gate → resume | `itrader/trading_system/safety/stream_recovery_handler.py` |
 | `PreTradeThrottle` | Pre-trade rate/size throttle safety collaborator | `itrader/trading_system/safety/pre_trade_throttle.py` |
@@ -111,7 +111,7 @@ their component graph from.
 
 **Key Characteristics:**
 - Queue-only cross-domain communication — handlers never call each other's methods directly; they emit events onto `global_queue`.
-- Data-driven dispatch — `EventHandler.routes` is a single `dict[EventType, list[Callable]]`; list order IS execution order (D-14). No handler self-registers.
+- Data-driven dispatch — `EventHandler.routes` is a single `dict[EventType, list[Callable]]`; list order IS execution order. No handler self-registers.
 - Frozen, immutable event facts — every event subclasses `Event` (`msgspec.Struct`, `frozen=True, kw_only=True, gc=False`), NOT a dataclass (the class docstring/CLAUDE.md phrasing "frozen dataclass" is stale terminology — verified against `itrader/events_handler/events/base.py`, it is `msgspec.Struct`).
 - Read-model seams instead of cross-domain reads — `PortfolioReadModel` (Protocol, `itrader/core/portfolio_read_model.py`) and `BacktestBarFeed`/`LiveBarFeed` are injected as read-models; the queue-only rule governs handlers, not read-models.
 - Decimal end-to-end for money — `float()` appears only at the serialization/logging edge.
@@ -182,7 +182,7 @@ their component graph from.
 ### Live External-Signal Path
 
 1. External caller invokes `LiveTradingSystem.add_event(event)` (`itrader/trading_system/live_trading_system.py`).
-2. `add_event` is fail-closed/default-deny (D-10): only `SIGNAL`, `STRATEGY_COMMAND`, and `CONFIG_UPDATE` are admissible; everything else is rejected.
+2. `add_event` is fail-closed/default-deny: only `SIGNAL`, `STRATEGY_COMMAND`, and `CONFIG_UPDATE` are admissible; everything else is rejected.
 3. An admitted `SIGNAL` is put on `global_queue` and flows through the SAME `SIGNAL → OrderHandler.on_signal → AdmissionManager` path as the backtest flow, so validation/sizing/cash-reservation always run before any `OrderEvent` is emitted.
 4. `LiveRunner` owns the background drain loop (`process_events()` on a daemon thread) started/stopped by `LiveTradingSystem`.
 5. On a handler exception, the injected `ErrorPolicy` (not `FailFastPolicy`) emits an `ErrorEvent` and the loop keeps draining (publish-and-continue).
@@ -191,7 +191,7 @@ their component graph from.
 
 1. A connector's asyncio loop puts a `StreamStateEvent` or `ConnectorFatalEvent` on the bus (never touches engine state directly).
 2. `LiveRouteRegistrar`-installed routes actuate on the engine thread: `STREAM_STATE(up)` → `StreamRecoveryHandler.on_reconnect`; `STREAM_STATE(down)` → `SafetyController.pause_submission`; `CONNECTOR_FATAL` → `SafetyController.halt(reason)`.
-3. A scoped `ConfigUpdateEvent` (RTCFG-02/D-23) is actuated via the injected `ConfigRouter.apply(event)` (validate → persist → apply → push), only when a durable store/router exists; otherwise the route is a pre-declared no-op empty slot.
+3. A scoped `ConfigUpdateEvent` is actuated via the injected `ConfigRouter.apply(event)` (validate → persist → apply → push), only when a durable store/router exists; otherwise the route is a pre-declared no-op empty slot.
 
 **State Management:**
 - Portfolio positions/cash: owned by each `Portfolio`; sub-managers in `cash/`, `position/`, `transaction/`, `metrics/`.
@@ -255,7 +255,7 @@ their component graph from.
 **LiveTradingSystem.add_event():**
 - Location: `itrader/trading_system/live_trading_system.py`.
 - Triggers: Web API / external caller.
-- Responsibilities: Fail-closed default-deny admission (D-10) — accepts only externally-originated `SIGNAL`, `STRATEGY_COMMAND`, and `CONFIG_UPDATE` events onto the queue; a `SIGNAL` routes through `OrderHandler.on_signal` → `AdmissionManager` so validation/sizing/cash-reservation run before any `OrderEvent` is emitted.
+- Responsibilities: Fail-closed default-deny admission — accepts only externally-originated `SIGNAL`, `STRATEGY_COMMAND`, and `CONFIG_UPDATE` events onto the queue; a `SIGNAL` routes through `OrderHandler.on_signal` → `AdmissionManager` so validation/sizing/cash-reservation run before any `OrderEvent` is emitted.
 
 **Strategy.generate_signal(ticker):**
 - Location: `itrader/strategy_handler/base.py` — strategy `generate_signal(ticker)` → `SignalIntent`, which `StrategiesHandler` turns into a `SignalEvent`.
@@ -263,7 +263,7 @@ their component graph from.
 
 ## Architectural Constraints
 
-- **Threading (backtest):** Single-threaded synchronous for-loop; no locking needed for correctness. `PortfolioHandler` removed its collection lock (D-19 single-writer contract).
+- **Threading (backtest):** Single-threaded synchronous for-loop; no locking needed for correctness. `PortfolioHandler` has no collection lock — the **single-writer contract** makes one unnecessary: all portfolio state mutations happen on the engine thread, and `queue.Queue` is the thread boundary (other threads only put events), so composite reads are consistent because nothing mutates concurrently.
 - **Threading (live):** Event processing runs on one daemon thread owned by `LiveRunner`; individual portfolios use `threading.RLock`; `SimulatedExchange` uses `threading.RLock` for config updates; connector-loop callbacks only flip thread-safe flags — blocking venue I/O always runs on the engine thread, never the asyncio loop.
 - **Global state:** `config`, `logger`, `idgen` are module-level singletons in `itrader/__init__.py`, initialised at import time. `MatchingEngine._resting` is instance-level.
 - **Import side effects:** importing anything from `itrader` triggers singleton init. Do not import `itrader` in fixtures without understanding this.
@@ -315,8 +315,8 @@ their component graph from.
 ## Cross-Cutting Concerns
 
 **Logging:** `structlog`; bind a component context via `get_itrader_logger().bind(component="ClassName")`.
-**Validation:** `EnhancedOrderValidator` at order admission; `SimulatedExchange.validate_order` re-checks structural preconditions at the fill boundary (defense-in-depth, D-03a — justified overlap, not removed).
-**Authentication:** Live external ingress is fail-closed/default-deny at `LiveTradingSystem.add_event` (D-10); connector credentials owned solely by the connector (`OkxSettings`, `SecretStr`).
+**Validation:** `EnhancedOrderValidator` at order admission; `SimulatedExchange.validate_order` re-checks structural preconditions at the fill boundary (defense-in-depth — justified overlap, not removed; see CONVENTIONS.md "Pinned Decisions").
+**Authentication:** Live external ingress is fail-closed/default-deny at `LiveTradingSystem.add_event`; connector credentials owned solely by the connector (`OkxSettings`, `SecretStr`).
 
 ---
 

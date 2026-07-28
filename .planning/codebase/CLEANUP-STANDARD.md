@@ -70,9 +70,12 @@ oracle to make the suite pass.
 In the **same change** that applies the cleanup:
 
 - Flip the item's `Status` to **`done (phase N)`** in `FIX-LIST.md` (N = the phase doing the work).
-- Leave a **`# FL-NN`** reference comment at the fix site, matching the existing decision-tag
-  comment convention (`# D-04 — string entry`, `# FL-03 — …`; see CONVENTIONS.md "Inline
-  comments"). The tag is a load-bearing back-reference from the source to the fix-list.
+- Leave a **`# FL-NN`** reference comment at the fix site (`# FL-03 — …`). This tag IS a
+  load-bearing back-reference: there is exactly one `FIX-LIST.md`, so `FL-NN` is a single
+  global registry and always resolves.
+  **Do not extend this to `D-NN`.** `D-NN` is a per-phase counter that restarts every phase,
+  so a bare `D-NN` in source resolves to nothing (see CONVENTIONS.md "Comments & Docstrings").
+  Cite a decision by scoping it to its phase (`11.2-07 (D-36)`) or by stating the claim outright.
 - Preserve the file's indentation (tabs in handler modules; 4 spaces in `config/`, `core/`,
   `price_handler/feed/`, the events package) — **no tab/space normalization diffs**.
 
