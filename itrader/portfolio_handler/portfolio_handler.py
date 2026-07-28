@@ -1,11 +1,4 @@
-"""
-Enhanced PortfolioHandler with better separation of concerns.
-
-D-19 single-writer contract: ALL portfolio state mutations happen on the
-engine thread; queue.Queue is the thread boundary — other threads only put
-events. Composite reads are consistent because nothing mutates concurrently.
-Live cross-thread reads are a D-live design item.
-"""
+"""Portfolio lifecycle, fill settlement and global configuration for the portfolio domain."""
 from collections import OrderedDict
 from datetime import datetime, UTC
 from decimal import Decimal
@@ -32,10 +25,6 @@ from itrader.events_handler.bus import EventBus
 from itrader.events_handler.events import OrderEvent
 from itrader.core.portfolio_read_model import PositionView
 from itrader.core.money import to_money, quantize
-# D-24 (11.2-09): the state-storage seam, the compute-venue name and the
-# single-account key half MOVED to PortfolioFactory / ComputeAccountAuthority — the
-# handler no longer builds leaves or scopes state storage inline, so those imports
-# (PortfolioStateStorageFactory, COMPUTE_VENUE, DEFAULT_ACCOUNT_ID) are gone from here.
 from itrader.portfolio_handler.transaction import Transaction
 from itrader.events_handler.events import BarEvent, FillEvent, PortfolioUpdateEvent, PortfolioErrorEvent
 from itrader.config import PortfolioConfig, get_portfolio_preset
@@ -49,25 +38,15 @@ from itrader.logger import get_itrader_logger
 
 
 class PortfolioHandler:
-    """
-    Enhanced PortfolioHandler with better separation of concerns.
-    
-    This handler focuses on:
-    - Global system configuration via a Pydantic PortfolioConfig
-    - Portfolio lifecycle management (creation, deletion)
-    - System-wide monitoring and health checks
-    - Event publishing coordination
-    - Runtime configuration updates via API
+    """Portfolio lifecycle, global configuration, health monitoring and fill routing.
 
-    Individual portfolios manage their own:
-    - State (ACTIVE, INACTIVE, ARCHIVED)
-    - Configuration (limits, validation)
-    - Health monitoring
+    Individual portfolios own their own state (ACTIVE/INACTIVE/ARCHIVED), configuration
+    and health.
 
-    D-19 single-writer contract: ALL portfolio state mutations happen on the
-    engine thread; queue.Queue is the thread boundary — other threads only put
-    events. Composite reads are consistent because nothing mutates
-    concurrently. Live cross-thread reads are a D-live design item.
+    Single-writer contract: ALL portfolio state mutations happen on the engine thread;
+    queue.Queue is the thread boundary — other threads only put events. Composite reads
+    are consistent because nothing mutates concurrently, which is why the portfolio
+    collection carries no lock.
     """
     
     def __init__(self, global_queue: "EventBus", config_dir: str = "settings",
@@ -77,46 +56,31 @@ class PortfolioHandler:
         self.global_queue: "EventBus" = global_queue
         self.current_time: Any = 0
 
-        # D-07 (05.2-05): the durable portfolio-storage selector. ``add_portfolio``
-        # builds each portfolio's ``PortfolioStateStorage`` from it (11.1-09 — the
-        # build moved UP from ``Portfolio._init_managers`` so the account, which is
-        # now constructed BEFORE its portfolio, can be given the SAME seam).
-        # "backtest" (the default) is the in-memory oracle-dark path; the live
-        # composition root passes "live" + the shared SqlEngine so every portfolio
-        # persists to the durable SQL ledger and rehydrates its truth on restart.
-        # ``sql_engine`` is typed Any to keep the SqlEngine import off this
-        # hot-path module (GATE-01).
+        # Durable portfolio-storage selector. "backtest" is the in-memory path; "live"
+        # plus the shared SqlEngine persists every portfolio to the SQL ledger and
+        # rehydrates its truth on restart. ``sql_engine`` is typed Any to keep the
+        # SqlEngine import off this module (GATE-01 inertness).
         self._environment = environment
         self._sql_engine = sql_engine
 
-        # D-24 (11.2-09): the SOLE leaf-builder. ``add_portfolio`` builds every
-        # portfolio's runtime graph — its id-scoped ``PortfolioStateStorage`` seam, its
-        # ``Account`` leaf and the ``Portfolio`` over them — THROUGH this injected factory,
-        # never through a handler-held ``VenueBundles`` or an inline compute-account
-        # builder. The factory holds a REAL, mode-agnostic authority at construction (LIVE:
-        # the ``VenueAccountManager`` — ACCT-03 raises on a missing/disabled/not-online
-        # account; BACKTEST: the compute authority — ``account_id`` None, never raises), so
-        # the account-kind selection and the venue-truth authority both live in ONE place.
-        # Typed ``Optional[Any]`` for the GATE-01 reason ``sql_engine`` is: naming
-        # ``PortfolioFactory`` concretely is unnecessary and ``None`` is the
-        # DIRECT-CONSTRUCTION arm (focused unit tests that never call ``add_portfolio``) —
-        # ``compose_engine`` always injects the built factory.
+        # The SOLE leaf-builder: ``materialize`` builds every portfolio's runtime graph —
+        # id-scoped ``PortfolioStateStorage`` seam, ``Account`` leaf, ``Portfolio`` — through
+        # this factory, so account-kind selection and venue-truth authority live in ONE
+        # place. The factory holds a real, mode-agnostic authority at construction (live:
+        # ``VenueAccountManager``, raises on a missing/disabled/not-online account;
+        # backtest: the compute authority, ``account_id`` None, never raises). Typed
+        # ``Optional[Any]`` for the GATE-01 reason ``sql_engine`` is; ``None`` is the
+        # direct-construction arm (unit tests that never call ``add_portfolio``).
         self._factory = portfolio_factory
 
-        # 11-08 (D-07/D-08): the DEFINITION-row writer. Before this plan nothing in
-        # the phase ever wrote the ``portfolios`` table — ``PortfolioDefinitionStore``
-        # had zero production callers — so ``rehydrate_portfolios`` would have read an
-        # empty table on EVERY production boot, forever, while every fixture-provisioned
-        # test passed. Constructing it here (rather than at the composition root) is
-        # what makes the guarantee hold for POST-BOOT ``add_portfolio`` calls too: live
+        # The ``portfolios`` DEFINITION-row writer. Constructed here rather than at the
+        # composition root so POST-BOOT ``add_portfolio`` calls persist too — live
         # portfolios are added by the application after build_live_system returns, and a
         # writer that only ran at boot would persist none of them.
         #
-        # The import is LAZY inside the gate deliberately — this module is on the
-        # BACKTEST import graph and the store pulls SQLAlchemy, so a module-top import
-        # would break the GATE-01 inertness gate (tests/integration/test_okx_inertness.py).
-        # The backtest composition root passes environment="backtest" + sql_engine=None,
-        # so this stays None and the byte-exact oracle path is untouched.
+        # The import is LAZY inside the gate deliberately: this module is on the BACKTEST
+        # import graph and the store pulls SQLAlchemy, so a module-top import breaks the
+        # GATE-01 inertness gate (tests/integration/test_okx_inertness.py).
         self.definition_store: Optional[Any] = None
         if environment == "live" and sql_engine is not None:
             from itrader.storage.portfolio_definition_store import (
@@ -124,71 +88,47 @@ class PortfolioHandler:
             )
             self.definition_store = PortfolioDefinitionStore(sql_engine)
 
-        # Initialize configuration by constructing the Pydantic model directly
-        # (M2-06 / D-01): the registry/provider getters were deleted. Pydantic validates
-        # on construction, so no separate validator is needed.
+        # Pydantic validates on construction, so no separate validator is needed.
         self.config_data: PortfolioConfig = PortfolioConfig.default()
 
-        # Extract key configuration values with defaults.
-        # WR-08: sourced from the dedicated limits.max_portfolios field —
-        # NOT limits.max_positions (the per-portfolio position limit).
+        # limits.max_portfolios, NOT limits.max_positions (the per-portfolio limit).
         self.max_portfolios = self.config_data.limits.max_portfolios
         self.publish_error_events = True  # Default behavior
 
-        # Portfolio storage - now just stores portfolio instances.
-        # 02-05 carry-over: portfolios are keyed by PortfolioId (UUID) at runtime
-        # while events still carry an int portfolio_id. Until the portfolio_id
-        # migration completes, the key is typed Any to bridge both forms (the full
-        # retype is deferred — not mandated by Task 2).
-        # D-19: collection lock removed — single-writer contract, see class docstring.
+        # Keyed by PortfolioId (UUID) at runtime while events still carry an int
+        # portfolio_id; typed Any to bridge both forms until that migration completes.
+        # No collection lock — single-writer contract, see the class docstring.
         self._portfolios: Dict[Any, Portfolio] = {}
 
-        # Plan 02-05 (D-13/MARGIN-03): the injected Universe read-model used to
-        # resolve each open position's Instrument (maintenance_margin_rate) on
-        # demand. None until wired — the runner builds the Universe at its Trap-4
-        # point (AFTER this handler is constructed in compose_engine) and calls
-        # set_universe, mirroring the exchange/order-domain seam from Plan 02-03.
-        # maintenance_margin/margin_ratio are query-only and unread on the golden
-        # path, so a None Universe never trips during the byte-exact SMA_MACD run.
+        # The injected Universe read-model resolving each open position's Instrument
+        # (maintenance_margin_rate) on demand. None until ``set_universe`` is called by
+        # the runner, AFTER this handler is constructed in compose_engine.
         self._universe: Any = None
 
-        # LIQ-03 (04-03): the NARROW INJECTED WRITE-SEAM the liquidation engine
-        # uses to register a forced-close Order in the shared order mirror, set
-        # via set_order_storage (the analog of set_universe). None until wired —
-        # compose.py injects the SAME order_storage instance the OrderHandler /
-        # ReconcileManager hold, so the portfolio side writes into the exact
-        # mirror the reconcile reads. Oracle-dark on the spot path: with no
-        # breaches it is never written, so SMA_MACD stays byte-exact.
+        # The narrow injected write-seam the liquidation engine uses to register a
+        # forced-close Order in the shared order mirror (set via ``set_order_storage``).
+        # compose.py injects the SAME instance the OrderHandler/ReconcileManager hold, so
+        # the portfolio side writes into the exact mirror the reconcile reads.
         self._order_storage: Optional[OrderStorage] = None
 
-        # 05-04 (D-15/D-01/D-02, RECON-01/RECON-03): the engine-thread drift-halt
-        # seam. The live composition root injects a halt callback
-        # (``LiveTradingSystem.halt``) via ``set_halt_signal``; on unexplained
-        # beyond-band per-symbol drift the engine-thread compare calls it to freeze
-        # the WHOLE engine (D-02). ``None`` on the backtest path — no VenueAccount
-        # portfolio exists, so the compare is never reached and the SMA_MACD oracle
-        # stays byte-exact (drift is inert on the spot SimulatedAccount path).
+        # Engine-thread drift-halt seam: the live root injects ``LiveTradingSystem.halt``
+        # via ``set_halt_signal`` and unexplained beyond-band per-symbol drift freezes the
+        # WHOLE engine. None on backtest — no VenueAccount portfolio, so no compare.
         self._halt_signal: Optional[Callable[[str], None]] = None
-        # 05-04 (D-04): the injected reconciler answering whether a beyond-band
-        # drift maps to a KNOWN venue event (an external cancel / external or
-        # hand-closed fill) and is therefore adopt-and-continue rather than a halt.
-        # Signature ``(portfolio, ticker, engine_qty, venue_qty) -> bool``. ``None``
-        # → the conservative money-first default: any beyond-band drift is
-        # unexplained (halt). The full resolver (venue order/fill events + stored
-        # intent) is a follow-on (restart/resilience); this plan wires the halt.
+        # Answers whether a beyond-band drift maps to a KNOWN venue event (an external
+        # cancel / external or hand-closed fill) and is therefore adopt-and-continue
+        # rather than a halt. ``None`` → the conservative money-first default: any
+        # beyond-band drift is unexplained and halts.
         self._drift_reconciler: Optional[
             Callable[[Any, str, Decimal, Decimal], bool]
         ] = None
 
-        # CR-01: bounded per-handler set of already-settled venue trade ids — the
-        # cross-emitter fill-dedup ledger. The live OKX stream and the restart
-        # VenueReconciler can both book the SAME economic venue trade (they share
-        # no other idempotency key: fill_id is a fresh uuid7 per emit). on_fill
-        # rejects a fill whose venue_trade_id is already here so the position/cash
-        # settles exactly once. An OrderedDict is used as a bounded FIFO (oldest
-        # evicted past the cap) so a long-running live session cannot grow it
-        # unbounded. Backtest/simulated fills carry venue_trade_id=None and NEVER
-        # touch this ledger — the SMA_MACD oracle stays byte-exact (oracle-dark).
+        # Bounded-FIFO ledger of already-settled venue trade ids — the cross-emitter
+        # fill-dedup guard. The live OKX stream and the restart VenueReconciler can both
+        # book the SAME economic venue trade, and they share no other idempotency key
+        # (fill_id is a fresh uuid7 per emit). ``on_fill`` rejects an id already here so
+        # position/cash settle exactly once; the cap keeps a long-running session bounded.
+        # Backtest/simulated fills carry venue_trade_id=None and never touch it.
         self._settled_venue_trade_ids: "OrderedDict[str, None]" = OrderedDict()
         self._max_settled_venue_trade_ids = 100_000
 
@@ -201,7 +141,7 @@ class PortfolioHandler:
         )
 
     def _generate_correlation_id(self) -> CorrelationId:
-        """Generate unique correlation ID for operation tracking (D-01/D-02 — single UUIDv7 idgen scheme)."""
+        """Generate a unique correlation ID for operation tracking."""
         return CorrelationId(idgen.generate_correlation_id())
 
     def _publish_error_event(self, error: Exception, operation: str, correlation_id: CorrelationId, portfolio_id: Optional[Any] = None) -> None:
@@ -209,11 +149,9 @@ class PortfolioHandler:
         if not self.publish_error_events:
             return
         
-        # Frozen PortfolioErrorEvent (D-06): type=EventType.ERROR via the
-        # ErrorEvent base; source defaults to "portfolio" on the child.
-        # Wall-clock carve-out (RESEARCH Open Question 4): error paths never
-        # fire during a green oracle run, so datetime.now(UTC) here cannot
-        # perturb determinism — the engine path itself stays on business time.
+        # Wall-clock carve-out: error paths never fire during a green oracle run, so
+        # datetime.now(UTC) here cannot perturb determinism — the engine path itself
+        # stays on business time.
         error_event = PortfolioErrorEvent(
             time=datetime.now(UTC),
             error_type=type(error).__name__,
@@ -227,12 +165,10 @@ class PortfolioHandler:
     
     @contextmanager
     def _operation_context(self, operation_name: str) -> Generator[CorrelationId, None, None]:
-        """Context manager providing a correlation ID for operation tracking.
+        """Context manager supplying a correlation ID for operation tracking.
 
-        D-19: the concurrency-limiting machinery (_operations_lock /
-        _active_operations) was removed with the single-writer contract.
-        Correlation-id generation and error-event publication (Pitfall 8)
-        survive — this context only supplies the correlation id now.
+        Carries no concurrency-limiting machinery: the single-writer contract makes it
+        unnecessary.
         """
         correlation_id = self._generate_correlation_id()
         yield correlation_id
@@ -243,25 +179,19 @@ class PortfolioHandler:
                       portfolio_id: Optional[PortfolioId] = None,
                       account_id: Optional[str] = None,
                       venue_name: Optional[str] = None) -> PortfolioId:
-        """Create a new portfolio with enhanced capabilities.
+        """Create a portfolio: write its definition row, then build its runtime graph.
 
-        ACCT-04: the former owning-user first positional parameter was dropped —
-        that mapping is an app-layer (FastAPI) concern, not a Portfolio concern,
-        and is not relocated onto the Account.
+        ``portfolio_id`` / ``account_id`` / ``venue_name`` mirror ``Portfolio.__init__``
+        one-for-one and are threaded straight through. All three default, so a minimal
+        call works, but the backtest composition root passes ``venue_name`` EXPLICITLY —
+        the same shape a live portfolio is created with.
 
-        F-5 (11-05): ``portfolio_id`` / ``account_id`` / ``venue_name`` mirror the
-        ``Portfolio.__init__`` parameters one-for-one and are threaded straight
-        through. All three DEFAULT, so a minimal call still works — but D-19 makes
-        the backtest composition root pass ``venue_name`` EXPLICITLY:
-        ``add_portfolio(name=, exchange='paper', venue_name='paper', cash=)``, the
-        same shape a live portfolio is created with.
-
-        * ``portfolio_id`` — an EXISTING id to reattach to on rehydrate (F-1).
-          Supplying an id already registered here RAISES rather than overwriting:
-          a silent overwrite would destroy the first portfolio's cash and positions.
-        * ``account_id`` — the venue account this portfolio's orders reach (D-06).
-        * ``venue_name`` — the source of truth for the portfolio's exchange (D-07);
-          when supplied it wins and ``exchange`` is derived from it.
+        * ``portfolio_id`` — an EXISTING id to reattach to on rehydrate. Supplying an id
+          already registered RAISES rather than overwriting: a silent overwrite would
+          destroy the first portfolio's cash and positions.
+        * ``account_id`` — the venue account this portfolio's orders reach.
+        * ``venue_name`` — the source of truth for the portfolio's exchange; when
+          supplied it wins and ``exchange`` is derived from it.
         """
 
         with self._operation_context("add_portfolio") as correlation_id:
@@ -273,13 +203,10 @@ class PortfolioHandler:
                 if not name.strip():
                     raise PortfolioValidationError(0, "name", "Portfolio name cannot be empty")
 
-                # D-25 (11.2-09): add_portfolio is CREATE then MATERIALIZE — a durable WRITE
-                # and a runtime BUILD, split into two verbs. The id is resolved HERE so both
-                # the definition row (create) and the runtime graph (materialize) carry the
-                # SAME id; omitting it mints a UUIDv7 through the single idgen, exactly as
-                # before (F-1, 11-05). create runs FIRST: a create that succeeds followed by
-                # a materialize that raises leaves a durable row with no live Portfolio — the
-                # next boot rehydrates it, so the row is not orphaned (T-11.2-09-05 backstop).
+                # The id is resolved HERE so the definition row and the runtime graph carry
+                # the SAME id. ``create`` runs FIRST: a create that succeeds followed by a
+                # materialize that raises leaves a durable row with no live Portfolio — the
+                # next boot rehydrates it, so the row is not orphaned.
                 resolved_id = (
                     portfolio_id if portfolio_id is not None
                     else PortfolioId(idgen.generate_portfolio_id())
@@ -318,37 +245,30 @@ class PortfolioHandler:
     def create(self, portfolio_id: PortfolioId, *, name: str,
                cash: "float | Decimal", account_id: Optional[str],
                venue_name: Optional[str]) -> None:
-        """Write this portfolio's DEFINITION row — the durable half of the split (D-25/ACCT-07).
+        """Write this portfolio's DEFINITION row — the durable half of create/materialize.
 
         The row records what a portfolio IS (``portfolio_id`` / ``name`` /
-        ``(venue_name, account_id)`` / ``initial_cash``), the SOURCE OF TRUTH
-        ``rehydrate_portfolios`` reads at the next boot; the persisted ``portfolio_id`` is
-        what reattaches the child tables across a restart (T-11-41). It builds no Portfolio
-        and registers nothing — that is ``materialize``'s job.
+        ``(venue_name, account_id)`` / ``initial_cash``): the source of truth
+        ``rehydrate_portfolios`` reads at the next boot, and the persisted ``portfolio_id``
+        is what reattaches the child tables across a restart. It builds no Portfolio and
+        registers nothing — that is ``materialize``'s job.
 
-        D-25: this is the WRITE half of the create/materialize split. Before the split,
-        ``add_portfolio`` conflated the durable write with the runtime build and rehydrate
-        re-entered the WHOLE thing — which is why the write needed an absence gate (skip if
-        the row already exists) so a rehydrate re-write would not WIPE the operator's
-        ``config_json``. Now rehydrate MATERIALIZES ONLY and never re-enters create, so
-        ``create`` runs ONCE per ``portfolio_id`` (``add_portfolio`` refuses a duplicate id
-        via ``materialize``), the INSERT is a first write, and the absence gate is DELETED
-        rather than preserved.
+        ``create`` runs ONCE per ``portfolio_id`` (rehydrate materializes only and never
+        re-enters here; ``add_portfolio`` refuses a duplicate id via ``materialize``), so
+        the INSERT is always a first write and needs no absence gate.
 
-        ACCT-07: the null-account early return is DELETED too. It let the write path SKIP the
-        row for a portfolio naming no ``(venue_name, account_id)`` — which then disagreed
-        with ``SqlPortfolioStorage.save_config``, which RAISES ``PortfolioStateError`` on
-        ``rowcount == 0`` (the very row it expected the write path to have made). With the
-        skip gone, the write path either writes the row or fails LOUD on the composite FK
-        onto ``venue_accounts`` (the account check on the write side, D-06/D-07) — it never
-        silently makes ``save_config``'s raise unreachable. The two halves can no longer drift.
+        There is deliberately NO early return for a portfolio naming no
+        ``(venue_name, account_id)``: skipping the row would disagree with
+        ``SqlPortfolioStorage.save_config``, which RAISES ``PortfolioStateError`` on
+        ``rowcount == 0`` — the very row it expects this path to have made. Without the
+        skip this either writes the row or fails LOUD on the composite FK onto
+        ``venue_accounts``, so the two halves cannot drift.
 
-        The no-store guard STAYS: on the backtest/in-memory arm there is nothing to write.
-
-        A write failure PROPAGATES (``add_portfolio``'s except arm publishes the error event
-        and re-raises): a definition that did not persist would boot into nothing on the next
-        restart while its positions and cash rows orphan — a silent money loss D-19 rates
-        worse than failing loud.
+        A write failure PROPAGATES (``add_portfolio``'s except arm publishes the error
+        event and re-raises): a definition that did not persist would boot into nothing on
+        the next restart while its positions and cash rows orphan — a silent money loss,
+        worse than failing loud. The no-store guard stays: on the backtest/in-memory arm
+        there is nothing to write.
         """
         if self.definition_store is None:
             return
@@ -359,8 +279,8 @@ class PortfolioHandler:
             account_id=account_id,
             initial_cash=to_money(cash),
             enabled=True,
-            # config is owned by save_config/load_config on this row (D-09); a definition
-            # write never authors or overwrites it.
+            # config is owned by save_config/load_config on this row; a definition write
+            # never authors or overwrites it.
             config=None,
             at=datetime.now(UTC),
         )
@@ -370,26 +290,24 @@ class PortfolioHandler:
                     portfolio_id: Optional[PortfolioId] = None,
                     account_id: Optional[str] = None,
                     venue_name: Optional[str] = None) -> Portfolio:
-        """Build the runtime Portfolio through the factory and register it — the BUILD half (D-25).
+        """Build the runtime Portfolio through the factory and register it — the BUILD half.
 
-        The runtime half of the create/materialize split: it builds the id-scoped
-        state-storage seam, the ``Account`` leaf and the ``Portfolio`` over them THROUGH the
-        injected factory, then REGISTERS the portfolio. It writes NOTHING durable — the
-        definition row is ``create``'s job. Both ``add_portfolio`` (as create -> materialize)
+        Builds the id-scoped state-storage seam, the ``Account`` leaf and the ``Portfolio``
+        over them through the injected factory, then REGISTERS the portfolio. It writes
+        NOTHING durable — the definition row is ``create``'s job. Both ``add_portfolio``
         and ``rehydrate_portfolios`` call this, so the duplicate-id guard and the
-        max-portfolios limit live HERE, where registration happens, and both callers inherit
-        them (rehydrate no longer re-enters ``add_portfolio``).
+        max-portfolios limit live HERE, where registration happens, and both callers
+        inherit them.
 
-        On the LIVE arm the factory's authority is the ``VenueValidatedComputeAuthority``, so
-        a portfolio naming a not-provisioned / disabled account RAISES here (ACCT-03,
-        ``VenueAccountNotProvisionedError``) rather than silently sitting on a fabricated
+        On the LIVE arm the factory's authority is the ``VenueValidatedComputeAuthority``,
+        so a portfolio naming a not-provisioned/disabled account raises
+        ``VenueAccountNotProvisionedError`` rather than silently sitting on a fabricated
         balance; on backtest the compute authority builds an ``account_id=None`` leaf and
-        never raises. The venue-truth ``VenueAccount`` swap stays COMP-07 / Phase 12.
+        never raises.
         """
         # A handler built without a factory (the direct-construction unit arm) cannot build
-        # portfolios: refuse LOUDLY rather than minting an account inline (D-24). The tempting
-        # inline ``SimulatedCashAccount(...)`` fallback would reinstate the second
-        # account-kind selection D-03 exists to delete, on a path nothing covers.
+        # portfolios: refuse LOUDLY. The tempting inline ``SimulatedCashAccount(...)``
+        # fallback would reinstate a second account-kind selection, on a path nothing covers.
         if self._factory is None:
             raise PortfolioConfigurationError(
                 "portfolio_factory", None,
@@ -398,26 +316,24 @@ class PortfolioHandler:
                 "inline — that would put account-kind selection back in a second place.",
             )
 
-        # F-1 (11-05): a duplicate id must fail loud — the registry write below is an
-        # unconditional dict assignment, so without this a re-materialize would SILENTLY
-        # destroy the first portfolio along with its cash and open positions. It lives HERE
-        # (not in add_portfolio) so rehydrate inherits it too (D-25).
+        # A duplicate id must fail loud — the registry write below is an unconditional dict
+        # assignment, so without this a re-materialize would SILENTLY destroy the first
+        # portfolio along with its cash and open positions. It lives HERE (not in
+        # add_portfolio) so rehydrate inherits it too.
         if portfolio_id is not None and portfolio_id in self._portfolios:
             raise PortfolioValidationError(
                 portfolio_id, "portfolio_id",
                 "A portfolio with this id is already registered"
             )
 
-        # WR-08: the global portfolio-count limit, enforced at REGISTRATION so both the add
-        # and the rehydrate path honour it.
+        # Enforced at REGISTRATION so both the add and the rehydrate path honour it.
         if len(self._portfolios) >= self.max_portfolios:
             raise PortfolioConfigurationError(
                 "max_portfolios", self.max_portfolios,
                 "maximum portfolios limit reached")
 
         # ``self._factory`` is typed ``Any`` (GATE-01), so pin the built object to
-        # ``Portfolio`` — the factory's ``materialize`` is contracted to return one, and the
-        # annotation keeps ``portfolio.portfolio_id`` a real ``PortfolioId``.
+        # ``Portfolio`` — that keeps ``portfolio.portfolio_id`` a real ``PortfolioId``.
         portfolio: Portfolio = self._factory.materialize(
             name=name,
             exchange=exchange,
@@ -437,32 +353,24 @@ class PortfolioHandler:
         return self._portfolios[portfolio_id]
 
     def has_portfolio(self, portfolio_id: PortfolioId) -> bool:
-        """Whether a portfolio with this id is REGISTERED in this process (D-25).
+        """Whether a portfolio with this id is REGISTERED in this process.
 
-        The narrowest PUBLIC registration predicate. Added by 11.2-09 so
-        ``rehydrate_portfolios`` can skip an already-registered id WITHOUT reaching the
-        handler's private ``_portfolios`` map (the queue-only / encapsulation seam). D-41
-        (plan 12) gives the handler its full public read surface (``has_portfolio`` /
-        ``all_portfolios``); this is the minimal slice that path needs now, and plan 12
-        should converge it rather than add a second predicate.
+        The narrowest public registration predicate, so ``rehydrate_portfolios`` can skip
+        an already-registered id without reaching the private ``_portfolios`` map.
         """
         return portfolio_id in self._portfolios
 
     def all_portfolios(self) -> Dict[PortfolioId, Portfolio]:
-        """Every REGISTERED portfolio regardless of state, keyed by ``portfolio_id`` (ACCT-08 / D-41).
+        """Every REGISTERED portfolio regardless of state, keyed by ``portfolio_id``.
 
-        The handler's full PUBLIC read surface, alongside ``has_portfolio`` (11-REVIEW
-        WR-09). Every consumer that reached for the private ``_portfolios`` map wanted one
-        of two questions no public accessor answered: *all* portfolios, or *is this id
-        registered* — ``get_active_portfolios()`` answers a DIFFERENT question (ACTIVE
-        only). This is also the read surface the FastAPI layer needs.
+        The handler's full public read surface alongside ``has_portfolio``;
+        ``get_active_portfolios()`` answers a DIFFERENT question (ACTIVE only).
 
         Returns a SHALLOW COPY of the registry, never the live private dict: an accessor
-        that lets a caller mutate the registry is the reach-in with extra steps (D-41
-        prohibition). ``has_portfolio(pid)`` is true exactly when ``pid`` is a key of the
-        value returned here — both read the same registry, so the two can never disagree.
-        Empty registry returns an empty mapping, never ``None``; entries preserve the
-        registry's own insertion order.
+        that lets a caller mutate the registry is the reach-in with extra steps.
+        ``has_portfolio(pid)`` is true exactly when ``pid`` is a key here — both read the
+        same registry, so the two cannot disagree. An empty registry returns an empty
+        mapping, never ``None``; entries preserve insertion order.
         """
         return dict(self._portfolios)
 
@@ -481,19 +389,12 @@ class PortfolioHandler:
                     if portfolio.cash > 0:
                         raise InvalidPortfolioOperationError("Cannot delete portfolio with remaining cash")
                 
-                # ACCT-10 / D-32 / WR-04: RETIRE the definition durably BEFORE the in-memory
-                # teardown. delete_portfolio historically flipped to ARCHIVED and dropped the
-                # registry entry but NEVER touched the definition store, so a "deleted"
-                # portfolio returned on the next boot with its persisted id and its child
-                # tables reattached. Persisting is_deleted=True FIRST orders the failure the
-                # safe way: a crash after this leaves the row RETIRED (rehydrate's read_all
-                # filters is_deleted, so it never returns), never a still-live row that comes
-                # back trading. The terminal-ARCHIVED state does NOT collide with D-30's
-                # pause/resume path — a retired row never rehydrates, and the object leaves the
-                # registry so nothing can call activate_portfolio on it. is_deleted=True (D-32
-                # RETIRED) also RELEASES the (venue_name, account_id) pair for a successor. No
-                # `state` column is added (deferred, stays deferred). None on the
-                # backtest/in-memory arm — there is nothing durable to retire.
+                # RETIRE the definition durably BEFORE the in-memory teardown. Persisting
+                # is_deleted=True first orders the failure the safe way: a crash after this
+                # leaves the row RETIRED (rehydrate's read_all filters is_deleted, so it
+                # never returns), never a still-live row that comes back trading. Retiring
+                # also RELEASES the (venue_name, account_id) pair for a successor. None on
+                # the backtest/in-memory arm — nothing durable to retire.
                 if self.definition_store is not None:
                     self.definition_store.set_deleted(portfolio_id, True, datetime.now(UTC))
 
@@ -517,27 +418,25 @@ class PortfolioHandler:
                 raise
     
     def deactivate_portfolio(self, portfolio_id: PortfolioId) -> None:
-        """PAUSE a portfolio durably — persist enabled=False, THEN flip in memory (ACCT-10/D-30).
+        """PAUSE a portfolio durably — persist enabled=False, THEN flip in memory.
 
-        D-30: the pause is ONE operation — the durable write AND the in-memory
-        ``Portfolio.set_state(INACTIVE)`` flip — performed HERE in the handler, which already
-        owns the definition store, so nothing new is injected. ``Portfolio.set_state`` stays a
-        pure in-memory domain transition holding NO storage (rejected alternatives: a
-        state-change callback on ``Portfolio``, which would put persistence inside the domain
-        object; and an event-driven persist, which is asynchronous relative to the flip and
-        loses the deactivation on a crash between the two — the exact failure ACCT-10 closes).
+        The pause is ONE operation — the durable write and the in-memory
+        ``Portfolio.set_state(INACTIVE)`` flip — performed here in the handler, which
+        already owns the definition store. ``Portfolio.set_state`` stays a pure in-memory
+        domain transition holding NO storage (rejected: a state-change callback on
+        ``Portfolio``, which puts persistence inside the domain object; and an event-driven
+        persist, which is asynchronous relative to the flip and loses the deactivation on a
+        crash between the two).
 
-        ACCT-10 crash-safety ORDERING: persist ``enabled=False`` BEFORE the in-memory flip, so
-        the state that survives ANY crash between the two halves is always "stopped", never
-        "trading". On restart ``rehydrate_portfolios``' present-but-inactive branch
-        reconstructs it INACTIVE from the persisted ``enabled=False`` — a real code path now,
-        not only an out-of-band DB write. Idempotent (ACCT-10): deactivating an already-paused
-        portfolio re-persists ``enabled=False`` and ``set_state(INACTIVE)`` is a no-op, so it
-        does not raise.
+        Crash-safety ORDERING: persist ``enabled=False`` BEFORE the in-memory flip, so the
+        state surviving ANY crash between the two halves is always "stopped", never
+        "trading". On restart the present-but-inactive rehydrate branch reconstructs it
+        INACTIVE from the persisted ``enabled=False``. Idempotent: re-deactivating
+        re-persists and ``set_state`` is a no-op, so it does not raise.
 
-        Disabling a portfolio NEVER touches its venue account (D-33): a venue account is a
-        real external thing that outlives any number of internal portfolios. On the
-        backtest/in-memory arm (no definition store) this is the in-memory flip alone.
+        Disabling a portfolio NEVER touches its venue account — a venue account is a real
+        external thing that outlives any number of internal portfolios. On the
+        backtest/in-memory arm this is the in-memory flip alone.
         """
         portfolio = self.get_portfolio(portfolio_id)
         if self.definition_store is not None:
@@ -545,17 +444,13 @@ class PortfolioHandler:
         portfolio.set_state(PortfolioState.INACTIVE, "operator deactivation (ACCT-10/D-30)")
 
     def activate_portfolio(self, portfolio_id: PortfolioId) -> None:
-        """RESUME a portfolio durably — flip in memory FIRST, THEN persist enabled=True (ACCT-10/D-30).
+        """RESUME a portfolio durably — flip in memory FIRST, THEN persist enabled=True.
 
         The mirror of ``deactivate_portfolio``, ordered the OTHER way for the SAME reason:
-        ACCT-10 crash-safety means the state surviving any crash must be "stopped", so
-        ``activate`` flips the in-memory state to ACTIVE first and persists ``enabled=True``
-        only after. A crash between the two leaves the durable row still ``enabled=False``, so
-        the next boot rehydrates it INACTIVE (stopped) — never a portfolio that returns
-        trading on a half-completed resume. One operation, handler-owned store, no storage on
-        the domain object, never event-driven (D-30). Idempotent: activating an already-active
-        portfolio re-persists ``enabled=True`` and ``set_state(ACTIVE)`` is a no-op, so it does
-        not raise.
+        the state surviving any crash must be "stopped", so this flips to ACTIVE first and
+        persists ``enabled=True`` only after. A crash between the two leaves the durable row
+        still ``enabled=False``, so the next boot rehydrates it INACTIVE — never a portfolio
+        that returns trading on a half-completed resume. Idempotent.
         """
         portfolio = self.get_portfolio(portfolio_id)
         portfolio.set_state(PortfolioState.ACTIVE, "operator activation (ACCT-10/D-30)")
@@ -574,24 +469,22 @@ class PortfolioHandler:
         """Get total portfolio count."""
         return len(self._portfolios)
 
-    # PortfolioReadModel — structural Protocol implementation (D-16, Plan 05-03)
+    # PortfolioReadModel — structural Protocol implementation.
     #
     # The order domain reads portfolio state through this narrow Protocol surface ONLY
-    # (itrader/core/portfolio_read_model.py). No inheritance, no adapter:
-    # PortfolioHandler satisfies the runtime_checkable Protocol structurally.
-    # D-15: live Position objects never cross the boundary — get_position
-    # returns a frozen PositionView snapshot (None when flat).
+    # (itrader/core/portfolio_read_model.py). No inheritance, no adapter. Live Position
+    # objects never cross the boundary — get_position returns a frozen PositionView.
 
     def active_portfolio_ids(self) -> List[PortfolioId]:
-        """Return the ids of all active portfolios (WR-02, LIFE-01 sweep)."""
+        """Return the ids of all active portfolios."""
         return [p.portfolio_id for p in self._portfolios.values() if p.is_active()]
 
     def available_cash(self, portfolio_id: PortfolioId) -> Decimal:
-        """Return the portfolio's buying power (balance minus reservations, D-14)."""
+        """Return the portfolio's buying power (balance minus reservations)."""
         return self.get_portfolio(portfolio_id).account.available_balance
 
     def get_position(self, portfolio_id: PortfolioId, ticker: str) -> Optional[PositionView]:
-        """Return a frozen snapshot of the open position, or None when flat (D-15)."""
+        """Return a frozen snapshot of the open position, or None when flat."""
         position = self.get_portfolio(portfolio_id).get_open_position(ticker)
         if position is None:
             return None
@@ -603,77 +496,58 @@ class PortfolioHandler:
         )
 
     def reserve(self, portfolio_id: PortfolioId, order_id: OrderId, amount: Decimal) -> None:
-        """Reserve cash for a pending order (per-reference, full precision — OQ4).
+        """Reserve cash for a pending order (per-reference, full precision).
 
-        D-06/D-07: the ``PortfolioReadModel.reserve(portfolio_id, order_id,
-        amount)`` Protocol signature stays FROZEN (keyed by ``portfolio_id``,
-        which the Account has no notion of); only the delegation re-points to the
-        Account-level ``reserve(order_id, amount)`` (the fixed "order cash
-        reservation" description + ``str(order_id)`` reference are folded into the
-        account method). Zero order-domain ripple.
+        The ``PortfolioReadModel`` signature is FROZEN and keyed by ``portfolio_id``,
+        which the Account has no notion of; only the delegation re-points to the
+        Account-level ``reserve(order_id, amount)``.
         """
         self.get_portfolio(portfolio_id).account.reserve(order_id, amount)
 
     def release(self, portfolio_id: PortfolioId, order_id: OrderId) -> None:
-        """Release the cash reservation keyed by an order id (idempotent).
-
-        D-06/D-07: Protocol signature FROZEN; delegation re-points to the
-        Account-level ``release(order_id)``.
-        """
+        """Release the cash reservation keyed by an order id (idempotent)."""
         self.get_portfolio(portfolio_id).account.release(order_id)
 
     def drop_pending(self, portfolio_id: PortfolioId, order_id: OrderId) -> None:
-        """Drop the local pending overlay on the venue ORDER-ACK (D-15, V17-13).
+        """Drop the local pending overlay on the venue ORDER-ACK.
 
-        Getattr-guarded delegate: only ``VenueAccount`` carries a local pending
-        overlay to drop, so this resolves ``account.drop_pending`` dynamically and
-        skips cleanly when absent (paper/simulated accounts have no such method —
-        oracle-dark, the byte-exact backtest never takes this branch). Mirrors the
-        ``save_account_state`` getattr-skip idiom. NON-terminal: the account drop
-        pops only the admission overlay, never the settled ledger.
+        Getattr-guarded: only ``VenueAccount`` carries a pending overlay, so this resolves
+        ``account.drop_pending`` dynamically and skips cleanly for paper/simulated
+        accounts. NON-terminal — it pops only the admission overlay, never the settled
+        ledger.
         """
         fn = getattr(self.get_portfolio(portfolio_id).account, "drop_pending", None)
         if fn is not None:
             fn(order_id)
 
     def exchange_for(self, portfolio_id: PortfolioId) -> str:
-        """Return the exchange the portfolio trades on (admission metadata, OQ1)."""
+        """Return the exchange the portfolio trades on."""
         exchange: str = self.get_portfolio(portfolio_id).exchange
         return exchange
 
     def account_for(self, portfolio_id: PortfolioId) -> Optional[str]:
-        """Return the venue account the portfolio's orders reach (D-27, plan 11-05).
+        """Return the venue account the portfolio's orders reach.
 
-        The direct mirror of ``exchange_for``: an order's target is the pair
+        The mirror of ``exchange_for``: an order's target is the pair
         ``(venue, account_id)`` and this reads the account half. Routed through
-        ``get_portfolio`` so an unknown id raises ``PortfolioNotFoundError``,
-        identically to ``exchange_for``.
-
-        ``Optional[str]`` because ``Portfolio.account_id`` is optional — the
-        default keeps the byte-exact backtest call site untouched; plan 11-08's
+        ``get_portfolio``, so an unknown id raises ``PortfolioNotFoundError``.
+        ``Optional[str]`` because ``Portfolio.account_id`` is optional; a
         composition-time invariant is what requires a named account in live.
-
-        ExecutionHandler reads this through the injected ``PortfolioReadModel``
-        Protocol (11-06) and never imports this class.
         """
         account_id: Optional[str] = self.get_portfolio(portfolio_id).account_id
         return account_id
 
     def open_position_count(self, portfolio_id: PortfolioId) -> int:
-        """Return the number of open positions (position-limit check, OQ1)."""
+        """Return the number of open positions."""
         count: int = self.get_portfolio(portfolio_id).n_open_positions
         return count
 
     def total_equity(self, portfolio_id: PortfolioId) -> Decimal:
         """Return total equity as Decimal: full cash balance + position market values.
 
-        Plan 07-01 (M5-06): the RiskPercent sizing input — computed from the
-        Decimal internals directly (RESEARCH Pitfall 8: CashManager.balance and
-        PositionManager.get_total_market_value() are both Decimal-native), NEVER
-        through the float Portfolio.total_equity property. Uses the FULL ledger
-        balance (available cash + reservations) — equity is a sizing/metrics
-        figure, not buying power. Oracle-dark: the golden FractionOfCash policy
-        never reads it.
+        Computed from the Decimal internals directly, NEVER through the float
+        ``Portfolio.total_equity`` property. Uses the FULL ledger balance (available cash
+        plus reservations) — equity is a sizing/metrics figure, not buying power.
         """
         portfolio = self.get_portfolio(portfolio_id)
         return (
@@ -684,18 +558,12 @@ class PortfolioHandler:
     def set_universe(self, universe: Any) -> None:
         """Inject the Universe read-model used to resolve per-symbol Instruments.
 
-        Plan 02-05 (D-13): called by the runner at its Trap-4 wiring point (after
-        the Universe is built, mirroring the exchange/order-domain set_universe
-        seam from Plan 02-03). Stores the reference; maintenance_margin reads
-        ``universe.instrument(ticker).maintenance_margin_rate`` per open position.
-
-        ACCT-02: the margin/liquidation MATH now lives on
-        ``SimulatedMarginAccount`` and reads the account's OWN injected Universe
-        (the math-pulldown moved the universe seam down with it, 01-02). Propagate
-        the reference down to each existing margin account so the delegated math is
-        wired. Spot (``SimulatedCashAccount``) accounts have no margin surface and
-        are skipped. Backtest adds all portfolios before this Trap-4 call, so every
-        margin account is reached; this is oracle-dark (the golden run is spot).
+        Called by the runner once the Universe is built. ``maintenance_margin`` reads
+        ``universe.instrument(ticker).maintenance_margin_rate`` per open position; since
+        the margin/liquidation math lives on ``SimulatedMarginAccount`` and reads the
+        account's OWN Universe, the reference is propagated down to each existing margin
+        account. Spot accounts have no margin surface and are skipped. Backtest adds all
+        portfolios before this call, so every margin account is reached.
         """
         self._universe = universe
         for portfolio in self._portfolios.values():
@@ -704,63 +572,45 @@ class PortfolioHandler:
                 account.set_universe(universe)
 
     def set_order_storage(self, order_storage: OrderStorage) -> None:
-        """Inject the shared order mirror for the liquidation forced-close (LIQ-03).
+        """Inject the shared order mirror for the liquidation forced-close.
 
-        04-03: the NARROW INJECTED WRITE-SEAM (the analog of ``set_universe`` and
-        the ``PortfolioReadModel.reserve``/``release`` write-ish surface) the
-        BAR-route liquidation engine uses to register a real forced-close
-        ``Order`` so ``ReconcileManager.on_fill`` reconciles EXECUTED→FILLED
-        (Pitfall 4 — without the registered order the reconcile early-returns and
-        the mirror silently no-ops). ``compose.py`` injects the SAME
-        ``order_storage`` instance the ``OrderHandler``/``ReconcileManager`` hold,
-        so the mirror is a single shared store. NOT a raw handler-to-handler call
-        and NOT an enqueued OrderEvent (the ORDER route would fill next-bar-open,
-        violating D-04/Pitfall 6). Query/write-only and oracle-dark on the golden
-        path (no breaches → never written)."""
+        The BAR-route liquidation engine uses this to register a real forced-close
+        ``Order`` so ``ReconcileManager.on_fill`` reconciles EXECUTED→FILLED — without the
+        registered order the reconcile early-returns and the mirror silently no-ops.
+        ``compose.py`` injects the SAME instance the ``OrderHandler``/``ReconcileManager``
+        hold, so the mirror is a single shared store. NOT a raw handler-to-handler call and
+        NOT an enqueued OrderEvent (the ORDER route would fill next-bar-open)."""
         self._order_storage = order_storage
 
     def maintenance_margin(self, portfolio_id: PortfolioId) -> Decimal:
-        """Return maintenance margin computed on demand (D-13/MARGIN-03).
+        """Return maintenance margin computed on demand.
 
-        ACCT-02: the inline computation was pulled DOWN to
-        ``SimulatedMarginAccount.maintenance_margin`` (the math reads the
-        account's OWN injected Universe + the portfolio's open positions). This
-        handler method is now a thin pass-through delegating to the portfolio's
-        account. A spot (``SimulatedCashAccount``) account has no margin
-        requirement and returns ``Decimal("0")``. The PortfolioReadModel
-        signature ``maintenance_margin(portfolio_id) -> Decimal`` is FROZEN.
-
-        D-01 (11.1-03): the MATH still lives on the leaf — what changed is that
-        this handler now SUPPLIES the portfolio-side inputs (the open positions
-        and the portfolio id) instead of the leaf reaching back through an
-        ``Account -> Portfolio`` reference for them. Only the body moved; the
-        ``PortfolioReadModel`` signature above is unchanged.
+        A thin pass-through: the math lives on ``SimulatedMarginAccount``, reading the
+        account's OWN injected Universe plus the portfolio-side inputs this handler
+        supplies (the open positions and the portfolio id). A spot
+        (``SimulatedCashAccount``) account has no margin requirement and returns
+        ``Decimal("0")``. The ``PortfolioReadModel`` signature is FROZEN.
         """
         portfolio = self.get_portfolio(portfolio_id)
         account = portfolio.account
         if not isinstance(account, SimulatedMarginAccount):
             return Decimal("0")
-        # Pass ``portfolio.portfolio_id``, NOT the ``portfolio_id`` argument: the
-        # argument may arrive as an int under the in-flight id migration (which
-        # is why ``_portfolios`` is Any-keyed), and the WR-02 StateError carries
-        # the resolved PortfolioId as its attribution context.
+        # Pass ``portfolio.portfolio_id``, NOT the ``portfolio_id`` argument: the argument
+        # may arrive as an int under the in-flight id migration (which is why
+        # ``_portfolios`` is Any-keyed), and the StateError carries the resolved
+        # PortfolioId as its attribution context.
         return account.maintenance_margin(
             portfolio.position_manager.get_all_positions(),
             portfolio.portfolio_id,
         )
 
     def margin_ratio(self, portfolio_id: PortfolioId) -> Decimal:
-        """Return ``total_equity / maintenance_margin`` (D-12/D-13).
+        """Return ``total_equity / maintenance_margin``.
 
-        ACCT-02: pulled DOWN to ``SimulatedMarginAccount.margin_ratio``; this is a
-        thin pass-through. A spot account returns the deterministic ``Decimal("0")``
-        sentinel (no margin required). Signature FROZEN (PortfolioReadModel).
-
-        D-01 (11.1-03): as with ``maintenance_margin``, this handler now supplies
-        the portfolio-side inputs — mark-to-market equity, the open positions and
-        the portfolio id — while the ratio arithmetic and its zero-maintenance
-        sentinel stay on the leaf. The ``PortfolioReadModel`` signature stays
-        frozen at ``margin_ratio(portfolio_id) -> Decimal``.
+        A thin pass-through to ``SimulatedMarginAccount.margin_ratio``, supplied with the
+        portfolio-side inputs (mark-to-market equity, the open positions, the portfolio
+        id); the ratio arithmetic and its zero-maintenance sentinel stay on the leaf. A
+        spot account returns the deterministic ``Decimal("0")`` sentinel. Signature FROZEN.
         """
         portfolio = self.get_portfolio(portfolio_id)
         account = portfolio.account
@@ -773,46 +623,38 @@ class PortfolioHandler:
         )
 
     # ------------------------------------------------------------------
-    # Isolated-margin liquidation engine (LIQ-01/02, D-01-CORR/D-03-CORR/D-04/
-    # D-05/D-07). The BAR-route per-position breach check runs AFTER the per-
-    # portfolio mark + P3 carry pass (D-02 placement — breach sees carry-eroded
-    # equity).
+    # Isolated-margin liquidation engine. The BAR-route per-position breach check runs
+    # AFTER the per-portfolio mark + carry pass, so a breach sees carry-eroded equity.
     #
-    # ACCT-02: the pure-Decimal MATH (``_isolated_liq_price`` / ``_is_breached`` /
-    # ``_liquidation_penalty`` / ``_liq_inputs`` + the ``maintenance_margin`` /
-    # ``margin_ratio`` bodies above) was pulled DOWN onto ``SimulatedMarginAccount``.
-    # The EMISSION SHELL stays HERE (``_liquidate_position`` /
-    # ``_run_liquidation_pass`` / ``_collect_breaches_over_prices``): it keeps the
-    # ``order_storage.add_order`` + ``OrderEvent``/``FillEvent`` mint +
-    # ``global_queue.put`` + log, and calls DOWN into the portfolio's margin
-    # account for the math. The queue-only rule is preserved (the account has no
-    # queue). Spot accounts have no margin/liquidation surface, so they are skipped
-    # — byte-identical to the prior wb==0 continue (oracle-dark). The liq price is
-    # quantized to the instrument price scale ONLY at the FillEvent boundary in the
-    # mint step, never mid-formula.
+    # The pure-Decimal MATH (``_isolated_liq_price`` / ``_is_breached`` /
+    # ``_liquidation_penalty`` / ``_liq_inputs``) lives on ``SimulatedMarginAccount``; the
+    # EMISSION SHELL stays here (``order_storage.add_order`` + the ``OrderEvent`` /
+    # ``FillEvent`` mint + ``global_queue.put`` + log) and calls down into the portfolio's
+    # margin account for the math. The queue-only rule is preserved — the account has no
+    # queue. Spot accounts have no margin/liquidation surface and are skipped. The liq
+    # price is quantized to the instrument price scale ONLY at the FillEvent boundary in
+    # the mint step, never mid-formula.
     # ------------------------------------------------------------------
 
     def _liquidate_position(self, portfolio: Portfolio, position: Position,
                             liq_price: Decimal, fee_rate: Decimal,
                             bar_time: datetime) -> None:
-        """Force-close a breached position on the BAR route (LIQ-02/LIQ-03/D-04).
+        """Force-close a breached position on the BAR route.
 
-        Mints a REAL opposite-side ``Order`` (SELL to close a long / BUY to close
-        a short; qty = ``|net_quantity|``) tagged ``OrderTriggerSource.LIQUIDATION``,
-        registers it in the injected ``order_storage`` (Pitfall 4 — without this
-        ``ReconcileManager.on_fill`` early-returns and the mirror never reaches
-        FILLED), and emits a ``FillEvent(EXECUTED)`` DIRECTLY on the queue at the
-        liq price with ``time=bar_time`` — NOT routed through ExecutionHandler /
-        SimulatedExchange (D-04/Pitfall 6 — those fill next-bar-open; liquidation
-        settles on the breach bar). The liq price enters the FillEvent as the
-        executed price; the penalty rides ``commission`` (D-05). The existing
-        ``portfolio.on_fill`` settle path realizes the PnL + penalty and releases
-        the lock. The realized loss is bounded by SETTLING THE FORCED CLOSE AT THE
-        ISOLATED MAINTENANCE LIQ PRICE (D-03 automatic-floor reading): the position
-        is closed AT the floor, never below it, even when the breach bar gaps far
-        below the liq price (the engine fills at the liq price, not the gapped
-        close). There is NO explicit ``min(loss + penalty, WB)`` clamp —
-        fill-at-liq-price is the loss-bounding mechanism.
+        Mints a REAL opposite-side ``Order`` (SELL to close a long / BUY to close a short;
+        qty = ``|net_quantity|``) tagged ``OrderTriggerSource.LIQUIDATION``, registers it
+        in the injected ``order_storage`` (without this ``ReconcileManager.on_fill``
+        early-returns and the mirror never reaches FILLED), and emits a
+        ``FillEvent(EXECUTED)`` DIRECTLY on the queue at the liq price with
+        ``time=bar_time`` — NOT routed through ExecutionHandler / SimulatedExchange, which
+        fill next-bar-open; liquidation settles on the breach bar. The penalty rides
+        ``commission``; ``portfolio.on_fill`` realizes the PnL + penalty and releases the
+        lock.
+
+        The realized loss is bounded by SETTLING THE FORCED CLOSE AT THE ISOLATED
+        MAINTENANCE LIQ PRICE: the position closes AT the floor, never below it, even when
+        the breach bar gaps far below it. There is NO explicit ``min(loss + penalty, WB)``
+        clamp — fill-at-liq-price IS the loss-bounding mechanism.
         """
         if self._order_storage is None:
             raise StateError(
@@ -824,14 +666,13 @@ class PortfolioHandler:
         size = abs(position.net_quantity)
         # Opposite side closes the position: SELL closes a long, BUY a short.
         close_side = Side.SELL if position.side == PositionSide.LONG else Side.BUY
-        # ACCT-02: the penalty math now lives on the margin account (static — no
-        # instance state needed). Reached only for breached margin positions.
+        # The penalty math lives on the margin account. Reached only for breached
+        # margin positions.
         penalty = SimulatedMarginAccount._liquidation_penalty(fee_rate, size, liq_price)
 
-        # Quantize the liq price to the instrument price scale ONLY here, at the
-        # FillEvent money boundary (Pitfall 5 — never mid-formula). The Universe
-        # Instrument carries the per-symbol price scale; a stub Instrument without
-        # one (unit tests) leaves the full-precision liq price untouched.
+        # Quantize the liq price to the instrument price scale ONLY here, at the FillEvent
+        # money boundary — never mid-formula. A stub Instrument carrying no price scale
+        # (unit tests) leaves the full-precision liq price untouched.
         fill_price = liq_price
         instrument = self._universe.instrument(position.ticker)
         price_scale = getattr(instrument, "price_precision", None)
@@ -863,7 +704,7 @@ class PortfolioHandler:
             time=bar_time,
             allow_same_status=True,
         )
-        # Pitfall 4: register in the SHARED mirror so the reconcile reaches FILLED.
+        # Register in the SHARED mirror so the reconcile reaches FILLED.
         self._order_storage.add_order(order)
 
         order_event = OrderEvent.new_order_event(order)
@@ -872,13 +713,10 @@ class PortfolioHandler:
             price=fill_price, quantity=size, commission=penalty, time=bar_time)
         self.global_queue.put(fill_event)
 
-        # IN-01: ``liq_price`` here is the QUANTIZED FillEvent price (``fill_price``,
-        # rounded to the instrument price scale above) — that IS the price the
-        # position settles at. The ``penalty`` field carries FULL precision
-        # (``fee_rate × |size| × liq_price`` on the UNquantized formula price),
-        # so a reader cross-checking the log against the hand-computed isolated
-        # liq formula will see the rounded field but the full-precision penalty.
-        # This is intentional: the logged value mirrors the emitted FillEvent.
+        # The logged ``liq_price`` is the QUANTIZED FillEvent price — the price the
+        # position actually settles at — while ``penalty`` carries FULL precision (computed
+        # on the unquantized formula price). Intentional: the log mirrors the emitted
+        # FillEvent.
         self.logger.info(
             "Position force-liquidated",
             ticker=position.ticker,
@@ -892,36 +730,25 @@ class PortfolioHandler:
     def _run_liquidation_pass(self, closes: Dict[str, Decimal],
                               bar_time: Optional[datetime],
                               marked_portfolio_ids: Optional[set[Any]] = None) -> None:
-        """BAR-route per-position liquidation breach check (D-02 placement).
+        """BAR-route per-position liquidation breach check.
 
-        Runs AFTER the per-portfolio mark + P3 carry pass so the breach sees the
-        carry-eroded equity. For each active portfolio, collect the deterministically
-        sorted breached positions at this tick's close and force-close each. Fully
-        oracle-dark: with the liquidation engine default-off (no locked margin /
-        zero breaches) this loop finds nothing and emits no fills, so SMA_MACD
-        stays byte-exact (D-11). No Universe / no order_storage wired (legacy
-        mark-only callers) → no-op.
+        Runs AFTER the per-portfolio mark + carry pass so the breach sees carry-eroded
+        equity. For each active portfolio, collect the deterministically sorted breached
+        positions at this tick's close and force-close each. No Universe / no order_storage
+        wired → no-op.
 
-        IN-01: ``closes`` is the SAME per-ticker close map the caller already
-        built for the mark — passed in (not re-derived from bar_events) so the
-        mark price and the breach price are guaranteed identical.
+        ``closes`` is the SAME per-ticker close map the caller built for the mark — passed
+        in rather than re-derived from bar_events, so the mark price and the breach price
+        are guaranteed identical.
 
-        WR-05 (WR-02 re-review): ``marked_portfolio_ids`` is the set of
-        portfolios that re-marked cleanly this tick. Only those are evaluated.
-        Under the CURRENT error policy this gate NEVER fires: a failed mark in
-        ``update_portfolios_market_value`` re-raises (it does not continue the
-        per-portfolio loop), and the dispatch error seam operates at the
-        granularity of the whole handler call — so in BOTH backtest and live
-        modes either every active portfolio re-marked (and this pass runs with a
-        full set) or the re-raise propagates out and this pass is never reached.
-        ``marked_portfolio_ids`` is therefore always the full active set whenever
-        the pass runs, and the ``not in`` skip below is never taken in
-        production. The gate is kept purely as a DEFENSIVE guardrail: if a future
-        per-portfolio continue-on-mark-failure policy is ever adopted for live
-        mode, the partial-mark scenario would become reachable and this gate
-        would already prevent the breach from reading a stale, partially-marked
-        equity. ``None`` (legacy direct callers / unit tests) means "no gating"
-        — evaluate every active portfolio.
+        ``marked_portfolio_ids`` gates evaluation to the portfolios that re-marked cleanly
+        this tick. Under the CURRENT error policy the skip never fires: a failed mark in
+        ``update_portfolios_market_value`` RE-RAISES rather than continuing the loop, and
+        the dispatch error seam works at whole-handler-call granularity, so either every
+        active portfolio re-marked or this pass is never reached. It is kept as a DEFENSIVE
+        guardrail — were a per-portfolio continue-on-mark-failure policy ever adopted for
+        live mode, the partial-mark case would become reachable and this gate would already
+        stop the breach reading a stale, partially-marked equity. ``None`` means no gating.
         """
         if bar_time is None or self._universe is None or self._order_storage is None:
             return
@@ -929,26 +756,21 @@ class PortfolioHandler:
             if (marked_portfolio_ids is not None
                     and portfolio.portfolio_id not in marked_portfolio_ids):
                 continue
-            # ACCT-02: the liq math lives on the margin account. A spot account has
-            # no margin/liquidation surface — skip it (byte-identical to the prior
-            # wb==0 continue; oracle-dark since the golden run is all-spot).
+            # The liq math lives on the margin account; a spot account has no
+            # margin/liquidation surface, so skip it.
             account = portfolio.account
             if not isinstance(account, SimulatedMarginAccount):
                 continue
             for position in self._collect_breaches_over_prices(portfolio, closes, bar_time):
                 wb, mmr, fee_rate = account._liq_inputs(position)
                 liq_price = account._isolated_liq_price(position, wb, mmr)
-                # WR-04 / CR-01 (LOAD-BEARING): the breach is DETECTED on the
-                # bar close (``_is_breached``) but the position is SETTLED at
-                # ``liq_price`` (the maintenance liq price), NOT at the breaching
-                # close. With NO explicit ``min(loss + penalty, WB)`` clamp,
-                # filling at the maintenance floor is THE mechanism that bounds
-                # the realized loss near WB even on a gap-through (DEF-01-C). A
-                # maintainer "fixing" this to settle at the realistic breach
-                # close would silently re-open DEF-01-C with no clamp behind it —
-                # see _liquidate_position's docstring (fill-at-liq-price is the
-                # loss bound) and the gap-through regression
-                # test_liquidation_fills_at_liq_price_on_far_gap_through.
+                # LOAD-BEARING: the breach is DETECTED on the bar close but the position
+                # is SETTLED at ``liq_price`` (the maintenance liq price), NOT at the
+                # breaching close. With no ``min(loss + penalty, WB)`` clamp, filling at
+                # the maintenance floor is THE mechanism bounding the realized loss near
+                # WB even on a gap-through. "Fixing" this to settle at the realistic
+                # breach close silently removes that bound — see the gap-through
+                # regression test_liquidation_fills_at_liq_price_on_far_gap_through.
                 self._liquidate_position(portfolio, position, liq_price, fee_rate, bar_time)
 
     def _collect_breaches_over_prices(self, portfolio: Portfolio,
@@ -956,21 +778,18 @@ class PortfolioHandler:
                                       bar_time: datetime) -> List[Position]:
         """Collect breached open positions across a per-ticker close map.
 
-        The SINGLE breach predicate (WR-01): the live path
-        (``_run_liquidation_pass``) and the unit tests both call this directly;
-        there is no second collector to drift apart. Evaluates each position
-        against ITS OWN ticker's
-        close from ``closes`` — a position whose ticker is absent from this tick
-        is skipped (stale mark, never a spurious breach). Returns the breached
-        set sorted ``(ticker, open_time, position_id)``. The WR-02
-        unwired-Universe guard fires only when there is a position to evaluate.
+        The SINGLE breach predicate: the live path and the unit tests both call this
+        directly, so there is no second collector to drift apart. Each position is
+        evaluated against ITS OWN ticker's close — a position whose ticker is absent from
+        this tick is skipped (stale mark, never a spurious breach). Returns the breached
+        set sorted ``(ticker, open_time, position_id)``. The unwired-Universe guard fires
+        only when there is a position to evaluate.
         """
         positions = portfolio.position_manager.get_all_positions()
         if not positions:
             return []
-        # ACCT-02: a spot (SimulatedCashAccount) account has no margin/liquidation
-        # surface — it is never breached (byte-identical to the prior wb==0
-        # continue; oracle-dark). The margin math is delegated to the account.
+        # A spot (SimulatedCashAccount) account has no margin/liquidation surface — it is
+        # never breached. The margin math is delegated to the account.
         account = portfolio.account
         if not isinstance(account, SimulatedMarginAccount):
             return []
@@ -998,51 +817,44 @@ class PortfolioHandler:
         return breached
 
     # ------------------------------------------------------------------
-    # Engine-thread drift compare + halt decision (05-04, D-15/D-01/D-04,
-    # RECON-01/RECON-03). The venue is the arbiter of truth in live: the async
-    # push writer only WRITES the VenueAccount cache (D-15 single-writer); the
-    # per-symbol COMPARE + halt DECISION run HERE, on the engine thread, after a
-    # fill drains (on_fill) and once per closed bar (BAR-route backstop). This
-    # placement structurally defeats the phantom-drift race (Pitfall 8): the
-    # engine tally is fully applied before the compare reads it, and no compare is
-    # reachable from a spawned coroutine. Fully oracle-dark: a backtest/paper
-    # portfolio holds a SimulatedAccount, so the compare skips cleanly and
-    # SMA_MACD stays byte-exact.
+    # Engine-thread drift compare + halt decision. The venue is the arbiter of truth in
+    # live: the async push writer only WRITES the VenueAccount cache (single-writer); the
+    # per-symbol COMPARE + halt DECISION run HERE, on the engine thread, after a fill
+    # drains (on_fill) and once per closed bar (BAR-route backstop). That placement
+    # structurally defeats the phantom-drift race — the engine tally is fully applied
+    # before the compare reads it, and no compare is reachable from a spawned coroutine.
+    # A backtest/paper portfolio holds a SimulatedAccount, so the compare skips cleanly.
     # ------------------------------------------------------------------
 
     def set_halt_signal(self, halt_signal: Callable[[str], None]) -> None:
-        """Inject the composition-root freeze-in-place halt entrypoint (05-04, D-01/D-02).
+        """Inject the composition-root freeze-in-place halt entrypoint.
 
-        The live root wires ``LiveTradingSystem.halt`` here; the engine-thread
-        drift compare calls it with a machine-readable reason (``"drift"``) on
-        unexplained beyond-band drift. Backtest never wires it (no VenueAccount →
-        no compare → the signal is never invoked).
+        The live root wires ``LiveTradingSystem.halt`` here; the engine-thread drift
+        compare calls it with a machine-readable reason (``"drift"``) on unexplained
+        beyond-band drift. Backtest never wires it — no VenueAccount, so no compare.
         """
         self._halt_signal = halt_signal
 
     def set_drift_reconciler(
         self, reconciler: Callable[[Any, str, Decimal, Decimal], bool]
     ) -> None:
-        """Inject the external-event reconciler for beyond-band drift (05-04, D-04).
+        """Inject the external-event reconciler for beyond-band drift.
 
-        Answers whether a beyond-band per-symbol drift reconciles to a KNOWN venue
-        event (an external cancel / external or hand-closed fill) — adopt-and-
-        continue — versus genuinely unexplained drift that halts the engine.
-        ``None`` → every beyond-band drift is treated as unexplained (the
-        conservative money-first default; an external fill is NOT unexplained
-        drift and is adopted only when the reconciler confirms it).
+        Answers whether a beyond-band per-symbol drift reconciles to a KNOWN venue event
+        (an external cancel / external or hand-closed fill) — adopt-and-continue — versus
+        genuinely unexplained drift that halts the engine. ``None`` treats every
+        beyond-band drift as unexplained: the conservative money-first default.
         """
         self._drift_reconciler = reconciler
 
     def _drift_precision(self, ticker: str) -> int:
-        """Resolve the instrument quantity precision for the drift epsilon (D-01).
+        """Resolve the instrument quantity precision for the drift epsilon.
 
         Keys the ``is_within_single_unit_tolerance`` band off the SAME instrument
-        precision ``core/money.py::quantize`` consumes
-        (``Instrument.quantity_precision``), resolved via the injected Universe —
-        never a hand-rolled per-symbol table. Falls back to ``8`` (the money-policy
-        quantity default, ``1e-8``) when no Universe is wired or the instrument
-        carries no precision.
+        precision ``core/money.py::quantize`` consumes, resolved via the injected
+        Universe — never a hand-rolled per-symbol table. Falls back to ``8`` (the
+        money-policy quantity default) when no Universe is wired or the instrument carries
+        no precision.
         """
         default = 8
         if self._universe is None:
@@ -1059,40 +871,37 @@ class PortfolioHandler:
     def _compare_symbol_drift(self, portfolio: Portfolio, ticker: str,
                               correlation_id: CorrelationId,
                               just_applied_fill_qty: Optional[Decimal] = None) -> None:
-        """Per-symbol engine-vs-venue drift compare on the ENGINE thread (D-15/D-01/D-04).
+        """Per-symbol engine-vs-venue drift compare on the ENGINE thread.
 
         Runs ONLY for a live ``VenueAccount`` portfolio — a backtest/paper
-        ``SimulatedAccount`` portfolio has no venue truth, so this is a clean skip
-        (oracle-dark). Compares the engine's fill-applied position quantity for
-        ``ticker`` against the ``VenueAccount`` cached venue truth via
-        ``is_within_single_unit_tolerance`` keyed to the instrument precision:
+        ``SimulatedAccount`` portfolio has no venue truth, so this is a clean skip.
+        Compares the engine's fill-applied position quantity for ``ticker`` against the
+        ``VenueAccount`` cached venue truth via ``is_within_single_unit_tolerance`` keyed
+        to the instrument precision:
 
-        * within the precision-epsilon band → adopt venue truth silently
-          (auto-correct, D-01) — a no-op (the difference is last-digit dust);
-        * D-04 spurious-halt band: on the IMMEDIATE on-fill compare, the just-applied
-          fill may not yet be reflected in the not-yet-refreshed venue snapshot — the
-          only skew the fill itself explains is exactly its own signed quantity (venue
-          still at the pre-fill holding), so absorb that transient and defer to the
-          periodic sweep (a first spot position-opening fill must NOT halt, V17-04);
-        * beyond band AND reconciles to a known venue event → adopt-and-continue
-          (D-04 — an external fill / hand-closed position is NOT unexplained drift);
-        * beyond band AND unexplained → freeze-in-place halt the WHOLE engine
-          (D-01/D-02) via the injected halt signal.
+        * within the precision-epsilon band → adopt venue truth silently (the difference
+          is last-digit dust);
+        * spurious-halt band: on the IMMEDIATE on-fill compare the just-applied fill may
+          not yet be reflected in the venue snapshot — the only skew the fill itself
+          explains is exactly its own signed quantity, so absorb that transient and defer
+          to the periodic sweep (a first spot position-opening fill must NOT halt);
+        * beyond band AND reconciles to a known venue event → adopt-and-continue (an
+          external fill / hand-closed position is NOT unexplained drift);
+        * beyond band AND unexplained → freeze-in-place halt the WHOLE engine.
 
         Parameters
         ----------
         just_applied_fill_qty : Optional[Decimal]
             The SIGNED position delta of a fill JUST applied to the engine belief for
-            ``ticker`` (``+qty`` BUY, ``-qty`` SELL), passed ONLY by the on-fill
-            compare. ``None`` (the per-bar sweep + the session-start baseline guard)
-            means no just-applied fill — every beyond-band skew is a candidate drift.
-            The band is deliberately scoped to the on-fill transient: the periodic
-            sweep (``None``) is the backstop that halts once the venue snapshot has
-            had time to catch up, so a genuinely persistent divergence is never hidden.
+            ``ticker`` (``+qty`` BUY, ``-qty`` SELL), passed ONLY by the on-fill compare.
+            ``None`` (the per-bar sweep) means no just-applied fill — every beyond-band
+            skew is a candidate drift. The band is deliberately scoped to the on-fill
+            transient so the periodic sweep still halts once the venue snapshot has had
+            time to catch up, and a genuinely persistent divergence is never hidden.
 
-        Single-writer safe (D-15): the async push writer only writes the
-        VenueAccount cache; this compare + decision run on the engine thread AFTER
-        the fill has drained — never from a spawned coroutine (Pitfall 8).
+        Single-writer safe: the async push writer only writes the VenueAccount cache; this
+        compare and decision run on the engine thread AFTER the fill has drained, never
+        from a spawned coroutine.
         """
         account: Account = portfolio.account
         if not isinstance(account, VenueAccount):
@@ -1106,17 +915,15 @@ class PortfolioHandler:
         )
         precision = self._drift_precision(ticker)
         if is_within_single_unit_tolerance(engine_qty, venue_qty, precision):
-            return  # within the precision-epsilon band — adopt silently (D-01).
+            return  # within the precision-epsilon band — adopt silently.
 
-        # D-04 spurious-halt band (V17-04): a just-applied engine fill vs a
-        # not-yet-refreshed venue snapshot. The venue snapshot legitimately lags the
-        # fill it hasn't streamed yet, and the ONLY holding that lag explains is the
-        # pre-fill one — ``engine_qty - just_applied_fill_qty``. When the venue truth
-        # still matches that pre-fill holding within the band, the skew is exactly the
-        # fill the venue hasn't caught up to (NOT drift), so absorb it and let the
-        # periodic per-bar sweep (which passes no fill qty) be the backstop once the
-        # snapshot refreshes. Only the on-fill compare supplies a fill qty; every
-        # other caller falls straight through to the drift decision below.
+        # Spurious-halt band: a just-applied engine fill vs a not-yet-refreshed venue
+        # snapshot. The snapshot legitimately lags the fill it hasn't streamed yet, and the
+        # ONLY holding that lag explains is the pre-fill one
+        # (``engine_qty - just_applied_fill_qty``). When venue truth still matches that
+        # within the band, the skew IS the un-streamed fill, not drift — absorb it and let
+        # the periodic per-bar sweep be the backstop once the snapshot refreshes. Only the
+        # on-fill compare supplies a fill qty.
         if just_applied_fill_qty is not None and is_within_single_unit_tolerance(
                 venue_qty, engine_qty - just_applied_fill_qty, precision):
             self.logger.info(
@@ -1130,7 +937,7 @@ class PortfolioHandler:
             )
             return
 
-        # Beyond band: adopt-and-continue if it maps to a known venue event (D-04).
+        # Beyond band: adopt-and-continue if it maps to a known venue event.
         if self._drift_reconciler is not None and self._drift_reconciler(
                 portfolio, ticker, engine_qty, venue_qty):
             self.logger.warning(
@@ -1142,10 +949,10 @@ class PortfolioHandler:
             )
             return
 
-        # Unexplained beyond-band drift → freeze-in-place halt the whole engine.
-        # The compare declared the engine's own state untrustworthy; per D-02 the
-        # halt does NOT auto-flatten/auto-cancel — it stops NEW submissions and
-        # surfaces HALTED + a CRITICAL alert (wired by the composition root).
+        # Unexplained beyond-band drift → freeze-in-place halt the whole engine. The
+        # compare declared the engine's own state untrustworthy. The halt does NOT
+        # auto-flatten or auto-cancel — it stops NEW submissions and surfaces HALTED plus a
+        # CRITICAL alert (wired by the composition root).
         self.logger.error(
             "Unexplained per-symbol drift beyond tolerance — halting engine",
             ticker=ticker,
@@ -1157,14 +964,12 @@ class PortfolioHandler:
             self._halt_signal("drift")
 
     def _run_drift_sweep(self, bar_time: Optional[datetime]) -> None:
-        """Periodic per-closed-bar drift backstop on the ENGINE thread (D-15).
+        """Periodic per-closed-bar drift backstop on the ENGINE thread.
 
-        The on-bar backstop to the on-fill compare (D-15 — on fill immediate + on
-        bar periodic): sweeps every active ``VenueAccount`` portfolio and compares
-        each symbol's engine tally against venue truth across the union of
-        engine-held and venue-reported tickers. Fully oracle-dark — a
-        backtest/paper portfolio holds a ``SimulatedAccount`` and is skipped, so
-        SMA_MACD stays byte-exact.
+        The on-bar complement to the immediate on-fill compare: sweeps every active
+        ``VenueAccount`` portfolio and compares each symbol's engine tally against venue
+        truth across the union of engine-held and venue-reported tickers. A backtest/paper
+        portfolio holds a ``SimulatedAccount`` and is skipped.
         """
         if bar_time is None:
             return
@@ -1179,11 +984,11 @@ class PortfolioHandler:
                     portfolio, ticker, self._generate_correlation_id())
 
     def _mark_venue_trade_settled(self, venue_trade_id: str) -> None:
-        """Record a venue trade id as settled in the bounded FIFO dedup ledger (CR-01).
+        """Record a venue trade id as settled in the bounded FIFO dedup ledger.
 
-        Evicts the oldest id once the ledger exceeds its cap so a long-running live
-        session cannot grow it without bound. Re-inserting an already-present id
-        refreshes its recency (moves it to the newest end).
+        Evicts the oldest id once the ledger exceeds its cap so a long-running live session
+        cannot grow it without bound. Re-inserting an already-present id refreshes its
+        recency.
         """
         self._settled_venue_trade_ids[venue_trade_id] = None
         self._settled_venue_trade_ids.move_to_end(venue_trade_id)
@@ -1191,22 +996,17 @@ class PortfolioHandler:
             self._settled_venue_trade_ids.popitem(last=False)
 
     def _persist_account_state(self, portfolio: Portfolio, updated_time: datetime) -> None:
-        """Write-through the durable account-state scalar after a settled fill (F/U-11).
+        """Write-through the durable account-state scalar after a settled fill.
 
-        The D-07 restore path (Plan 04) reads the cash scalar back on restart via
-        ``load_account_state`` -> ``Account.restore_cash``; that read is only
-        meaningful if ``save_account_state`` is actually written on the settlement
-        path. This seam persists ``cash_balance`` (+ the derived accounting scalars
-        the row carries) once the fill has settled, so a process restart restores
-        the true balance rather than the construction-time initial cash.
+        The restart path reads the cash scalar back via ``load_account_state`` ->
+        ``Account.restore_cash``; that read is only meaningful if ``save_account_state`` is
+        actually written on the settlement path, so a process restart restores the true
+        balance rather than the construction-time initial cash.
 
-        LIVE ONLY / oracle-dark: the in-memory backtest backend exposes no
-        ``save_account_state`` (only ``CachedSqlPortfolioStateStorage`` does), so
-        this is a clean ``getattr`` skip on the SMA_MACD path (no persistence, no
-        new branch through the byte-exact run). ``updated_time`` is the fill's
-        BUSINESS time (never wall-clock — determinism). ``peak_equity`` monotonically
-        tracks the high-water equity across restarts by max-ing the current equity
-        against any previously-persisted peak.
+        LIVE ONLY: the in-memory backtest backend exposes no ``save_account_state`` (only
+        ``CachedSqlPortfolioStateStorage`` does), so this is a clean ``getattr`` skip.
+        ``updated_time`` is the fill's BUSINESS time, never wall-clock — determinism.
+        ``peak_equity`` tracks the high-water equity across restarts.
         """
         storage = portfolio.state_storage
         save_account_state = getattr(storage, "save_account_state", None)
@@ -1236,43 +1036,34 @@ class PortfolioHandler:
         self,
         applied_trade_sink: Optional[Callable[[Iterable[str]], None]] = None,
     ) -> None:
-        """Restore live portfolio state + the durable dedup ledger on restart (D-07/D-08).
+        """Restore live portfolio state + the durable dedup ledger on restart.
 
-        The cross-restart arm the in-session A5 guard (Plan 03) does NOT cover: on a live
-        restart ``_settled_venue_trade_ids`` starts EMPTY, so a venue trade re-delivered
-        AFTER the restart (an OKX stream re-send, or the ``VenueReconciler`` adopting a
-        downtime fill) would be booked a SECOND time. Per active portfolio this seam:
+        The cross-restart arm the in-session guard does NOT cover: on a live restart
+        ``_settled_venue_trade_ids`` starts EMPTY, so a venue trade re-delivered after the
+        restart (an OKX stream re-send, or the ``VenueReconciler`` adopting a downtime
+        fill) would be booked a SECOND time. Per active portfolio this seam:
 
-        1. **Drives ``state_storage.rehydrate(account)``** — the Task-1 restore path: open
-           positions surface through the live ``PositionManager`` read cache and the
-           persisted cash scalar is restored into the ``Account`` (D-07 / V17-05). The
-           in-memory backtest backend exposes no ``rehydrate`` (oracle-dark) — skipped.
+        1. **Drives ``state_storage.rehydrate(account)``** — open positions surface through
+           the live ``PositionManager`` read cache and the persisted cash scalar is
+           restored into the ``Account``. The in-memory backtest backend exposes no
+           ``rehydrate`` and is skipped.
         2. **Seeds the settled-trade dedup ledger** from the durable
-           ``transactions.venue_trade_id`` (the D-08 Layer-2 durable backstop), keyed
-           ``f"{ticker}:{venue_trade_id}"`` (V17-12 collision-safe — the same numeric
-           trade id on a DIFFERENT symbol still settles) via the bounded-FIFO
-           ``_mark_venue_trade_settled``. A re-delivered ``(ticker, venue_trade_id)`` is
-           then a no-op at the ``on_fill`` guard.
+           ``transactions.venue_trade_id``, keyed ``f"{ticker}:{venue_trade_id}"``
+           (collision-safe — the same numeric trade id on a DIFFERENT symbol still
+           settles). A re-delivered pair is then a no-op at the ``on_fill`` guard.
+        3. **Restart-seeds the ORDER-mirror dedup ring symmetrically** when an
+           ``applied_trade_sink`` is supplied. ``ReconcileManager._applied_trade_keys``
+           also starts EMPTY on a restart, so the SAME keys are forwarded once — a single
+           history pass, since ReconcileManager has no durable transaction store of its
+           own. The composition root wires the sink; backtest passes ``None``.
 
-        3. **Restart-seeds the ORDER-mirror dedup ring symmetrically (D-22 / WR-05)**
-           when an ``applied_trade_sink`` is supplied. The order-mirror
-           ``ReconcileManager._applied_trade_keys`` also starts EMPTY on a restart, so
-           the SAME ``f"{ticker}:{venue_trade_id}"`` keys collected for the portfolio
-           arm are forwarded ONCE (single history pass, Pitfall 8 — ReconcileManager
-           has no durable transaction store of its own) into the sink
-           (``OrderManager.seed_applied_trades``). Both dedup arms then survive a
-           restart symmetrically. The composition root wires the sink; the in-memory
-           backtest path passes ``None`` (oracle-dark).
-
-        Sequencing (composition-root, Plan 05): this MUST run BEFORE
-        ``VenueReconciler.reconcile()`` so adoption diffs against restored state and the
-        dedup ledger already knows every already-settled venue trade.
+        Sequencing: this MUST run BEFORE ``VenueReconciler.reconcile()`` so adoption diffs
+        against restored state and the dedup ledger already knows every settled venue trade.
 
         Args:
             applied_trade_sink: Optional seed hook (``OrderManager.seed_applied_trades``)
-                driven with the durable ``f"{ticker}:{venue_trade_id}"`` history so the
-                order-mirror dedup ring is restart-seeded symmetrically (D-22). ``None``
-                keeps the portfolio-arm-only behaviour (backtest / no order domain).
+                driven with the durable ``f"{ticker}:{venue_trade_id}"`` history. ``None``
+                keeps the portfolio-arm-only behaviour.
         """
         seeded_keys: List[str] = []
         for portfolio in self.get_active_portfolios():
@@ -1281,14 +1072,13 @@ class PortfolioHandler:
             if rehydrate_fn is None:
                 # Backtest in-memory backend — nothing durable to restore (oracle-dark).
                 continue
-            # (a) D-07 restore: positions into the live managers' read cache + the
-            # persisted cash scalar into the account.
+            # (a) Positions into the live managers' read cache + the persisted cash
+            # scalar into the account.
             rehydrate_fn(portfolio.account)
-            # (a2) WR-03 restore: re-seed the realised-PnL accumulator from the durable
-            # account-state scalar. The accumulator is not one of the containers the
-            # working-set cache carries, so without this a post-restart fill would
-            # overwrite the durable realized_pnl column with a 0-based value. Guarded
-            # exactly like the cash restore — only when durable state exists.
+            # (a2) Re-seed the realised-PnL accumulator from the durable account-state
+            # scalar. The accumulator is not one of the containers the working-set cache
+            # carries, so without this a post-restart fill would overwrite the durable
+            # realized_pnl column with a 0-based value.
             load_account_state = getattr(storage, "load_account_state", None)
             if load_account_state is not None:
                 account_state = load_account_state()
@@ -1296,21 +1086,20 @@ class PortfolioHandler:
                     portfolio.position_manager.restore_realised_pnl(
                         account_state["realized_pnl"]
                     )
-            # (b) D-08 Layer 2 durable backstop: seed the dedup ledger from the durable
-            # transaction history, keyed f"{ticker}:{venue_trade_id}" (V17-12). None-keyed
-            # backtest/simulated transactions carry no venue key and are skipped.
+            # (b) Durable backstop: seed the dedup ledger from the transaction history,
+            # keyed f"{ticker}:{venue_trade_id}". Backtest/simulated transactions carry no
+            # venue key and are skipped.
             for transaction in storage.get_transaction_history():
                 venue_trade_id = getattr(transaction, "venue_trade_id", None)
                 if venue_trade_id is None:
                     continue
                 dedup_key = f"{transaction.ticker}:{venue_trade_id}"
                 self._mark_venue_trade_settled(dedup_key)
-                # D-22: collect the SAME key for the order-mirror ring seed so both
-                # dedup arms read from ONE history pass (no second divergent read).
+                # Collect the SAME key for the order-mirror ring seed so both dedup arms
+                # read from ONE history pass (no second divergent read).
                 seeded_keys.append(dedup_key)
-        # D-22 (WR-05): restart-seed the order-mirror dedup ring symmetrically with
-        # the portfolio ledger — one history pass feeds both arms. Skipped when no
-        # sink is wired (backtest / no order domain — oracle-dark).
+        # Restart-seed the order-mirror dedup ring symmetrically with the portfolio
+        # ledger — one history pass feeds both arms. Skipped when no sink is wired.
         if applied_trade_sink is not None and seeded_keys:
             applied_trade_sink(seeded_keys)
 
@@ -1318,17 +1107,13 @@ class PortfolioHandler:
     def on_fill(self, fill_event: FillEvent) -> None:
         """Process fill event for the appropriate portfolio.
 
-        D-10 contract: returns ``None``; failures raise typed domain
-        exceptions which propagate to the dispatch registry's
-        ``_on_handler_error`` seam (backtest re-raise — the run stops loudly
-        rather than producing corrupted numbers).
+        Returns ``None``; failures raise typed domain exceptions which propagate to the
+        dispatch registry's ``_on_handler_error`` seam (backtest re-raise — the run stops
+        loudly rather than producing corrupted numbers).
         """
 
-        # W1-07: hoist the non-EXECUTED no-op guard ABOVE the operation-context /
-        # correlation-id allocation. A non-EXECUTED fill is a pure no-op on
-        # portfolio state, so it returns early WITHOUT entering _operation_context
-        # (no correlation-id allocated, no active-operation tracked). The EXECUTED
-        # path below is unchanged — it still enters the context and processes.
+        # A non-EXECUTED fill is a pure no-op on portfolio state, so it returns before
+        # _operation_context — no correlation id is allocated for it.
         if fill_event.status != FillStatus.EXECUTED:
             self.logger.debug(
                 "Ignoring non-executed fill",
@@ -1337,18 +1122,16 @@ class PortfolioHandler:
             )
             return
 
-        # CR-01: cross-emitter fill-dedup at the settlement chokepoint. The venue
-        # trade id is the ONE idempotency key shared by the two live emitters (the
-        # OKX trade stream and the restart VenueReconciler); a fill whose
-        # venue_trade_id was already settled is a duplicate booking of the SAME
-        # economic venue trade — reject it BEFORE it mutates position/cash, so
-        # 0.5 BTC is never booked as 1.0 (the CR-01 double-count). Backtest and
-        # simulated fills carry venue_trade_id=None and SKIP the guard entirely —
-        # the SMA_MACD oracle takes no new branch (oracle-dark).
-        # D-08 Layer 2 (V17-12): key the dedup ledger by f"{ticker}:{venue_trade_id}",
-        # NOT the raw id — the numeric venue tradeId is only unique per instrument, so
-        # the SAME id on a different symbol is a DISTINCT economic trade and must still
-        # settle (collision-safe). None-keyed backtest/simulated fills skip the guard.
+        # Cross-emitter fill-dedup at the settlement chokepoint. The venue trade id is the
+        # ONE idempotency key shared by the two live emitters (the OKX trade stream and the
+        # restart VenueReconciler); a fill whose venue_trade_id was already settled is a
+        # duplicate booking of the SAME economic venue trade — reject it BEFORE it mutates
+        # position/cash, so 0.5 BTC is never booked as 1.0.
+        #
+        # Key by f"{ticker}:{venue_trade_id}", NOT the raw id: the numeric venue tradeId is
+        # only unique per instrument, so the SAME id on a different symbol is a DISTINCT
+        # economic trade and must still settle. Backtest/simulated fills carry
+        # venue_trade_id=None and skip the guard entirely.
         venue_trade_id = getattr(fill_event, "venue_trade_id", None)
         dedup_key = (
             f"{fill_event.ticker}:{venue_trade_id}"
@@ -1365,18 +1148,13 @@ class PortfolioHandler:
 
         with self._operation_context("on_fill") as correlation_id:
             try:
-                # Portfolio ids are native uuid.UUID (D-13/D-14); the dict is keyed
-                # directly by the UUID — no int/str coercion (the integer scheme is gone).
                 portfolio_id = fill_event.portfolio_id
                 portfolio = self.get_portfolio(portfolio_id)
 
-                # Portfolio handles its own validation and processing.
-                # D-05 boundary map: events carry Side; Portfolio maps
-                # Side -> TransactionType at its own boundary (the vocabularies
-                # stay distinct — same precedent as FillStatus -> OrderStatus).
-                # D-22: FillEvent money is Decimal end-to-end now — to_money is
-                # an identity normalization at this domain entry (kept
-                # deliberately: the ledger never trusts an unnormalized input).
+                # Events carry Side; Portfolio maps Side -> TransactionType at its own
+                # boundary, keeping the two vocabularies distinct. FillEvent money is
+                # already Decimal, so to_money is an identity normalization here — kept
+                # deliberately: the ledger never trusts an unnormalized input.
                 transaction_type = TransactionType.BUY if fill_event.action is Side.BUY else TransactionType.SELL
                 transaction = Transaction(
                     time=fill_event.time,
@@ -1387,60 +1165,45 @@ class PortfolioHandler:
                     commission=to_money(fill_event.commission),
                     portfolio_id=portfolio_id,
                     id=TransactionId(idgen.generate_transaction_id()),
-                    # D-11 audit chain: the settlement record carries the
-                    # originating fill's identity (fill -> order -> strategy).
+                    # Audit chain: the settlement record carries the originating fill's
+                    # identity (fill -> order -> strategy).
                     fill_id=fill_event.fill_id,
-                    # LEV-03 (Finding B): carry the admission-clamped EFFECTIVE
-                    # leverage from the fill so the opening Transaction sets
-                    # Position.leverage to the effective value — the position-life
-                    # locked margin (aggregate_notional / leverage) then EQUALS
-                    # the admission reservation (notional / effective_leverage).
-                    # getattr default keeps spot fills byte-exact (oracle-dark).
+                    # The admission-clamped EFFECTIVE leverage, so the opening Transaction
+                    # sets Position.leverage to the effective value and the position-life
+                    # locked margin (aggregate_notional / leverage) EQUALS the admission
+                    # reservation (notional / effective_leverage).
                     leverage=getattr(fill_event, "leverage", Decimal("1")),
-                    # CR-01: carry the venue trade id onto the durable settlement
-                    # record (None for backtest/simulated fills — oracle-dark).
                     venue_trade_id=venue_trade_id,
-                    # spot-base-fee-drift-halt: carry the venue fee currency so the
-                    # spot settlement seam nets a base-denominated fee (OKX spot BUY)
-                    # out of the position quantity instead of the quote cash leg.
-                    # None for backtest/simulated fills (oracle-dark).
+                    # The venue fee currency, so the spot settlement seam nets a
+                    # base-denominated fee (OKX spot BUY) out of the position quantity
+                    # instead of the quote cash leg. None for backtest/simulated fills.
                     fee_currency=getattr(fill_event, "fee_currency", None),
                 )
 
-                # D-19 (WR-04): wrap the durable position upsert (driven by
-                # transact_shares -> set_position) AND the cash-scalar account-state
-                # upsert (_persist_account_state -> save_account_state) in ONE
-                # transaction so a crash between them can never leave the durable
-                # position one fill ahead of the durable cash (a torn restore, which
-                # is PERMANENT on the SimulatedAccount path — no venue heals it). The
-                # in-memory backtest backend exposes no fill_transaction, so this is a
-                # clean getattr-skip on the SMA_MACD path (oracle-dark — the two
-                # writes stay independent, but backtest never persists at all). LIVE
-                # ONLY.
+                # Wrap the durable position upsert (transact_shares -> set_position) and
+                # the cash-scalar account-state upsert (_persist_account_state ->
+                # save_account_state) in ONE transaction, so a crash between them can never
+                # leave the durable position one fill ahead of the durable cash — a torn
+                # restore, which is PERMANENT on the SimulatedAccount path since no venue
+                # heals it. The in-memory backtest backend exposes no fill_transaction, so
+                # this is a clean getattr-skip. LIVE ONLY.
                 fill_transaction = getattr(
                     portfolio.state_storage, "fill_transaction", None)
                 if fill_transaction is not None:
                     with fill_transaction():
                         portfolio.transact_shares(transaction)
-                        # F/U-11 (05.2-05): write-through the account-state scalar on
-                        # the settlement path so the D-07 restore (rehydrate ->
-                        # load_account_state -> Account.restore_cash) has a persisted
-                        # balance to read on restart — now atomic with the position.
+                        # Write-through the account-state scalar so the restart restore
+                        # has a persisted balance to read — atomic with the position.
                         self._persist_account_state(portfolio, fill_event.time)
                 else:
                     portfolio.transact_shares(transaction)
                     self._persist_account_state(portfolio, fill_event.time)
 
-                # CR-01: record the venue trade id as settled ONLY after the durable
-                # persist committed — a later re-delivery (stream re-send or the
-                # restart reconciler) of the SAME venue trade is then a no-op at the
-                # guard above. Placed AFTER the fill_transaction so a rolled-back
-                # atomic persist (D-19) does not record a dedup key for a fill that
-                # never durably landed. Recorded under the SAME
-                # f"{ticker}:{venue_trade_id}" key the guard reads (D-08 Layer 2 /
-                # V17-12 — symbol-scoped so the durable-ledger seed and the live mark
-                # share one key space). None-keyed backtest/simulated fills never
-                # record.
+                # Record the venue trade id as settled ONLY after the durable persist
+                # committed, so a later re-delivery is a no-op at the guard above and a
+                # rolled-back persist never records a key for a fill that did not land.
+                # Same f"{ticker}:{venue_trade_id}" key the guard reads, so the
+                # durable-ledger seed and the live mark share one key space.
                 if dedup_key is not None:
                     self._mark_venue_trade_settled(dedup_key)
 
@@ -1451,24 +1214,18 @@ class PortfolioHandler:
                     correlation_id=correlation_id
                 )
 
-                # 05-04 (D-15): engine-thread per-symbol drift compare + halt
-                # decision, immediately after the fill has drained (single-writer
-                # safe — Pitfall 8). No-op for backtest/paper SimulatedAccount
-                # portfolios, so the SMA_MACD oracle stays byte-exact.
-                # D-04: pass the SIGNED just-applied fill delta (+qty BUY / -qty
-                # SELL) so the spurious-halt band can absorb the "fill applied to the
-                # engine but not yet in the venue snapshot" transient (V17-04) — a
-                # first spot position-opening fill must not spuriously halt.
-                # spot-base-fee-drift-halt: this MUST be the ACTUAL signed position
-                # delta the settlement applied — NET of a base-denominated fee. The
-                # settlement moves a base-fee BUY by (amount - base_fee), so passing
-                # the RAW fill_event.quantity here left the absorber's pre-fill
-                # reconstruction (engine_qty - just_applied_fill_qty) off by the fee,
-                # spuriously tripping halt('drift') when the venue cache was still
-                # pre-fill. transaction.position_quantity is (amount - base_fee) for a
-                # base BUY and the raw amount otherwise (fee_currency None / quote fee
-                # -> identity, so simulated fills yield +/- fill_event.quantity as
-                # before — oracle-dark).
+                # Engine-thread per-symbol drift compare + halt decision, immediately
+                # after the fill has drained (single-writer safe). No-op for
+                # backtest/paper SimulatedAccount portfolios.
+                #
+                # The signed delta passed here MUST be the ACTUAL position delta the
+                # settlement applied — NET of a base-denominated fee. Settlement moves a
+                # base-fee BUY by (amount - base_fee), so passing the RAW
+                # fill_event.quantity leaves the spurious-halt band's pre-fill
+                # reconstruction (engine_qty - just_applied_fill_qty) off by the fee and
+                # trips halt('drift') while the venue cache is still pre-fill.
+                # transaction.position_quantity is (amount - base_fee) for a base BUY and
+                # the raw amount otherwise.
                 settled_base_delta = transaction.position_quantity
                 just_applied_fill_qty = (
                     settled_base_delta if fill_event.action is Side.BUY
@@ -1491,14 +1248,12 @@ class PortfolioHandler:
         if isinstance(bar_events, BarEvent):
             bar_events = [bar_events]
         
-        # Convert bar events to price dictionary. The close is already
-        # Decimal via the Bar struct (D-14); downstream position updates
+        # The close is already Decimal via the Bar struct; downstream position updates
         # enter via to_money (value-identity on Decimal input).
         prices = {}
-        # CARRY-01/D-04: thread the bar's BUSINESS time down into the per-portfolio
-        # mark + carry accrual — NEVER datetime.now(UTC) (a wall-clock stamp breaks
-        # the determinism double-run gate). One BarEvent per tick on the daily grid;
-        # the last event's time stamps the mark for this tick.
+        # Thread the bar's BUSINESS time down into the per-portfolio mark + carry accrual
+        # — NEVER datetime.now(UTC), which breaks the determinism double-run gate. One
+        # BarEvent per tick on the daily grid; the last event's time stamps this mark.
         bar_time = None
         for bar_event in bar_events:
             bar_time = bar_event.time
@@ -1508,60 +1263,43 @@ class PortfolioHandler:
         # Update only active portfolios (each handles its own thread safety)
         active_portfolios = self.get_active_portfolios()
 
-        # WR-05 (WR-02 re-review): record which portfolios re-marked cleanly
-        # THIS tick and pass the set to the liquidation gate. Under the CURRENT
-        # error policy this is always the FULL active set whenever the pass runs:
-        # the except below RE-RAISES (it does not continue the loop), so a single
-        # mark failure aborts the whole handler call in both backtest and live
-        # modes (the dispatch error seam — _on_handler_error / live
-        # _publish_and_continue — works at handler-call granularity, not
-        # per-portfolio). Hence the pass either sees every portfolio re-marked,
-        # or never runs at all; the gate's "skip a partially-marked portfolio"
-        # branch never fires in production today. It is kept purely as a
-        # DEFENSIVE guardrail for a FUTURE per-portfolio continue-on-mark-failure
-        # policy: were the swallow ever moved INSIDE this loop, the partial-mark
-        # scenario would become reachable and this set would already protect the
-        # "breach sees carry-eroded equity" invariant (D-02).
+        # Which portfolios re-marked cleanly THIS tick, passed to the liquidation gate.
+        # Under the current error policy this is always the FULL active set: the except
+        # below RE-RAISES rather than continuing the loop, and the dispatch error seam
+        # works at handler-call granularity, so the pass either sees every portfolio
+        # re-marked or never runs. Kept as a DEFENSIVE guardrail — were the re-raise ever
+        # softened to a per-portfolio continue, the partial-mark case would become
+        # reachable and this set would already protect the "breach sees carry-eroded
+        # equity" invariant.
         marked_portfolio_ids: set[Any] = set()
 
         for portfolio in active_portfolios:
             try:
-                # CARRY-01/D-01: thread bar business time + the injected Universe
-                # so each open short can resolve its Instrument.borrow_rate (the
-                # same read pattern as maintenance_margin). _universe is None until
-                # set_universe is wired; with no universe / rate-0 / no open shorts
-                # the carry accrual is a no-op (SMA_MACD byte-exact under default-off).
+                # Thread bar business time + the injected Universe so each open short can
+                # resolve its Instrument.borrow_rate. With no universe / rate-0 / no open
+                # shorts the carry accrual is a no-op.
                 portfolio.update_market_value_of_portfolio(prices, bar_time, self._universe)
                 marked_portfolio_ids.add(portfolio.portfolio_id)
             except Exception as e:
-                # WR-08: a failed mark must NOT be swallowed. In a project whose
-                # core value is "numbers you can trust", silently continuing
-                # leaves the equity curve carrying stale position values that
-                # the metrics/drawdown/oracle blocks then consume as if valid.
-                # Mirror on_fill's D-10 fail-fast contract on this same dispatch
-                # path: publish a PortfolioErrorEvent to the ERROR route, then
-                # re-raise so the registry's _on_handler_error backtest policy
-                # aborts the run instead of producing silently-wrong numbers.
+                # A failed mark must NOT be swallowed: silently continuing leaves the
+                # equity curve carrying stale position values that the
+                # metrics/drawdown/oracle blocks then consume as if valid. Mirror
+                # on_fill's fail-fast contract — publish a PortfolioErrorEvent to the
+                # ERROR route, then re-raise so the backtest policy aborts the run
+                # instead of producing silently-wrong numbers.
                 correlation_id = self._generate_correlation_id()
                 self._publish_error_event(
                     e, "update_portfolios_market_value", correlation_id,
                     portfolio.portfolio_id)
                 raise
 
-        # LIQ-01/02/03 (D-02 placement): the per-position liquidation breach
-        # check runs AFTER the per-portfolio mark + P3 carry pass so a breach
-        # sees the carry-eroded equity. Oracle-dark on the spot path (no locked
-        # margin / no Universe-or-storage wired → zero breaches, no fills).
-        # WR-05 (WR-02 re-review): the marked-set gate is a defensive guardrail
-        # that, under the current re-raise-on-mark-failure policy, always passes
-        # the full active set (see the comment on marked_portfolio_ids above).
-        # IN-01: reuse the SAME ``prices`` map the mark used so the breach price
-        # and the mark price cannot diverge (no second pass over bar_events).
+        # The per-position liquidation breach check runs AFTER the per-portfolio mark +
+        # carry pass so a breach sees carry-eroded equity. Reuses the SAME ``prices`` map
+        # the mark used, so the breach price and the mark price cannot diverge.
         self._run_liquidation_pass(prices, bar_time, marked_portfolio_ids)
 
-        # 05-04 (D-15): per-closed-bar drift backstop on the engine thread — the
-        # on-bar complement to the on-fill compare. Oracle-dark (SimulatedAccount
-        # portfolios are skipped), so SMA_MACD stays byte-exact.
+        # Per-closed-bar drift backstop on the engine thread — the on-bar complement to
+        # the on-fill compare. SimulatedAccount portfolios are skipped.
         self._run_drift_sweep(bar_time)
 
     # Global health and monitoring
@@ -1612,40 +1350,34 @@ class PortfolioHandler:
             portfolios=self.portfolios_to_dict()
         )
     
-    # Configuration Management Methods
-    #
-    # M2-06 / D-01: the hot-reloadable registry/provider machinery was deleted; the
-    # handler holds a single validated Pydantic ``PortfolioConfig`` (``config_data``).
-    # ``update_config`` merges + re-validates via the model (Pydantic raises on bad
-    # input); the per-portfolio variants were never wired on the backtest path.
+    # Configuration management. The handler holds a single validated Pydantic
+    # ``PortfolioConfig``; ``update_config`` merges and re-validates through the model.
     @staticmethod
     def _deep_merge(base: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
-        """Thin delegate to the shared ``recursive_merge`` helper (WR-04).
+        """Thin delegate to the shared ``recursive_merge`` helper.
 
-        Kept as a static method so any existing caller keeps working; the
-        recursion now lives in ``itrader/outils/dict_merge.py`` (promoted to a
-        single shared helper — do NOT re-derive a fresh merge per handler).
+        The recursion lives in ``itrader/outils/dict_merge.py`` — do NOT re-derive a fresh
+        merge per handler.
         """
         return recursive_merge(base, updates)
 
     def update_config(self, updates: Dict[str, Any]) -> None:
-        """Update PortfolioHandler configuration at runtime (D-07/D-08/D-09).
+        """Update PortfolioHandler configuration at runtime.
 
-        Canonical contract: recursive_merge -> model_validate -> atomic-swap, wrapping
-        pydantic ``ValidationError`` (which also rejects unknown keys via
-        ``extra="forbid"``) into ``ConfigurationError``. Returns ``None`` and
-        RAISES on failure (no longer returns ``bool``). After the swap the
-        cached ``max_portfolios`` is re-derived (Pitfall 1).
+        recursive_merge -> model_validate -> atomic swap, wrapping pydantic
+        ``ValidationError`` (which also rejects unknown keys via ``extra="forbid"``) into
+        ``ConfigurationError``. Returns ``None`` and RAISES on failure. The cached
+        ``max_portfolios`` is re-derived after the swap.
         """
-        # WR-04: recursive-merge so a partial nested update (e.g. a single limits
-        # field) preserves the other fields of that submodel instead of
-        # replacing the whole submodel via a shallow `{**a, **b}`.
+        # Recursive-merge so a partial nested update (e.g. a single limits field)
+        # preserves the other fields of that submodel instead of replacing the whole
+        # submodel via a shallow `{**a, **b}`.
         merged = recursive_merge(self.config_data.model_dump(), updates)
         try:
             new_config = PortfolioConfig.model_validate(merged)
         except pydantic.ValidationError as e:
             raise ConfigurationError(reason=str(e)) from e
-        self.config_data = new_config  # atomic GIL-safe reference swap (D-11)
+        self.config_data = new_config  # atomic GIL-safe reference swap
         self.max_portfolios = self.config_data.limits.max_portfolios
         self.logger.info("Configuration updated successfully", updates=updates)
 
@@ -1674,10 +1406,9 @@ class PortfolioHandler:
             return False
 
     def update_portfolio_config(self, portfolio_id: PortfolioId, updates: Dict[str, Any]) -> bool:
-        """Update configuration for a specific portfolio (not wired — D-live).
+        """Update configuration for a specific portfolio (not wired).
 
-        Per-portfolio config mutation was a dormant provider method never wired on the
-        backtest path; it is deferred with the live runtime-config surface (D-live).
+        Deferred with the live runtime-config surface.
         """
         self.logger.warning(
             "update_portfolio_config is not wired (deferred to D-live)",
@@ -1686,7 +1417,7 @@ class PortfolioHandler:
         return False
 
     def get_portfolio_config(self, portfolio_id: PortfolioId) -> Optional[Dict[str, Any]]:
-        """Get configuration for a specific portfolio (not wired — D-live)."""
+        """Get configuration for a specific portfolio (not wired)."""
         self.logger.warning(
             "get_portfolio_config is not wired (deferred to D-live)",
             portfolio_id=portfolio_id,
