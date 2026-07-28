@@ -17,17 +17,17 @@ class SystemStatus(Enum):
     RUNNING = "running"
     STOPPING = "stopping"
     ERROR = "error"
-    HALTED = "halted"   # D-07: distinct machine-readable halt state, reason ∈
-                        # {drift, reconciliation-unresolved, connector-fatal,
-                        #  paused-on-disconnect}. Not RUNNING/STOPPED/ERROR —
-                        # a reconciliation-driven stop the operator must clear.
+    HALTED = "halted"   # Distinct machine-readable halt state; the reason
+                        # vocabulary is ``HaltReason`` below. Not
+                        # RUNNING/STOPPED/ERROR — a reconciliation-driven stop
+                        # the operator must clear.
 
 
 # Valid state transitions for the system lifecycle (D-05 / V17-03).
 #
 # Mirrors ``core/enums/order.py::VALID_ORDER_TRANSITIONS`` (the shape donor): a dict
 # mapping each state to the SET of states it may legally move to. Enforced at the ONE
-# mutation seam ``LiveTradingSystem._update_status`` so the engine has genuinely one
+# mutation seam ``SafetyController.update_status`` so the engine has genuinely one
 # writer and one rule.
 #
 # ``HALTED`` is the terminal/latched analog of ``OrderStatus.FILLED: []`` — it maps to
@@ -39,7 +39,7 @@ class SystemStatus(Enum):
 #
 # ANY non-terminal state may transition to ``HALTED`` — a safety halt must always be
 # reachable (F/U-8). ``ERROR`` is recoverable (an operator may re-``start()`` or stop
-# it). A same-state call is treated as an idempotent no-op by ``_update_status`` and so
+# it). A same-state call is treated as an idempotent no-op by ``update_status`` and so
 # is intentionally NOT listed here.
 VALID_STATUS_TRANSITIONS: dict[SystemStatus, set[SystemStatus]] = {
     SystemStatus.STOPPED: {SystemStatus.STARTING, SystemStatus.HALTED},
@@ -70,20 +70,25 @@ VALID_STATUS_TRANSITIONS: dict[SystemStatus, set[SystemStatus]] = {
 
 
 class HaltReason(Enum):
-    """Typed vocabulary for every reachable engine halt reason (CFG-05 / D-10).
+    """Typed vocabulary for engine halt reasons.
 
-    Exactly the reasons that reach ``halt()`` / ``_update_status(halt_reason=)``
-    today — one member per live reason, no dead members. ``drift`` is a live
-    ``halt()`` reason: ``portfolio_handler`` fires ``_halt_signal("drift")`` on
-    unexplained beyond-band drift and ``LiveTradingSystem`` wires that signal
-    straight to ``self.halt`` (``set_halt_signal(self.halt)``), so it is a member
-    here (CR-01). ``paused-on-disconnect`` is deliberately NOT a member — it is a
-    ``pause_submission()`` reason, not a halt.
+    ``drift`` is a live ``halt()`` reason: ``portfolio_handler`` fires
+    ``_halt_signal("drift")`` on unexplained beyond-band drift and
+    ``LiveTradingSystem`` wires that signal straight to ``self.halt``
+    (``set_halt_signal(self.halt)``). ``paused-on-disconnect`` is deliberately
+    NOT a member — it is a ``pause_submission()`` reason, not a halt.
 
-    Each ``.value`` is the EXISTING wire string, so durable halt records
-    persisted as strings (``storage/halt_record_store.py``) still resolve — no
-    data migration (T-02-01). P1 defines the enum; migrating the remaining
-    ``halt()`` call sites and its ``reason: str`` signature is P8's job (D-11).
+    Each ``.value`` is the wire string durable halt records are persisted as
+    (``storage/halt_record_store.py``), so a stored reason resolves back to its
+    member without a data migration.
+
+    NOT YET AUTHORITATIVE: ``SafetyController.halt`` and
+    ``SafetyController.update_status(halt_reason=)`` both still take a bare
+    ``str``, and nothing checks an argument against this enum. Free-string call
+    sites remain, and at least one reason reaching ``halt()`` is absent from
+    this vocabulary — ``SafetyController``'s ``deferred-protective-overflow``.
+    Treat this as the intended vocabulary, not a guarantee about what reaches
+    ``halt()``.
     """
 
     BASELINE_RESIDUAL = "baseline-residual"

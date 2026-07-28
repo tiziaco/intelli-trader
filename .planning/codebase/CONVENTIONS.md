@@ -58,7 +58,7 @@
 - Required and enforced under `mypy --strict` for in-scope code.
 - Modern union syntax preferred: `float | int | str | Decimal`, `"PortfolioId | int"`.
 - `typing` imports used where needed: `Any`, `Optional`, `Callable`, `Dict`, `List`, `cast`, `assert_never`.
-- Several subsystems are deferred from strict typing via `[[tool.mypy.overrides]]` (`live_trading_system`, `trading_interface`, ccxt/oanda providers, `binance_stream`, `screeners_handler.*`, `my_strategies.*`). Do not rely on these being typed; **new code should be strict-clean**.
+- Several subsystems are deferred from strict typing via `[[tool.mypy.overrides]]` (`live_trading_system`, ccxt/oanda providers, `exchange_base`, `binance_stream`, `screeners_handler.*`, `my_strategies.*`). Do not rely on these being typed; **new code should be strict-clean**.
 - Stubless third-party libs (`ta`, `pandas_ta`, `ccxt`, `pandas`, `scipy`, `plotly`, `sklearn`, `statsmodels`, …) are `ignore_missing_imports = true`.
 
 ## Import Organization

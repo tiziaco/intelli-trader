@@ -37,9 +37,9 @@
 - Fix approach: Continue the decomposition; the remaining `str`-typed halt signature (CF-8 above) is one of the concrete residual items.
 
 **mypy `ignore_errors` overrides — blindspot confirmed STILL OPEN, unchanged scope.**
-- Issue: `pyproject.toml:102-112` still lists `itrader.trading_system.live_trading_system` (D-live), `itrader.trading_system.trading_interface` (D-live — note: this module name is stale, `TradingInterface` was deleted per V17-16; the mypy override entry itself is now a dead reference, mirroring the pattern already flagged for `order_handler/storage/__init__.py:14`), `itrader.price_handler.providers.{ccxt_provider,oanda_provider,exchange_base,binance_stream}` (D-oanda/D-live), and `itrader.screeners_handler.*` (D-screener) all under `ignore_errors = true`. A separate override covers `itrader.strategy_handler.my_strategies.*`.
+- Issue: the `[[tool.mypy.overrides]]` block still lists `itrader.trading_system.live_trading_system` (D-live), `itrader.price_handler.providers.{ccxt_provider,oanda_provider,exchange_base,binance_stream}` (D-oanda/D-live), and `itrader.screeners_handler.*` (D-screener) under `ignore_errors = true`. A separate override covers `itrader.strategy_handler.my_strategies.*`. (The dead `itrader.trading_system.trading_interface` entry was removed 2026-07-28 — `TradingInterface` had been deleted per V17-16 and the override outlived it.)
 - Impact: Dead code, unused imports, and type errors in these modules pass `mypy --strict` and the full suite silently — the only backstop is manual code review. Confirmed still the case for `live_trading_system.py` even after the Phase 8–10.1 extraction work shrank it.
-- Fix approach: Sweep imports/dead code by hand after any edit to these modules (per project memory `live-facade-mypy-ignore-errors-blindspot`); remove the stale `trading_interface` override entry; retire `D-live` overrides module-by-module as each is folded into the ongoing refactor.
+- Fix approach: Sweep imports/dead code by hand after any edit to these modules (per project memory `live-facade-mypy-ignore-errors-blindspot`); retire `D-live` overrides module-by-module as each is folded into the ongoing refactor.
 
 **Stream-supervisor state machine triplicated (DRY) — RESOLVED (verified 2026-07-28).**
 - Previously: `_run_stream_supervisor`-style reconnect/backoff logic duplicated across the execution/account/price-provider streams.
@@ -110,7 +110,7 @@
 
 **`pandas-ta 0.4.71b0` pinned pre-release — STILL OPEN, unchanged.**
 
-**mypy `--strict` deferred subsystems — STILL OPEN, scope essentially unchanged (see Tech Debt above for the exact current module list and the newly-noted stale `trading_interface` entry).**
+**mypy `--strict` deferred subsystems — STILL OPEN, scope narrowed by one (see Tech Debt above for the exact current module list).**
 
 ## Missing Critical Features
 

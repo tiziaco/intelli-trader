@@ -246,10 +246,10 @@ class InMemoryOrderStorage(OrderStorage):
 
     # Enhanced storage methods implementation
     #
-    # D-05/D-05a seam audit (no Postgres code — PERSIST-01 deferred): the
-    # OrderStorage ABC stays query-shaped and UNCHANGED; the indexes below are a
-    # private cache of InMemoryOrderStorage only. Every ABC method is
-    # SQL-expressible by a future PostgreSQLOrderStorage — insertion order maps
+    # The OrderStorage ABC stays query-shaped: the indexes below are a private
+    # cache of InMemoryOrderStorage only, and no in-memory-only assumption may
+    # leak into the seam. Every ABC method is SQL-expressible, as
+    # ``sql_storage.py::SqlOrderStorage`` does — insertion order maps
     # to ``ORDER BY created_at, id``; get_order_history implies a state-change
     # child table; search_orders needs a column whitelist; the active vs terminal
     # split here is an in-memory caching detail (SQL covers both with one

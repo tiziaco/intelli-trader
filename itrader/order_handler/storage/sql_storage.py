@@ -7,8 +7,7 @@ It is schema-pure (WR-03/D-14 — no runtime ``create_all``): the durable schema
 in production and provisioned by ``tests.support.schema.provision_schema`` in tests. This mirrors
 the existing concrete analogs ``results/sql_storage.py`` and ``price_handler/store/sql_store.py``.
 
-It fills the retired-and-deleted ``PostgreSQLOrderStorage`` ``NotImplementedError`` stub (D-05)
-and implements the full ``OrderStorage`` ABC via *parameterized* SQLAlchemy Core (constant
+It implements the full ``OrderStorage`` ABC via *parameterized* SQLAlchemy Core (constant
 ``Table``/``Column`` objects + bound values, never f-string SQL — SEC-01 / T-03-03).
 
 Round-trip contract (D-10): an ``Order`` is a field-wise ``@dataclass`` whose ``__eq__``

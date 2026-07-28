@@ -1108,7 +1108,8 @@ class PortfolioHandler:
         """Process fill event for the appropriate portfolio.
 
         Returns ``None``; failures raise typed domain exceptions which propagate to the
-        dispatch registry's ``_on_handler_error`` seam (backtest re-raise — the run stops
+        dispatch registry's ``HandlerErrorPolicy`` seam (backtest ``FailFastPolicy``
+        re-raise — the run stops
         loudly rather than producing corrupted numbers).
         """
 

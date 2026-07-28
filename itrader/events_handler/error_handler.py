@@ -1,8 +1,7 @@
-"""ErrorHandler — the formalized ERROR-route consumer (D-01).
+"""ErrorHandler — the ERROR-route consumer.
 
-Lifts the ``full_event_handler.py::_log_error_event`` body VERBATIM (re-indented
-tab→4-space) into a standalone, composition-friendly consumer so the ERROR route
-becomes ``EventType.ERROR: [self.error_handler.on_error]`` (08-03). This is the
+A standalone, composition-friendly consumer: the ERROR route is
+``EventType.ERROR: [self.error_handler.on_error]``. This is the
 CONSUMER side of the WR-06 two-guard terminal safety: the whole ``on_error`` body
 is wrapped in a ``try/except`` that swallows (inner ``try/except: pass`` last-resort
 log) so a raising alert-sink / logger / SQL upsert / record_failure can NEVER escape

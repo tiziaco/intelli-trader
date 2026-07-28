@@ -286,7 +286,7 @@ must import, run, and yield trustworthy results.
 - Required and enforced under `mypy --strict` for in-scope code.
 - Modern union syntax preferred: `float | int | str | Decimal`, `"PortfolioId | int"`.
 - `typing` imports used where needed: `Any`, `Optional`, `Callable`, `Dict`, `List`, `cast`, `assert_never`.
-- Several subsystems are deferred from strict typing via `[[tool.mypy.overrides]]` `ignore_errors` — exactly: `trading_system.live_trading_system`, `trading_system.trading_interface` (a stale entry; that module no longer exists), `price_handler.providers.{ccxt_provider,oanda_provider,exchange_base,binance_stream}`, `screeners_handler.*`, `strategy_handler.my_strategies.*`. The SQL stores are NOT exempt. Do not rely on the exempt modules being typed; new code should be strict-clean.
+- Several subsystems are deferred from strict typing via `[[tool.mypy.overrides]]` `ignore_errors` — exactly: `trading_system.live_trading_system`, `price_handler.providers.{ccxt_provider,oanda_provider,exchange_base,binance_stream}`, `screeners_handler.*`, `strategy_handler.my_strategies.*`. The SQL stores are NOT exempt. Do not rely on the exempt modules being typed; new code should be strict-clean.
 
 ## Import Organization
 

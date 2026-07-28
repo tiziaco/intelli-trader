@@ -359,7 +359,7 @@ class ReconcileManager:
 		# gated by this flag so the early-return "unknown status" path (which
 		# intentionally holds the reservation) does not trigger it. The body is
 		# re-raised after logging (backtest fail-fast policy, matching the
-		# portfolio side of the same FILL via _on_handler_error) so a corrupted
+		# portfolio side of the same FILL via FailFastPolicy) so a corrupted
 		# reconciliation aborts the run instead of producing silently-wrong
 		# numbers.
 		should_release = False
@@ -496,7 +496,7 @@ class ReconcileManager:
 			# A reconciliation that cannot complete leaves the mirror and/or
 			# reservation in an inconsistent state; continuing would produce
 			# silently-wrong numbers. The portfolio side of the same FILL is
-			# already fail-fast via _on_handler_error; the order side now
+			# already fail-fast via FailFastPolicy; the order side now
 			# matches. The `finally` below still releases a terminal fill's
 			# reservation before the exception propagates.
 			self.logger.error('Error reconciling fill for order %s: %s',

@@ -32,9 +32,8 @@ Composition, not inheritance:
 from config by the caller — NOT constructor knobs the caller must remember /
 re-derive. Import-inert: imports only stdlib ``threading``/``queue``/``datetime``
 + the ``EventBus`` seam + the two sibling collaborators (no ccxt.pro / no SQL on
-the backtest import path — ``test_okx_inertness.py`` green). Unwired here;
-``build_live_system`` (plan 06-05) composes and wires it, then removes the old
-``_event_processing_loop``/``_run_poll_timer``/``_publish_and_continue``.
+the backtest import path — ``test_okx_inertness.py`` green).
+``build_live_system`` composes and wires it.
 
 Indentation: 4 SPACES (matches the ``live_trading_system.py`` donor).
 """

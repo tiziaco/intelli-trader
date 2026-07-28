@@ -5,13 +5,13 @@ RELOCATED (D-02) from the ``trading_system`` package to sit BESIDE the dispatche
 package: the WR-06 source guard here (don't republish/count a failing ErrorEvent)
 pairs with the WR-06 consumer guard in ``error_handler.py``.
 
-Carries the LIVE handler-failure policy: today's
-``LiveTradingSystem._publish_and_continue`` (the WR-05/WR-06 body) moved VERBATIM
-into a standalone, composition-friendly object so ``LiveRunner``/``build_live_system``
-can inject it (D-07). It overrides the base ``EventHandler._on_handler_error``
-(fail-fast re-raise) on the daemon/live path ONLY — a live session can't abort on
-one handler error; it emits an ``ErrorEvent`` and keeps draining. The offline
-deterministic parity driver keeps the base fail-fast re-raise so the parity gate
+Carries the LIVE handler-failure policy as a standalone, composition-friendly
+object so ``LiveRunner``/``build_live_system`` can inject it. ``EventHandler``
+owns no failure policy of its own — ``_dispatch`` routes a raising handler
+through the injected ``HandlerErrorPolicy``, and this is the arm wired on the
+daemon/live path ONLY: a live session can't abort on one handler error, so it
+emits an ``ErrorEvent`` and keeps draining. The offline
+deterministic parity driver wires ``FailFastPolicy`` so the parity gate
 can never false-green on a swallowed error (D-17/WR-04/D-19, T-05-28).
 
 This module also holds the D-06 ``HandlerErrorPolicy`` Protocol + ``FailFastPolicy``
@@ -155,10 +155,9 @@ class FailFastPolicy:
 
     ORACLE-SAFETY-critical: ``on_handler_error`` re-raises the active
     except-block exception UNCHANGED. Because it is called from inside
-    ``_dispatch``'s ``except Exception:`` block, a bare ``raise`` re-raises the
-    exception context identically to the pre-refactor inline ``_on_handler_error``
-    body — a handler failure aborts the backtest run rather than silently
-    corrupting state (T-04-15), and the byte-exact oracle is preserved.
+    ``_dispatch``'s ``except Exception:`` block, a bare ``raise`` preserves the
+    exception context exactly — a handler failure aborts the backtest run rather
+    than silently corrupting state, and the byte-exact oracle is preserved.
     """
 
     def on_handler_error(self, event: Any, handler: Any) -> None:
@@ -279,8 +278,9 @@ class ErrorPolicy:
     def on_handler_error(self, event: Any, handler: Any) -> None:
         """Live handler-failure policy (WR-05): publish an ErrorEvent, keep draining.
 
-        Overrides the base EventHandler._on_handler_error (fail-fast re-raise).
-        Invoked from EventHandler._dispatch when a handler raises; emits an
+        The live arm of the injected HandlerErrorPolicy seam (FailFastPolicy is
+        the backtest arm). Invoked from EventHandler._dispatch when a handler
+        raises; emits an
         ErrorEvent onto the queue (consumed by the ERROR route) and returns so
         the loop continues. Reads the active exception via sys.exc_info().
         """

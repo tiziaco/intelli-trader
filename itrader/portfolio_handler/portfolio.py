@@ -465,7 +465,7 @@ class Portfolio(object):
 
 		Returns ``None`` on success; raises typed domain exceptions on failure —
 		no bool channel. In backtest the exception propagates to the
-		``_on_handler_error`` re-raise seam and the run stops loudly rather than
+		``FailFastPolicy`` re-raise seam and the run stops loudly rather than
 		producing corrupted numbers.
 		"""
 		# Update transaction with portfolio information

@@ -392,7 +392,7 @@ class SimulatedCashAccount(Account):
         buying power: FILL dispatches portfolio-first, so the order's own
         un-released reservation would false-positive here. The admission
         reservation gate should have prevented this state; if it fires it is an
-        engine bug and the backtest stops loudly through ``_on_handler_error``.
+        engine bug and the backtest stops loudly through ``FailFastPolicy``.
 
         Args:
             required: The actual net cash cost of the settlement debit.

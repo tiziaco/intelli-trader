@@ -1,10 +1,11 @@
 """
-Frozen event dataclasses for the iTrader event system (D-09).
+Frozen event structs for the iTrader event system.
 
 All inter-component messages on the global queue, organized by domain
 module for better maintainability. Every class is an immutable
-``frozen=True``/``slots=True``/``kw_only=True`` fact subclassing
-``Event`` (M3-01) — mutation raises ``dataclasses.FrozenInstanceError``.
+``msgspec.Struct`` subclassing ``Event``
+(``frozen=True``/``kw_only=True``/``gc=False``) — mutation raises
+``AttributeError``, not ``dataclasses.FrozenInstanceError``.
 """
 
 # Event base
