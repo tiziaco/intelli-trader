@@ -23,7 +23,7 @@
 - Event-handler callbacks: `on_<event>()` — `on_signal()`, `on_order()`, `on_fill()`, `on_market_data()`, `on_universe_update()`.
 - Factory class methods: `new_<object>()` — `Order.new_order()`, `Order.new_stop_order()`, `FillEvent.new_fill()`.
 - Getters: `get_<thing>()` — `get_portfolio()`, `get_cash_operations()`, `get_orders_by_ticker()`.
-- Private helpers/attributes: single leading underscore — `_resolve_rng_seed()`, `self._rng`, `self._storage`.
+- Private helpers/attributes: single leading underscore — `_emit_rejection()`, `self._rng`, `self._storage`.
 - Module-private module-level constants: leading underscore — `_DEFAULT_SCALES`, `_CASH_SCALES`, `_EXTERNALLY_ADMISSIBLE`, `_ROUTE_CLASS`.
 
 **Variables:**

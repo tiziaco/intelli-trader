@@ -1,7 +1,7 @@
 """Resume is gated on ALL venue stream arms being healthy (D-28 / WR-03).
 
 Locks in the D-28 fix: the engine-thread resume drain
-``LiveTradingSystem._maybe_resume_after_reconnect`` must resume NEW order submission
+``StreamRecoveryHandler.on_reconnect`` must resume NEW order submission
 ONLY when every wired venue stream arm reports healthy — the exchange arm
 (fills+orders) AND the data-provider arm (candles). Before the fix, ``_on_venue_stream_up``
 set ``_pending_stream_resume`` on ANY single arm's reconnect, so a candle-stream reconnect

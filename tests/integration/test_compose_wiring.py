@@ -104,7 +104,7 @@ def test_the_composed_exchange_holds_the_ctx_rng_instance(
     through an ``ExecutionHandler`` attribute. The assertion is unchanged in substance.
     """
     engine = compose_engine(ctx, venue_bundles=venue_bundles)
-    # Registry lookup: read `ExecutionHandler.init_exchanges` before changing this key.
+    # Registry lookup: read `seed_exchange_registry` before changing this key.
     # It is the (venue, account_id) PAIR with the paper venue on DEFAULT_ACCOUNT_ID.
     exchange = engine.execution_handler.exchanges[("paper", DEFAULT_ACCOUNT_ID)]
     assert exchange._rng is ctx.rng

@@ -1,8 +1,7 @@
 """StreamRecoveryHandler.on_reconnect — engine-thread resume I/O (SAFE-04 / D-12 / D-28).
 
-Unit coverage for the byte-moved reconnect-resume orchestration extracted from
-``LiveTradingSystem._maybe_resume_after_reconnect`` (607-666) +
-``_all_venue_streams_healthy`` (668-684) into ``StreamRecoveryHandler`` (Plan 04).
+Unit coverage for the reconnect-resume orchestration in
+``StreamRecoveryHandler.on_reconnect`` and its ``_all_venue_streams_healthy`` gate.
 
 Locks the contract with fakes (no socket, no live stack):
 

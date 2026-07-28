@@ -11,9 +11,9 @@ On the real OKX arm, ``start()`` runs ``VenueReconciler.reconcile()`` on the eng
 thread BEFORE the processing thread spawns (live_trading_system.py:1147-1155). When the
 reconciler cannot trust venue state it calls its injected ``halt_signal`` — i.e.
 ``self.halt("reconciliation-unresolved")`` — which sets ``SystemStatus.HALTED``. But
-``start()`` never checks ``_is_halted()`` afterward, and the processing loop's FIRST
-action is an UNCONDITIONAL ``self._update_status(SystemStatus.RUNNING)`` at
-live_trading_system.py:993. That blind stamp CLOBBERS the halt: the engine opens the
+``start()`` never checks ``is_halted()`` afterward, and the processing loop's FIRST
+action is an UNCONDITIONAL ``update_status(SystemStatus.RUNNING)``. That blind stamp
+CLOBBERS the halt: the engine opens the
 SIGNAL/ORDER gate and trades on state the reconciler already declared untrustworthy.
 
 Offline reproduction (no OKX network / credentials)
@@ -28,8 +28,8 @@ no credentials, no OKX client is touched.
 
 Expected today (RED): the loop clobbers HALTED -> RUNNING, so ``get_status()["status"]``
 reports ``"running"`` while ``halt_reason`` is still ``"reconciliation-unresolved"``.
-Expected after 05.1-05 (D-05): ``_update_status`` refuses HALTED->RUNNING and ``start()``
-checks ``_is_halted()`` post-reconcile, so the status LATCHES at ``"halted"``.
+Expected after 05.1-05 (D-05): ``update_status`` refuses HALTED->RUNNING and ``start()``
+checks ``is_halted()`` post-reconcile, so the status LATCHES at ``"halted"``.
 
 The ``integration`` marker is applied AUTOMATICALLY by the ``tests/integration/`` path
 (folder-derived TYPE auto-marking). The system is always stopped in a ``finally`` so no
@@ -111,7 +111,7 @@ def test_start_after_reconcile_halt_stays_halted() -> None:
     try:
         system.start()
 
-        # The processing loop's FIRST action is _update_status(RUNNING) at :993; give
+        # The processing loop's FIRST action is update_status(RUNNING); give
         # it a bounded window to run so we observe the clobber deterministically rather
         # than reading the transient pre-clobber HALTED (which would false-pass). On
         # the D-05-fixed engine this wait simply times out (status never leaves HALTED).

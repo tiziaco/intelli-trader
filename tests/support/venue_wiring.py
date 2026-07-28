@@ -69,8 +69,7 @@ def backtest_exchange_registry(
     composition-root-owned and injected (D-43). Every direct-construction test site that
     builds an ``ExecutionHandler`` therefore needs the SAME seed production uses: build the
     backtest bundles, then seed the paper exchange into a fresh dict through the shared
-    ``seed_exchange_registry`` helper (the execution-domain function the retired
-    ``init_exchanges`` became). This is the exact recipe ``compose_engine`` runs, so a
+    ``seed_exchange_registry`` helper. This is the exact recipe ``compose_engine`` runs, so a
     directly-built handler resolves the identical paper exchange under the same pair key.
     """
     from itrader.execution_handler.execution_handler import seed_exchange_registry

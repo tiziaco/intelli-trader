@@ -315,7 +315,7 @@ must import, run, and yield trustworthy results.
 ## IDs & Determinism
 
 - Single UUIDv7 scheme via the `idgen` singleton (`from itrader import idgen`), backed by `uuid-utils`. Do not introduce a second ID scheme.
-- Determinism: a single seeded `random.Random` is constructed at engine wiring from `config.rng_seed` (frozen base param, default 42) and carried on `EngineContext.rng`, reaching `SimulatedExchange._rng` via `PaperVenuePlugin.build_bundle`. `ExecutionHandler` holds NO determinism seam any more — its `rng` parameter and `_rng`/`_rng_seed`/`_resolve_rng_seed` were removed. Never seed per-call.
+- Determinism: a single seeded `random.Random` is constructed at engine wiring from `config.rng_seed` (frozen base param, default 42) and carried on `EngineContext.rng`, reaching `SimulatedExchange._rng` via `PaperVenuePlugin.build_bundle`. `ExecutionHandler` holds NO determinism seam. Never seed per-call.
 
 ## Logging
 

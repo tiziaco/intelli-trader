@@ -2,10 +2,11 @@
 
 These pin the ``HaltReason`` enum P1 introduces (design D-10/D-11):
 
-  1. Exactly the FIVE reasons that reach ``halt()`` / ``_update_status(halt_reason=)``
-     today — ``BASELINE_RESIDUAL`` / ``CONNECTOR_FATAL`` /
-     ``RECONCILIATION_UNRESOLVED`` / ``DURABLE_HALT`` / ``DRIFT``. One member per
-     live reason, no dead members.
+  1. The five reasons P1 pinned as reaching ``halt()`` /
+     ``SafetyController.update_status(halt_reason=)`` — ``BASELINE_RESIDUAL`` /
+     ``CONNECTOR_FATAL`` / ``RECONCILIATION_UNRESOLVED`` / ``DURABLE_HALT`` /
+     ``DRIFT``. The enum carries NINE members today; the four D-16 tripwire
+     reasons are pinned by the first test below.
   2. Each member's ``.value`` equals its EXISTING wire string, so durable halt
      records persisted before the change still resolve (T-02-01, no data migration).
   3. Absence guard — no ``PAUSED_ON_DISCONNECT`` (a ``pause_submission`` reason,

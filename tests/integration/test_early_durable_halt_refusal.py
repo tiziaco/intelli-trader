@@ -8,7 +8,7 @@ order-arm stream spawn, the ``VenueAccount.snapshot()``, AND the state-mutating
 performed real venue I/O and a state-mutating reconcile before finally refusing (WR-01).
 
 D-20 moves the durable-halt refusal to the TOP of ``start()`` — right after
-``_update_status(STARTING)`` and BEFORE any ``connect``/``snapshot``/stream spawn/reconcile.
+``update_status(STARTING)`` and BEFORE any ``connect``/``snapshot``/stream spawn/reconcile.
 A durably-HALTED engine then stays inert: it re-latches HALTED and returns False with ZERO
 venue I/O and no second durable record.
 
@@ -36,7 +36,7 @@ class _UnresolvedHaltStore:
 
     Only the surface ``start()``'s durable-refusal gate touches: ``has_unresolved`` /
     ``get_unresolved``. ``record_halt`` is a no-op — the gate re-latches in-process via
-    ``_update_status`` (NOT ``halt()``), so no second durable record is ever written.
+    ``update_status`` (NOT ``halt()``), so no second durable record is ever written.
     """
 
     def __init__(self, reason: str = "drift") -> None:
@@ -51,7 +51,7 @@ class _UnresolvedHaltStore:
     def record_halt(self, reason, at) -> None:  # pragma: no cover - must never fire here
         raise AssertionError(
             "record_halt() must not run on a durably-halted refusal — the gate re-latches "
-            "via _update_status, never a second durable write (D-20).")
+            "via update_status, never a second durable write (D-20).")
 
     def resolve_all(self) -> None:
         pass

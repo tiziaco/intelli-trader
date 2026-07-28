@@ -604,7 +604,7 @@ def test_pause_does_not_fire_while_halted(monkeypatch: Any) -> None:
 def test_resume_snapshots_before_clearing_pause(monkeypatch: Any) -> None:
     """Resume takes a fresh REST snapshot BEFORE clearing the pause; a raise stays paused (WR-04).
 
-    Proves the honest resume path: ``_maybe_resume_after_reconnect`` refreshes venue
+    Proves the honest resume path: ``StreamRecoveryHandler.on_reconnect`` refreshes venue
     truth via ``VenueAccount.snapshot()`` and only then clears the pause — and a snapshot
     that RAISES leaves the pause in place and re-sets the resume flag (never resume blind).
     A blind mid-session ``VenueReconciler.reconcile()`` would spuriously HALT on legitimate
@@ -638,7 +638,7 @@ def test_concurrent_halt_fires_single_alert(monkeypatch: Any) -> None:
 
     The atomic single-lock check-and-set guarantees only the winning caller flips the
     status and emits. Reverting halt() to the old two-acquisition form (guard on
-    ``self._status`` but flip in a separate ``_update_status`` lock) makes multiple
+    ``self._status`` but flip in a separate ``update_status`` lock) makes multiple
     callers pass the guard and this test FAIL (many CRITICAL ErrorEvents enqueued).
     """
     import threading

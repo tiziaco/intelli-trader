@@ -1,5 +1,5 @@
 ---
-status: open
+status: completed
 created: "2026-07-28"
 source: comment-reduction campaign (45 files, 2026-07-28) — dead cross-references found in files the campaign has NOT yet passed over
 tags: [documentation, stale-citations, claude-md, planning-docs, test-docstrings, gsd-plan-quality]
@@ -127,11 +127,42 @@ The `invented` bucket (7) deserves separate weight: those citations were **wrong
 were written**. No amount of keeping docs in sync with code would have prevented them — only
 verifying the reference at authoring time.
 
-## Suggested handling
+## RESOLVED 2026-07-28
 
-A mechanical sweep, no design decisions: replace each dead symbol with its real owner and drop
-every line coordinate in favour of the symbol name (line coordinates decay silently — this is
-why the campaign cuts them unconditionally, even when currently correct).
+All five dead symbols are now at **zero** occurrences across `itrader/`, `tests/`,
+`.planning/codebase/` and `CLAUDE.md`:
+
+| symbol | live owner it was replaced with | sites |
+|---|---|---:|
+| `_log_error_event` | `ErrorHandler.on_error` | already closed by the doc audit before this pass |
+| `_maybe_resume_after_reconnect` | `StreamRecoveryHandler.on_reconnect` | 4 |
+| `_update_status` | `SafetyController.update_status` | 8 |
+| `_is_halted` | `is_halted` (public on both facade and controller) | 1 |
+| `_resolve_rng_seed` | *(no replacement — `EngineContext.rng` is the seam)* | 3 |
+| `init_exchanges` | `seed_exchange_registry` | 2 |
+
+Three decayed line coordinates went with them: `catch_up_missed_fills (okx.py:626)` — the real
+line is 518 — plus `live_trading_system.py:993` twice. All replaced with symbol names.
+
+Also corrected: `test_halt_reason.py`'s module docstring claimed *"Exactly the FIVE reasons"*
+while `HaltReason` carries **nine** members — and the file's own first test asserts all nine.
+The docstring had been describing the P1 state and was never revisited when D-16 added the four
+tripwire reasons.
+
+**Scope note.** 17 of the 19 sites were in `tests/` — a tree the comment campaign has never
+passed over. The dead symbols survived longest exactly where nobody was looking, which is the
+argument for extending a citation sweep to `tests/` even though the campaign proper stops at
+`itrader/`.
+
+**One deliberate AST change.** `test_early_durable_halt_refusal.py`'s `_UnresolvedHaltStore`
+raises `AssertionError("… the gate re-latches via _update_status …")`. Runtime string literals
+are normally out of scope for the campaign, but this is a test-failure message read only by a
+human, nothing greps for its text, and leaving a dead symbol in the one line a developer sees
+when the test breaks defeats the point. `verify.py` reports that single `Constant` delta for
+that file and nothing else.
+
+Gates at resolution: 3021 passed / 6 skipped, mypy clean on 285 files, oracle + inertness
+7 passed. Every other touched file is AST-identical to HEAD.
 
 Do `CLAUDE.md` and `.planning/codebase/` **first** and separately — they are the highest-leverage
 two files in the repo for plan quality, and fixing them is independent of everything else.

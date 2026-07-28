@@ -1,13 +1,13 @@
 """Resume-path missed-fill catch-up wiring (D-25 / WR-01).
 
 Locks in the D-25 fix: the engine-thread resume drain
-``LiveTradingSystem._maybe_resume_after_reconnect`` must re-fetch fills that settled
+``StreamRecoveryHandler.on_reconnect`` must re-fetch fills that settled
 while the OKX fill stream was down — by calling ``OkxExchange.catch_up_missed_fills()``
 BEFORE the fresh REST ``snapshot()`` — so a trade that settled during the outage window
 reaches the mirror/portfolio on reconnect instead of waiting for the next full startup
 reconcile.
 
-Before the fix, ``catch_up_missed_fills`` (okx.py:626) was fully built and unit-tested
+Before the fix, ``OkxExchange.catch_up_missed_fills`` was fully built and unit-tested
 in isolation (tests/unit/execution/test_missed_fill_catchup.py calls it DIRECTLY) but had
 ZERO production call sites — the resume drain called only ``venue_account.snapshot()`` +
 ``resume_submission()``, so the missed fill was never recovered on resume (WR-01). This
