@@ -1,7 +1,7 @@
 ---
 status: open
 created: "2026-07-28"
-source: comment-reduction campaign (13 files, 2026-07-28) — dead cross-references found in files the campaign has NOT yet passed over
+source: comment-reduction campaign (45 files, 2026-07-28) — dead cross-references found in files the campaign has NOT yet passed over
 tags: [documentation, stale-citations, claude-md, planning-docs, test-docstrings, gsd-plan-quality]
 resolves_phase: ""
 ---
@@ -9,7 +9,7 @@ resolves_phase: ""
 # Dead symbol citations in files the comment campaign has not reached
 
 **Origin:** The 2026-07-28 comment-reduction campaign audits every external reference in the file
-it is cleaning. **42 of 136** citations checked so far were wrong. The ones below live in files
+it is cleaning. **103 of ~290** citations checked so far were wrong. The ones below live in files
 that have **not** had a pass yet, so they are still in the tree — including in `CLAUDE.md` and
 `.planning/codebase/`, which brief every future planner and executor.
 
@@ -78,6 +78,54 @@ Recorded for the pattern, not as open work. That file cited `_all_venue_streams_
 **(668-684)** in a ~230-line file where the method sits at ~204, and
 `_maybe_resume_after_reconnect` **(607-666)** for a method that does not exist. Both were
 replaced with symbol names in commit `306fe4ad`. The test-tree copies (item 2) survive.
+
+## 6. Two live dead-symbol citations in files still outside the campaign
+
+Found by sweep agents while verifying their own files, in files they did not own and correctly
+left untouched:
+
+- **`itrader/trading_system/backtest_trading_system.py`** cites
+  `ExecutionHandler._resolve_rng_seed` **twice** (`:179` and again in a Notes block). That method
+  does not exist anywhere in `itrader/` — the determinism seam moved to `EngineContext.rng`.
+  This is on the **backtest determinism path**, the one thing the whole project is anchored on,
+  so a planner reading it is pointed at a method that cannot be inspected.
+- **`tests/integration/test_compose_wiring.py:107`** says *"Registry lookup: read
+  `ExecutionHandler.init_exchanges` before changing this key."* `init_exchanges` has zero
+  occurrences in `itrader/`; the real seam is the module-level `seed_exchange_registry`. The
+  comment instructs a future reader to consult a symbol that cannot be found — the failure mode
+  is wasted search, then a guess.
+
+Both are one-line fixes (swap in the live symbol name). Neither file has had a pass.
+
+## Running tally after the 29-file sweep
+
+**103 wrong of ~290 citations checked**, across 45 source files plus `CLAUDE.md` and
+`.planning/codebase/`. The 29-file sweep alone contributed 52 wrong out of ~130.
+
+The category split from the sweep, which is the useful part — it says what *kind* of rot to
+expect and therefore what a fix should target:
+
+| category | n | what it looks like |
+|---|---:|---|
+| `stale-behavior` | 21 | the claim was true when written; the code moved underneath it |
+| `dead-symbol` | 8 | names a symbol that no longer exists anywhere |
+| `invented` | 7 | names a symbol that **never** existed (`plugin.venue_uid`, `ExecutionTimeoutError`, a "mirror" site with no matching code) |
+| `moved-symbol` | 4 | right symbol, wrong home |
+| `stale-line-number` | 4 | coordinate decayed, including one off-by-one that was *already* wrong when authored |
+| `wrong-count` | 1 | "the four safety collaborators" — there are three |
+| `other` | 7 | mostly correct facts carrying an unresolvable plan-id tag |
+
+**`stale-behavior` dominating at 40% is the finding.** These are not typos; they are claims that
+were accurate at authoring and were never revisited when the code moved. Several now assert the
+*opposite* of current behaviour — `venue_spec.py` documents an `account_id` fallback that
+`assemble_venue` now **raises** on, and `order_manager.py` advertises "stop/limit trigger
+evaluation" in two separate docstrings when nothing in `order_handler/` evaluates a trigger at all
+(matching lives in the execution layer). A planner trusting either would design against inverted
+behaviour.
+
+The `invented` bucket (7) deserves separate weight: those citations were **wrong on the day they
+were written**. No amount of keeping docs in sync with code would have prevented them — only
+verifying the reference at authoring time.
 
 ## Suggested handling
 

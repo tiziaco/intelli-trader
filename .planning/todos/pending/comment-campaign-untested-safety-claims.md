@@ -1,7 +1,7 @@
 ---
 status: open
 created: "2026-07-28"
-source: comment-reduction campaign (13 files, 2026-07-28) — category-3 claims KEPT because no test covers them
+source: comment-reduction campaign (45 files, 2026-07-28) — category-3 claims KEPT because no test covers them
 tags: [test-coverage, live, safety, okx, halt, thread-affinity, category-3]
 resolves_phase: ""
 ---
@@ -82,6 +82,53 @@ fail-closed `validate_symbol`, ambiguous-timeout non-terminalization, negative-f
 The gaps cluster in **error/degradation paths** — the swallow, the raising callback, the
 unregistered sink, the un-awaited coroutine. Happy paths get tests; the guard that exists so a
 failure does not cascade gets a comment.
+
+## Second batch — 34 more gaps from the 29-file sweep
+
+The sweep over the remaining changed files added 34 kept claims. The clustering held: almost
+none are on a happy path.
+
+**Highest cost if silently regressed:**
+
+- `ReconcileManager.on_fill`'s `else: raise NotImplementedError('terminal fill status … has no
+  reconcile arm')` fires **before** `should_release` is armed, so a status `_classify` calls
+  terminal but the reconcile arm forgot leaks the reservation as it raises. No test anywhere
+  asserts this raise.
+- `ReconciliationCoordinator`: *"Quote-side cash is NOT asserted, because a deposit is
+  legitimate funding"* — the session baseline guard scans base-asset positions only and must
+  **not** halt on a cash delta. `test_reconciliation_coordinator.py` has no cash/quote case at
+  all, so nothing stops a future change from making an operator deposit trip `halt('drift')`.
+- `ReconciliationCoordinator._exchange_for` deliberately returns `None` for an unregistered
+  `(venue, account_id)` rather than falling back to another registered exchange. Only the hit
+  path is tested — nothing drives a miss, which is the case where a fallback would silently
+  reconcile one account against another account's venue.
+- `ErrorPolicy.record_failure` sets `_last_trip` when the window trips **even if `halt` is
+  unwired** — the threshold being reached *is* the trip. The existing test only asserts the
+  call does not raise.
+- `LiveTradingSystem.start()` warms the feed FIRST (REST replay sets the ring) and subscribes
+  the live socket SECOND per member; reordering races the ring's first write and breaks the
+  single-writer guarantee. The feed-side ordering is tested; `start()`'s membership loop is not.
+
+**Rest, by area** (full claim text and the specific missing case are in the sweep output):
+
+| area | gaps | shape |
+|---|---:|---|
+| `order_manager` | 4 | `stamp_venue_order_id` false-returns, merged-config-validated-before-store, the no-queue-reference layering invariant, collaborator construction order |
+| `execution_handler` | 4 | `validate_config` as ConfigRouter's dry twin, the unwired-paper-exchange refusal, `get_exchange_health` (dead — see defects item 10), connect-dedup by identity |
+| `live_trading_system` | 4 | stats snapshot swallow, best-effort `last_started_at`, tz-aware `uptime_start`, warm-before-subscribe |
+| `venues/*` | 5 | guard-skips-on-absent-collaborator, `GUARD_REASON_NOT_STARTED` seeding, shared `state_storage` instance, quote derived from the pair's right leg, lazy import in `build_bundle` |
+| `config_router` | 2 | rejection-flood dedup across the clock, merge-not-overwrite on venue rows |
+| storage stores | 2 | `set_deleted` idempotency, `set_enabled` touching only its own column |
+| others | 8 | fill-time ordering, bounded dedup ring, no partial-fill aging, `max_portfolios` on rehydrate, halt-vocabulary drift, `region` vs `market_type` typing, live-runner gate ordering |
+
+Two are worth calling out as *not* worth a test: the OrderManager layering invariant ("holds no
+queue or handler back-reference") and the collaborator construction order both fail loudly at
+construction if violated. They are kept as documented invariants, not coverage debt.
+
+One is a mislabelled gate rather than a gap: `ReconciliationCoordinator`'s *"connector/OKX
+imports stay LAZY so importing this module pulls no ccxt/SQL (inertness gate)"* —
+`test_okx_inertness.py` guards the **backtest** import path and never imports this module, so
+the gate the comment names does not actually cover the claim it is attached to.
 
 ## Suggested handling
 

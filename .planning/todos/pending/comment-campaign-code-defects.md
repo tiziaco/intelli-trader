@@ -1,8 +1,8 @@
 ---
 status: open
 created: "2026-07-28"
-source: comment-reduction campaign (16 files, 2026-07-28) — defects surfaced while auditing comments against real code; flagged, never fixed (the campaign is comment-only, AST-verified)
-tags: [live, okx, safety, halt-vocabulary, config-reachability, liquidation, encapsulation, dead-parameter, margin, dead-code]
+source: comment-reduction campaign (45 files, 2026-07-28) — defects surfaced while auditing comments against real code; flagged, never fixed (the campaign is comment-only, AST-verified)
+tags: [live, okx, safety, halt-vocabulary, config-reachability, liquidation, encapsulation, dead-parameter, margin, dead-code, reconnect, false-green]
 resolves_phase: ""
 ---
 
@@ -131,7 +131,102 @@ The two harmless ones, in `Portfolio.set_state`: **`old_state`** is assigned and
 and the **`reason: str = ""`** parameter is never used in the body — not logged, not recorded
 in `_state_transitions`. Every caller passes a reason string that goes nowhere.
 
+## 9. `venue_accounts` is never populated — post-reconnect account refresh is a no-op (worst of the set)
+
+Found in the 29-file sweep. **This is the same false-green shape as item 1, on the safety path.**
+
+`build_live_system` (`trading_system/live_trading_system.py`) declares:
+
+```python
+venue_lifecycles: Dict[str, Any] = {}
+venue_accounts: Dict[str, Any] = {}
+```
+
+with a comment stating *"Both maps are declared here so facade construction,
+StreamRecoveryHandler and the halt-signal wiring see them on EVERY path."* The bring-up loop
+then fills **only the first**:
+
+```python
+for row in venue_manager.read_enabled_for(exchange):
+    record = venue_manager.bring_online(row)
+    venue_lifecycles[str(row["account_id"])] = record.lifecycle
+```
+
+`venue_accounts` is written by **no code path in the repo** — grep finds exactly three
+occurrences: the declaration, two comments, and the consumer
+`venue_accounts=lambda: list(venue_accounts.values())`. That callable therefore always
+returns `[]`.
+
+**Consequence.** `StreamRecoveryHandler.on_reconnect` runs
+`for account in _distinct(self._venue_accounts()): account.snapshot()` — a no-op in
+production. After a venue stream drops and reconnects, the missed-fill catch-up still runs
+(different path, through the exchange), but **the venue-cached account truth is never
+re-snapshotted**, so balances/positions cached before the disconnect survive it silently.
+`.snapshot()` has exactly three call sites; the other two (`venue_reconciler.py`,
+`reconciliation_coordinator.py`) are boot-time reconcile, not reconnect-time. There is no
+second path that covers this.
+
+**Why the suite is green:** all eight call sites in
+`tests/unit/trading_system/test_stream_recovery_handler.py` inject their own
+`venue_accounts=lambda: [_FakeAccount(...)]`. The refresh logic is proven correct on a
+collection production cannot produce — identical to item 1's hand-built `Instrument`.
+
+**Fix:** populate `venue_accounts` in the `bring_online` loop (the account is reachable from
+the record the loop already holds), then add a test that asserts the callable handed to
+`StreamRecoveryHandler` is non-empty after a boot with at least one enabled venue row — i.e.
+cover the wiring, not just the refresh.
+
+## 10. Dead public surface and cross-collaborator private reaches
+
+Eleven lower-severity defects from the same sweep, grouped by kind. All verified at HEAD.
+
+**Dead code / unreachable:**
+
+- `ExecutionHandler.get_exchange_health` — zero callers, zero tests, anywhere. Carries ~25
+  lines of Parameters/Returns contract for a shape nothing consumes, and defaults
+  `'connected': True` on `AttributeError` — an unknown health state reported as healthy.
+  Harmless while dead; a safety defect the moment it acquires a caller.
+- `OrderHandler.__init__` assigns `self.order_validator = EnhancedOrderValidator(portfolio_handler)`
+  and nothing ever reads it. It is a **second** validator built *without* `enable_margin`,
+  diverging from the one `OrderManager` builds. A future caller reaching for the facade's
+  validator would silently get spot-mode full-notional cash checks.
+- `core/enums/execution.py::ExecutionStatus` — entire enum unused outside its own definition
+  and the barrel re-export. `ExecutionErrorCode.TIMEOUT` likewise, and the comment justifying
+  it cites a nonexistent `ExecutionTimeoutError`.
+- `venues/bundles.py` imports `DEFAULT_ACCOUNT_ID` at module scope; its only two occurrences
+  were inside the (now-corrected) docstring prose. No linter is configured and
+  `mypy --strict` does not flag unused imports, so nothing catches it.
+
+**Cross-boundary private reaches** (behaviour correct, coupling only):
+
+- `ReconcileManager.on_fill` → `self.bracket_manager._create_fill_anchored_children(...)`.
+  `BracketManager` publishes no seam for this, so the module docstring's "injection, no
+  sibling edges" claim is crossed through a private.
+- `ReconciliationCoordinator._run_session_baseline_guard` →
+  `self._portfolio_handler._drift_precision(symbol)`. Its only external caller. The
+  dust-epsilon contract this safety guard depends on is unpublished and can be retuned with
+  no compile-time signal — and `portfolio_handler` is typed `Any` there, so mypy sees nothing.
+
+**Cosmetic:**
+
+- `ExecutionHandler.update_config` / `validate_config` are byte-identical apart from the final
+  delegate call, including a shared `'no paper exchange wired to update'` message that is wrong
+  wording for the dry-validate path (`validate_config` applies nothing).
+- `ErrorPolicy.on_handler_error` hardcodes `source='live_trading_system'`, but the policy now
+  lives in `events_handler/error_policy.py` and is the dispatcher's generic seam — it is
+  injected in replay wiring with no live facade present. The field is wire-visible
+  (`ErrorHandler` logs it, `classify_failure` keys on `(source, operation)`), so changing it is
+  a behaviour change, not a comment fix.
+- `ReconciliationCoordinator.run_startup_reconcile` dedups accounts with a
+  `List[int]` of `id(account)` and an `in` test — O(n²), and `id()` is a valid key only while
+  every account stays alive. Safe as written; a set keyed on `account_id` would be neither.
+
 ## Suggested handling
+
+Item 9 is the one to schedule first: it is a live safety-path no-op, it has a two-line fix,
+and its test gap is the same false-green pattern as item 1 — which is the argument for
+treating "does a production builder ever produce this value?" as a checklist question rather
+than two separate bugs.
 
 Item 8's first two are the only ones here that could mean wrong money; treat them as an
 investigation, not a cleanup — decide what the close arm *should* compute, then either delete
