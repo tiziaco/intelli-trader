@@ -1,8 +1,8 @@
 ---
 status: open
 created: "2026-07-28"
-source: comment-reduction campaign (13 files, 2026-07-28) — defects surfaced while auditing comments against real code; flagged, never fixed (the campaign is comment-only, AST-verified)
-tags: [live, okx, safety, halt-vocabulary, config-reachability, liquidation, encapsulation, dead-parameter]
+source: comment-reduction campaign (16 files, 2026-07-28) — defects surfaced while auditing comments against real code; flagged, never fixed (the campaign is comment-only, AST-verified)
+tags: [live, okx, safety, halt-vocabulary, config-reachability, liquidation, encapsulation, dead-parameter, margin, dead-code]
 resolves_phase: ""
 ---
 
@@ -105,7 +105,37 @@ predicate, which is why the caller cracked the encapsulation. Behaviour is corre
 (`test_unsubscribe_stale_supervisor_state_without_task_still_marshals`); this is coupling only.
 Fix: add `StreamSupervisor.tracks(stream_name) -> bool`.
 
+## 8. Four dead assignments in `Portfolio`, two of them on the margin money path
+
+Found in the `portfolio.py` pass. All four pass `mypy --strict` (an unused local is not an
+error) and none is covered by a test, so nothing flags them.
+
+The two that matter, both in `Portfolio._process_transaction_margin`:
+
+- **`prior_entry_commission`** — assigned in *both* branches of the `if prior is not None`
+  block, then never read. Its own comment says it exists "to avoid double-counting it on
+  close", but the close arm computes that credit through
+  `_open_commission_credit_for_close(position, closed_qty)` instead. Either it is a leftover
+  from before that helper existed, **or the close arm is missing a term.**
+- **`fraction`** — assigned in the close arm as `closed_qty / prior_qty`, then never read.
+  The method docstring still describes settling `p × realized_PnL`, but `cash_delta` is built
+  from `realised_increment + open_commission_credit` with **no `fraction` factor anywhere**.
+  Either the docstring describes intended-but-absent behaviour, or the arithmetic is right and
+  the docstring is stale.
+
+Both sit on the margin cash-delta path. Resolve what each was meant to do before anyone trusts
+that arithmetic — a dead variable whose *name* matches a term in the documented formula is the
+signature of a half-applied refactor, not of harmless cruft.
+
+The two harmless ones, in `Portfolio.set_state`: **`old_state`** is assigned and never read,
+and the **`reason: str = ""`** parameter is never used in the body — not logged, not recorded
+in `_state_transitions`. Every caller passes a reason string that goes nowhere.
+
 ## Suggested handling
+
+Item 8's first two are the only ones here that could mean wrong money; treat them as an
+investigation, not a cleanup — decide what the close arm *should* compute, then either delete
+the variables or restore the missing term. The `set_state` pair is a trivial tidy.
 
 Items 2–4 are one coherent `SafetyController` cleanup and pair naturally with finishing
 [[off-vocabulary-halt-reason-baseline-residual-wr04]]. Items 5–7 are one OKX-exchange cleanup.

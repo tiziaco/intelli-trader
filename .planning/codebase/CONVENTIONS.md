@@ -12,7 +12,7 @@
 **Files:**
 - `snake_case.py` throughout — no exceptions.
 - Handler modules: `<domain>_handler.py` — `order_handler.py`, `execution_handler.py`, `portfolio_handler.py`.
-- Manager modules: `<domain>_manager.py` — `order_manager.py`, `cash_manager.py`, `position_manager.py`.
+- Manager modules: `<domain>_manager.py` — `order_manager.py`, `position_manager.py`, `metrics_manager.py`.
 - Abstract base modules: `base.py` inside each domain package (e.g. `itrader/execution_handler/exchanges/base.py`).
 - Storage backends: `<backend>_storage.py` — `in_memory_storage.py`, `sql_storage.py`, `cached_sql_storage.py`.
 - Connectors: `<venue>.py` inside `itrader/connectors/` (live-trading, v1.7) — e.g. `okx.py` (class `OkxConnector`).
@@ -33,7 +33,7 @@
 - Config is always `self.config` (or a typed config object such as `ITraderConfig` / `ExchangeConfig`).
 
 **Types:**
-- Classes: `PascalCase` — `OrderHandler`, `SimulatedExchange`, `MatchingEngine`, `CashManager`.
+- Classes: `PascalCase` — `OrderHandler`, `SimulatedExchange`, `MatchingEngine`, `PositionManager`.
 - Handler/Manager split: `<Domain>Handler` (thin interface) + `<Domain>Manager` (business logic).
 - Abstract bases: `Abstract<Name>` — `AbstractExchange`, `AbstractExecutionHandler`.
 - Config classes: `<Domain>Config` — `PortfolioConfig`, `ExchangeConfig`, `OrderConfig`, `UniverseConfig`, `LogConfig` (frozen root: `ITraderConfig`; `<Domain>Settings` is the sibling form — `SystemSettings`, `SafetySettings`, `StreamSettings`, `SqlSettings`, `OkxSettings`).

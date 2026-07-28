@@ -15,7 +15,7 @@ intelli-trader/
 │   ├── execution_handler/         # Order execution: exchanges/, fee_model/, slippage_model/, matching engine
 │   ├── order_handler/             # Order lifecycle: admission/, brackets/, lifecycle/, reconcile/, storage/
 │   ├── outils/                    # Small shared utility functions (dict_merge, time_parser, id_generator)
-│   ├── portfolio_handler/         # Portfolio state: cash/, position/, transaction/, metrics/, account/, reconcile/, rehydrate/, storage/
+│   ├── portfolio_handler/         # Portfolio state: position/, transaction/, metrics/, account/, reconcile/, rehydrate/, storage/
 │   ├── price_handler/             # Data engine: store/, feed/, providers/
 │   ├── reporting/                 # Pure report builders (frames.py, metrics.py, plots.py)
 │   ├── results/                   # Run-results persistence and serialization
@@ -74,7 +74,7 @@ intelli-trader/
 
 **`itrader/portfolio_handler/`:**
 - Purpose: Portfolio lifecycle and state.
-- Contains: `portfolio_handler.py`, `portfolio.py`, `portfolio_factory.py`, `cash/`, `position/`, `transaction/`, `metrics/`, `account/` (`SimulatedCashAccount`/`SimulatedMarginAccount`/`VenueAccount`), `reconcile/` (`venue_reconciler.py`, `drift.py`), `rehydrate/`, `storage/`, `validators.py`.
+- Contains: `portfolio_handler.py`, `portfolio.py`, `portfolio_factory.py`, `position/`, `transaction/`, `metrics/`, `account/` (`SimulatedCashAccount`/`SimulatedMarginAccount`/`VenueAccount`), `reconcile/` (`venue_reconciler.py`, `drift.py`), `rehydrate/`, `storage/`, `validators.py`.
 - Key files: `itrader/portfolio_handler/portfolio_handler.py`, `itrader/portfolio_handler/portfolio.py`.
 
 **`itrader/price_handler/`:**
@@ -136,13 +136,13 @@ intelli-trader/
 **Files:**
 - `snake_case.py` throughout, no exceptions.
 - Handler modules: `<domain>_handler.py` (e.g. `order_handler.py`).
-- Manager modules: `<domain>_manager.py` (e.g. `order_manager.py`, `cash_manager.py`).
+- Manager modules: `<domain>_manager.py` (e.g. `order_manager.py`, `position_manager.py`).
 - Abstract base modules: `base.py` inside each domain package.
 - Test files: `test_<module>.py`, mirroring the source module name.
 
 **Directories:**
 - Domain package: `<domain>_handler/` (e.g. `order_handler/`, `portfolio_handler/`).
-- Since v1.7/v1.8, large handlers are decomposed into collaborator subdirs named by RESPONSIBILITY, not by class: `admission/`, `brackets/`, `lifecycle/`, `reconcile/`, `storage/`, `cash/`, `position/`, `transaction/`, `metrics/`, `account/`, `registry/`, `indicators/`.
+- Since v1.7/v1.8, large handlers are decomposed into collaborator subdirs named by RESPONSIBILITY, not by class: `admission/`, `brackets/`, `lifecycle/`, `reconcile/`, `storage/`, `position/`, `transaction/`, `metrics/`, `account/`, `registry/`, `indicators/`. (`portfolio_handler/cash/` also exists but is an intentionally empty namespace package — its `CashManager` was absorbed into `SimulatedCashAccount`.)
 
 ## Where to Add New Code
 

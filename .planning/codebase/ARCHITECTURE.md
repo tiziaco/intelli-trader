@@ -97,7 +97,7 @@ the backtest per-tick path stays inert (`tests/integration/test_okx_inertness.py
 | `SimulatedExchange` | Fill market orders; rest stop/limit; apply fee/slippage; emit `FillEvent` | `itrader/execution_handler/exchanges/simulated.py` |
 | `MatchingEngine` | Pure resting-order book; intrabar trigger/OCO evaluation | `itrader/execution_handler/matching_engine.py` |
 | `PortfolioHandler` | Portfolio lifecycle; `on_fill` routing; structurally satisfies `PortfolioReadModel` Protocol | `itrader/portfolio_handler/portfolio_handler.py` |
-| `Portfolio` | Per-portfolio state; delegates to cash/position/transaction/metrics managers | `itrader/portfolio_handler/portfolio.py` |
+| `Portfolio` | Per-portfolio state; delegates to position/transaction/metrics managers + an `Account` leaf | `itrader/portfolio_handler/portfolio.py` |
 | `BacktestBarFeed` | Look-ahead-safe per-tick bar window read-model; `generate_bar_event` factory | `itrader/price_handler/feed/bar_feed.py` |
 | `CsvPriceStore` | Eager-load committed golden CSV; offline read-only store | `itrader/price_handler/store/csv_store.py` |
 | `BacktestClock` | Injected deterministic clock (determinism seam) | `itrader/core/clock.py` |
@@ -194,7 +194,7 @@ their component graph from.
 3. A scoped `ConfigUpdateEvent` is actuated via the injected `ConfigRouter.apply(event)` (validate → persist → apply → push), only when a durable store/router exists; otherwise the route is a pre-declared no-op empty slot.
 
 **State Management:**
-- Portfolio positions/cash: owned by each `Portfolio`; sub-managers in `cash/`, `position/`, `transaction/`, `metrics/`.
+- Portfolio positions: owned by each `Portfolio`; sub-managers in `position/`, `transaction/`, `metrics/`. Cash lives on the `Account` leaf in `account/`.
 - Order mirror: `OrderManager` over a pluggable `OrderStorage`, selected by `OrderStorageFactory` on an environment string — `'backtest'`/`'test'` → `InMemoryOrderStorage`, `'live'` → `CachedSqlOrderStorage` wrapping `SqlOrderStorage` (there is deliberately no `'postgresql'` arm).
 - Resting-order book: `MatchingEngine._resting`, one per `SimulatedExchange`.
 - Strategy control-plane state: `ManagedStrategies` roster + `StrategyLifecycleManager` (pending removals, etc.).
@@ -219,7 +219,7 @@ their component graph from.
 
 **PortfolioReadModel:**
 - Purpose: Narrow read boundary so `OrderManager`/`OrderHandler` query portfolios without importing the handler.
-- Examples: `itrader/core/portfolio_read_model.py` — `available_cash`, `get_position`, `reserve`, `release`, `total_equity`, `open_position_count`.
+- Examples: `itrader/core/portfolio_read_model.py` — twelve methods: `available_cash`, `get_position`, `reserve`, `release`, `drop_pending`, `exchange_for`, `account_for`, `open_position_count`, `active_portfolio_ids`, `total_equity`, `maintenance_margin`, `margin_ratio`.
 - Pattern: `PortfolioHandler` satisfies the Protocol structurally.
 
 **BarFeed:**

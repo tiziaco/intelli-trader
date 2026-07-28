@@ -80,7 +80,7 @@ Both wire up the identical component graph around one shared queue in their `__i
 ### Handlers (each owns a domain, talks via the queue)
 
 - **order_handler/** — `OrderHandler` is a thin interface layer; order *management* logic (signal-to-order, lifecycle, modify/cancel, bracket declaration) lives in `OrderManager`. It does **not** match orders: it declares brackets via `parent_order_id`/`child_order_ids` (the exchange enforces OCO) and reconciles the stored order mirror against exchange truth in `on_fill` (EXECUTED→FILLED, CANCELLED→CANCELLED, REFUSED→REJECTED). Validation via `EnhancedOrderValidator`. Since v1.7 the order-handler internals are decomposed into collaborator subdirs — `admission/`, `brackets/`, `lifecycle/`, `reconcile/` — alongside `storage/`. Persistence is pluggable through `OrderStorageFactory` keyed on environment string: `backtest`/`test` → `InMemoryOrderStorage`; `live` → `CachedSqlOrderStorage` wrapping `SqlOrderStorage`. The `live` arm lazy-imports the SQL backend inside the branch so the backtest import path stays SQL-free.
-- **portfolio_handler/** — `PortfolioHandler` manages portfolio lifecycle and routes `on_fill`; it structurally satisfies the `PortfolioReadModel` Protocol. Each `Portfolio` delegates to four managers, each now in its own subdir: `cash/`, `position/`, `transaction/`, `metrics/`. `Portfolio` itself holds no lock; the only `threading.RLock`s in the domain guard the live leaves — `VenueAccount`'s venue cache (`account/venue.py`) and `CachedSqlPortfolioStateStorage` (`storage/cached_sql_storage.py`). There is no lock on the portfolio *collection* — the **single-writer contract** makes one unnecessary: all portfolio state mutations happen on the engine thread, and `queue.Queue` is the thread boundary (other threads only put events), so composite reads are consistent because nothing mutates concurrently.
+- **portfolio_handler/** — `PortfolioHandler` manages portfolio lifecycle and routes `on_fill`; it structurally satisfies the `PortfolioReadModel` Protocol. Each `Portfolio` delegates to three managers in their own subdirs (`position/`, `transaction/`, `metrics/`) plus an injected `Account` leaf under `account/`. The former `CashManager` was absorbed into `SimulatedCashAccount`; `cash/` survives only as an intentionally empty namespace package. `Portfolio` itself holds no lock; the only `threading.RLock`s in the domain guard the live leaves — `VenueAccount`'s venue cache (`account/venue.py`) and `CachedSqlPortfolioStateStorage` (`storage/cached_sql_storage.py`). There is no lock on the portfolio *collection* — the **single-writer contract** makes one unnecessary: all portfolio state mutations happen on the engine thread, and `queue.Queue` is the thread boundary (other threads only put events), so composite reads are consistent because nothing mutates concurrently.
 - **execution_handler/** — `ExecutionHandler` with pluggable `fee_model/` (`zero`/`percent`/`maker_taker`), `slippage_model/` (`zero`/`fixed`/`linear`), and `exchanges/` (e.g. `simulated`). Routes `on_order` and `on_market_data` to the exchange, turning `OrderEvent`/`BarEvent` into `FillEvent`s. The `SimulatedExchange` composes a pure `MatchingEngine` (`matching_engine.py`) that holds the resting-order book and evaluates stop/limit triggers against intrabar high/low with gap-aware fills and same-bar OCO priority; the exchange then applies fee/slippage and emits the fill.
 - **strategy_handler/** — `StrategiesHandler` runs strategies. Concrete strategies live under `strategy_handler/strategies/`; the reference strategy is `strategy_handler/strategies/SMA_MACD_strategy.py` (alongside `empty_strategy.py`). User-supplied strategies go in `strategy_handler/my_strategies/`. The handler also owns instance registration (`registry/` — `catalog.py`, `config_codec.py`, `rehydrate.py`), the lifecycle verbs (`lifecycle/manager.py::StrategyLifecycleManager`), signal recording (`signal_record.py`), and a `storage/` backend.
 - **price_handler/** — the data engine, reorganized into `store/` (`CsvPriceStore`, `SqlHandler` in `sql_store.py` — read-only on the run path), `feed/` (`BacktestBarFeed` + the look-ahead-safety **bar-timing contract** in `feed/bar_feed.py`; `LiveBarFeed` for the push-driven live path), and `providers/` (CCXT, OANDA, Binance stream, `okx_provider.py`, `live_provider.py`).
@@ -252,7 +252,7 @@ must import, run, and yield trustworthy results.
 
 - `snake_case.py` throughout — no exceptions found.
 - Handler modules: `<domain>_handler.py` — `order_handler.py`, `execution_handler.py`, `portfolio_handler.py`.
-- Manager modules: `<domain>_manager.py` — `order_manager.py`, `cash_manager.py`, `position_manager.py`.
+- Manager modules: `<domain>_manager.py` — `order_manager.py`, `position_manager.py`, `metrics_manager.py`.
 - Abstract base modules: `base.py` inside each domain package (e.g. `execution_handler/exchanges/base.py`).
 - Storage backends: `<backend>_storage.py` — `in_memory_storage.py`, `sql_storage.py`, `cached_sql_storage.py`.
 - Tests mirror source: `test_<module>.py` (e.g. `test_order_manager.py`).
@@ -266,7 +266,7 @@ must import, run, and yield trustworthy results.
 - The shared event queue is always named `global_queue` (constructor parameter) or `events_queue`.
 - Bound logger is always `self.logger`.
 - Config is always `self.config` (or a typed config object such as `ITraderConfig`).
-- Classes: `PascalCase` — `OrderHandler`, `SimulatedExchange`, `MatchingEngine`, `CashManager`.
+- Classes: `PascalCase` — `OrderHandler`, `SimulatedExchange`, `MatchingEngine`, `PositionManager`.
 - Handler/Manager split: `<Domain>Handler` (thin interface) + `<Domain>Manager` (business logic).
 - Abstract bases: `Abstract<Name>` — `AbstractExchange`, `AbstractExecutionHandler`.
 - Config classes: `<Domain>Config` — `PortfolioConfig`, `ExchangeConfig`, `LogConfig` (frozen root: `ITraderConfig`).
@@ -396,7 +396,7 @@ raises `NotImplementedError` on an unrouted type; silent drops are a tampering r
 | `SimulatedExchange` | Fill market orders; rest stop/limit; apply fee/slippage; emit `FillEvent` | `itrader/execution_handler/exchanges/simulated.py` |
 | `MatchingEngine` | Pure resting-order book; intrabar trigger/OCO evaluation | `itrader/execution_handler/matching_engine.py` |
 | `PortfolioHandler` | Portfolio lifecycle; `on_fill` routing; `PortfolioReadModel` Protocol implementation | `itrader/portfolio_handler/portfolio_handler.py` |
-| `Portfolio` | Per-portfolio state; delegates to cash/position/transaction/metrics managers | `itrader/portfolio_handler/portfolio.py` |
+| `Portfolio` | Per-portfolio state; delegates to position/transaction/metrics managers + an `Account` leaf | `itrader/portfolio_handler/portfolio.py` |
 | `BacktestBarFeed` | Look-ahead-safe per-tick bar window read-model; `generate_bar_event` factory | `itrader/price_handler/feed/bar_feed.py` |
 | `CsvPriceStore` | Eager-load committed golden CSV; offline read-only store | `itrader/price_handler/store/csv_store.py` |
 | `BacktestClock` | Injected deterministic clock (determinism seam) | `itrader/core/clock.py` |
@@ -454,7 +454,7 @@ raises `NotImplementedError` on an unrouted type; silent drops are a tampering r
 
 ### Bracket / Resting-Order Flow
 
-- Portfolio positions/cash: owned by each `Portfolio`; sub-managers in `cash/`, `position/`, `transaction/`, `metrics/`.
+- Portfolio positions: owned by each `Portfolio`; sub-managers in `position/`, `transaction/`, `metrics/`. Cash lives on the `Account` leaf in `account/`.
 - Order mirror: `OrderManager` over a pluggable `OrderStorage` (`in_memory` / `sql` / `cached_sql`).
 - Resting-order book: `MatchingEngine._resting`, one per `SimulatedExchange`.
 - Live run status: `SafetyController._status` guarded by `SafetyController._status_lock` (`threading.Lock`); `LiveTradingSystem` only delegates.
@@ -471,7 +471,7 @@ raises `NotImplementedError` on an unrouted type; silent drops are a tampering r
 - Examples: `itrader/execution_handler/exchanges/base.py`; concrete `SimulatedExchange`.
 - Pattern: Implements `on_order`, `on_market_data`, `connect/disconnect/health_check/validate_order`.
 - Purpose: Narrow read boundary so `OrderManager`/`OrderHandler` query portfolios without importing the handler.
-- Examples: `itrader/core/portfolio_read_model.py` — `available_cash`, `get_position`, `reserve`, `release`, `total_equity`, `open_position_count`.
+- Examples: `itrader/core/portfolio_read_model.py` — twelve methods: `available_cash`, `get_position`, `reserve`, `release`, `drop_pending`, `exchange_for`, `account_for`, `open_position_count`, `active_portfolio_ids`, `total_equity`, `maintenance_margin`, `margin_ratio`.
 - Pattern: `PortfolioHandler` satisfies the Protocol structurally.
 - Purpose: Look-ahead-safe data access.
 - Examples: `itrader/price_handler/store/base.py`, `itrader/price_handler/feed/base.py`; concrete `CsvPriceStore`, `BacktestBarFeed`.
