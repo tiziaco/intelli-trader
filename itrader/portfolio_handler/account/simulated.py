@@ -24,7 +24,7 @@ boundaries, never mid-stream.
 import uuid
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime, UTC
-from typing import Any, Optional, List, Dict, TYPE_CHECKING
+from typing import Any, Optional, List, Dict
 from dataclasses import dataclass
 
 import uuid_utils.compat as uuid_compat
@@ -38,12 +38,10 @@ from itrader.core.exceptions import (
 from itrader.core.ids import OrderId
 from itrader.core.money import to_money
 from itrader.logger import get_itrader_logger
+from itrader.portfolio_handler.base import PortfolioStateStorage
 from itrader.portfolio_handler.position import Position
 
 from .base import Account
-
-if TYPE_CHECKING:
-    from itrader.portfolio_handler.base import PortfolioStateStorage
 
 
 @dataclass
@@ -87,7 +85,7 @@ class SimulatedCashAccount(Account):
         self,
         initial_cash: float | Decimal = 0.0,
         *,
-        state_storage: "PortfolioStateStorage",
+        state_storage: PortfolioStateStorage,
         account_id: str | None = None,
         venue_name: str | None = None,
     ) -> None:
@@ -131,7 +129,6 @@ class SimulatedCashAccount(Account):
 
         # Reserved cash and the cash-operation audit trail live in the injected
         # seam; only the running balance is intrinsic ledger state on the account.
-        from itrader.portfolio_handler.base import PortfolioStateStorage
         self._storage: PortfolioStateStorage = state_storage
 
         self.min_balance = Decimal('0.00')
@@ -146,7 +143,7 @@ class SimulatedCashAccount(Account):
         )
 
     @property
-    def state_storage(self) -> "PortfolioStateStorage":
+    def state_storage(self) -> PortfolioStateStorage:
         """The shared persistence seam this leaf routes its working state through.
 
         Read-only so ``Portfolio`` ADOPTS the seam of the account it is handed
@@ -595,7 +592,7 @@ class SimulatedMarginAccount(SimulatedCashAccount):
         self,
         initial_cash: float | Decimal = 0.0,
         *,
-        state_storage: "PortfolioStateStorage",
+        state_storage: PortfolioStateStorage,
         account_id: str | None = None,
         venue_name: str | None = None,
     ) -> None:
