@@ -1,40 +1,30 @@
 """
-Simulated account leaves — the verbatim money-math home (D-01 / D-05, ACCT-01/02).
+Simulated account leaves — the compute-side money math.
 
-``SimulatedCashAccount`` is ``CashManager`` moved **byte-for-byte** (D-05): the spot
-cash-flow math the SMA_MACD byte-exact oracle exercises (``134 / 46189.87730727451``)
-is carried here unchanged. Per the plan 01-01 D-04 resolution the oracle runs the SPOT
-settlement path, so this cash leaf is the verbatim-critical surface — the fill / lock /
-carry paths deliberately skip the 2dp quantize (Pitfall 1: a quantize there shifts the
-equity curve and FAILS the oracle).
+``SimulatedCashAccount`` carries the spot cash-flow math the SMA_MACD byte-exact
+oracle exercises (``134 / 46189.87730727451``). The fill / lock / carry paths
+deliberately skip the 2dp quantize: a quantize there shifts the equity curve and
+FAILS the oracle.
 
 ``SimulatedMarginAccount(SimulatedCashAccount)`` models margin as a strict *superset*
-of cash (D-02): inheritance adds the margin-only surface (locks + borrow carry) plus the
-margin/liquidation MATH pulled DOWN from ``PortfolioHandler`` (ACCT-02) with zero
-cash-logic duplication.
+of cash — inheritance adds the margin-only surface (locks, borrow carry, and the
+margin/liquidation math) with zero cash-logic duplication.
 
-The ``CashOperation`` audit entity moves here with the cash leaf and is re-exported from
-the ``account/`` barrel, giving every importer a single stable home once
-``cash_manager.py`` is deleted in plan 01-03.
+Neither leaf holds a reference back to the ``Portfolio`` that owns it. Both construct
+from ``initial_cash`` plus an explicitly-supplied state-storage seam, and the
+portfolio-side reads the margin math needs (open positions, portfolio id, total
+equity) arrive as METHOD ARGUMENTS. That is what lets a built ``Account`` be handed TO
+a ``Portfolio`` instead of the constructor demanding a ``Portfolio`` that does not
+exist yet.
 
-D-01 (11.1-03): neither leaf carries a reference back to the ``Portfolio`` that owns
-it. Both construct from ``initial_cash`` (plus an explicitly-supplied state-storage
-seam) and NOTHING else, and the three portfolio-side reads the margin math needed
-(open positions, portfolio id, total equity) are now METHOD ARGUMENTS supplied by
-``PortfolioHandler`` — already their only production caller. The math stays on the
-leaf; only the reads moved out. This is what lets a built ``Account`` be handed TO a
-``Portfolio`` (D-02/D-03) instead of the constructor demanding a ``Portfolio`` that
-does not exist yet.
-
-Money (D-12): Decimal end-to-end via ``to_money``; quantization only at ledger
-boundaries, never mid-stream. 4-space indentation (matches the ``cash_manager.py``
-code-motion source).
+Money is Decimal end-to-end via ``to_money``; quantization happens only at ledger
+boundaries, never mid-stream.
 """
 
 import uuid
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime, UTC
-from typing import Any, Optional, List, Dict, TYPE_CHECKING
+from typing import Any, Optional, List, Dict
 from dataclasses import dataclass
 
 import uuid_utils.compat as uuid_compat
@@ -48,24 +38,21 @@ from itrader.core.exceptions import (
 from itrader.core.ids import OrderId
 from itrader.core.money import to_money
 from itrader.logger import get_itrader_logger
+from itrader.portfolio_handler.base import PortfolioStateStorage
 from itrader.portfolio_handler.position import Position
 
 from .base import Account
-
-if TYPE_CHECKING:
-    from itrader.portfolio_handler.base import PortfolioStateStorage
 
 
 @dataclass
 class CashOperation:
     """Record of a cash operation for audit trail.
 
-    Deterministic ledger record (Pitfall 5): ``operation_id`` is a UUIDv7
-    generated at record construction; ``timestamp`` is supplied by the caller
-    (event-derived on the fill path — NEVER wall clock there). D-06: for fill
-    settlements ``amount`` is the SIGNED net cash delta (principal ± commission)
-    and ``fee`` carries the commission portion included in ``amount``, so
-    balance reconstruction holds: balance = initial + Σ amounts.
+    ``operation_id`` is a UUIDv7 minted at record construction; ``timestamp`` is
+    caller-supplied (event-derived on the fill path — never wall clock there).
+    For fill settlements ``amount`` is the SIGNED net cash delta (principal ±
+    commission) and ``fee`` the commission portion included in it, so balance
+    reconstruction holds: balance = initial + Σ amounts.
     """
     operation_id: uuid.UUID
     operation_type: CashOperationType
@@ -80,99 +67,74 @@ class CashOperation:
 
 class SimulatedCashAccount(Account):
     """
-    Simulated spot cash account — ``CashManager`` moved verbatim (D-01 / D-05,
-    ACCT-01).
+    Simulated spot cash account — the verbatim-critical leaf on the byte-exact
+    oracle SPOT path.
 
-    The verbatim-critical leaf on the byte-exact oracle SPOT path (D-04): the
-    cash-flow math here is byte-for-byte the ``CashManager`` code-motion, so the
-    SMA_MACD oracle stays ``134 / 46189.87730727451``. Satisfies the ``Account``
-    ABC (``balance`` / ``available`` / ``reserve(order_id, amount)`` /
-    ``release(order_id)``), the D-05 reserve/release dropping ``portfolio_id``
-    (the account IS the single account, LX-04 1:1).
+    Satisfies the ``Account`` ABC (``balance`` / ``available`` /
+    ``reserve(order_id, amount)`` / ``release(order_id)``); reserve and release
+    are keyed by order alone because the account IS the single account (1:1).
 
-    D-01 (11.1-03): this leaf holds NO reference to the ``Portfolio`` that owns
-    it. It never read one — it only stored one — so removing the attribute is
-    value-inert and the byte-exact oracle is unmoved. The state-storage seam the
-    old constructor used to SNIFF off the portfolio (``getattr(portfolio,
-    "state_storage", ...)``) is now supplied EXPLICITLY by the caller, which is
-    strictly more honest: the seam was always the only thing this leaf wanted
-    from the portfolio, and passing it names that dependency instead of reaching
-    through an object graph for it.
-
-    Features:
-    - Decimal precision for financial calculations
-    - Cash reservations for pending orders
-    - Overdraft protection
-    - Complete audit trail
-    - Balance validation and consistency checks
+    Holds NO reference to the ``Portfolio`` that owns it. The state-storage seam
+    is supplied EXPLICITLY by the caller rather than sniffed off a portfolio
+    attribute — that seam was always the only thing this leaf wanted from the
+    portfolio, so passing it names the dependency instead of reaching through an
+    object graph for it.
     """
 
     def __init__(
         self,
         initial_cash: float | Decimal = 0.0,
         *,
-        state_storage: "PortfolioStateStorage | None" = None,
+        state_storage: PortfolioStateStorage,
+        account_id: str | None = None,
+        venue_name: str | None = None,
     ) -> None:
-        """Construct a spot cash leaf from cash alone (D-01, 11.1-03).
+        """Construct a spot cash leaf from cash alone.
 
         Parameters
         ----------
         initial_cash:
             The opening cash balance, quantized to the cash scale at this ledger
-            boundary (D-04 string entry via ``to_money``, D-03 HALF_UP).
+            boundary.
         state_storage:
             The shared ``PortfolioStateStorage`` seam (reserved cash, locked
             margin, cash-operation audit trail). ``Portfolio._init_managers``
             passes the SAME instance its four managers hold, so the account and
-            its siblings stay on one backend. Keyword-only ON PURPOSE: the old
-            signature took a ``portfolio`` FIRST positional, so a stale
-            ``Account(portfolio, cash)`` call now fails loud with a ``TypeError``
-            instead of silently binding a portfolio into this slot. Omitted
-            (standalone construction, e.g. a focused unit test) falls back to a
-            private in-memory backend.
+            its siblings stay on one backend.
+
+            Keyword-only so a stale ``Account(portfolio, cash)`` call fails loud
+            with a ``TypeError`` rather than binding a portfolio into this slot.
+            REQUIRED with no default: a leaf that minted its own backend would be
+            invisible to the live restart path — ``state_storage.rehydrate(account)``
+            repopulates the reservation and locked-margin caches on the
+            PORTFOLIO's instance — so it would silently lose every reservation
+            across a restart while reporting itself live. Backtest reads those
+            containers nowhere else, so the byte-exact oracle and the whole suite
+            stay green throughout.
         """
-        # D-19: lock removed — single-writer contract, see Portfolio docstring.
+        # No lock: the single-writer contract makes one unnecessary (see Portfolio).
         self.logger = get_itrader_logger().bind(component="SimulatedCashAccount")
 
-        # Cash balance with high precision (D-04 string entry via to_money;
-        # quantize to the cash scale at this ledger boundary, D-03 HALF_UP).
-        # WR-05: the scale comes from the account's declared precision (the ABC's
-        # single home) — `Portfolio._validate_initial_state` asks the SAME helper,
-        # so the opening-cash equality guard cannot be broken by a one-sided change.
+        # The ONE storage site for the (venue_name, account_id) pair this compute
+        # leaf belongs to, read back through the ``Portfolio.venue_name`` /
+        # ``.account_id`` properties. Optional because the backtest oracle leaf
+        # names no account; the caller that DOES know the pair threads it in so
+        # the leaf and the portfolio can never disagree about which account it is.
+        self.account_id = account_id
+        self.venue_name = venue_name
+
+        # `Portfolio._validate_initial_state` asks the SAME helper for the cash
+        # scale, so the opening-cash equality guard cannot be broken one-sidedly.
         self._balance = self.quantize_cash(initial_cash)
 
-        # M2-08: reserved cash (working state) + cash operations (audit trail) now
-        # live in the injected state-storage seam. This account no longer owns
-        # those containers — it routes reads/writes through self._storage. The
-        # cash *balance* (self._balance) stays on the account: it is not one of the
-        # four relocated containers (positions / transactions / cash-ops+reserved /
-        # snapshots) — reserved cash is the working-state container, the running
-        # balance is intrinsic ledger state.
-        #
-        # D-01 (11.1-03): the seam is now PASSED IN, not sniffed off a portfolio
-        # back-reference. Every real owner (Portfolio._init_managers, and through
-        # it the paper venue plugin) supplies the SAME instance its four managers
-        # hold, so the previous getattr-and-write-back dance — fabricate a backend
-        # from the portfolio's ``_environment``/``_sql_engine``, then assign it
-        # BACK onto ``portfolio.state_storage`` so siblings do not end up on
-        # disjoint backends (the old WR-02 note) — is no longer needed: there is
-        # exactly one seam and the caller names it. The remaining fallback is for
-        # STANDALONE construction only (a focused unit test with no portfolio at
-        # all), and it is deliberately plain in-memory: with no portfolio to read
-        # an environment from, guessing 'live' is not an option, and a caller that
-        # wants a durable backend must now say so by passing one.
-        from itrader.portfolio_handler.base import PortfolioStateStorage
-        from itrader.portfolio_handler.storage import PortfolioStateStorageFactory
-        if state_storage is None:
-            state_storage = PortfolioStateStorageFactory.create("backtest")
+        # Reserved cash and the cash-operation audit trail live in the injected
+        # seam; only the running balance is intrinsic ledger state on the account.
         self._storage: PortfolioStateStorage = state_storage
 
-        # Configuration
-        self.min_balance = Decimal('0.00')  # Minimum allowed balance
-        self.max_balance = Decimal('10000000.00')  # Maximum allowed balance
-        # WR-05: `precision` is NOT re-declared here — the cash scale is declared
-        # once on the `Account` ABC and inherited, so `_validate_and_convert_amount`
-        # below and `quantize_cash` above read one value, not two copies of it.
+        self.min_balance = Decimal('0.00')
+        self.max_balance = Decimal('10000000.00')
+        # `precision` is inherited from the `Account` ABC — the cash scale is
+        # declared once there, never copied here.
 
         self.logger.info("SimulatedCashAccount initialized",
             initial_balance=str(self._balance),
@@ -181,37 +143,27 @@ class SimulatedCashAccount(Account):
         )
 
     @property
-    def state_storage(self) -> "PortfolioStateStorage":
+    def state_storage(self) -> PortfolioStateStorage:
         """The shared persistence seam this leaf routes its working state through.
 
-        Exposed READ-ONLY (11.1-09, D-02) so ``Portfolio`` can ADOPT the seam of the
-        account it is handed rather than building a second one. That inversion is
-        what makes the account/managers split structurally impossible: the account is
-        now built BEFORE its portfolio exists, so a portfolio that built its own
-        backend would leave the leaf on a private one — and the live restart path
-        (``state_storage.rehydrate(account)``) repopulates the reservation and
-        locked-margin caches on the PORTFOLIO's instance, so every reservation would
-        be silently lost across a restart. Backtest reads none of those containers
-        anywhere else, so the byte-exact oracle would stay green throughout.
-
-        There is NO setter: rebinding the seam after construction is the late-init
-        shape this phase exists to remove.
+        Read-only so ``Portfolio`` ADOPTS the seam of the account it is handed
+        rather than building a second one — the account is built BEFORE its
+        portfolio exists, and the split backend that would result is the restart
+        defect described on ``__init__``. There is no setter: rebinding after
+        construction is the late-init shape this design removes.
         """
         return self._storage
 
     @property
     def balance(self) -> Decimal:
-        """Get current cash balance."""
         return self._balance
 
     @property
     def available_balance(self) -> Decimal:
-        """Get available cash balance (D-10: one buying-power authority).
+        """The single buying-power authority: ``balance − reserved − locked_margin``.
 
-        ``balance − reserved − locked_margin`` (Plan 02-04, Pitfall 6). In spot
-        mode (``enable_margin=False``) nothing is ever locked, so
-        ``locked_margin_total`` is a clean ``Decimal('0')`` and this is
-        byte-exact ``balance − reserved`` (``x − Decimal('0') == x``).
+        In spot mode nothing is ever locked, so locked margin is a clean
+        ``Decimal('0')`` and this is byte-exact ``balance − reserved``.
         """
         return (
             self._balance
@@ -221,22 +173,16 @@ class SimulatedCashAccount(Account):
 
     @property
     def reserved_balance(self) -> Decimal:
-        """Get reserved cash balance."""
         return self._storage.get_reserved_cash()
 
     def restore_cash(self, balance: Decimal) -> None:
-        """Restore the cash balance from a durable snapshot on restart (D-07 / V17-05).
+        """Restore the cash balance from a durable snapshot on restart.
 
-        The ONE live-restart-only cash setter: sets ``self._balance`` directly from the
-        persisted account-state scalar
-        (``CachedSqlPortfolioStateStorage.load_account_state``) so a fresh account leaf
-        REMEMBERS the pre-restart balance instead of its construction-time initial cash.
-        Deliberately bypasses the ``deposit``/``withdraw`` min/max-balance policy gates —
-        those guard NEW live admin cash flows; a restart is restoring already-validated
-        persisted truth, not admitting a new deposit. Decimal end-to-end via ``to_money``
-        (never ``Decimal(float)`` — the persisted Postgres ``Numeric`` round-trips
-        exactly). Oracle-dark: only reachable on the live rehydrate path (the in-memory
-        backtest backend exposes no ``rehydrate``), so SMA_MACD stays byte-exact.
+        The ONE live-restart-only cash setter, reading the persisted account-state
+        scalar so a fresh leaf REMEMBERS the pre-restart balance instead of its
+        construction-time initial cash. Deliberately bypasses the
+        ``deposit``/``withdraw`` min/max-balance gates: those guard NEW live admin
+        cash flows, while a restart restores already-validated persisted truth.
 
         Args:
             balance: The persisted cash balance to restore (full precision Decimal).
@@ -252,29 +198,23 @@ class SimulatedCashAccount(Account):
             description: Description of the deposit
             reference_id: Optional reference ID for tracking
 
-        Returns:
-            bool: True if successful
-
         Raises:
-            InvalidTransactionError: If amount is invalid
+            InvalidTransactionError: If amount is invalid, or would breach the
+                maximum balance limit
         """
         amount_decimal = self._validate_and_convert_amount(amount, "deposit")
 
         old_balance = self._balance
         new_balance = old_balance + amount_decimal
 
-        # Check maximum balance limit
         if new_balance > self.max_balance:
             raise InvalidTransactionError(
                 f"Deposit would exceed maximum balance limit of ${self.max_balance}",
                 {"amount": float(amount_decimal), "current_balance": float(old_balance)}
             )
 
-        # Execute deposit
         self._balance = new_balance
 
-        # Record operation (IN-04: return value discarded — the record is
-        # appended to storage inside the helper).
         self._create_operation(
             CashOperationType.DEPOSIT,
             amount_decimal,
@@ -303,11 +243,9 @@ class SimulatedCashAccount(Account):
             description: Description of the withdrawal
             reference_id: Optional reference ID for tracking
 
-        Returns:
-            bool: True if successful
-
         Raises:
-            InvalidTransactionError: If amount is invalid
+            InvalidTransactionError: If amount is invalid, or would breach the
+                minimum balance
             InsufficientFundsError: If insufficient funds
         """
         amount_decimal = self._validate_and_convert_amount(amount, "withdrawal")
@@ -315,7 +253,6 @@ class SimulatedCashAccount(Account):
         old_balance = self._balance
         available = self.available_balance
 
-        # Check sufficient funds
         if available < amount_decimal:
             raise InsufficientFundsError(
                 required_cash=amount_decimal,
@@ -324,18 +261,14 @@ class SimulatedCashAccount(Account):
 
         new_balance = old_balance - amount_decimal
 
-        # Check minimum balance
         if new_balance < self.min_balance:
             raise InvalidTransactionError(
                 f"Withdrawal would breach minimum balance of ${self.min_balance}",
                 {"amount": float(amount_decimal), "resulting_balance": float(new_balance)}
             )
 
-        # Execute withdrawal
         self._balance = new_balance
 
-        # Record operation (IN-04: return value discarded — the record is
-        # appended to storage inside the helper).
         self._create_operation(
             CashOperationType.WITHDRAWAL,
             amount_decimal,
@@ -365,9 +298,6 @@ class SimulatedCashAccount(Account):
             description: Description of the transaction
             transaction_id: Transaction ID for reference
 
-        Returns:
-            bool: True if successful
-
         Raises:
             InvalidTransactionError: If amount is invalid
             InsufficientFundsError: If insufficient funds for debit
@@ -378,7 +308,6 @@ class SimulatedCashAccount(Account):
         old_balance = self._balance
 
         if is_debit:
-            # Debit (outflow)
             available = self.available_balance
             if available < amount_decimal:
                 raise InsufficientFundsError(
@@ -389,15 +318,11 @@ class SimulatedCashAccount(Account):
             new_balance = old_balance - amount_decimal
             operation_type = CashOperationType.TRANSACTION_DEBIT
         else:
-            # Credit (inflow)
             new_balance = old_balance + amount_decimal
             operation_type = CashOperationType.TRANSACTION_CREDIT
 
-        # Execute cash flow
         self._balance = new_balance
 
-        # Record operation (IN-04: return value discarded — the record is
-        # appended to storage inside the helper).
         self._create_operation(
             operation_type,
             amount_decimal,
@@ -420,20 +345,16 @@ class SimulatedCashAccount(Account):
 
     def apply_fill_cash_flow(self, amount: Decimal, fee: Decimal, description: str,
                              reference_id: str, timestamp: datetime) -> None:
-        """Apply a fill settlement's signed, full-precision cash delta (D-05/D-06).
+        """Apply a fill settlement's signed, full-precision cash delta.
 
         The ONE trade-path cash primitive. Deliberately does NOT route through
-        ``_validate_and_convert_amount`` (Pitfall 1: its 2dp HALF_UP quantize
-        would silently shift the balance → equity curve → byte-exact oracle
-        FAIL on 8dp instrument costs) and does NOT enforce the deposit/withdraw
-        min/max-balance policy gates (solvency was enforced pre-trade by the
-        reservation gate; the settlement-side check is the separate
-        ``assert_funds_invariant`` guard).
+        ``_validate_and_convert_amount``: its 2dp HALF_UP quantize would silently
+        shift the balance → equity curve → byte-exact oracle FAIL on 8dp
+        instrument costs. It also skips the deposit/withdraw min/max-balance
+        gates — solvency is enforced pre-trade by the reservation gate, and the
+        settlement-side check is the separate ``assert_funds_invariant`` guard.
 
-        Records exactly ONE ``CashOperation`` per fill (D-06): ``amount`` is
-        the SIGNED net cash delta (principal ± commission, full precision),
-        ``fee`` the commission portion included in it, ``timestamp`` the
-        caller-supplied event-derived time (Pitfall 5 — never wall clock).
+        Records exactly ONE ``CashOperation`` per fill.
 
         Args:
             amount: Signed full-precision net cash delta — negative for a BUY
@@ -465,14 +386,13 @@ class SimulatedCashAccount(Account):
         )
 
     def assert_funds_invariant(self, required: Decimal) -> None:
-        """D-10 engine-bug guard: raise when a settlement debit exceeds balance.
+        """Engine-bug guard: raise when a settlement debit exceeds balance.
 
         Compares against ``self._balance`` — NEVER the reservation-adjusted
-        buying power (Pitfall 2): FILL dispatches portfolio-first, so the
-        order's own un-released reservation would false-positive here. The
-        D-02 reservation gate should have prevented this state; if it fires,
-        it is an engine bug and the backtest stops loudly via the Phase 4
-        ``_on_handler_error`` re-raise seam.
+        buying power: FILL dispatches portfolio-first, so the order's own
+        un-released reservation would false-positive here. The admission
+        reservation gate should have prevented this state; if it fires it is an
+        engine bug and the backtest stops loudly through ``FailFastPolicy``.
 
         Args:
             required: The actual net cash cost of the settlement debit.
@@ -488,18 +408,13 @@ class SimulatedCashAccount(Account):
             )
 
     def reserve(self, order_id: OrderId, amount: Decimal) -> None:
-        """Reserve cash for a pending order, keyed by ``order_id`` (D-05/Plan 05-03).
+        """Reserve cash for a pending order, keyed by ``order_id``.
 
-        The Account-level reserve (D-05 — drops ``portfolio_id``; the account IS
-        the single account, LX-04 1:1). Wraps the verbatim ``reserve_cash``
-        mechanics with the fixed description ``"order cash reservation"`` and
-        ``str(order_id)`` as the reference id.
-
-        Reservations are tracked per ``order_id`` at FULL precision (OQ4: the
-        released amount must equal the reserved amount exactly, so this
-        deliberately skips ``_validate_and_convert_amount``'s 2dp quantize).
-        The audit entry records balance_before == balance_after — only the
-        reservation changes, never the ledger balance.
+        Reservations are tracked at FULL precision — the released amount must
+        equal the reserved amount exactly, so this deliberately skips
+        ``_validate_and_convert_amount``'s 2dp quantize. The audit entry records
+        balance_before == balance_after: only the reservation moves, never the
+        ledger balance.
 
         Args:
             order_id: The order the reservation is keyed by.
@@ -527,7 +442,6 @@ class SimulatedCashAccount(Account):
 
         self._storage.add_reservation(str(order_id), amount_decimal)
 
-        # Record operation (balance unchanged — reservation only)
         self._create_operation(
             CashOperationType.RESERVATION,
             amount_decimal,
@@ -539,16 +453,11 @@ class SimulatedCashAccount(Account):
         )
 
     def release(self, order_id: OrderId) -> None:
-        """Release the cash reservation keyed by ``order_id`` (D-05/Plan 05-03).
-
-        The Account-level release (D-05 — drops ``portfolio_id``). Wraps the
-        verbatim ``release_reservation`` mechanics with ``str(order_id)`` as the
-        reference id.
+        """Release the cash reservation keyed by ``order_id``.
 
         Idempotent: releasing an unknown or already-released reference is a
-        silent no-op — no exception, no audit entry. When a reservation
-        existed, the exact reserved amount (full precision, OQ4) is released
-        and a RELEASE_RESERVATION audit entry is recorded.
+        silent no-op — no exception, no audit entry. When a reservation existed
+        the exact reserved amount is released at full precision.
 
         Args:
             order_id: The order the reservation was keyed by
@@ -557,7 +466,6 @@ class SimulatedCashAccount(Account):
         if released is None:
             return
 
-        # Record operation (balance unchanged — reservation only)
         self._create_operation(
             CashOperationType.RELEASE_RESERVATION,
             released,
@@ -569,7 +477,7 @@ class SimulatedCashAccount(Account):
         )
 
     def get_balance_info(self) -> Dict[str, float]:
-        """Get comprehensive balance information."""
+        """Balance, buying power and the configured limits, as floats."""
         return {
             "total_balance": float(self._balance),
             "available_balance": float(self.available_balance),
@@ -579,7 +487,12 @@ class SimulatedCashAccount(Account):
         }
 
     def get_cash_operations(self, limit: Optional[int] = None, operation_type: Optional[CashOperationType] = None) -> List[CashOperation]:
-        """Get cash operations history."""
+        """Return the cash-operation audit trail, oldest first.
+
+        Args:
+            limit: Keep only the most recent ``limit`` operations.
+            operation_type: Keep only operations of this type.
+        """
         operations = self._storage.get_cash_operations()
 
         if operation_type:
@@ -591,8 +504,7 @@ class SimulatedCashAccount(Account):
         return operations.copy()
 
     def validate_balance_consistency(self) -> bool:
-        """Validate balance consistency and integrity."""
-        # Check if balance is within valid range
+        """Return False (and log) when balance or reserved cash is incoherent."""
         if self._balance < 0:
             self.logger.error("Negative balance detected", balance=str(self._balance))
             return False
@@ -612,25 +524,20 @@ class SimulatedCashAccount(Account):
         return True
 
     def _validate_and_convert_amount(self, amount: float | Decimal, operation_type: str) -> Decimal:
-        """Validate and convert amount to Decimal with proper precision."""
+        """Validate an admin-path amount and quantize it to the cash scale."""
         if amount <= 0:
             raise InvalidTransactionError(
                 f"Amount for {operation_type} must be positive",
-                # IN-05: convert at the serialization edge so a binary-float
-                # artifact from an incoming float `amount` does not surface in
-                # the structured error/audit payload ("Decimal until the edge").
+                # Serialize at the edge: a binary-float artifact from an incoming
+                # float `amount` must not surface in the audit payload.
                 {"amount": str(to_money(amount))}
             )
 
-        # Convert to Decimal with proper precision (D-04 string entry).
         amount_decimal = to_money(amount).quantize(self.precision, rounding=ROUND_HALF_UP)
 
         if amount_decimal <= 0:
             raise InvalidTransactionError(
                 f"Amount for {operation_type} too small after precision rounding",
-                # IN-05/WR-03: mirror the positivity branch — serialize at the
-                # edge so an incoming float `amount` (and the rounded Decimal)
-                # do not leak a binary-float artifact into the audit payload.
                 {"amount": str(to_money(amount)), "rounded_amount": str(amount_decimal)}
             )
 
@@ -641,14 +548,12 @@ class SimulatedCashAccount(Account):
                          balance_before: Decimal, balance_after: Decimal,
                          timestamp: datetime,
                          fee: Decimal = Decimal("0")) -> CashOperation:
-        """Create a cash operation record.
+        """Append one cash-operation record to the audit trail.
 
-        Deterministic (Pitfall 5): ``operation_id`` is a UUIDv7 (the
-        ``uuid_utils.compat`` scheme used at fill construction) and
-        ``timestamp`` is CALLER-supplied — the fill path always passes the
-        transaction's event-derived time; admin paths (deposit/withdraw/
-        reservations, not on the oracle-serialized path) pass their own
-        wall-clock source explicitly at their call sites.
+        ``timestamp`` is CALLER-supplied so the record stays deterministic: the
+        fill path passes the transaction's event-derived time, while admin paths
+        (deposit/withdraw/reservations, none of them oracle-serialized) name
+        their own wall-clock source at the call site.
         """
         operation = CashOperation(
             operation_id=uuid_compat.uuid7(),
@@ -668,97 +573,92 @@ class SimulatedCashAccount(Account):
 
 class SimulatedMarginAccount(SimulatedCashAccount):
     """
-    Simulated margin account — the strict *superset* of cash (D-01 / D-02,
-    ACCT-02).
+    Simulated margin account — the strict *superset* of cash.
 
     Margin needs everything the cash leaf provides (balance / available /
-    reserve / release + the full cash-flow audit trail) AND adds the margin-only
+    reserve / release plus the cash-flow audit trail) AND adds the margin-only
     surface: position-keyed margin locks, short borrow-interest carry, and the
-    margin/liquidation MATH pulled DOWN from ``PortfolioHandler`` (ACCT-02 — the
-    pure-Decimal math moves here; the liquidation ``global_queue.put`` emission
-    and the ``_liquidate_position`` / ``_run_liquidation_pass`` event-minting
-    shell STAY in the handler, queue-only rule preserved). Inheritance expresses
-    the superset honestly with ZERO cash-logic duplication (D-02).
+    margin/liquidation math. Only the pure-Decimal math lives here — the
+    liquidation ``global_queue.put`` emission and its event-minting shell stay in
+    ``PortfolioHandler``, preserving the queue-only rule.
 
-    Dark-but-verbatim (D-04): the SMA_MACD oracle runs the SPOT path, so this
-    leaf is not on the byte-exact hot path — but the math is byte-for-byte the
-    ``PortfolioHandler`` / ``CashManager`` code-motion and stays mypy-clean. The
-    lock / borrow-interest paths carry full precision (no 2dp quantize, Pitfall
-    1); the liq price is quantized only at the FillEvent boundary in the handler
-    mint step, never mid-formula.
+    The SMA_MACD oracle runs the SPOT path, so this leaf is not on the byte-exact
+    hot path. The lock and borrow-interest paths still carry full precision (no
+    2dp quantize); the liq price is quantized only at the FillEvent boundary in
+    the handler's mint step, never mid-formula.
     """
 
     def __init__(
         self,
         initial_cash: float | Decimal = 0.0,
         *,
-        state_storage: "PortfolioStateStorage | None" = None,
+        state_storage: PortfolioStateStorage,
+        account_id: str | None = None,
+        venue_name: str | None = None,
     ) -> None:
-        """Construct a margin leaf from cash alone (D-01, 11.1-03).
+        """Construct a margin leaf from cash alone.
 
         Parameters
         ----------
         initial_cash:
             The opening cash balance (see ``SimulatedCashAccount.__init__``).
         state_storage:
-            The shared ``PortfolioStateStorage`` seam, keyword-only. Same
-            contract as the cash superclass — the margin leaf additionally keeps
-            its position-keyed margin locks there.
+            The shared ``PortfolioStateStorage`` seam, keyword-only and REQUIRED —
+            same contract as the cash superclass. This arm must state it
+            independently because it declares its own ``__init__``: a default here
+            would keep the restart defect alive on the leaf that ALSO parks
+            position-keyed margin locks on the seam, dropping locked margin as
+            well as reservations.
         """
-        super().__init__(initial_cash, state_storage=state_storage)
-        # The Universe read-model used to resolve per-symbol Instruments for the
-        # margin/liquidation math. Wired by the runner via ``set_universe`` (the
-        # math-pulldown moves the universe seam with it); 01-03 re-points the
-        # handler to call DOWN into the account once this leaf is consumed.
+        super().__init__(
+            initial_cash, state_storage=state_storage,
+            account_id=account_id, venue_name=venue_name)
+        # Resolves per-symbol Instruments for the margin/liquidation math; wired
+        # by the runner through ``set_universe``.
         self._universe: Any = None
         self.logger = get_itrader_logger().bind(component="SimulatedMarginAccount")
 
     def set_universe(self, universe: Any) -> None:
         """Inject the Universe read-model used to resolve per-symbol Instruments.
 
-        D-13: stores the reference; ``maintenance_margin`` reads
-        ``universe.instrument(ticker).maintenance_margin_rate`` per open
-        position. Mirrors the handler's ``set_universe`` seam (the math-pulldown
-        moves the universe dependency down with the math, ACCT-02).
+        ``maintenance_margin`` reads
+        ``universe.instrument(ticker).maintenance_margin_rate`` per open position.
         """
         self._universe = universe
 
     @property
     def locked_margin_total(self) -> Decimal:
-        """Total margin currently locked across all open positions (D-10).
+        """Total margin currently locked across all open positions.
 
-        Position-keyed, a DISTINCT lifecycle from the order-keyed reservation
-        (Pitfall 2). Returns a clean ``Decimal('0')`` when nothing is locked
-        (Pitfall 6) — never a float, never a quantized zero.
+        Position-keyed — a DISTINCT lifecycle from the order-keyed reservation.
+        Returns a clean ``Decimal('0')`` when nothing is locked, never a float
+        and never a quantized zero.
         """
         return self._storage.get_locked_margin()
 
     def get_locked_margin_for(self, position_id: str) -> Decimal:
-        """Return the isolated margin locked for one position id (WR-03).
+        """Return the isolated margin locked for one position id.
 
-        Public read-surface delegator over the storage seam so sibling handlers
-        (the liquidation engine's ``_liq_inputs``) read a single position's
-        locked margin WITHOUT reaching through the private ``_storage``
-        attribute — a refactor of the pluggable storage backend then surfaces as
-        a typed contract change here, not a silent ``AttributeError`` across a
-        domain boundary. Returns a clean ``Decimal('0')`` when nothing is locked.
+        A public delegator over the storage seam so callers read a single
+        position's locked margin WITHOUT reaching through the private
+        ``_storage`` attribute — a backend refactor then surfaces as a typed
+        contract change here, not a silent ``AttributeError`` across a domain
+        boundary. Returns a clean ``Decimal('0')`` when nothing is locked.
         """
         return self._storage.get_locked_margin_for(position_id)
 
     def lock_margin(self, position_id: str, amount: Decimal) -> None:
-        """Lock (insert or replace) margin for a position, keyed by id (D-10).
+        """Lock (insert or replace) margin for a position, keyed by id.
 
-        The margin-mode analogue of ``reserve`` (Pitfall 2 — a DISTINCT,
-        position-lifetime container, not the order-keyed reservation). Held at
-        FULL precision (no 2dp quantize, same discipline as ``reserve``)
-        so a later ``release_margin`` returns the EXACT locked amount with no
-        rounding drift. The ledger balance is unchanged — only buying power
-        (``available_balance``) moves. A scale-in replaces the prior lock with
-        the recomputed ``new_aggregate_notional / L``.
+        The margin-mode analogue of ``reserve``, over a DISTINCT
+        position-lifetime container. Held at FULL precision so a later
+        ``release_margin`` returns the EXACT locked amount with no rounding
+        drift. The ledger balance is unchanged — only buying power moves. A
+        scale-in replaces the prior lock with the recomputed
+        ``new_aggregate_notional / L``.
 
-        No audit ``CashOperation`` is recorded here: the lock is working state
-        (like a reservation move), and the open/close fill that drives it
-        already records its own commission/PnL settlement entry.
+        No audit ``CashOperation`` is recorded: the lock is working state, and
+        the fill that drives it already records its own settlement entry.
 
         Args:
             position_id: The position the margin is locked under.
@@ -769,11 +669,10 @@ class SimulatedMarginAccount(SimulatedCashAccount):
     def release_margin(self, position_id: str) -> Decimal:
         """Release the margin locked for a position id, returning the amount.
 
-        Idempotent: releasing an unknown or already-released position is a
-        silent no-op that returns a clean ``Decimal('0')`` (no exception). When
-        a lock existed, the EXACT locked amount (full precision) is released and
-        returned — the caller settles PnL + releases the lock together on close
-        (Plan 02-04, D-11).
+        Idempotent: releasing an unknown or already-released position is a silent
+        no-op returning a clean ``Decimal('0')``. When a lock existed the EXACT
+        locked amount is released and returned, so the caller can settle PnL and
+        release the lock together on close.
 
         Args:
             position_id: The position whose locked margin is released.
@@ -790,24 +689,16 @@ class SimulatedMarginAccount(SimulatedCashAccount):
 
     def accrue_borrow_interest(self, amount: Decimal, reference_id: str,
                                description: str, timestamp: datetime) -> None:
-        """Debit a short's per-bar borrow-interest carry (CARRY-01/D-03/D-08).
+        """Debit a short's per-bar borrow-interest carry.
 
         The financing-cost analogue of ``apply_fill_cash_flow`` for the short
-        side: a REAL ledger outflow (carry erodes equity as it accrues so the
-        P4 liquidation trigger sees carry-eroded equity), recorded as a
-        first-class ``BORROW_INTEREST`` ``CashOperation`` so the drag is an
-        attributable ledger line DISTINCT from trade PnL (D-08 — carry never
-        folds into ``Position.realised_pnl``).
+        side: a REAL ledger outflow, so carry erodes equity as it accrues and the
+        liquidation trigger sees the eroded figure. Recorded as a first-class
+        ``BORROW_INTEREST`` operation so the drag stays an attributable ledger
+        line DISTINCT from trade PnL — carry never folds into
+        ``Position.realised_pnl``.
 
-        Full precision, like ``apply_fill_cash_flow`` (Pitfall 1: routing
-        through ``_validate_and_convert_amount``'s 2dp quantize would shift the
-        equity curve → byte-exact oracle FAIL). ``timestamp`` is the bar's
-        BUSINESS time supplied by the caller — NEVER ``datetime.now(UTC)``
-        (Pitfall 5 / D-04 — a wall-clock stamp breaks the determinism double-run
-        gate).
-
-        A zero ``amount`` (rate-0 / no-short under default-off) is a silent
-        no-op — no balance change, no audit entry — keeping SMA_MACD byte-exact.
+        Full precision, like ``apply_fill_cash_flow``.
 
         Args:
             amount: Decimal carry magnitude to debit (positive outflow). A
@@ -842,31 +733,22 @@ class SimulatedMarginAccount(SimulatedCashAccount):
 
     def assert_lock_fits_buying_power(self, lock_amount: Decimal,
                                       position_id: str) -> None:
-        """WR-01 (T-03-15): assert a margin lock fits available buying power.
+        """Assert a margin lock fits available buying power.
 
         A settlement-side solvency assertion run BEFORE a position-keyed margin
-        lock is applied: the lock (``aggregate_notional / L``) must fit the
-        buying power that remains AFTER releasing any prior lock on the SAME
-        position (a scale-in replaces its own lock, so its already-locked amount
-        is not double-counted). Fails LOUD — a silent over-lock beyond buying
-        power on the short/levered path is a solvency leak the D-02 admission
-        reservation should have caught upstream; if it reaches here it is an
-        engine bug and the backtest stops loudly.
+        lock is applied. Buying power for this check is
+        ``available_balance + own_prior_lock``: ``available_balance`` already
+        nets reserved and locked cash, and the position's own prior lock is about
+        to be released and re-locked, so it is added back rather than
+        double-counted. Fails LOUD — a silent over-lock on the short/levered path
+        is a solvency leak the admission reservation should have caught upstream.
 
-        Available buying power for this check =
-            ``available_balance + own_prior_lock``
-        (``available_balance`` already nets reserved + locked; the position's
-        own prior lock is about to be released and re-locked, so it is added
-        back). A lock within that figure settles normally.
-
-        WR-04 (Plan 04-02) — CALL-ORDER CONTRACT: callers MUST invoke this
-        assertion while the position's prior lock is STILL present (i.e. assert
-        BEFORE ``release_margin``). The add-back reads
-        ``get_locked_margin_for(position_id)`` to credit the position's own prior
-        lock; if the prior lock has already been popped by ``release_margin`` it
-        reads ``0`` and the add-back is silently dropped. The ``portfolio.py``
-        margin-lock sites (open/scale-in and partial/full close) honour this
-        order — assert, then release, then re-lock.
+        CALL-ORDER CONTRACT: callers MUST invoke this while the position's prior
+        lock is STILL present — assert BEFORE ``release_margin``. The add-back
+        reads ``get_locked_margin_for(position_id)``; once ``release_margin`` has
+        popped that lock it reads ``0`` and the add-back is silently dropped,
+        turning the assertion into a stricter check that rejects legitimate
+        scale-ins. The ``portfolio.py`` lock sites honour this order.
 
         Args:
             lock_amount: The margin about to be locked (``aggregate_notional / L``).
@@ -884,55 +766,41 @@ class SimulatedMarginAccount(SimulatedCashAccount):
             )
 
     # ------------------------------------------------------------------
-    # Margin / liquidation MATH pulled DOWN from PortfolioHandler (ACCT-02,
-    # D-13/MARGIN-03 + LIQ-01/02). Pure Decimal end-to-end (Pitfall 5 — NEVER
-    # Decimal(float)); the liq price is quantized to the instrument price scale
-    # ONLY at the FillEvent boundary in the handler mint step, never mid-formula.
-    # D-01 (11.1-03): the MATH stays here; the portfolio-side READS it needs
-    # (open positions, the portfolio id carried by the fail-loud guard, and
-    # mark-to-market equity) are METHOD ARGUMENTS supplied by ``PortfolioHandler``
-    # — already the only production caller of both. That is what dissolves the
-    # mutual Account<->Portfolio reference: the leaf answers a margin question
-    # about state it is HANDED, so it needs no object graph to walk. The emission
-    # shell stays in PortfolioHandler.
+    # Margin / liquidation math. Pure Decimal end-to-end; the liq price is
+    # quantized to the instrument price scale ONLY at the FillEvent boundary in
+    # the handler's mint step, never mid-formula. The portfolio-side reads these
+    # need (open positions, portfolio id, mark-to-market equity) arrive as METHOD
+    # ARGUMENTS: the leaf answers a margin question about state it is HANDED, so
+    # it needs no object graph to walk and no back-reference to its Portfolio.
     # ------------------------------------------------------------------
 
     def maintenance_margin(self, positions: Any, portfolio_id: Any) -> Decimal:
-        """Return maintenance margin computed on demand (D-13/MARGIN-03).
+        """Return maintenance margin computed on demand.
 
-        ``maintenance_margin = Σ (Instrument.maintenance_margin_rate × |size| ×
-        current_price)`` over the supplied OPEN positions, resolving each
-        ticker's Instrument via the injected Universe. Decimal end-to-end
-        (RESEARCH Pitfall 8 — Position.net_quantity is already |size| Decimal and
-        current_price is Decimal; the rate is Decimal). NOT a stored Position
-        field (D-13a). With no open positions the sum is ``Decimal("0")``.
+        ``Σ (Instrument.maintenance_margin_rate × |size| × current_price)`` over
+        the supplied OPEN positions, resolving each ticker's Instrument via the
+        injected Universe. Computed, never a stored Position field.
 
         Parameters
         ----------
         positions:
             The open positions to price, as the ticker-keyed mapping
-            ``PositionManager.get_all_positions()`` returns. D-01: supplied by
-            the caller (``PortfolioHandler``) instead of read off a portfolio
-            back-reference.
+            ``PositionManager.get_all_positions()`` returns.
         portfolio_id:
-            The portfolio the positions belong to, carried as attribution
-            context on the WR-02 fail-loud ``StateError`` below. NOT optional
-            and NOT droppable (RESEARCH F-6): dropping it degrades a
-            context-rich error on a money-arithmetic path.
+            The portfolio the positions belong to. Carried purely as attribution
+            context on the fail-loud ``StateError`` below — not droppable, since
+            losing it degrades a context-rich error on a money path.
 
         Returns
         -------
         Decimal
-            The maintenance margin, full precision, ``Decimal("0")`` when there
+            The maintenance margin at full precision, ``Decimal("0")`` when there
             is nothing to price.
         """
         total = Decimal("0")
-        # WR-02 (T-03-17): the per-symbol Instrument read dereferences the
-        # injected Universe. If positions exist but the Universe was never wired
-        # (``set_universe`` not called), fail LOUD with a context-rich StateError
-        # — never a bare ``AttributeError: 'NoneType' has no attribute
-        # 'instrument'``. With NO open positions the read is never reached, so an
-        # unwired Universe is benign and the sum is ``Decimal("0")``.
+        # Fail loud with attribution rather than a bare ``AttributeError:
+        # 'NoneType' has no attribute 'instrument'``. With no open positions the
+        # Instrument read is never reached, so an unwired Universe is benign.
         if positions and self._universe is None:
             raise StateError(
                 portfolio_id,
@@ -950,29 +818,23 @@ class SimulatedMarginAccount(SimulatedCashAccount):
         return total
 
     def margin_ratio(self, equity: Decimal, positions: Any, portfolio_id: Any) -> Decimal:
-        """Return ``total_equity / maintenance_margin`` (D-12/D-13).
+        """Return ``total_equity / maintenance_margin``.
 
-        Mark-to-market equity over maintenance margin — the figure a UI/live layer
-        (deferred N+4) reads for margin-call warnings. Reads HONESTLY even when
-        breached: an equity drop below maintenance returns a ratio < 1 with NO
-        clamp (D-16 — the honest sub-1 reading is the P4 liquidation input). When
-        maintenance margin is ``Decimal("0")`` (no open positions, no margin
-        required) it returns the deterministic sentinel ``Decimal("0")`` rather
+        Reads HONESTLY even when breached: an equity drop below maintenance
+        returns a ratio < 1 with NO clamp, because that sub-1 reading is what the
+        liquidation pass consumes. With zero maintenance margin (no open
+        positions) it returns the deterministic ``Decimal("0")`` sentinel rather
         than dividing by zero.
 
         Parameters
         ----------
         equity:
-            Mark-to-market total equity, already Decimal at the boundary
-            (``Portfolio.total_equity``). D-01: supplied by the caller.
+            Mark-to-market total equity, already Decimal at the boundary.
         positions:
             The open positions, forwarded verbatim to ``maintenance_margin``.
         portfolio_id:
             The portfolio id, forwarded verbatim to ``maintenance_margin`` for
-            its WR-02 guard. ``positions``/``portfolio_id`` ride along BECAUSE of
-            that internal delegation — VENUE-01's requirement text writes
-            ``margin_ratio(equity)`` naming only the read it removes, which is
-            the same elision RESEARCH F-6 flags on ``maintenance_margin``.
+            its unwired-Universe guard.
 
         Returns
         -------
@@ -986,20 +848,19 @@ class SimulatedMarginAccount(SimulatedCashAccount):
 
     @staticmethod
     def _isolated_liq_price(position: Position, wb: Decimal, mmr: Decimal) -> Decimal:
-        """Corrected isolated liquidation price (D-01-CORR — HAND-VERIFIED).
+        """Isolated liquidation price.
 
         ``margin_per_unit = wb / |size|`` where ``wb`` is the position-keyed
-        locked isolated margin (``get_locked_margin_for``) and
-        ``|size| = abs(net_quantity)``. With ``entry = avg_price``:
+        locked isolated margin and ``|size| = abs(net_quantity)``. With
+        ``entry = avg_price``:
 
         * LONG : ``(entry − margin_per_unit) / (1 − mmr)``
         * SHORT: ``(entry + margin_per_unit) / (1 + mmr)``
 
-        The corrected formula (NOT the literal CONTEXT D-01 string, which yields
-        a negative price). For Entry=100, |size|=200, WB=4000, MMR=0.01 it gives
-        the long 80.808080… / short 118.811881… worked numbers. Full Decimal
-        precision is carried; quantization happens only at the FillEvent price
-        boundary (the mint step).
+        Dividing by ``(1 ∓ mmr)`` rather than multiplying is what keeps the price
+        positive; the multiplied form yields a negative price. For Entry=100,
+        |size|=200, WB=4000, MMR=0.01 this gives long 80.808080… and short
+        118.811881…. Quantization happens only at the FillEvent price boundary.
         """
         size = abs(position.net_quantity)
         entry = position.avg_price
@@ -1022,25 +883,18 @@ class SimulatedMarginAccount(SimulatedCashAccount):
 
     @staticmethod
     def _liquidation_penalty(fee_rate: Decimal, size: Decimal, liq_price: Decimal) -> Decimal:
-        """Forced-close penalty = ``fee_rate × |size| × liq_price`` (D-05/LIQ-02).
+        """Forced-close penalty = ``fee_rate × |size| × liq_price``.
 
-        Rides ``FillEvent.commission`` (no new FillStatus). Full Decimal
-        precision; defaults to ``Decimal("0")`` for a 0 fee rate (oracle-dark).
+        Rides ``FillEvent.commission`` rather than introducing a new FillStatus.
         """
         return fee_rate * size * liq_price
 
     def _liq_inputs(self, position: Position) -> "tuple[Decimal, Decimal, Decimal]":
         """Resolve ``(wb, mmr, fee_rate)`` for a position from cash + Universe.
 
-        ``wb`` = the position-keyed locked isolated margin
-        (``get_locked_margin_for(str(position.id))`` — the account's OWN margin
-        surface, the account being the single account under LX-04 1:1); ``mmr`` =
-        ``Instrument.maintenance_margin_rate``; ``fee_rate`` resolved
-        Instrument-first (``instrument.liquidation_fee_rate``) — the Universe
-        Instrument is the single per-symbol source of truth (the
-        ``TradingRules`` config fallback is consulted by the caller only when no
-        Universe Instrument carries the rate; here the Instrument always does
-        since it defaults to ``Decimal("0")``).
+        ``wb`` is the position-keyed locked isolated margin; ``mmr`` and
+        ``fee_rate`` come from the Universe Instrument, the single per-symbol
+        source of truth for both.
         """
         wb = self.get_locked_margin_for(str(position.id))
         instrument = self._universe.instrument(position.ticker)

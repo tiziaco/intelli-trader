@@ -13,7 +13,7 @@ from itrader.events_handler.events import FillEvent, OrderEvent
 from itrader.core.enums import FillStatus, OrderType, Side
 from itrader.core.exceptions.portfolio import PortfolioNotFoundError
 
-from tests.support.venue_wiring import backtest_venue_bundles
+from tests.support.venue_wiring import backtest_exchange_registry
 
 
 @pytest.fixture
@@ -21,7 +21,7 @@ def env():
     """ExecutionHandler with its queue plus a market BUY order event."""
     queue = Queue()
     execution_handler = ExecutionHandler(
-        queue, venue_bundles=backtest_venue_bundles(queue))
+        queue, exchange_registry=backtest_exchange_registry(queue))
     order_event = OrderEvent(
         time=datetime(2024, 1, 1),
         ticker="BTCUSDT",
@@ -153,15 +153,33 @@ def _order_for(portfolio_id, exchange='paper'):
     )
 
 
+def test_handler_holds_the_injected_registry_by_reference(env):
+    """D-43: the handler READS the composition-root-owned map by reference.
+
+    ``ExecutionHandler`` no longer builds its own registry — it is handed one and
+    holds it. A later write into that same map (the write ``VenueAccountManager.
+    bring_online`` performs when it brings an account online) is therefore visible
+    to the handler with no reach-in FROM the manager TO the handler. This is the
+    D-43 cut: one map, both arms.
+    """
+    _queue, execution_handler, _order_event = env
+    reg = execution_handler.exchanges
+    sentinel = _RecordingExchange()
+    # A registry-writer (i.e. VAM.bring_online) writes the shared map...
+    reg[('okx', 'acct-9')] = sentinel
+    # ...and the handler resolves the EXACT object it wrote (identity, not equality).
+    assert execution_handler.exchanges[('okx', 'acct-9')] is sentinel
+
+
 def test_registry_is_pair_keyed_with_no_venue_aliases(env):
     """D-05: venue ALIASING is retired — one venue name, one key, one object.
 
     This test asserts the INVERSE of what it did before the rename. It used to
     pin that ``'simulated'`` and ``'csv'`` resolved to the SAME object; D-05
     deleted that aliasing in full (along with the dead ``'ccxt': None``
-    placeholder), so the registry ``init_exchanges`` returns is a SINGLE
-    ``('paper', DEFAULT_ACCOUNT_ID)`` entry and no two keys may share an
-    exchange object.
+    placeholder), so the seeded backtest registry (D-43: built by
+    ``seed_exchange_registry``) is a SINGLE ``('paper', DEFAULT_ACCOUNT_ID)``
+    entry and no two keys may share an exchange object.
 
     It goes RED if a future phase reintroduces a venue synonym — which is the
     point: an alias is invisible in a single-account backtest (both keys reach

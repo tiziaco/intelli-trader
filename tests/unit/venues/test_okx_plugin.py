@@ -2,13 +2,17 @@
 
 Drives ``OkxVenuePlugin.build_bundle`` / ``OkxDataPlugin.build_provider`` with a
 FAKE ``ConnectorProvider`` (``get`` returns a trivial fake connector) + a fake
-``ctx`` (``bus`` attr) + a fake ``spec`` (``account_id=None``), asserting:
+``ctx`` (``bus`` attr) + a fake ``spec`` naming a REAL account, asserting:
 
   - the bundle shape (exchange is an ``OkxExchange`` wrapping the fake connector,
     ``account_factory`` is callable and mints a ``VenueAccount``, ``connector`` is
     the SAME fake instance, ``lifecycle`` is ``None``),
   - the data provider is an ``OkxDataProvider`` bound to the SAME memoized
-    connector (both arms call ``connectors.get("okx", "default", spec)``),
+    connector (both arms call ``connectors.get("okx", <spec.account_id>, spec)``),
+  - a spec that names NO account is REFUSED (ACCT-04/WR-03) rather than silently
+    coerced onto a ``"default"`` memo key — the ``spec.account_id or
+    DEFAULT_ACCOUNT_ID`` coercion that let the exchange registry and the connector
+    memo disagree about an unnamed account is GONE,
   - importing ``itrader.venues.okx_plugin`` pulls NO ccxt at module scope (D-04
     triple-deferral — the concretion import lives inside ``build*``).
 
@@ -107,17 +111,17 @@ def test_okx_venue_plugin_builds_bundle_wrapping_the_connector() -> None:
 
     connectors = _FakeConnectorProvider()
     ctx = _fake_ctx()
-    spec = _fake_spec(account_id=None)
+    spec = _fake_spec(account_id="acct-a")
 
     bundle = OkxVenuePlugin().build_bundle(ctx, spec, connectors)
 
     assert isinstance(bundle, VenueBundle)
     assert isinstance(bundle.exchange, OkxExchange)
-    # account_id=None -> the "default" logical account key (D-07).
-    assert connectors.calls == [("okx", "default", spec)]
+    # ACCT-04/WR-03: the memo keys on the spec's OWN account_id, uncoerced.
+    assert connectors.calls == [("okx", "acct-a", spec)]
     # The bundle carries the SAME connector the provider handed out.
-    assert bundle.exchange._connector is connectors.get("okx", "default", spec)
-    assert bundle.connector is connectors.get("okx", "default", spec)
+    assert bundle.exchange._connector is connectors.get("okx", "acct-a", spec)
+    assert bundle.connector is connectors.get("okx", "acct-a", spec)
     # 11-09: the dead ``VenueBundle.lifecycle`` field is gone — assemble_venue returns
     # the lifecycle beside the bundle, so there was never anything to store here.
     assert not hasattr(bundle, "lifecycle")
@@ -125,7 +129,7 @@ def test_okx_venue_plugin_builds_bundle_wrapping_the_connector() -> None:
     assert callable(bundle.account_factory)
     account = bundle.account_factory()
     assert isinstance(account, VenueAccount)
-    assert account._connector is connectors.get("okx", "default", spec)
+    assert account._connector is connectors.get("okx", "acct-a", spec)
 
 
 def test_okx_data_plugin_shares_the_same_connector() -> None:
@@ -135,17 +139,19 @@ def test_okx_data_plugin_shares_the_same_connector() -> None:
 
     connectors = _FakeConnectorProvider()
     ctx = _fake_ctx()
-    spec = _fake_spec(account_id=None)
+    spec = _fake_spec(account_id="acct-a")
 
     bundle = OkxVenuePlugin().build_bundle(ctx, spec, connectors)
     provider = OkxDataPlugin().build_provider(ctx, spec, connectors)
 
     assert isinstance(provider, OkxDataProvider)
-    # ONE connector for ("okx", "default") shared across BOTH builders (D-03):
-    # two get() calls, one memoized instance.
+    # ONE connector for ("okx", "acct-a") shared across BOTH builders (D-03):
+    # two get() calls, one memoized instance. The key is the spec's OWN account_id,
+    # uncoerced (ACCT-04/WR-03) — build_bundle and build_provider must construct the
+    # SAME pair or the exec and data arms open two sessions for one account.
     assert connectors.calls == [
-        ("okx", "default", spec),
-        ("okx", "default", spec),
+        ("okx", "acct-a", spec),
+        ("okx", "acct-a", spec),
     ]
     assert provider._connector is bundle.connector
 
@@ -165,6 +171,213 @@ def test_okx_plugins_honor_explicit_account_id() -> None:
         ("okx", "sub-7", spec),
         ("okx", "sub-7", spec),
     ]
+
+
+# --------------------------------------------------------------------------- #
+# ACCT-04 / WR-03 — a spec naming NO account is REFUSED, never coerced to a
+# ``"default"`` memo key
+# --------------------------------------------------------------------------- #
+def test_build_bundle_raises_when_the_spec_names_no_account() -> None:
+    """ACCT-04/WR-03: ``build_bundle`` refuses a ``None`` account_id, no ``"default"``.
+
+    The deleted ``spec.account_id or DEFAULT_ACCOUNT_ID`` coercion memoized the
+    connector under ``("okx", "default")`` for an unnamed account, while the exchange
+    registry's write side keyed the SAME account differently — a write-only registry
+    entry no reader reached (the WR-03 asymmetry). With the coercion gone, an unnamed
+    account is a bug and RAISES here rather than silently building a bundle under a
+    fabricated key. Registration-side and resolution-side defaults are not symmetric.
+    """
+    from itrader.core.exceptions import ValidationError
+    from itrader.venues.okx_plugin import OkxVenuePlugin
+
+    connectors = _FakeConnectorProvider()
+
+    with pytest.raises(ValidationError):
+        OkxVenuePlugin().build_bundle(_fake_ctx(), _fake_spec(account_id=None), connectors)
+
+    # The refusal precedes any connector build — no session was memoized.
+    assert connectors.calls == []
+
+
+def test_build_provider_raises_when_the_spec_names_no_account() -> None:
+    """ACCT-04/WR-03: ``build_provider`` refuses a ``None`` account_id, same reasoning.
+
+    ``build_provider`` shares ``build_bundle``'s ``(venue, account_id)`` memo key, so
+    it must construct the pair identically — including refusing a ``None`` rather than
+    coercing it. Normalizing in two places is how the exchange registry and the
+    connector memo end up disagreeing about the same real account.
+    """
+    from itrader.core.exceptions import ValidationError
+    from itrader.venues.okx_plugin import OkxDataPlugin
+
+    connectors = _FakeConnectorProvider()
+
+    with pytest.raises(ValidationError):
+        OkxDataPlugin().build_provider(_fake_ctx(), _fake_spec(account_id=None), connectors)
+
+    assert connectors.calls == []
+
+
+# --------------------------------------------------------------------------- #
+# 11.2-06 (D-38): the account-level knobs reach a REAL consumer
+# --------------------------------------------------------------------------- #
+def test_build_bundle_carries_the_specs_market_type_to_the_minted_account() -> None:
+    """D-38: a ``"derivative"`` spec mints a ``"derivative"`` account, not ``"spot"``.
+
+    THE test for the D-38 blocker. ``build_bundle`` used to HARDCODE
+    ``market_type="spot"``, so an account-level ``market_type`` key would have been
+    accepted by the allowlist and then changed nothing — an inert key is worse than a
+    rejected one (T-11.2-06-02). This is not cosmetic: ``VenueAccount`` derives
+    ``_cash_stream_nets_holds = market_type != "spot"``, which decides whether the
+    leaf's cash channel nets a venue-side hold — i.e. it changes CASH ACCOUNTING.
+    """
+    from itrader.venues.okx_plugin import OkxVenuePlugin
+
+    connectors = _FakeConnectorProvider()
+    spec = SimpleNamespace(account_id="acct-a", market_type="derivative")
+
+    bundle = OkxVenuePlugin().build_bundle(_fake_ctx(), spec, connectors)
+    account = bundle.account_factory()
+
+    assert account._market_type == "derivative"
+    # The cash-accounting consequence, asserted directly rather than inferred.
+    assert account._cash_stream_nets_holds is True
+
+
+def test_build_bundle_defaults_market_type_to_spot_when_the_spec_names_none() -> None:
+    """D-38: the OKX VENUE-level default stays ``"spot"`` — it is NOT bundle.py's default.
+
+    The deleted hardcode encoded a real venue default. Falling through to
+    ``VenueAccountConfig``'s own ``"derivative"`` default instead would invert
+    ``_cash_stream_nets_holds`` for EVERY OKX account that names no market type — money
+    arithmetic changing under a green suite. Pinned so the removal cannot regress into
+    that.
+    """
+    from itrader.venues.okx_plugin import OkxVenuePlugin
+
+    connectors = _FakeConnectorProvider()
+    spec = _fake_spec(account_id="acct-a")  # carries no market_type at all
+
+    bundle = OkxVenuePlugin().build_bundle(_fake_ctx(), spec, connectors)
+    account = bundle.account_factory()
+
+    assert account._market_type == "spot"
+    assert account._cash_stream_nets_holds is False
+
+
+def test_new_account_still_reads_the_configs_own_market_type() -> None:
+    """The SIBLING call site (``market_type=config.market_type``) is UNCHANGED.
+
+    ``build_bundle`` (the producer) and ``new_account`` (the consumer) are not two
+    copies of one rule — the first fills the config, the second reads it. Only the
+    hardcode in the producer was removed; the consumer's parameterized read must keep
+    honouring whatever the config carries.
+    """
+    from itrader.venues.okx_plugin import OkxVenuePlugin
+    from itrader.venues.bundle import VenueAccountConfig
+
+    connectors = _FakeConnectorProvider()
+    spec = _fake_spec(account_id="acct-a")
+
+    account = OkxVenuePlugin().new_account(VenueAccountConfig(
+        account_id="acct-a",
+        connectors=connectors,
+        spec=spec,
+        quote_currency="USDC",
+        market_type="derivative",
+        symbol="BTC/USDC",
+    ))
+
+    assert account._market_type == "derivative"
+
+
+def test_okx_connector_plugin_applies_the_accounts_sandbox_and_region(
+    monkeypatch: Any,
+) -> None:
+    """D-38: the account's own ``sandbox`` / ``region`` decide WHICH HOST it reaches.
+
+    These are the routing keys, and the reason the allowlist raises on a typo: an
+    account pinned to ``eea`` that silently fell back to the ambient ``global``
+    environment would send live orders to a host that answers 50119 — or, with
+    ``sandbox`` inverted, to the PRODUCTION host with real money on it. They are passed
+    as init kwargs, pydantic-settings' highest-priority source, so the ambient
+    ``OKX_SANDBOX`` / ``OKX_REGION`` cannot outrank the account's own row.
+    """
+    from itrader.venues.okx_plugin import OkxConnectorPlugin
+
+    monkeypatch.setenv("OKX_API_KEY", "ambient-key")
+    monkeypatch.setenv("OKX_API_SECRET", "ambient-secret")
+    monkeypatch.setenv("OKX_API_PASSPHRASE", "ambient-passphrase")
+    # The ambient environment says global/sandbox; the ACCOUNT says eea/production.
+    monkeypatch.setenv("OKX_REGION", "global")
+    monkeypatch.setenv("OKX_SANDBOX", "true")
+
+    connector = OkxConnectorPlugin().build(SimpleNamespace(
+        account_id="acct-a", secret_ref=None, sandbox=False, region="eea"))
+
+    assert connector._settings.sandbox is False
+    assert connector._settings.region == "eea"
+    # The routing consequence, not just the field: region+sandbox derive BOTH hosts.
+    assert connector._settings.rest_hostname == "eea.okx.com"
+    assert connector._settings.ws_hostname == "wseea.okx.com"
+
+
+def test_okx_connector_plugin_applies_the_knobs_on_the_resolved_credential_path(
+    monkeypatch: Any,
+) -> None:
+    """The knobs reach the RESOLVED path too — not just the legacy ambient one.
+
+    A per-account ``secret_ref`` is exactly the deployment that has per-account rows,
+    so wiring the knobs only into the credential-less arm would leave them inert for
+    every account that actually has a row. The CR-05 completeness gate is untouched:
+    ``sandbox`` / ``region`` carry defaults and are therefore never in the REQUIRED set.
+    """
+    from pydantic import SecretStr
+
+    from itrader.venues.okx_plugin import OkxConnectorPlugin
+
+    monkeypatch.setenv("OKX_REGION", "global")
+    monkeypatch.setenv("OKX_SANDBOX", "true")
+
+    class _Resolver:
+        def resolve(self, secret_ref: str | None) -> dict[str, SecretStr]:
+            return {
+                "api_key": SecretStr("k"),
+                "api_secret": SecretStr("s"),
+                "api_passphrase": SecretStr("p"),
+            }
+
+    connector = OkxConnectorPlugin(resolver=_Resolver()).build(SimpleNamespace(
+        account_id="acct-a", secret_ref="env:A", sandbox=False, region="eea"))
+
+    assert connector._settings.sandbox is False
+    assert connector._settings.region == "eea"
+    assert connector._settings.api_key.get_secret_value() == "k"
+
+
+def test_a_spec_naming_no_knobs_leaves_the_environment_in_force(
+    monkeypatch: Any,
+) -> None:
+    """ABSENCE is not an override — the settings' own env/default resolution stands.
+
+    The whole precedence rule is "account overrides venue, and a key the account does
+    not name leaves the venue default in force". Passing ``sandbox=None`` through to
+    ``OkxSettings`` would violate it in the worst direction: ``None`` is not a valid
+    bool, so it would either fail validation or coerce a configured production account
+    to the sandbox host.
+    """
+    from itrader.venues.okx_plugin import OkxConnectorPlugin
+
+    monkeypatch.setenv("OKX_API_KEY", "ambient-key")
+    monkeypatch.setenv("OKX_API_SECRET", "ambient-secret")
+    monkeypatch.setenv("OKX_API_PASSPHRASE", "ambient-passphrase")
+    monkeypatch.setenv("OKX_REGION", "eea")
+    monkeypatch.setenv("OKX_SANDBOX", "false")
+
+    connector = OkxConnectorPlugin().build(SimpleNamespace(account_id="acct-a"))
+
+    assert connector._settings.region == "eea"
+    assert connector._settings.sandbox is False
 
 
 # --------------------------------------------------------------------------- #
@@ -674,5 +887,7 @@ def test_okx_account_factory_is_keyword_only_and_has_no_catch_all() -> None:
         parameter.kind is inspect.Parameter.KEYWORD_ONLY
         for parameter in parameters.values()
     ), f"account_factory must be keyword-only: {parameters!r}"
+    # D-23 (11.2-08): ``venue_name`` joins the fixed set (carried onto the leaf).
     assert set(parameters) == {
-        "initial_cash", "enable_margin", "account_id", "state_storage"}
+        "initial_cash", "enable_margin", "account_id", "venue_name",
+        "state_storage"}

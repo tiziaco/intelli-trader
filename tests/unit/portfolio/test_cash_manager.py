@@ -27,6 +27,7 @@ from itrader.core.exceptions import (
     InvalidTransactionError,
     InsufficientFundsError,
 )
+from tests.support.venue_wiring import in_memory_state_storage
 
 
 @pytest.fixture
@@ -35,8 +36,12 @@ def cm():
 
     D-01 (11.1-03): no portfolio double is built or passed — the leaf carries no
     back-reference to a Portfolio, so cash is the whole construction contract.
+
+    11.1-REVIEW WR-04: the persistence seam IS named, because it now has no default
+    — a leaf that minted its own backend is the live-but-unpersisted defect the
+    required keyword removes.
     """
-    return SimulatedCashAccount(100000.0)
+    return SimulatedCashAccount(100000.0, state_storage=in_memory_state_storage())
 
 
 @pytest.fixture
@@ -47,7 +52,7 @@ def mcm():
     accrue_borrow_interest) lives only on the margin leaf after the 01-02 split,
     so the margin-keyed tests exercise it here.
     """
-    return SimulatedMarginAccount(100000.0)
+    return SimulatedMarginAccount(100000.0, state_storage=in_memory_state_storage())
 
 
 def test_cash_manager_initialization(cm):

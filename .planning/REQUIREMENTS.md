@@ -432,14 +432,14 @@ STORE — not the spec — is the source of truth for both portfolios and accoun
 this (`portfolios.venue_name` / `.account_id` are `NOT NULL` under a composite FK onto `venue_accounts`);
 the code does not yet trust it.*
 
-- [ ] **ACCT-01**: The live account set is derived from `VenueAccountStore.read_enabled_for(venue_name)`,
+- [x] **ACCT-01**: The live account set is derived from `VenueAccountStore.read_enabled_for(venue_name)`,
   not from the spec. The spec-derived halves of `_account_ids_for_spec` and the `spec.portfolios` field are
   deleted; `assemble_venues` receives the account set as an argument, and `live_trading_system.py` computes
   no account identity of its own. Decouples provisioning from portfolio creation — an account can be
   provisioned before any portfolio references it, which is what makes the composite FK satisfiable at
   `add_portfolio` time.
 
-- [ ] **ACCT-02**: `_mint_account_rows` is replaced by a deliberate provisioning path — a
+- [x] **ACCT-02**: `_mint_account_rows` is replaced by a deliberate provisioning path — a
   `venue_account:{venue}/{id}` `config_router` scope mirroring the existing `venue:{name}` → `VenueStore`
   scope and reusing its secret-scrub guard. A **handoff, not a deletion**: minting is currently the only
   production writer of `venue_accounts`, so removing it unreplaced makes the FK reject the first
@@ -447,7 +447,7 @@ the code does not yet trust it.*
   `OKX_API_*` credentials — the fail-open composite of `11-REVIEW.md` WR-05 — so it is a liability, not a
   convenience.
 
-- [ ] **ACCT-03** *(closes 11-REVIEW CR-02)*: A live portfolio naming no venue account **raises** at
+- [x] **ACCT-03** *(closes 11-REVIEW CR-02)*: A live portfolio naming no venue account **raises** at
   composition time. Today it is silently skipped and left on its `SimulatedCashAccount` leaf with
   `is_venue_truth=False`, which disables snapshot, streaming, `VenueReconciler` and the D-04
   unexplained-residual HALT behind a green suite. Hard-raise rather than per-portfolio quarantine (the
@@ -460,24 +460,24 @@ the code does not yet trust it.*
   illegal, so it must be given distinct `account_id`s and a real `venue_name` in this phase; the phase
   cannot go green otherwise. Close the half-null bypass explicitly rather than relying on it.
 
-- [ ] **ACCT-04** *(closes 11-REVIEW WR-03)*: The six live-path `or DEFAULT_ACCOUNT_ID` coercions are
+- [x] **ACCT-04** *(closes 11-REVIEW WR-03)*: The six live-path `or DEFAULT_ACCOUNT_ID` coercions are
   deleted. Registration writes `(venue, 'default')` while both readers construct `(venue, None)` raw, so for
   an unnamed account the registered key is unreachable by every reader — a write-only entry, not merely an
   asymmetry. The backtest/simulated uses are KEPT: `DEFAULT_ACCOUNT_ID` is the backtest single-account
   identity and is load-bearing for the golden oracle.
 
-- [ ] **ACCT-05** *(closes 11-REVIEW CR-03)*: The venue account is attached on every portfolio creation
+- [x] **ACCT-05** *(closes 11-REVIEW CR-03)*: The venue account is attached on every portfolio creation
   path, not only inside `build_live_system`. Under DB-as-source-of-truth this is the PRIMARY creation path:
   on a fresh DB nothing rehydrates, so the first `add_portfolio` yields a portfolio submitting real orders
   against a compute-leaf ledger with no reconcile. The attach seam must not use `None`-then-assign late
   wiring or a post-construction setter.
 
-- [ ] **ACCT-06**: The two docstrings asserting the phantom *"plan 11-08 makes account_id mandatory at
+- [x] **ACCT-06**: The two docstrings asserting the phantom *"plan 11-08 makes account_id mandatory at
   composition time"* invariant (`execution_handler.py:209`, `core/portfolio_read_model.py:227`) are
   corrected — ACCT-03 is what makes it true. The two citing 11-08's **distinct**-account invariant
   (`live_trading_system.py:1627`, `reconciliation_coordinator.py:164`) are accurate and stay untouched.
 
-- [ ] **ACCT-07** *(closes 11-REVIEW WR-01)*: `PortfolioHandler._persist_definition` and
+- [x] **ACCT-07** *(closes 11-REVIEW WR-01)*: `PortfolioHandler._persist_definition` and
   `SqlPortfolioStorage.save_config` agree on when a definition row is required. `save_config`'s legacy
   account-state arm was deleted on the stated grounds that *"a live portfolio now always has a definition
   row"*, but `_persist_definition` returns early when `venue_name` or `account_id` is `None` — so for such a
@@ -486,7 +486,7 @@ the code does not yet trust it.*
   disagreement; the early-return itself is then removed or converted to the same typed raise so the two
   halves cannot drift apart again.
 
-- [ ] **ACCT-08** *(closes 11-REVIEW WR-09)*: `PortfolioHandler` exposes `all_portfolios()` and
+- [x] **ACCT-08** *(closes 11-REVIEW WR-09)*: `PortfolioHandler` exposes `all_portfolios()` and
   `has_portfolio(portfolio_id)`, and the production reach-ins to the private `_portfolios` dict are
   converted (`portfolio_rehydrate.py:124`, `live_trading_system.py:1341/1591/1964`). Folded here because
   ACCT-01 and ACCT-05 rewrite two of those call sites anyway — the handler already exposes
@@ -497,7 +497,7 @@ the code does not yet trust it.*
   first failure — despite the docstring claiming per-scope isolation. The guard moves INSIDE the loop.
   Folded here because WR-02 and this requirement edit the SAME statement (`live_trading_system.py:1341`).
 
-- [ ] **ACCT-09** *(closes 11-REVIEW WR-10)*: `ExecutionHandler.on_order`'s fail-closed paths emit a
+- [x] **ACCT-09** *(closes 11-REVIEW WR-10)*: `ExecutionHandler.on_order`'s fail-closed paths emit a
   `FillEvent(REFUSED)` — the established rejection-as-event convention, which also reconciles the order
   mirror instead of leaving it PENDING forever — rather than only calling `logger.error(...)` and
   returning. Today a misconfigured live engine drops 100% of its orders while `get_status()` reports
@@ -506,7 +506,7 @@ the code does not yet trust it.*
   `(venue, account)` pair), and the dead branch is removed rather than instrumented — its comment is one of
   the two phantom-invariant citations ACCT-06 corrects.
 
-- [ ] **ACCT-10** *(closes 11-REVIEW WR-04)*: Runtime portfolio deactivation PERSISTS. `_persist_definition`
+- [x] **ACCT-10** *(closes 11-REVIEW WR-04)*: Runtime portfolio deactivation PERSISTS. `_persist_definition`
   hardcodes `enabled=True` and is gated on row absence, and nothing else ever writes `enabled=False`, so
   `Portfolio.set_state(INACTIVE)` never reaches the store and a portfolio an operator deliberately stopped
   comes back ACTIVE and trading on the next restart — money-relevant, and silent. Add a
@@ -785,6 +785,17 @@ Each requirement maps to exactly one phase. The roadmap was created 2026-07-09 w
 | MPORT-05 | P11 | Complete |
 | MPORT-06 | P11 | Complete |
 | MPORT-07 | P11 | Complete |
+| ACCT-01 | P11.2 | Complete |
+| ACCT-02 | P11.2 | Complete |
+| ACCT-03 | P11.2 | Complete |
+| ACCT-04 | P11.2 | Complete |
+| ACCT-05 | P11.2 | Complete |
+| ACCT-06 | P11.2 | Complete |
+| ACCT-07 | P11.2 | Complete |
+| ACCT-08 | P11.2 | Complete |
+| ACCT-09 | P11.2 | Complete |
+| ACCT-10 | P11.2 | Complete |
+| ACCT-11 | P11.3 | Pending |
 | COMP-01 | P12 | Pending |
 | COMP-02 | P12 | Pending |
 | COMP-03 | P12 | Pending |

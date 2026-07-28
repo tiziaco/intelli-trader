@@ -67,7 +67,18 @@ def _portfolio(**kwargs) -> Portfolio:
     # D-02 (11.1-09): the account is SUPPLIED, never minted by the portfolio. It is
     # built from the SAME cash the portfolio is asked to open at — a mismatch is
     # refused at construction (T-11.1-42), so the two cannot drift here either.
-    defaults.setdefault("account", compute_account(defaults["cash"]))
+    # D-23 (11.2-08): ``Portfolio.venue_name`` / ``.account_id`` are read-only
+    # PROPERTIES over the account leaf, so the identity must be built INTO the leaf.
+    # Thread the caller's pair through to ``compute_account`` — the leaf is the ONE
+    # storage site the portfolio reports from.
+    defaults.setdefault(
+        "account",
+        compute_account(
+            defaults["cash"],
+            account_id=defaults.get("account_id"),
+            venue_name=defaults.get("venue_name"),
+        ),
+    )
     return Portfolio(**defaults)
 
 
@@ -181,6 +192,46 @@ def test_duplicate_supplied_portfolio_id_raises_instead_of_clobbering(env):
         )
     assert env.handler.get_portfolio_count() == 1
     assert env.handler.get_portfolio(existing).name == _NAME
+
+
+# ---------------------------------------------------------------------------
+# D-23 (11.2-08) — venue_name / account_id are read-only properties over the
+# account leaf: ONE storage site, drift structurally impossible
+# ---------------------------------------------------------------------------
+
+
+def test_venue_name_reads_from_the_account_leaf():
+    """D-23: the property returns the SAME object the account leaf stores."""
+    portfolio = _portfolio(venue_name="okx", account_id="acct_a")
+    assert portfolio.venue_name is portfolio.account.venue_name
+    assert portfolio.account_id is portfolio.account.account_id
+    assert portfolio.venue_name == "okx"
+    assert portfolio.account_id == "acct_a"
+
+
+def test_venue_name_is_read_only():
+    """D-23: no setter — a second write site is exactly the drift the property removes."""
+    portfolio = _portfolio(venue_name="okx")
+    with pytest.raises(AttributeError):
+        portfolio.venue_name = "binance"  # type: ignore[misc]
+
+
+def test_account_id_is_read_only():
+    """D-23: account_id is a property over the leaf, not an assignable attribute."""
+    portfolio = _portfolio(account_id="acct_a")
+    with pytest.raises(AttributeError):
+        portfolio.account_id = "acct_b"  # type: ignore[misc]
+
+
+def test_no_second_storage_site_on_the_portfolio_instance():
+    """D-23: the pair lives on the account leaf, NOT in the portfolio's __dict__.
+
+    A second copy in ``portfolio.__dict__`` would be a storage site that could
+    disagree with the leaf — the exact drift the single source makes impossible.
+    """
+    portfolio = _portfolio(venue_name="okx", account_id="acct_a")
+    assert "venue_name" not in portfolio.__dict__
+    assert "account_id" not in portfolio.__dict__
 
 
 # ---------------------------------------------------------------------------

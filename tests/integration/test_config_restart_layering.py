@@ -88,13 +88,79 @@ class _PortfolioDouble:
 
 
 class _PortfolioHandlerDouble:
-    """Portfolio-handler stand-in: the ``_portfolios`` map the restart helper iterates."""
+    """Portfolio-handler stand-in exposing the PUBLIC read surface the helper reads.
+
+    Post-11.2-12 the restart helper iterates ``all_portfolios()`` (ACCT-08 / D-41), never
+    the private ``_portfolios`` map — this double answers the same public accessor.
+    """
 
     def __init__(self, portfolios: Dict[Any, Any]) -> None:
         self._portfolios = portfolios
 
     def get_portfolio(self, portfolio_id: Any) -> Any:
         return self._portfolios[portfolio_id]
+
+    def all_portfolios(self) -> Dict[Any, Any]:
+        return dict(self._portfolios)
+
+
+class _RaisingStateStorage:
+    """A bound ``state_storage`` whose ``load_config`` raises a degrade-clean error.
+
+    Models a poisoned per-portfolio config row: the stored blob no longer loads.
+    """
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    def load_config(self) -> Any:
+        raise self._exc
+
+
+class _StaticStateStorage:
+    """A bound ``state_storage`` returning a fixed config (a healthy row)."""
+
+    def __init__(self, cfg: Optional[Dict[str, Any]]) -> None:
+        self._cfg = cfg
+
+    def load_config(self) -> Optional[Dict[str, Any]]:
+        return self._cfg
+
+
+class _ListVenueStore:
+    """Venue-store stand-in returning an ORDERED row list (poison-first is guaranteed)."""
+
+    def __init__(self, rows: Any) -> None:
+        self._rows = list(rows)
+
+    def read_all(self) -> Any:
+        return list(self._rows)
+
+
+class _RaisingVenueStore:
+    """Venue-store stand-in whose ``read_all`` itself raises — the schema-unavailable case."""
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    def read_all(self) -> Any:
+        raise self._exc
+
+
+class _SelectiveExecHandler:
+    """Execution-handler stand-in: raises degrade-clean on a POISON fee, records a good push.
+
+    Proves per-entry venue isolation — the poisoned venue degrades, the healthy one still
+    pushes, so the recorded pushes prove the loop did not abort on the first failure.
+    """
+
+    def __init__(self) -> None:
+        self.pushed: list = []
+
+    def update_config(self, updates: Dict[str, Any]) -> None:
+        if updates.get("fee_model") == "POISON":
+            raise ValueError("poisoned venue fee_model")
+        self.pushed.append(updates)
 
 
 @pytest.fixture()
@@ -275,3 +341,106 @@ def test_boot_degrades_clean_on_invalid_persisted_override(wiring):
     # (order) the good, isolated scope STILL applied despite the system scope failing.
     assert config.order.market_execution is MarketExecution.NEXT_BAR
     assert order_handler.pushed == {"market_execution": "next_bar"}
+
+
+def test_portfolio_arm_isolates_a_poisoned_first_entry(wiring):
+    """WR-02: one poisoned portfolio config no longer skips every portfolio after it.
+
+    Two portfolios in iteration order, the FIRST poisoned (its ``load_config`` raises a
+    degrade-clean error). Under the OLD whole-loop guard the raise aborts the loop and the
+    SECOND portfolio never layers; under the per-entry guard the first degrades and the
+    second STILL applies. A single-portfolio case cannot distinguish the two placements —
+    hence the two-portfolio, first-poisoned fixture.
+    """
+    pid_bad = uuid.uuid4()
+    pid_good = uuid.uuid4()
+    good_override = {"limits": {"max_positions": 7}}
+    poisoned = _PortfolioDouble(pid_bad, _RaisingStateStorage(ValueError("poisoned config_json")))
+    healthy = _PortfolioDouble(pid_good, _StaticStateStorage(good_override))
+    # dict preserves insertion order -> poisoned is iterated FIRST.
+    portfolio_handler = _PortfolioHandlerDouble({pid_bad: poisoned, pid_good: healthy})
+
+    order_handler = _OrderHandlerDouble(wiring.order_store)
+    exec_handler = _ExecHandlerDouble()
+    config = ITraderConfig()
+
+    # MUST NOT raise — the poisoned portfolio degrades clean.
+    _layer_persisted_overrides(
+        config,
+        system_store=wiring.system_store,
+        venue_store=wiring.venue_store,
+        order_handler=order_handler,
+        portfolio_handler=portfolio_handler,
+        execution_handler=exec_handler,
+    )
+
+    # The poisoned FIRST entry degraded (never applied) ...
+    assert poisoned.applied_config is None
+    # ... and the SECOND entry STILL layered its override despite the first failing.
+    assert healthy.applied_config == good_override
+
+
+def test_venue_arm_isolates_a_poisoned_first_entry(wiring):
+    """OQ3 / F-13: the venue arm has the identical whole-loop defect, fixed the same way.
+
+    Poison-first venue rows via an ordered fake store; the first row's push raises
+    degrade-clean, the second (healthy) row must STILL push — proving the venue loop guards
+    per entry, not around the whole loop.
+    """
+    venue_store = _ListVenueStore([
+        {"venue_name": "v_poison", "config": {"fee_model": "POISON"}},
+        {"venue_name": "v_good", "config": {"fee_model": "zero"}},
+    ])
+    exec_handler = _SelectiveExecHandler()
+    portfolio = _PortfolioDouble(wiring.portfolio_id, wiring.portfolio_store)
+    portfolio_handler = _PortfolioHandlerDouble({wiring.portfolio_id: portfolio})
+
+    order_handler = _OrderHandlerDouble(wiring.order_store)
+    config = ITraderConfig()
+
+    # MUST NOT raise — the poisoned venue degrades clean.
+    _layer_persisted_overrides(
+        config,
+        system_store=wiring.system_store,
+        venue_store=venue_store,
+        order_handler=order_handler,
+        portfolio_handler=portfolio_handler,
+        execution_handler=exec_handler,
+    )
+
+    # The healthy SECOND venue still pushed despite the poisoned FIRST one.
+    assert {"fee_model": "zero"} in exec_handler.pushed
+
+
+def test_venue_read_all_schema_unavailable_still_degrades_clean(wiring):
+    """WR-03 preserved: a venue ``read_all()`` that itself raises (un-provisioned schema)
+    degrades clean and does NOT abort the boot — the portfolio arm still layers after it.
+
+    Guards the acquisition-vs-per-entry split introduced with the venue per-entry guard:
+    moving the guard fully inside the loop would let a ``read_all()`` failure crash boot, so
+    the venue read acquisition keeps its own degrade-clean guard.
+    """
+    from sqlalchemy.exc import SQLAlchemyError
+
+    venue_store = _RaisingVenueStore(SQLAlchemyError("no venue table yet"))
+    good_override = {"limits": {"max_positions": 5}}
+    portfolio = _PortfolioDouble(wiring.portfolio_id, _StaticStateStorage(good_override))
+    portfolio_handler = _PortfolioHandlerDouble({wiring.portfolio_id: portfolio})
+
+    order_handler = _OrderHandlerDouble(wiring.order_store)
+    exec_handler = _ExecHandlerDouble()
+    config = ITraderConfig()
+
+    # MUST NOT raise despite read_all() blowing up.
+    _layer_persisted_overrides(
+        config,
+        system_store=wiring.system_store,
+        venue_store=venue_store,
+        order_handler=order_handler,
+        portfolio_handler=portfolio_handler,
+        execution_handler=exec_handler,
+    )
+
+    # The venue scope was skipped, but the portfolio scope AFTER it still layered.
+    assert exec_handler.pushed is None
+    assert portfolio.applied_config == good_override

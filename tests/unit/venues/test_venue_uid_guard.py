@@ -140,9 +140,9 @@ def _guard(
     store: Any,
     alert_sink: Any,
     account_id: str | None = "acct-a",
-) -> None:
-    """Drive the guard with the standard okx/acct-a pair."""
-    assert_venue_uid(
+) -> Any:
+    """Drive the guard with the standard okx/acct-a pair; return its outcome."""
+    return assert_venue_uid(
         plugin=plugin,
         connector=object(),
         venue_name="okx",
@@ -301,20 +301,159 @@ def test_a_missing_account_row_is_a_no_op() -> None:
     assert sink.events == []
 
 
-def test_a_none_account_id_is_normalized_to_the_default_account() -> None:
-    """``VenueSpec.account_id`` is Optional[str]; the guard must NOT write a NULL PK half.
+def test_the_guard_applies_no_account_id_substitution() -> None:
+    """ACCT-04/WR-03: the guard arms against the account id it is GIVEN, verbatim.
 
-    Both plugins apply ``spec.account_id or "default"`` INSIDE ``build_bundle`` — a
-    normalization the lifecycle never sees. Handing the raw ``None`` to the store
-    would write a ``None`` PK half whose row then silently never matches on any later
-    connect, permanently disabling the guard for that account.
+    The guard used to apply ``account_id or DEFAULT_ACCOUNT_ID`` — the same coercion the
+    plugins applied INSIDE ``build_bundle`` — so an unnamed account was recorded under a
+    fabricated ``"default"`` key. That is the WR-03 asymmetry from the read side: the
+    guard silently substituted while the registration side keyed the account differently,
+    so the recorded row was unreachable by every later connect.
+
+    After ACCT-03 the guard is armed from ``bring_online`` with the row's REAL
+    ``account_id``, so no substitution is needed — and none is applied. This test pins the
+    removal: the id the guard is handed is the id it records, with NO ``"default"``
+    substitution in between. (A live ``None`` cannot reach here post-ACCT-03; the value is
+    used verbatim precisely because the guard no longer second-guesses its caller.)
     """
     store = _FakeStore(venue_uid=None)
     sink = _RecordingAlertSink()
 
     _guard(plugin=_FakePlugin("uid-111"), store=store, alert_sink=sink, account_id=None)
 
-    assert store.recorded == [("okx", "default", "uid-111", _AT)]
+    # No ``"default"`` substitution — the given id (here ``None``) is used verbatim.
+    assert store.recorded == [("okx", None, "uid-111", _AT)]
+
+
+# --------------------------------------------------------------------------- #
+# 11.2-06 (D-15/D-40) — the guard REPORTS its outcome AND its reason
+# --------------------------------------------------------------------------- #
+class _RaisingPlugin(_FakePlugin):
+    """A plugin whose ``fetch_venue_uid`` RAISES (the third-party-plugin case)."""
+
+    def fetch_venue_uid(self, connector: Any) -> str | None:
+        raise RuntimeError("the venue endpoint exploded")
+
+
+class _WriteOnlyExplodingStore(_FakeStore):
+    """A store that READS fine but whose ``record_venue_uid`` fails.
+
+    Distinct from ``_ExplodingStore``: the read-failure and the write-failure are two
+    DIFFERENT inertness paths needing two different operator investigations (a broken
+    query path vs a broken write path / read-only replica), so they must not collapse
+    into one reason.
+    """
+
+    def record_venue_uid(
+        self, venue_name: str, account_id: str, venue_uid: str, at: datetime
+    ) -> None:
+        raise RuntimeError("the account row is read-only")
+
+
+def test_the_guard_reports_armed_when_it_records_on_first_connect() -> None:
+    """D-40 — trust-on-first-use SUCCEEDED, so the guard is genuinely armed."""
+    from itrader.venues.venue_uid_guard import GUARD_ARMED
+
+    outcome = _guard(
+        plugin=_FakePlugin("uid-111"), store=_FakeStore(venue_uid=None),
+        alert_sink=_RecordingAlertSink())
+
+    assert outcome.outcome == GUARD_ARMED
+    assert outcome.armed is True
+
+
+def test_the_guard_reports_armed_when_it_asserts_a_match() -> None:
+    """D-40 — the steady state is the guard WORKING, not the guard idle."""
+    from itrader.venues.venue_uid_guard import GUARD_ARMED
+
+    outcome = _guard(
+        plugin=_FakePlugin("uid-111"), store=_FakeStore(venue_uid="uid-111"),
+        alert_sink=_RecordingAlertSink())
+
+    assert outcome.outcome == GUARD_ARMED
+
+
+def test_the_guard_reports_armed_when_it_detects_a_mismatch() -> None:
+    """D-40 — a DETECTION is the guard at its most armed, never an inert state.
+
+    Reporting a mismatch as anything but armed would invert the operator's reading of
+    the status at exactly the moment it matters most.
+    """
+    from itrader.venues.venue_uid_guard import (
+        GUARD_ARMED,
+        REASON_MISMATCH_ALERTED,
+    )
+
+    outcome = _guard(
+        plugin=_FakePlugin("uid-999"), store=_FakeStore(venue_uid="uid-111"),
+        alert_sink=_RecordingAlertSink())
+
+    assert outcome.outcome == GUARD_ARMED
+    assert outcome.reason == REASON_MISMATCH_ALERTED
+
+
+def test_each_of_the_six_inertness_paths_reports_a_DISTINCT_reason() -> None:
+    """D-40 — the six paths in the guard's OWN code each need a different fix.
+
+    This is the whole of D-40: a bare boolean tells an operator the guard is off but not
+    WHICH HOLE they have, and these six need six different actions — restore the venue
+    endpoint, fix the renamed UID field, accept the credential-less no-op, restore the
+    database read path, provision the missing row, fix the write path. Collapsing any
+    two because they look similar sends an operator to the wrong investigation.
+
+    Enumerated from ``venue_uid_guard.py`` itself, which is the set the plan asked for.
+    The lifecycle contributes further inertness paths of its own (a bundle with no
+    connector, and absent guard collaborators); those are surfaced too but live in
+    ``lifecycle.py``, so they are asserted there rather than smuggled into this six.
+    """
+    from itrader.venues.venue_uid_guard import (
+        GUARD_INERT,
+        REASON_FETCH_RAISED,
+        REASON_NO_ACCOUNT_ROW,
+        REASON_NO_VENUE_IDENTITY,
+        REASON_RECORD_WRITE_FAILED,
+        REASON_STORE_READ_FAILED,
+        REASON_UID_UNAVAILABLE_CREDENTIALED,
+    )
+
+    cases = {
+        # 1. the plugin's fetch raised (a third-party plugin breaking its contract)
+        REASON_FETCH_RAISED: (_RaisingPlugin("unused"), _FakeStore(venue_uid=None)),
+        # 2. a CREDENTIALED venue supplied no uid (renamed field / revoked read scope)
+        REASON_UID_UNAVAILABLE_CREDENTIALED: (
+            _FakePlugin(None), _FakeStore(venue_uid=None)),
+        # 3. the venue declares NO credentials and has no venue-side identity (paper)
+        REASON_NO_VENUE_IDENTITY: (
+            _PaperLikePlugin(None), _FakeStore(venue_uid=None)),
+        # 4. the store READ failed (database outage)
+        REASON_STORE_READ_FAILED: (_FakePlugin("uid-111"), _ExplodingStore()),
+        # 5. no account row for this pair yet
+        REASON_NO_ACCOUNT_ROW: (_FakePlugin("uid-111"), _FakeStore(exists=False)),
+        # 6. the first-connect record WRITE failed
+        REASON_RECORD_WRITE_FAILED: (
+            _FakePlugin("uid-111"), _WriteOnlyExplodingStore(venue_uid=None)),
+    }
+
+    observed = {}
+    for expected_reason, (plugin, store) in cases.items():
+        outcome = _guard(
+            plugin=plugin, store=store, alert_sink=_RecordingAlertSink())
+        assert outcome.outcome == GUARD_INERT, expected_reason
+        assert outcome.reason == expected_reason
+        observed[expected_reason] = outcome.reason
+
+    # SIX paths, SIX distinct reasons — no two collapsed.
+    assert len(set(observed.values())) == 6
+
+
+def test_the_guard_outcome_is_not_a_bare_boolean() -> None:
+    """D-40/D-15 — outcome WITHOUT reason is the shape D-15's own condition rejects."""
+    outcome = _guard(
+        plugin=_FakePlugin("uid-111"), store=_FakeStore(venue_uid=None),
+        alert_sink=_RecordingAlertSink())
+
+    assert not isinstance(outcome, bool)
+    assert isinstance(outcome.reason, str) and outcome.reason
 
 
 # --------------------------------------------------------------------------- #
@@ -412,20 +551,36 @@ def test_build_live_system_threads_the_store_and_sink_into_assemble_venue() -> N
 
     ``assemble_venue`` accepts ``account_store`` / ``alert_sink`` as OPTIONAL kwargs so
     existing call sites keep working — which means the guard silently no-ops if the
-    ONE production caller forgets them. Asserted by source inspection because building
-    the live system requires credentials and a database.
+    production caller forgets them. Asserted by source inspection because building the
+    live system requires credentials and a database.
+
+    11.2-07 (D-20): the assembly call MOVED off ``build_live_system`` into
+    ``VenueAccountManager.bring_online`` (the store-derived boot hands each row to the
+    manager). So the store + sink now travel: ``build_live_system`` constructs the manager
+    with the ``VenueAccountStore`` and ``alert_sink=alert_sink``, and ``bring_online``
+    threads both into ``assemble_venue``. Both hops are asserted — a break in either
+    leaves the D-04 guard inert behind a green suite.
     """
     import inspect
 
     from itrader.trading_system import live_trading_system as _lts
+    from itrader.venues.venue_account_manager import VenueAccountManager
 
-    source = inspect.getsource(_lts.build_live_system)
-
-    assert "account_store=" in source, (
-        "build_live_system must pass account_store= to assemble_venue, or the D-04 "
-        "UID guard never runs in production (it would be dead code behind a green suite)"
+    boot_source = inspect.getsource(_lts.build_live_system)
+    assert "VenueAccountManager(" in boot_source, (
+        "build_live_system must build the VenueAccountManager that owns assembly (D-20)"
     )
-    assert "alert_sink=alert_sink" in source, (
-        "build_live_system must pass alert_sink= to assemble_venue, or a UID mismatch "
-        "has no egress channel"
+    assert "alert_sink=alert_sink" in boot_source, (
+        "build_live_system must pass alert_sink= to the manager, or a UID mismatch has "
+        "no egress channel"
+    )
+
+    bring_online_source = inspect.getsource(VenueAccountManager.bring_online)
+    assert "account_store=self._store" in bring_online_source, (
+        "VenueAccountManager.bring_online must pass account_store= to assemble_venue, or "
+        "the D-04 UID guard never runs in production (dead code behind a green suite)"
+    )
+    assert "alert_sink=self._alert_sink" in bring_online_source, (
+        "VenueAccountManager.bring_online must pass alert_sink= to assemble_venue, or a "
+        "UID mismatch has no egress channel"
     )

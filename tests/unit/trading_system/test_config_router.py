@@ -17,7 +17,10 @@ contract:
   (h) ``-k portfolio`` — the portfolio:{id} scope persists to the resolved Portfolio's OWN store +
       pushes ``update_config``; an unknown id is default-deny rejected (D-21/D-25 blocker coverage);
   (i) ``-k scope_owner_table`` — an enumerated walk of the full D-21/D-25 scope->OWNING-store table
-      asserting each scope persists into its OWN store, and order/portfolio NEVER into SystemStore.
+      asserting each scope persists into its OWN store, and order/portfolio NEVER into SystemStore;
+  (j) ``-k immutable`` — the ``enable_margin`` runtime flip is REFUSED (11.1-REVIEW CR-02), and the
+      refusal is key-scoped: every other ``trading_rules`` field and both sibling sections stay
+      routable.
 
 Fully offline: no ``LiveTradingSystem``, no venue, no network. Package-less test dir (no
 ``__init__.py``) to avoid the full-suite package collision. Folder-derived ``unit`` marker.
@@ -644,3 +647,109 @@ def test_scope_owner_table_order_and_venue_never_touch_system_store(
     else:
         assert b.system_store.upsert_count == 0  # non-system scopes never write SystemStore
     assert b.bus.warnings == []
+
+
+# --------------------------------------------------------------------------------------------
+# (j) Immutable portfolio key — the enable_margin runtime flip (11.1-REVIEW CR-02)
+# --------------------------------------------------------------------------------------------
+
+
+def test_immutable_enable_margin_refused_as_deduped_rejection() -> None:
+    """A ``portfolio:{id}`` update naming ``enable_margin`` is REFUSED (11.1-REVIEW CR-02).
+
+    The defect this pins: ``enable_margin`` is a ``TradingRules`` field and ``trading_rules`` is a
+    mutable section, so the key used to be fully routable — it merged, validated and swapped into
+    the live config while notifying NOBODY. Four of its five readers bind the value at CONSTRUCTION
+    (``AdmissionManager._enable_margin``, ``EnhancedOrderValidator.enable_margin``,
+    ``ManagedStrategies.enable_margin`` / SHORT-01, and the account leaf's very KIND); only
+    ``Portfolio.process_transaction`` re-reads it per fill. A runtime flip therefore silently
+    desynchronized four of five readers — settlement on the margin arm while admission, validation,
+    the strategy gate and the account leaf all still believed margin was off.
+    """
+    b = _Bundle()
+
+    b.apply(f"portfolio:{b.known_id}", "enable_margin", True)
+
+    assert b.portfolio_store.save_count == 0  # nothing persisted
+    assert b.portfolio.update_calls == []  # nothing pushed to the domain object
+    assert b.portfolio.config.trading_rules.enable_margin is False  # live config untouched
+    assert len(b.bus.warnings) == 1
+    assert b.bus.warnings[0].details["reason"] == "immutable-key"
+    assert b.router.last_error == "immutable-key"
+
+
+def test_immutable_enable_margin_refusal_does_not_escape_apply() -> None:
+    """The typed refusal stays a DEDUPED REJECTION — it never escapes ``apply()``.
+
+    ``ImmutableConfigKeyError`` is a ``PortfolioError(ITraderError)``, so without an explicit
+    ``except`` arm it would escape ``apply()`` to the engine error boundary — converting a refused
+    operator knob into an ErrorEvent / handler-error path in live mode instead of the deduped
+    WARNING every other default-deny rejection produces. This asserts the router surfaces it the
+    same way it surfaces an unknown key.
+    """
+    b = _Bundle()
+
+    b.router.apply(b.event(f"portfolio:{b.known_id}", "enable_margin", True))  # must NOT raise
+
+    assert b.bus.warnings[0].details["reason"] == "immutable-key"
+
+
+def test_immutable_enable_margin_refused_before_portfolio_resolution() -> None:
+    """The key-level refusal fires BEFORE the id resolves — no store is touched at all.
+
+    An immutable key is a structural refusal independent of which portfolio is addressed, so an
+    unknown id carrying ``enable_margin`` still rejects with ``immutable-key`` (not
+    ``unknown-portfolio``).
+    """
+    b = _Bundle()
+    unknown_id = uuid.uuid4()
+
+    b.apply(f"portfolio:{unknown_id}", "enable_margin", True)
+
+    assert b.portfolio_store.save_count == 0
+    assert b.bus.warnings[0].details["reason"] == "immutable-key"
+
+
+def test_immutable_refusal_is_key_scoped_other_trading_rules_still_apply() -> None:
+    """The refusal is KEY-scoped, never SECTION-scoped — ``trading_rules`` stays routable.
+
+    Banning the whole section would freeze every other field in it, a scope change the owner did
+    not authorize. These sibling fields must keep applying end-to-end (persist + push).
+    """
+    b = _Bundle()
+
+    b.apply(f"portfolio:{b.known_id}", "allow_short_selling", True)
+    b.apply(f"portfolio:{b.known_id}", "max_leverage", "3")
+
+    assert b.portfolio.config.trading_rules.allow_short_selling is True
+    assert str(b.portfolio.config.trading_rules.max_leverage) == "3"
+    assert b.portfolio_store.save_count == 2
+    assert b.bus.warnings == []
+
+
+def test_immutable_refusal_leaves_limits_and_risk_sections_routable() -> None:
+    """Both sibling mutable sections stay fully routable after the tightening."""
+    b = _Bundle()
+
+    b.apply(f"portfolio:{b.known_id}", "max_positions", 12)  # limits
+    b.apply(f"portfolio:{b.known_id}", "max_risk_per_trade", 0.03)  # risk_management
+
+    assert b.portfolio.config.limits.max_positions == 12
+    assert b.portfolio.config.risk_management.max_risk_per_trade == 0.03
+    assert b.bus.warnings == []
+
+
+def test_immutable_tightening_did_not_remove_trading_rules_from_mutable_sections() -> None:
+    """Structural pin: the section tuple is UNCHANGED by the CR-02 tightening.
+
+    Dropping ``trading_rules`` from ``_PORTFOLIO_MUTABLE_SECTIONS`` would be the over-broad fix —
+    it would refuse ``enable_margin`` while silently freezing max_leverage, min_trade_amount and
+    every other sibling. This asserts the denylist did the work, not a section removal.
+    """
+    from itrader.trading_system.config_router import (
+        _PORTFOLIO_MUTABLE_SECTIONS,
+        IMMUTABLE_PORTFOLIO_CONFIG_KEYS,
+    )
+
+    assert _PORTFOLIO_MUTABLE_SECTIONS == ("limits", "risk_management", "trading_rules")
+    assert IMMUTABLE_PORTFOLIO_CONFIG_KEYS == frozenset({"enable_margin"})

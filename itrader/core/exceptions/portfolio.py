@@ -119,6 +119,59 @@ class PortfolioValidationError(ValidationError):
         super().__init__(validation_type, str(portfolio_id), message)
 
 
+# Per-key rationale for ImmutableConfigKeyError. Keyed so the message names the ACTUAL
+# consequence + remediation for the refused key rather than a vague generic line; the
+# fallback keeps a future key honest if its entry is forgotten.
+_IMMUTABLE_KEY_RATIONALE: dict[str, str] = {
+    "enable_margin": (
+        "Four of its five readers bind the value at CONSTRUCTION — "
+        "AdmissionManager._enable_margin, EnhancedOrderValidator.enable_margin, "
+        "ManagedStrategies.enable_margin (the SHORT-01 direction gate) and the account "
+        "leaf's very KIND (cash vs margin) — while only Portfolio.process_transaction "
+        "re-reads it per fill. A runtime flip would therefore desynchronize four of the "
+        "five readers silently: settlement would take the margin arm while admission, "
+        "validation, the strategy gate and the account leaf all still believe margin is "
+        "off. Recreate the portfolio with the desired margin setting instead."
+    ),
+}
+
+_IMMUTABLE_KEY_FALLBACK = (
+    "Its readers bind the value at construction, so a runtime flip would desynchronize "
+    "them silently. Recreate the portfolio with the desired setting instead."
+)
+
+
+class ImmutableConfigKeyError(PortfolioError):
+    """A runtime config update names a portfolio key that is deliberately immutable (11.1-REVIEW CR-02).
+
+    Raised by BOTH refusal layers over the single ``IMMUTABLE_PORTFOLIO_CONFIG_KEYS`` set:
+    ``ConfigRouter._apply_portfolio`` (the queue-facing default-deny gate, which converts
+    this into its standard deduped WARNING rejection rather than letting it escape
+    ``apply()``) and ``Portfolio.update_config`` (the backstop for any caller that reaches
+    the domain object directly). The two layers are deliberate defense-in-depth, not
+    redundancy: the router cannot see a caller that bypasses the queue.
+
+    The refusal is KEY-scoped, never section-scoped — ``trading_rules`` stays a mutable
+    section and every other field in it stays routable. It is also presence-based, not
+    value-based: naming the key with its CURRENT value is refused too, so an operator
+    cannot discover the boundary by accident and conclude the knob "sometimes works".
+
+    Carries the rejected ``key`` (and the originating ``scope`` when the router raises it)
+    as structured fields and builds its message in ``__init__`` (the project's exception
+    convention). The message names the CONSEQUENCE (which readers desynchronize) and the
+    REMEDIATION (recreate the portfolio) so an operator can act on it.
+    """
+
+    def __init__(self, key: str, scope: Optional[str] = None):
+        self.key = key
+        self.scope = scope
+        where = f" (scope {scope!r})" if scope else ""
+        rationale = _IMMUTABLE_KEY_RATIONALE.get(key, _IMMUTABLE_KEY_FALLBACK)
+        super().__init__(
+            f"Portfolio config key {key!r}{where} is not runtime-mutable. {rationale}"
+        )
+
+
 class ReconciliationError(ITraderError):
     """A venue resting-order payload is missing/uncoercible where reconciliation needs an id (CF-7/SAFE-05)."""
     pass
@@ -167,3 +220,219 @@ class DuplicateVenueAccountError(PortfolioError):
             f"is no safe way to decide which portfolio the account belongs to. Give each "
             f"portfolio its own account_id on this venue, or remove one of them."
         )
+
+
+# Per-CAUSE rationale for VenueAccountNotProvisionedError (ACCT-03 / D-21).
+#
+# The three causes are NOT interchangeable and the message must not blur them: only
+# ``VenueAccountManager`` can tell "there is no such account" from "the account exists
+# but was provisioned after this boot brought its venue online", and an operator's next
+# action is different in each case. Keyed so the remediation is the SPECIFIC one; the
+# fallback keeps a future cause honest if its entry is forgotten.
+_UNPROVISIONED_ACCOUNT_CAUSE: dict[str, str] = {
+    "not_provisioned": (
+        "no venue_accounts row exists for this pair. Provision it first "
+        "(system.venue_accounts.provision(venue, account_id, ...)), then bring it "
+        "online — a provisioned account is usable in the same process, with no restart "
+        "(D-27)"
+    ),
+    "disabled": (
+        "the venue_accounts row exists but carries enabled=False, so it was "
+        "deliberately excluded from this venue's bring-up. Re-enable the account if it "
+        "should trade; a disabled account is never silently brought online"
+    ),
+    "not_online": (
+        "the venue_accounts row exists and is enabled, but this account was never "
+        "brought online in this process — it was provisioned after its venue came up. "
+        "Call bring_online(row) for it (the same single path boot uses in bulk, D-27) "
+        "before resolving an account against it"
+    ),
+}
+
+_UNPROVISIONED_ACCOUNT_FALLBACK = (
+    "this account could not be resolved to a provisioned, enabled, online venue "
+    "account. Provision and bring the account online before resolving against it."
+)
+
+
+class VenueAccountNotProvisionedError(PortfolioError):
+    """A ``(venue_name, account_id)`` names no live, enabled venue account (ACCT-03, D-21).
+
+    The typed refusal ``VenueAccountManager.account_for`` raises instead of returning an
+    account. It is deliberately a REFUSAL and not a fallback: the tempting alternative —
+    handing back the compute leaf a portfolio would otherwise have — produces an account
+    with ``is_venue_truth=False``, which silently disables the venue snapshot, the fill/
+    order streams, ``VenueReconciler`` and the unexplained-residual HALT. The portfolio
+    then trades against COMPUTED balances while believing they are the venue's, and every
+    guard built to catch that divergence is inert. A loud refusal at resolution time is
+    strictly cheaper than a quiet one at settlement time.
+
+    ``account_id`` is matched by EXACT STRING at every layer — no case-folding, trimming
+    or Unicode normalization — so ``' okx-1'`` and ``'okx-1'`` are different accounts and
+    neither silently resolves to the other. This error is what a near-miss produces.
+
+    Carries the pair and the ``cause`` as structured fields and builds its message in
+    ``__init__`` (the project's exception convention). The message names the CONSEQUENCE
+    of the alternative and the cause-SPECIFIC REMEDIATION, because the operator's next
+    action differs per cause (see ``_UNPROVISIONED_ACCOUNT_CAUSE``).
+    """
+
+    #: The three causes ``VenueAccountManager.account_for`` distinguishes (D-21).
+    NOT_PROVISIONED = "not_provisioned"
+    DISABLED = "disabled"
+    NOT_ONLINE = "not_online"
+
+    def __init__(self, venue_name: str, account_id: str, cause: str):
+        self.venue_name = venue_name
+        self.account_id = account_id
+        self.cause = cause
+        rationale = _UNPROVISIONED_ACCOUNT_CAUSE.get(
+            cause, _UNPROVISIONED_ACCOUNT_FALLBACK)
+        super().__init__(
+            f"Venue account ({venue_name!r}, {account_id!r}) is not available: "
+            f"{rationale}. Refusing to resolve an account for it (ACCT-03): returning a "
+            f"compute leaf instead would give the portfolio is_venue_truth=False and "
+            f"silently disable the venue snapshot, the fill/order streams, "
+            f"VenueReconciler and the unexplained-residual HALT."
+        )
+
+
+class UnknownVenueAccountConfigKeyError(PortfolioError):
+    """A ``venue_accounts.config_json`` key is not on the mergeable allowlist (11.2-06, D-38).
+
+    The typed refusal ``VenueAccountManager.bring_online`` raises BEFORE it merges an
+    account's own config onto its ``VenueSpec``, and it is the security control D-38
+    names — not a tidiness check.
+
+    **Why an unrecognised key must RAISE rather than be dropped.** The three mergeable
+    keys are the ones that decide where an account's money goes. ``sandbox`` and
+    ``region`` select the OKX host an authenticated session reaches (an EEA-issued key
+    answers 50119 on the global host; ``sandbox`` is demo-vs-PRODUCTION), and
+    ``market_type`` reaches ``VenueAccount``, where
+    ``_cash_stream_nets_holds = market_type != "spot"`` changes how cash is netted. A
+    dropped ``sandox`` typo therefore does not degrade to a harmless default: it leaves
+    the account on whatever the ambient process environment says, so an operator who
+    believes they pinned an account to demo routes a live order to the production host —
+    and nothing anywhere reports a problem. Logging-and-ignoring is the same defect with
+    a log line nobody reads.
+
+    It is a SEPARATE type from the generic ``ValidationError`` the VALUE checks raise,
+    because the two need different operator actions: an unknown KEY means "this key does
+    not exist / you typed it wrong / it belongs somewhere else", while a bad VALUE means
+    "this key exists but you gave it something illegal".
+
+    Carries the pair and both key sets as structured fields and builds its message in
+    ``__init__`` (the project's exception convention). The message names the offending
+    keys AND the complete legal set, so an operator never has to open the source to
+    learn what they may write.
+    """
+
+    def __init__(
+        self,
+        venue_name: str,
+        account_id: str,
+        unknown_keys: list[str],
+        legal_keys: list[str],
+    ):
+        self.venue_name = venue_name
+        self.account_id = account_id
+        self.unknown_keys = unknown_keys
+        self.legal_keys = legal_keys
+        super().__init__(
+            f"Venue account ({venue_name!r}, {account_id!r}) carries unrecognised "
+            f"config_json key(s) {unknown_keys}. Refusing to bring it online (D-38): "
+            f"the mergeable keys are exactly {legal_keys}, and silently dropping an "
+            f"unrecognised one is how a 'sandox' typo leaves an account on the ambient "
+            f"environment's host — routing a live order to production while the "
+            f"operator believes the account is pinned to demo. Correct the key, or "
+            f"remove it from the account's config_json."
+        )
+
+
+class VenueAccountInUseError(PortfolioError):
+    """A venue account cannot be DISABLED while a live portfolio still depends on it (D-33/ACCT-10).
+
+    The typed refusal ``VenueAccountManager.set_enabled(..., enabled=False)`` raises when the
+    account is still referenced by at least one LIVE portfolio — one whose durable definition
+    row has ``enabled = True AND NOT is_deleted``. Disabling the account out from under it
+    would strand a running portfolio on a venue account the engine has excluded from bring-up
+    (``read_enabled_for`` skips disabled rows, and ``assert_available`` raises DISABLED), so
+    the portfolio would fail ACCT-03 at the next composition — the boot failing loud rather
+    than trading blind.
+
+    D-33: account-``enabled`` and portfolio-``enabled`` are INDEPENDENT. Disabling a portfolio
+    NEVER touches its account (a venue account is a real external thing that outlives any
+    number of internal portfolios), and — symmetrically — disabling the account is refused
+    while a live portfolio needs it. The remediation is the sanctioned release: PAUSE
+    (``deactivate_portfolio`` → ``enabled=False``) or RETIRE (``delete_portfolio`` →
+    ``is_deleted=True``) the referencing portfolios first; a paused portfolio no longer
+    blocks the disable, which is exactly why pausing is the release mechanism.
+
+    The refusal is resolved against the DURABLE store (``PortfolioDefinitionStore``), not a
+    live in-memory portfolio collaborator: pause and retire are durable, so the block a
+    disable must respect is durable too, and the manager stays free of a portfolio-handler
+    back-reference (the one-directional layering).
+
+    Carries the pair and the blocking portfolio ids as structured fields and builds its
+    message in ``__init__`` (the project's exception convention), naming the consequence and
+    the remediation.
+    """
+
+    def __init__(
+        self,
+        venue_name: str,
+        account_id: str,
+        portfolio_ids: list[Any],
+    ):
+        self.venue_name = venue_name
+        self.account_id = account_id
+        self.portfolio_ids = portfolio_ids
+        ids = ", ".join(str(pid) for pid in portfolio_ids)
+        super().__init__(
+            f"Venue account ({venue_name!r}, {account_id!r}) cannot be disabled: "
+            f"{len(portfolio_ids)} live portfolio(s) still depend on it [{ids}]. "
+            f"Refusing (D-33): disabling the account would strand these portfolios on a "
+            f"venue account excluded from bring-up, so each would fail ACCT-03 at the next "
+            f"composition. Pause (deactivate) or retire (delete) the referencing "
+            f"portfolios first — a paused or retired portfolio no longer holds the account."
+        )
+
+
+class DuplicateVenueAccountProvisionError(PortfolioError):
+    """``provision`` named a ``(venue_name, account_id)`` that already exists (ACCT-02/D-11).
+
+    Provisioning is CREATE-ONLY. The database's composite primary key on
+    ``(venue_name, account_id)`` is the arbiter, and its ``IntegrityError`` is what this
+    exception classifies — there is deliberately NO pre-check ``SELECT``, because a
+    pre-check is TOCTOU and, decisively, does not bind the out-of-band writers a durable
+    table always has. The same argument is already recorded for the sibling
+    ``portfolio_definition_store``.
+
+    It is a SEPARATE type from ``DuplicateVenueAccountError``, which reports two
+    PORTFOLIOS colliding on one account and carries both portfolio labels. A provision
+    refusal has no portfolios in it — the collision is between an existing row and a new
+    write — so reusing that type would mean inventing two portfolio names that do not
+    exist. Same table, different collision.
+
+    Refusing rather than overwriting is the point. A silent restatement is how a re-run
+    provisioning script replaces the operator's ``secret_ref`` and ``config``, and how the
+    engine-written ``venue_uid`` (D-04 trust-on-first-use) gets reset to NULL — which
+    disarms the venue-identity guard for that account. Repointing an existing account is
+    its own targeted verb, never a side effect of create.
+
+    Carries the colliding pair as structured fields and builds its message in ``__init__``
+    (the project's exception convention), naming the consequence and the remediation.
+    """
+
+    def __init__(self, venue_name: str, account_id: str):
+        self.venue_name = venue_name
+        self.account_id = account_id
+        super().__init__(
+            f"Venue account ({venue_name!r}, {account_id!r}) is already provisioned. "
+            f"Refusing to provision it again (D-11): provisioning is create-only, and "
+            f"overwriting would silently replace the operator's secret_ref and config "
+            f"and clear the engine-written venue_uid, disarming the trust-on-first-use "
+            f"venue-identity guard for this account. Use a different account_id, or "
+            f"update the existing account through its own targeted verb."
+        )
+

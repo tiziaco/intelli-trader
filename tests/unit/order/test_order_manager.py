@@ -305,6 +305,17 @@ class _FakeReadModel:
     def exchange_for(self, portfolio_id):
         return "default"
 
+    def account_for(self, portfolio_id):
+        """The ACCOUNT half of the ``(venue, account_id)`` key (D-27/D-39).
+
+        The Protocol declares ``Optional[str]`` and every backtest portfolio
+        leaves ``Portfolio.account_id`` unset, so the honest double answers
+        ``None`` — the admission seam coerces that to the single-account
+        identity. The double was missing this member entirely before
+        11.1-REVIEW WR-01 gave the fee-model provider a pair to resolve.
+        """
+        return None
+
     def open_position_count(self, portfolio_id):
         return 0
 
@@ -354,7 +365,7 @@ def test_buy_signal_reserves_cost_plus_estimated_commission():
     read_model = _FakeReadModel()
     fee_model = _FixedFeeModel(Decimal("1.5"))
     manager, storage = _reserve_manager(
-        read_model, fee_model_provider=lambda: fee_model
+        read_model, fee_model_provider=lambda venue, account_id: fee_model
     )
 
     results = manager.process_signal(_reserve_signal())

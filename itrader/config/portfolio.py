@@ -90,6 +90,28 @@ class TradingRules(BaseModel):
     max_cash_withdrawal_pct: float = Field(default=0.50, ge=0, le=1)
 
 
+# 11.1-REVIEW CR-02 — portfolio config keys that are DELIBERATELY NOT runtime-mutable.
+#
+# The set lives next to the field it governs so it can never drift from the model, and it is
+# consumed by BOTH refusal layers: ``ConfigRouter._apply_portfolio`` (the queue-facing default-deny
+# gate) and ``Portfolio.update_config`` (the backstop for any caller reaching the domain object
+# directly). ONE set, so the two layers cannot disagree about what is immutable.
+#
+# ``enable_margin`` has FIVE readers, and only ONE of them follows a runtime flip:
+#   1. ``AdmissionManager._enable_margin``           — bound at CONSTRUCTION (compose.py)
+#   2. ``EnhancedOrderValidator.enable_margin``      — bound at CONSTRUCTION (compose.py)
+#   3. ``ManagedStrategies.enable_margin`` (SHORT-01)— bound at CONSTRUCTION (compose.py)
+#   4. the account leaf's very KIND (cash vs margin) — selected at CONSTRUCTION (paper_plugin.py)
+#   5. ``Portfolio.process_transaction``             — re-read PER FILL
+# Flipping it at runtime therefore desynchronizes four of five readers silently: settlement takes
+# the margin arm while admission, validation, the strategy gate and the account leaf all still
+# believe margin is off. Making it genuinely mutable means propagating the flip to all five —
+# rejecting the flip is the smaller change and the locked owner decision. This is a TIGHTENING of
+# the router's default-deny access control, and it is KEY-scoped: every other ``trading_rules``
+# field stays fully routable.
+IMMUTABLE_PORTFOLIO_CONFIG_KEYS = frozenset({"enable_margin"})
+
+
 class ValidationSettings(BaseModel):
     """Validation and business logic settings."""
 

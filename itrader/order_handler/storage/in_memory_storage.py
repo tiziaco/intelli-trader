@@ -2,18 +2,18 @@ import uuid
 from typing import Any, Dict, Iterator, List, Optional, TYPE_CHECKING
 from datetime import datetime
 from ..base import OrderStorage, IdLike
-# D-03/D-10: OrderStatus is needed at RUNTIME (as a dict key for the
-# active-only by_status index and the shadow registry, and to build the
-# module-level _ACTIVE_STATUSES frozenset). A TYPE_CHECKING-only import would
-# NameError at runtime — keep this a real top-level import. ``Order`` stays
-# under TYPE_CHECKING (string forward refs only); no ``from __future__``.
+# OrderStatus is needed at RUNTIME (as a dict key for the active-only
+# by_status index and the shadow registry, and to build the module-level
+# _ACTIVE_STATUSES frozenset). A TYPE_CHECKING-only import would NameError at
+# runtime — keep this a real top-level import. ``Order`` stays under
+# TYPE_CHECKING (string forward refs only); no ``from __future__``.
 from ...core.enums import OrderStatus
 
 if TYPE_CHECKING:
     from ..order import Order
 
 
-# D-02/D-10: the single source of the active predicate, kept in lockstep with
+# The single source of the active predicate, kept in lockstep with
 # ``Order.is_active`` (PENDING / PARTIALLY_FILLED). Never re-derive the active
 # set per call site — index logic reads this frozenset.
 _ACTIVE_STATUSES: frozenset['OrderStatus'] = frozenset(
@@ -25,13 +25,12 @@ class InMemoryOrderStorage(OrderStorage):
     """
     In-memory implementation of OrderStorage.
 
-    Flat-dict-only design (D-20, closes PERF3 / M4-06): a single
-    ``self._by_id: Dict[uuid.UUID, Order]`` is the SOLE container. Keying is
-    native ``uuid.UUID`` (D-14) so lookup and removal are O(1).
+    Flat-dict-only design: a single ``self._by_id: Dict[uuid.UUID, Order]``
+    is the SOLE container. Keying is native ``uuid.UUID`` so lookup and
+    removal are O(1).
 
-    The previous nested per-portfolio dicts (the active / all / archived order
-    classes) are deleted. Order classification is a *predicate filter* over
-    the entity, evaluated at query time:
+    Order classification is a *predicate filter* over the entity, evaluated
+    at query time:
 
     - "active"        -> ``order.is_active`` (PENDING / PARTIALLY_FILLED)
     - per-portfolio   -> ``order.portfolio_id == portfolio_id``
@@ -41,29 +40,28 @@ class InMemoryOrderStorage(OrderStorage):
     A status change on the entity alone moves it across query classes — no
     dual-write, no deactivate step. Terminal (filled/cancelled/rejected)
     orders stay in the flat dict, preserving the "all orders" audit/history
-    semantics (T-05-02).
+    semantics.
     """
 
     def __init__(self) -> None:
         """Initialize the in-memory storage.
 
-        D-20: the flat ``{order_id: order}`` dict is the ONLY source of truth.
-
-        The three structures below are DERIVED CACHES over it (D-02/D-03/D-10),
-        never a second source of truth. They are kept consistent at every one of
-        the five write seams (add_order / update_order / remove_order /
+        The flat ``{order_id: order}`` dict is the only source of truth. The
+        three structures below are derived caches over it, never a second
+        source of truth. They are kept consistent at every one of the five
+        write seams (add_order / update_order / remove_order /
         remove_orders_by_ticker / clear_portfolio_orders) via the shared
-        ``_index_apply`` / ``_index_remove`` helpers — exactly mirroring the
+        ``_index_apply`` / ``_index_remove`` helpers — mirroring the
         MatchingEngine ``_resting`` (truth) / ``_trails`` (parallel cache)
-        discipline, where the side-table is touched at every site the truth dict
-        is touched so no entry ever leaks or drifts.
+        discipline, where the side-table is touched at every site the truth
+        dict is touched so no entry ever leaks or drifts.
         """
-        self._by_id: Dict[uuid.UUID, 'Order'] = {}                          # SOURCE OF TRUTH (D-20)
+        self._by_id: Dict[uuid.UUID, 'Order'] = {}                          # source of truth
         # CACHE-CLASS: (b) storage-index lookup — solved by Phase-3 SQL WHERE/indexes — see docs/CACHE-CLASSIFICATION.md
-        self._active_by_portfolio: Dict[uuid.UUID, Dict[uuid.UUID, None]] = {}   # derived cache (D-02)
-        self._by_status: Dict['OrderStatus', Dict[uuid.UUID, None]] = {}         # derived cache, active-only (D-10)
-        self._last_indexed_status: Dict[uuid.UUID, 'OrderStatus'] = {}           # shadow registry (D-03): one entry per LIVE order (active OR terminal)
-        # D-25: the GLOBAL order-scope config singleton (trivial dict impl; backtest-dark).
+        self._active_by_portfolio: Dict[uuid.UUID, Dict[uuid.UUID, None]] = {}   # derived cache
+        self._by_status: Dict['OrderStatus', Dict[uuid.UUID, None]] = {}         # derived cache, active-only
+        self._last_indexed_status: Dict[uuid.UUID, 'OrderStatus'] = {}           # shadow registry: one entry per LIVE order (active OR terminal)
+        # The GLOBAL order-scope config singleton (trivial dict impl; backtest-dark).
         self._config: Optional[Dict[str, Any]] = None
 
     # --- index maintenance (derived caches over the flat dict) --------------
@@ -71,19 +69,19 @@ class InMemoryOrderStorage(OrderStorage):
     def _index_apply(self, order: 'Order') -> None:
         """Reconcile both caches + the shadow registry for one order.
 
-        Diff-on-write (D-03): the order mutates status IN PLACE before the
-        storage write, so the stored object already shows the new status. We
-        diff the registry's ``old`` (None for a brand-new id — never pre-seed
-        it, Pitfall 3) against ``order.status``. Called by BOTH add_order and
-        update_order (one shared path — no divergence). Idempotent.
+        Diff-on-write: the order mutates status IN PLACE before the storage
+        write, so the stored object already shows the new status. We diff the
+        registry's ``old`` (None for a brand-new id — never pre-seed it)
+        against ``order.status``. Called by BOTH add_order and update_order
+        (one shared path — no divergence). Idempotent.
         """
         oid = order.id
-        pid = order.portfolio_id                          # immutable per order (D-03)
+        pid = order.portfolio_id                          # immutable per order
         old_status = self._last_indexed_status.get(oid)   # None => brand-new id
         new_status = order.status
         if old_status == new_status:
             return                                        # PENDING->PENDING modify / EXPIRED no-op: no bucket move
-        was_active = old_status in _ACTIVE_STATUSES       # None => was absent (Pitfall 2: REJECTED-at-add)
+        was_active = old_status in _ACTIVE_STATUSES       # None => was absent
         is_active = new_status in _ACTIVE_STATUSES
         # active_by_portfolio: maintain only on an active-boundary crossing.
         if is_active and not was_active:
@@ -94,7 +92,7 @@ class InMemoryOrderStorage(OrderStorage):
                 bucket.pop(oid, None)
                 if not bucket:
                     del self._active_by_portfolio[pid]    # keep get_active_orders(None) clean
-        # by_status: active-only (D-10) — drop on terminal, add on active.
+        # by_status: active-only — drop on terminal, add on active.
         # ``was_active`` implies ``old_status`` is a non-None active member;
         # test it directly so mypy narrows ``OrderStatus | None`` -> ``OrderStatus``.
         if old_status is not None and old_status in _ACTIVE_STATUSES:
@@ -106,10 +104,10 @@ class InMemoryOrderStorage(OrderStorage):
     def _index_remove(self, order: 'Order') -> None:
         """Drop one order from both caches + the registry (delete paths).
 
-        Pitfall 5: every remove pops the registry entry too, so the registry
-        holds exactly one entry per LIVE _by_id order (active OR terminal) and
-        never leaks a stale status after the order is deleted. (The registry is
-        NOT active-only — _index_apply records terminal statuses as well, which
+        Every remove pops the registry entry too, so the registry holds
+        exactly one entry per LIVE _by_id order (active OR terminal) and never
+        leaks a stale status after the order is deleted. (The registry is NOT
+        active-only — _index_apply records terminal statuses as well, which
         the old_status diff for a later re-add/update of the same id relies on.)
         """
         oid = order.id
@@ -133,18 +131,18 @@ class InMemoryOrderStorage(OrderStorage):
                 yield order
 
     def add_order(self, order: 'Order') -> None:
-        """Add a new order to in-memory storage (flat-dict write, D-20).
+        """Add a new order to in-memory storage (flat-dict write).
 
         Routes through the same ``_index_apply`` diff as update_order so a
-        re-add of an existing id is idempotent (Pitfall 4) and a reject-then-add
-        (REJECTED at add time, Pitfall 2) never enters the active book.
+        re-add of an existing id is idempotent and a reject-then-add (REJECTED
+        at add time) never enters the active book.
         """
         self._by_id[order.id] = order
         self._index_apply(order)
 
     def remove_order(self, order_id: IdLike, portfolio_id: Optional[IdLike] = None) -> bool:
         """Remove an order from in-memory storage (O(1) flat-dict delete)."""
-        # Native-UUID keying (D-14): a non-UUID id can never be a stored key.
+        # Native-UUID keying: a non-UUID id can never be a stored key.
         if not isinstance(order_id, uuid.UUID):
             return False
         order = self._by_id.get(order_id)
@@ -159,14 +157,13 @@ class InMemoryOrderStorage(OrderStorage):
     def remove_orders_by_ticker(self, ticker: str, portfolio_id: IdLike) -> int:
         """Remove all active orders for a specific ticker in a portfolio.
 
-        Sources candidate ids from the active index (D-07): this method only
-        ever removed active orders (the old scan filtered ``is_active``), so the
-        active bucket is the exact equivalent set. Terminal orders stay in
-        ``_by_id`` (history) — they were never in the active index.
+        Sources candidate ids from the active index: this method only ever
+        removes active orders, so the active bucket is the exact equivalent
+        set. Terminal orders stay in ``_by_id`` (history) — they were never in
+        the active index.
         """
-        # WR-01: the index is UUID-keyed; a non-UUID IdLike can never be a key,
-        # so fail closed rather than silently returning {} (which would diverge
-        # from the ==-based scan paths on the same logical query).
+        # The index is UUID-keyed; a non-UUID IdLike can never be a key, so
+        # fail closed here rather than falling through to an empty bucket.
         if not isinstance(portfolio_id, uuid.UUID):
             return 0
         bucket = self._active_by_portfolio.get(portfolio_id, {})
@@ -184,17 +181,17 @@ class InMemoryOrderStorage(OrderStorage):
 
         The nested ``{portfolio_id: {order_id: order}}`` shape is built
         on-the-fly from the flat dict — it is a return-shape convenience, not
-        a stored structure (D-20).
+        a stored structure.
         """
         if portfolio_id is not None:
-            # WR-01: index is UUID-keyed; fail closed on a non-UUID IdLike.
+            # Index is UUID-keyed; fail closed on a non-UUID IdLike.
             if not isinstance(portfolio_id, uuid.UUID):
                 return {portfolio_id: {}}
             bucket = self._active_by_portfolio.get(portfolio_id, {})
             return {portfolio_id: {oid: self._by_id[oid] for oid in bucket}}
         # None path: scan _by_id filtered by active membership so the nested
         # shape keeps the SAME first-seen-portfolio + within-portfolio GLOBAL
-        # add_order order as today's scan (Pitfall 1 — a per-portfolio index
+        # add_order order an equivalent flat scan would (a per-portfolio index
         # union would re-group and change the sequence).
         result: Dict[Any, Dict[Any, 'Order']] = {}
         for order in self._by_id.values():
@@ -203,8 +200,8 @@ class InMemoryOrderStorage(OrderStorage):
         return result
 
     def get_order_by_id(self, order_id: IdLike, portfolio_id: Optional[IdLike] = None) -> Optional['Order']:
-        """Get a specific order by ID — O(1) flat-dict lookup (D-20/PERF3)."""
-        # Native-UUID keying (D-14): a non-UUID id can never be a stored key.
+        """Get a specific order by ID — O(1) flat-dict lookup."""
+        # Native-UUID keying: a non-UUID id can never be a stored key.
         if not isinstance(order_id, uuid.UUID):
             return None
         order = self._by_id.get(order_id)
@@ -227,13 +224,13 @@ class InMemoryOrderStorage(OrderStorage):
         return [order for order in self._orders(portfolio_id) if order.ticker == ticker]
 
     def clear_portfolio_orders(self, portfolio_id: IdLike) -> int:
-        """Clear all active orders for a portfolio (sourced from the active index, D-07).
+        """Clear all active orders for a portfolio (sourced from the active index).
 
         Terminal orders are kept in the flat dict to preserve history — they
         were never in the active index, so sourcing from it is exactly
-        equivalent to the old ``is_active`` scan.
+        equivalent.
         """
-        # WR-01: index is UUID-keyed; fail closed on a non-UUID IdLike.
+        # Index is UUID-keyed; fail closed on a non-UUID IdLike.
         if not isinstance(portfolio_id, uuid.UUID):
             return 0
         bucket = self._active_by_portfolio.get(portfolio_id, {})
@@ -246,10 +243,10 @@ class InMemoryOrderStorage(OrderStorage):
 
     # Enhanced storage methods implementation
     #
-    # D-05/D-05a seam audit (no Postgres code — PERSIST-01 deferred): the
-    # OrderStorage ABC stays query-shaped and UNCHANGED; the indexes below are a
-    # private cache of InMemoryOrderStorage only. Every ABC method is
-    # SQL-expressible by a future PostgreSQLOrderStorage — insertion order maps
+    # The OrderStorage ABC stays query-shaped: the indexes below are a private
+    # cache of InMemoryOrderStorage only, and no in-memory-only assumption may
+    # leak into the seam. Every ABC method is SQL-expressible, as
+    # ``sql_storage.py::SqlOrderStorage`` does — insertion order maps
     # to ``ORDER BY created_at, id``; get_order_history implies a state-change
     # child table; search_orders needs a column whitelist; the active vs terminal
     # split here is an in-memory caching detail (SQL covers both with one
@@ -258,19 +255,19 @@ class InMemoryOrderStorage(OrderStorage):
     def get_orders_by_status(self, status: 'OrderStatus', portfolio_id: Optional[IdLike] = None) -> List['Order']:
         """Get orders by status, optionally filtered by portfolio.
 
-        Active statuses resolve membership via the by_status index (D-02);
-        terminal statuses keep scanning the flat dict (D-10 — no hot caller,
-        unbounded bucket growth avoided).
+        Active statuses resolve membership via the by_status index; terminal
+        statuses keep scanning the flat dict (no hot caller, so the unbounded
+        bucket growth of an active-style index is avoided).
 
-        Ordering note (D-06/D-08, WR-01): the by_status bucket is kept in
-        status-transition order (an order is popped from PENDING and appended to
-        PARTIALLY_FILLED at fill time), which diverges from add-order. To keep
-        output byte-identical to the prior flat scan on EVERY active status (not
-        just PENDING, where transition order == add-order), we yield in _by_id
-        add-order and use the bucket only as the membership filter. This method
-        has no per-bar hot caller (the hot active-set path is get_active_orders /
-        get_pending_orders via _active_by_portfolio), so the _by_id walk here is
-        not on the measured path.
+        Ordering: the by_status bucket is kept in status-transition order (an
+        order is popped from PENDING and appended to PARTIALLY_FILLED at fill
+        time), which diverges from add-order. To keep output byte-identical
+        across every active status (not just PENDING, where transition order
+        equals add-order), we yield in _by_id add-order and use the bucket
+        only as the membership filter. This method has no per-bar hot caller
+        (the hot active-set path is get_active_orders / get_pending_orders via
+        _active_by_portfolio), so the _by_id walk here is not on the measured
+        path.
         """
         if status in _ACTIVE_STATUSES:
             bucket = self._by_status.get(status, {})
@@ -278,22 +275,23 @@ class InMemoryOrderStorage(OrderStorage):
         return [order for order in self._orders(portfolio_id) if order.status == status]
 
     def get_active_orders(self, portfolio_id: Optional[IdLike] = None) -> List['Order']:
-        """Get all active orders via the active index (D-02/D-07).
+        """Get all active orders via the active index.
 
         Per-portfolio: a single bucket lookup. None: a ``_by_id`` scan filtered
         by active membership — preserves GLOBAL add_order insertion order
-        byte-identically (Pitfall 1; a per-portfolio union would re-group). The
-        None path has no production hot caller (reconcile passes a concrete pid,
-        lifecycle iterates per concrete pid), so the scan costs nothing measured.
+        byte-identically (a per-portfolio union would re-group). The None path
+        has no production hot caller (reconcile passes a concrete pid,
+        lifecycle iterates per concrete pid), so the scan costs nothing
+        measured.
         """
         if portfolio_id is not None:
-            # WR-01: index is UUID-keyed; fail closed on a non-UUID IdLike.
+            # Index is UUID-keyed; fail closed on a non-UUID IdLike.
             if not isinstance(portfolio_id, uuid.UUID):
                 return []
             bucket = self._active_by_portfolio.get(portfolio_id, {})
             return [self._by_id[oid] for oid in bucket]
-        # IN-02: route the None scan through the centralized _orders() predicate
-        # (byte-identical add-order; single iteration source for the flat scan).
+        # Route the None scan through the centralized _orders() predicate for a
+        # single iteration source, matching add-order byte-identically.
         return [o for o in self._orders() if o.status in _ACTIVE_STATUSES]
 
     def get_orders_by_time_range(self, start_time: datetime, end_time: datetime,
@@ -343,7 +341,7 @@ class InMemoryOrderStorage(OrderStorage):
             status_counts[status_name] = status_counts.get(status_name, 0) + 1
         return status_counts
 
-    # -- Runtime config (order scope — global singleton, D-25) ---------------
+    # -- Runtime config (order scope — global singleton) ---------------
 
     def save_config(self, config: Dict[str, Any], at: datetime) -> None:
         """Store the GLOBAL order-scope config singleton (trivial dict; ``at`` unused)."""

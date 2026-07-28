@@ -6,18 +6,16 @@ from itrader.portfolio_handler.transaction import Transaction
 from itrader.portfolio_handler.position import Position
 from itrader.events_handler.events import BarEvent
 from itrader.config import PortfolioConfig, get_portfolio_preset
+from itrader.config.portfolio import IMMUTABLE_PORTFOLIO_CONFIG_KEYS
 from itrader.outils.dict_merge import recursive_merge
 
 import pydantic
 from itrader.core.enums import PortfolioState, PositionSide, TransactionType
 
-# Import the new managers
 from itrader.portfolio_handler.transaction.transaction_manager import TransactionManager
 from itrader.portfolio_handler.position.position_manager import PositionManager
-# D-02 (11.1-09): the two SIMULATED leaves are no longer imported for
-# CONSTRUCTION — this module mints no account. ``SimulatedMarginAccount`` survives
-# as a NARROWING type only (``_require_margin_account``'s isinstance guard);
-# ``SimulatedCashAccount`` has no remaining reference and its import is dropped.
+# ``SimulatedMarginAccount`` is a NARROWING type only, for the isinstance guard in
+# ``_require_margin_account`` — this module mints no account.
 from itrader.portfolio_handler.account import Account, SimulatedMarginAccount
 from itrader.portfolio_handler.metrics.metrics_manager import MetricsManager
 from itrader.portfolio_handler.storage import (
@@ -26,31 +24,49 @@ from itrader.portfolio_handler.storage import (
 )
 from itrader.core.ids import PortfolioId
 from itrader.core.exceptions.base import ValidationError, StateError, ConfigurationError
-from itrader.core.exceptions.portfolio import PortfolioError, InvalidTransactionError
+from itrader.core.exceptions.portfolio import (
+	PortfolioError,
+	InvalidTransactionError,
+	ImmutableConfigKeyError,
+)
 
 from itrader import idgen
 
 if TYPE_CHECKING:
-	# D-07 (05.2-05): the SqlEngine type is annotation-only here — a runtime
-	# import would pull SQLAlchemy onto the backtest hot path (GATE-01 inertness).
+	# Annotation-only: a runtime import would pull SQLAlchemy onto the backtest path.
 	from itrader.storage import SqlEngine
 
 
-class Portfolio(object):
+def _reject_immutable_config_keys(node: Any) -> None:
+	"""Refuse an update payload naming an immutable config key at ANY depth.
+
+	Walks the payload rather than checking top-level keys because ``recursive_merge``
+	accepts nested blobs — a top-level-only check is bypassable by nesting the key
+	inside its section.
+
+	Raises ``ImmutableConfigKeyError``; returns ``None`` when the payload is clean.
 	"""
-	Enhanced Portfolio with integrated state management and configuration.
+	if isinstance(node, list):
+		for item in node:
+			_reject_immutable_config_keys(item)
+		return
 
-	Each portfolio is now self-contained with its own:
-	- State management (ACTIVE, INACTIVE, ARCHIVED)
-	- Configuration (limits, validation settings) via a Pydantic PortfolioConfig
-	- Health monitoring
+	if not isinstance(node, dict):
+		return
 
-	D-19 single-writer contract: ALL portfolio state mutations happen on the
-	engine thread; queue.Queue is the thread boundary — other threads only put
-	events. Composite reads are consistent because nothing mutates concurrently.
-	Live cross-thread reads are a D-live design item.
+	for key, value in node.items():
+		if key in IMMUTABLE_PORTFOLIO_CONFIG_KEYS:
+			raise ImmutableConfigKeyError(key=str(key))
+		_reject_immutable_config_keys(value)
 
-	Maintains backward compatibility with existing interface.
+
+class Portfolio(object):
+	"""Self-contained portfolio: state, config, positions, cash and health.
+
+	Single-writer contract: ALL portfolio state mutations happen on the engine
+	thread; queue.Queue is the thread boundary — other threads only put events.
+	Composite reads are consistent because nothing mutates concurrently, which is
+	why there is no lock here.
 	"""
 
 	def __init__(self, name: str, exchange: str, cash: Decimal, time: datetime,
@@ -62,96 +78,66 @@ class Portfolio(object):
 	             venue_name: Optional[str] = None,
 	             *,
 	             account: Account) -> None:
-		"""
-		Initialize enhanced portfolio with integrated capabilities.
+		"""Initialize the portfolio.
 
-		ACCT-04: the owning-user identity is NOT a Portfolio concern — it is an
-		app-layer (FastAPI) mapping (owner -> portfolio) and is deliberately
-		absent here; it is NOT relocated onto the Account either.
+		The owning-user identity is NOT a Portfolio concern — it is an app-layer
+		(FastAPI) owner -> portfolio mapping, deliberately absent here and not
+		relocated onto the Account either.
 
-		D-07 (05.2-05): ``environment`` + ``sql_engine`` select the state-storage
-		backend built in ``_init_managers``. The default "backtest" builds the
-		in-memory backend (the SMA_MACD byte-exact oracle path — unchanged); the
-		live composition root passes "live" + the shared ``SqlEngine`` so this
-		portfolio's state persists to the durable SQL ledger keyed by
-		``portfolio_id``.
-
-		F-1 (11-05): that durable state SURVIVES a process restart because
-		``portfolio_id`` is SUPPLIED on rehydrate rather than regenerated. Before
-		this plan the id was minted fresh on EVERY construction, so a restart
-		orphaned the prior run's portfolio-scoped rows and dangled the persisted
-		strategy-subscription rows — the restart-stability this docstring claimed
-		held only within a single process. The id is never RE-SCHEMED: omitting
-		``portfolio_id`` still mints a UUIDv7 through the single ``idgen``
-		singleton, exactly as before.
+		``environment`` + ``sql_engine`` select the state-storage backend built in
+		``_init_managers``: "backtest" is the in-memory oracle path, "live" + the shared
+		``SqlEngine`` persists to the durable SQL ledger keyed by ``portfolio_id``.
 
 		Parameters
 		----------
 		portfolio_id : Optional[PortfolioId]
-			An EXISTING id to reattach to (rehydrate, F-1). ``None`` mints a fresh
-			UUIDv7 via ``idgen``. Uniqueness across a running system is the
-			composition-time invariant's job, not the constructor's.
+			An EXISTING id to reattach to on rehydrate; supplying it — rather than
+			regenerating — is what makes durable state survive a process restart. A freshly
+			minted id orphans the prior run's portfolio-scoped rows and dangles the
+			persisted strategy-subscription rows. ``None`` mints a fresh UUIDv7 via the
+			single ``idgen`` singleton.
 		account_id : Optional[str]
-			The venue account this portfolio's orders reach (D-06). Every portfolio
-			names an account — there are not two classes of portfolio. It defaults
-			ONLY so the byte-exact backtest call site stays untouched.
+			The venue account this portfolio's orders reach. It defaults ONLY so the
+			byte-exact backtest call site stays untouched.
 		venue_name : Optional[str]
-			The venue half of the ``(venue_name, account_id)`` account reference and
-			the SOURCE OF TRUTH for the portfolio's exchange going forward (D-07).
-			When supplied, ``self.exchange`` is DERIVED from it — storing the venue
-			twice creates two sources of truth that can drift once orders are routed
-			per-account. The ``exchange`` parameter is the LEGACY input path (the
-			backtest/oracle call site and ~100 test call sites pass it); it is used
+			The venue half of the ``(venue_name, account_id)`` account reference and the
+			SOURCE OF TRUTH for the portfolio's exchange: when supplied, ``self.exchange``
+			is DERIVED from it, because storing the venue twice creates two sources of
+			truth that can drift once orders are routed per-account. ``exchange`` is used
 			as-is only when ``venue_name`` is absent, never alongside it.
 		account : Account
-			The BUILT settlement leaf (D-02/D-03, 11.1-09). Constructed by the venue
-			plugin's ``new_account`` — the SOLE account factory — and supplied by
-			``PortfolioHandler.add_portfolio``, which holds the ``PortfolioConfig``
-			the margin-vs-cash selection reads. ``Portfolio`` no longer selects an
-			account kind: the duplicate branch that used to live in
-			``_init_managers`` is deleted, so there is exactly one owner of that rule.
+			The BUILT settlement leaf, constructed by the venue plugin's ``new_account`` —
+			the SOLE account factory — and supplied by ``PortfolioFactory.materialize``,
+			which holds the ``PortfolioConfig`` the margin-vs-cash selection reads;
+			``Portfolio`` selects no account kind.
 
-			REQUIRED, keyword-only, and deliberately WITHOUT a default. A default
-			would be a mint-on-omission path, and every construction site that forgot
-			to pass one would then silently receive the wrong account KIND instead of
-			failing with a ``TypeError`` at the call site. Keyword-only for the same
-			reason ``SimulatedCashAccount.state_storage`` is: it cannot be bound
-			positionally by a stale call.
+			REQUIRED and keyword-only WITHOUT a default: a default would be a
+			mint-on-omission path, and every construction site that forgot to pass one
+			would silently receive the wrong account KIND instead of a ``TypeError``.
 		"""
-		# Core portfolio identity. F-1: SUPPLYABLE, never re-schemed — a supplied
-		# id is what reattaches the portfolio-scoped durable child tables on a
-		# restart; omitting it mints through the single UUIDv7 idgen singleton.
 		self.portfolio_id: PortfolioId = (
 			portfolio_id if portfolio_id is not None
 			else PortfolioId(idgen.generate_portfolio_id())
 		)
 		self.name = name
-		self.account_id = account_id
-		# D-07: venue_name WINS when supplied; `exchange` is the legacy fallback.
-		self.venue_name = venue_name
+		# ``account_id`` / ``venue_name`` are not stored here — they are read-only
+		# properties over ``self.account``, the ONE storage site for the pair.
 		self.exchange = venue_name if venue_name is not None else exchange
 		self.creation_time = time
 		self.current_time = time
 		
-		# Portfolio-specific configuration
 		self.config = config or get_portfolio_preset('default')
 		
-		# Portfolio state management
 		self._state = PortfolioState.ACTIVE
 		self._state_transitions = [(PortfolioState.ACTIVE, time)]
 		self._last_activity = time
 		
-		# D-19: lock removed — single-writer contract, see class docstring.
+		# No lock: single-writer contract, see class docstring.
 
-		# D-07 (05.2-05): the durable state-storage selector, threaded from the
-		# composition root (PortfolioHandler.add_portfolio). Set BEFORE
-		# _init_managers, which builds self.state_storage from these. "backtest"
-		# (the default) is the in-memory oracle path; "live" + sql_engine build the
-		# SqlEngine-backed store scoped to self.portfolio_id.
+		# Set BEFORE _init_managers, which builds self.state_storage from these.
 		self._environment = environment
 		self._sql_engine = sql_engine
 
-		# Health monitoring
 		self._health_metrics: Dict[str, Any] = {
 			'last_health_check': time,
 			'validation_errors': 0,
@@ -159,47 +145,29 @@ class Portfolio(object):
 			'state_changes': 1
 		}
 		
-		# Initialize managers with self-reference
 		self._init_managers(account)
-
-		# Validation
 		self._validate_initial_state(cash)
 	
 	def _init_managers(self, account: Account) -> None:
-		"""Bind the RECEIVED account and initialize the three portfolio managers.
+		"""Bind the RECEIVED account and build the three portfolio managers.
 
-		M2-08: a single ``PortfolioStateStorage`` seam is shared by all four
-		managers (mirroring how ``OrderManager`` receives an ``OrderStorage`` from
-		``OrderStorageFactory.create(environment)``). The managers no longer own
-		their state containers — they read/write through this seam. The backtest
-		path uses the in-memory backend; live persistence is a pure backend swap.
-
-		D-02 (11.1-09): the account is RECEIVED, never minted. The margin-vs-cash
-		leaf selection that used to live here is DELETED — its sole owner is now
-		``VenuePlugin.new_account`` (D-03), so one selection rule has one home. The
-		field stays declared as the ``Account`` ABC (it IS the settlement contract,
-		not a concretion) so the live ``VenueAccount`` leaf that
-		``_attach_venue_accounts`` swaps in later still wires cleanly; margin-only
+		The account is RECEIVED, never minted: ``VenuePlugin.new_account`` is the sole
+		owner of the margin-vs-cash selection rule. The field stays declared as the
+		``Account`` ABC so the live ``VenueAccount`` leaf wires cleanly; margin-only
 		call sites narrow via ``_require_margin_account``.
 
-		**The seam is ADOPTED from the account when it carries one, and that
-		direction is load-bearing.** The account is now built BEFORE the portfolio
-		exists, so a portfolio that built its own backend here would leave the leaf
-		on a private one. Nothing else in the tree reads the leaf's three containers
-		(reserved cash, locked margin, the cash-operation audit trail), so the split
-		is invisible in backtest and the byte-exact oracle stays green — while in
-		live the restart path (``state_storage.rehydrate(account)``) repopulates
-		those caches on THIS object and every reservation is silently lost across a
-		restart. Adopting makes one instance a structural fact rather than a wiring
-		convention two call sites have to keep agreeing on.
+		**The state-storage seam is ADOPTED from the account when it carries one, and
+		that direction is load-bearing.** The account is built BEFORE the portfolio
+		exists, so a portfolio that built its own backend here would leave the leaf on a
+		private one. Nothing else in the tree reads the leaf's three containers (reserved
+		cash, locked margin, the cash-operation audit trail), so the split is invisible
+		in backtest and the oracle stays green — while in live the restart path
+		(``state_storage.rehydrate(account)``) repopulates those caches on THIS object
+		and every reservation is silently lost across a restart.
 
-		D-07 (05.2-05): the environment/sql_engine/portfolio_id selector remains the
-		FALLBACK, for a leaf that exposes no seam of its own (a venue-truth account,
-		whose balance lives at the venue). For "backtest" (the default) the extra
-		kwargs are ignored (the in-memory backend is byte-exact — the SMA_MACD
-		oracle path is UNCHANGED); for "live" they satisfy the SQL arm's required
-		``sql_engine`` + ``portfolio_id`` (the store scopes every query to this
-		portfolio).
+		The environment/sql_engine/portfolio_id factory is the FALLBACK, for a leaf that
+		exposes no seam of its own (a venue-truth account, whose balance lives at the
+		venue).
 		"""
 		account_seam = getattr(account, "state_storage", None)
 		self.state_storage: PortfolioStateStorage = (
@@ -215,25 +183,39 @@ class Portfolio(object):
 		self.position_manager = PositionManager(self)
 		self.metrics_manager = MetricsManager(self)
 
+	@property
+	def venue_name(self) -> Optional[str]:
+		"""The venue this portfolio's account belongs to.
+
+		Read-only over ``self.account``, the ONE storage site for the
+		``(venue_name, account_id)`` pair — two storage sites for one identity is how a
+		portfolio's idea of its account drifts from the leaf's own. No setter.
+		"""
+		return self.account.venue_name
+
+	@property
+	def account_id(self) -> Optional[str]:
+		"""The venue account this portfolio's orders reach.
+
+		Read-only over ``self.account``; see ``venue_name`` for the drift rationale.
+		"""
+		return self.account.account_id
+
 	def _validate_initial_state(self, cash: float | Decimal) -> None:
-		"""Validate initial portfolio state.
+		"""Refuse a portfolio whose opening cash disagrees with its account's balance.
 
-		``cash`` is the opening balance the CALLER asked for. It is compared against
-		the balance the RECEIVED account actually carries (T-11.1-42): the two are
-		now built by different code — ``PortfolioHandler.add_portfolio`` computes
-		``to_money(cash)`` once and passes it to both — so a caller that supplies one
-		value to the portfolio and another (or none) to the account factory would
-		otherwise get a portfolio whose reported opening cash and whose ledger
-		disagree, with nothing red.
+		``PortfolioFactory.materialize`` computes ``to_money(cash)`` once and passes it
+		to both sides; without this check a caller that supplies one value to the
+		portfolio and another to the account factory gets a portfolio whose reported
+		opening cash and whose ledger disagree, with nothing red. Venue-truth leaves are
+		exempt — their balance comes from the venue, so there is no wiring value to
+		agree with.
 
-		Venue-truth leaves are exempt: their balance comes from the venue, not from
-		wiring, so there is no wiring value to agree with.
-
-		WR-05: the expected value ASKS the account how it rounds cash
-		(``Account.quantize_cash``) instead of re-deriving the scale here. The two
-		sides of this exact-equality check are built by different code across a
-		domain boundary; when each spelled the scale out for itself, a one-sided
-		change made every portfolio construction raise — including the oracle path.
+		The expected value ASKS the account how it rounds cash
+		(``Account.quantize_cash``) rather than re-deriving the scale: both sides of
+		this exact-equality check are built across a domain boundary, and when each
+		spelled the scale out for itself a one-sided change made every portfolio
+		construction raise — including the oracle path.
 		"""
 		if not getattr(account := self.account, "is_venue_truth", False):
 			expected = account.quantize_cash(cash)
@@ -246,9 +228,8 @@ class Portfolio(object):
 					"initial_cash and the portfolio's cash must be the SAME value",
 				)
 		if self.account.balance < 0:
-			# FL-01: input validation on the cash field at construction (not a
-			# transaction funds-shortfall — InsufficientFundsError's
-			# (required, available) shape does not fit a negative starting balance).
+			# FL-01: input validation, not a transaction funds-shortfall —
+			# InsufficientFundsError's (required, available) shape does not fit here.
 			raise ValidationError("cash", str(self.account.balance), "Portfolio cannot start with negative cash")
 		if not self.name.strip():
 			# FL-01: input validation on the name field at construction.
@@ -260,21 +241,21 @@ class Portfolio(object):
 	def __repr__(self) -> str:
 		return str(self)
 
-	# State Management Methods
 	@property
 	def state(self) -> PortfolioState:
-		"""Get current portfolio state."""
 		return self._state
 	
 	def set_state(self, new_state: PortfolioState, reason: str = "") -> bool:
-		"""Change portfolio state with validation."""
+		"""Change portfolio state, validating the transition.
+
+		Returns ``False`` when the portfolio is already in ``new_state``; raises
+		``StateError`` on an illegal transition.
+		"""
 		if self._state == new_state:
 			return False
 			
-		# Validate state transition
 		if not self._is_valid_state_transition(self._state, new_state):
-			# FL-01: state-machine transition violation. self.portfolio_id is a
-			# PortfolioId (uuid.UUID) satisfying StateError's entity_id type.
+			# FL-01: state-machine transition violation.
 			raise StateError(self.portfolio_id, self._state.value, required_state=new_state.value, operation="set_state")
 			
 		old_state = self._state
@@ -285,48 +266,46 @@ class Portfolio(object):
 		return True
 	
 	def _is_valid_state_transition(self, from_state: PortfolioState, to_state: PortfolioState) -> bool:
-		"""Validate if state transition is allowed."""
-		# ACTIVE can go to INACTIVE or ARCHIVED
 		if from_state == PortfolioState.ACTIVE:
 			return to_state in [PortfolioState.INACTIVE, PortfolioState.ARCHIVED]
 		
-		# INACTIVE can go to ACTIVE or ARCHIVED
 		if from_state == PortfolioState.INACTIVE:
 			return to_state in [PortfolioState.ACTIVE, PortfolioState.ARCHIVED]
 		
-		# ARCHIVED is terminal state (no transitions allowed)
 		if from_state == PortfolioState.ARCHIVED:
 			return False
 		
 		return False
 	
 	def is_active(self) -> bool:
-		"""Check if portfolio is in active state."""
 		return self.state == PortfolioState.ACTIVE
 	
 	def can_trade(self) -> bool:
-		"""Check if portfolio can execute trades."""
 		return self.state == PortfolioState.ACTIVE
 
-	# Configuration Management
 	def update_config(self, updates: Dict[str, Any]) -> None:
-		"""Update portfolio configuration at runtime (D-07/D-08/D-09).
+		"""Update portfolio configuration at runtime.
 
-		Canonical contract: recursive_merge -> model_validate -> atomic-swap, wrapping
-		pydantic ``ValidationError`` (which also rejects unknown keys via
-		``extra="forbid"``) into ``ConfigurationError``. Returns ``None`` and
-		RAISES on failure. WR-04: the deep-merge preserves sibling submodel
-		fields a partial nested update did not intend to change.
+		recursive_merge -> model_validate -> atomic swap, wrapping pydantic
+		``ValidationError`` (which also rejects unknown keys via ``extra="forbid"``)
+		into ``ConfigurationError``. The deep-merge preserves sibling submodel fields a
+		partial nested update did not intend to change.
+
+		An immutable key is refused BEFORE the merge, so ``self.config`` is never
+		partially mutated. This duplicates a refusal ``ConfigRouter`` already makes: the
+		router is the QUEUE-FACING gate and cannot see a caller reaching this method
+		directly. Both layers read ``IMMUTABLE_PORTFOLIO_CONFIG_KEYS``, so they cannot
+		drift apart.
 		"""
+		_reject_immutable_config_keys(updates)
 		merged = recursive_merge(self.config.model_dump(), updates)
 		try:
 			new_config = PortfolioConfig.model_validate(merged)
 		except pydantic.ValidationError as e:
 			raise ConfigurationError(reason=str(e)) from e
-		self.config = new_config  # atomic GIL-safe reference swap (D-11)
+		self.config = new_config  # atomic GIL-safe reference swap
 	
 	def get_config_dict(self) -> Dict[str, Any]:
-		"""Get configuration as dictionary."""
 		return {
 			'max_positions': self.config.limits.max_positions,
 			'max_position_value': float(self.config.limits.max_position_value),
@@ -341,147 +320,103 @@ class Portfolio(object):
 			'require_sufficient_funds': self.config.validation.require_sufficient_funds
 		}
 
-	# Read Properties (backward compatible; D-19 single-writer — no locks)
 	@property
 	def cash(self) -> Decimal:
-		"""Get current cash balance as Decimal.
-
-		M2-02: money is Decimal end-to-end on the cash path — the former
-		float() cast on the ledger balance is removed so reading cash no longer
-		round-trips money back to float.
-
-		ACCT-01: cash truth is delegated to the account leaf (a receiver-only
-		re-point of the former cash-manager call; no math change).
-		"""
+		"""Current cash balance, delegated to the account leaf."""
 		return self.account.balance
 
-	# D-05 (Plan 05-05): the cash SETTER is deleted — every cash mutation goes
-	# through an audited CashManager primitive (deposit/withdraw/fill flow);
-	# the trade path applies cash via apply_fill_cash_flow in
-	# process_transaction. Assigning portfolio.cash raises AttributeError.
+	# There is deliberately NO cash setter: every cash mutation goes through an
+	# audited Account primitive (deposit / withdraw / apply_fill_cash_flow), so
+	# assigning portfolio.cash raises AttributeError.
 
 	@property
 	def n_open_positions(self) -> int:
-		"""Obtain the number of open positions."""
 		return len(self.position_manager.get_all_positions())
 
 	@property
 	def total_market_value(self) -> Decimal:
-		"""Get total market value excluding cash, as Decimal.
-
-		M5-10 (D-06): Decimal end-to-end on the result-bearing path — the
-		position_manager aggregate is already Decimal, so this returns it
-		unchanged with no float() narrowing at the property boundary.
-		"""
+		"""Total market value excluding cash."""
 		return self.position_manager.get_total_market_value()
 
 	@property
 	def total_equity(self) -> Decimal:
-		"""Get total equity including cash, as Decimal.
-
-		M5-10 (D-06): Decimal-native aggregation — total_market_value (Decimal)
-		plus cash (Decimal). No float() cast: money stays Decimal end-to-end.
-		"""
+		"""Total equity including cash."""
 		return self.total_market_value + self.cash
 
 	@property
 	def total_unrealised_pnl(self) -> Decimal:
-		"""Calculate unrealised P&L as Decimal (M5-10, D-06)."""
 		return self.position_manager.get_total_unrealized_pnl()
 
 	@property
 	def total_realised_pnl(self) -> Decimal:
-		"""Calculate realised P&L as Decimal (M5-10, D-06)."""
 		return self.position_manager.get_total_realized_pnl()
 
 	@property
 	def total_pnl(self) -> Decimal:
-		"""Sum of all positions' total P&Ls, as Decimal.
-
-		M5-10 (D-06): Decimal+Decimal aggregation of the two pnl read-properties.
-		"""
+		"""Unrealised plus realised P&L."""
 		return self.total_unrealised_pnl + self.total_realised_pnl
 	
 	@property
 	def positions(self) -> dict[str, Position]:
-		"""Get open positions as a dictionary."""
 		return self.position_manager.get_all_positions()
 	
 	@property
 	def closed_positions(self) -> list[Position]:
-		"""Get closed positions as a list."""
 		return self.position_manager.get_closed_positions()
 	
 	@property
 	def transactions(self) -> list[Transaction]:
-		"""Get all transactions as a list."""
 		return self.transaction_manager.get_transaction_history()
 
 	def process_transaction(self, transaction: Transaction) -> None:
-		"""
-		Settle a fill atomically: validate-first, then mutate (D-09/D-12).
+		"""Settle a fill atomically: validate-first, then mutate.
 
-		The Portfolio orchestrates the settlement sequence under its own
-		roof — each manager does exactly one concern, never touching a
-		sibling. NOTHING mutates until all checks pass, so no rollback
-		machinery is needed (a fill is a FACT; solvency was enforced
-		pre-trade by the reservation gate):
+		NOTHING mutates until all checks pass, so no rollback machinery is needed (a
+		fill is a FACT; solvency was enforced pre-trade by the reservation gate). The
+		ORDER is the invariant:
 
-		1. validate          — pure checks (TransactionManager, raises typed)
-		2. funds invariant   — debit-side guard against BALANCE, never the
-		                       reservation-adjusted buying power (D-10,
-		                       Pitfall 2); never fires in the golden run
-		3. position mutate   — first mutation (PositionManager)
-		4. cash apply        — full-precision fill flow, ONE ledger entry
-		                       with fee + event time (CashManager, D-05/D-06)
-		5. record            — seam history append (TransactionManager, D-11)
+		1. validate        — pure checks (TransactionManager, raises typed)
+		2. funds invariant — debit-side guard against BALANCE, never the
+		                     reservation-adjusted buying power
+		3. position mutate — first mutation (PositionManager)
+		4. cash apply      — full-precision fill flow, ONE ledger entry with fee
+		                     + event time
+		5. record          — seam history append (TransactionManager)
 
-		Returns ``None`` on success; raises typed domain exceptions on
-		failure (D-10 — no bool channel). Backtest: the exception propagates
-		to the Phase 4 ``_on_handler_error`` re-raise seam and the run stops
+		Raises typed domain exceptions on failure — no bool channel. In backtest the
+		exception propagates to the ``FailFastPolicy`` re-raise seam and the run stops
 		loudly rather than producing corrupted numbers.
 		"""
-		# Update transaction with portfolio information
 		transaction.portfolio_id = self.portfolio_id
 
-		# 1. Pure validation — raises InvalidTransactionError, nothing mutated.
+		# 1. Pure validation — nothing mutated.
 		self.transaction_manager.validate(transaction)
 
-		# enable_margin gate (D-09): branch the settlement on the portfolio's
-		# trading rules. The spot arm (False) is byte-exact site #2 — operand-
-		# for-operand identical to today; the margin arm is lock-and-settle.
+		# The spot arm (enable_margin=False) is the byte-exact oracle path; the margin
+		# arm is lock-and-settle.
 		if self.config.trading_rules.enable_margin:
 			self._process_transaction_margin(transaction)
 		else:
 			self._process_transaction_spot(transaction)
 
 	def _process_transaction_spot(self, transaction: Transaction) -> None:
-		"""Spot settlement (enable_margin=False) — UNCHANGED, byte-exact site #2.
+		"""Spot settlement (enable_margin=False) — the byte-exact oracle path.
 
-		Full notional debit via Transaction.net_cash_delta; nothing locked.
-		This arm is operand-for-operand identical to the pre-margin code and
-		MUST stay so (the SMA_MACD golden oracle, 134 / 46189.87730727451,
-		regression-locks it). NO `/ leverage` ever touches this path (Pitfall 4).
+		Full notional debit via ``Transaction.net_cash_delta``; nothing locked. The
+		SMA_MACD golden oracle (134 / 46189.87730727451) regression-locks this arm
+		operand-for-operand — NO ``/ leverage`` ever touches this path.
 		"""
-		# OVERSELL-A / CR-02 (spot): fail loud on an over-close SELL BEFORE any
-		# mutation — mirror of the margin guard at _process_transaction_margin
-		# (portfolio.py:399-404). Root cause:
-		# .planning/debug/spot-long-only-oversell.md — the spot path applied any
-		# reducing fill UNCONDITIONALLY, so a SELL exceeding the held long settled
-		# silently into a net-short inventory mislabeled side=LONG with phantom
-		# positive market_value (the dangerous part: fail-fast did NOT trip). This
-		# is the documented "byte-exact site #2"; the guard is DARK on the SMA_MACD
-		# golden path (exits are clamped to net_quantity, so it never over-sells),
-		# so the oracle stays byte-exact (134 / 46189.87730727451). No clamp —
-		# match the margin path's fail-fast semantics (raise, never truncate).
+		# Fail loud on an over-close SELL BEFORE any mutation. Without it a SELL
+		# exceeding the held long settles silently into a net-short inventory
+		# mislabeled side=LONG with phantom positive market_value — and, the dangerous
+		# part, fail-fast does NOT trip. DARK on the SMA_MACD golden path (exits are
+		# clamped to net_quantity), so the oracle stays byte-exact. No clamp: raise,
+		# never truncate.
 		ticker = transaction.ticker
 		prior = self.position_manager.get_position(ticker)
 		prior_qty = abs(prior.net_quantity) if prior is not None else Decimal("0")
-		# PERF-02 (D-02): capture realised PnL BEFORE the mutation so the
-		# accumulator can be fed the realised increment after settling — mirrors
-		# the margin arm's pre/post capture (portfolio.py:406/529). The spot path
-		# is the SMA_MACD oracle path and has no explicit increment today, so it is
-		# added here (03-INVARIANT-AUDIT.md §5). Open/scale-in yield increment 0.
+		# Capture realised PnL BEFORE the mutation so the accumulator can be fed the
+		# increment after settling. Open/scale-in yield an increment of 0.
 		prior_realised = prior.realised_pnl if prior is not None else Decimal("0")
 		# is_increase: a fill that moves in the position's OWN side.
 		if prior is None:
@@ -491,14 +426,10 @@ class Portfolio(object):
 				(prior.side == PositionSide.LONG and transaction.type == TransactionType.BUY)
 				or (prior.side == PositionSide.SHORT and transaction.type == TransactionType.SELL)
 			)
-		# Raise ONLY on a GROSS over-sell — a real logic error (the 64-BTC
-		# phantom-equity case from .planning/debug/spot-long-only-oversell.md,
-		# guard origin: quick task 260623-gao). A sub-close-tolerance excess
-		# (e.g. 1E-27 per-add bracket-child requantization on a pyramided
-		# position) is Decimal quantization noise, NOT an over-sell — absorb it
-		# as a clean full close: it passes here and `_should_close_position`
-		# (abs(net) <= tolerance) settles the residual to flat (260623-h6i debug
-		# session). Reuse the existing PositionManager.tolerance (1e-5).
+		# Raise ONLY on a GROSS over-sell. A sub-tolerance excess (1E-27 per-add
+		# bracket-child requantization on a pyramided position) is Decimal quantization
+		# noise, NOT an over-sell: it passes here and `_should_close_position`
+		# (abs(net) <= PositionManager.tolerance) settles the residual flat.
 		if not is_increase and (transaction.quantity - prior_qty) > self.position_manager.tolerance:
 			raise InvalidTransactionError(
 				"Spot close fill exceeds held quantity (over-sell not allowed — "
@@ -506,54 +437,45 @@ class Portfolio(object):
 				{"closed": str(transaction.quantity), "open": str(prior_qty)},
 			)
 
-		# 2. Funds invariant on the debit side (D-10). The actual net cost is
-		#    the entity's own cash math (Transaction.net_cash_delta) — the
-		#    EXACT delta the interim seam computed (value preservation).
+		# 2. Funds invariant on the debit side (Transaction.net_cash_delta).
 		net_delta = transaction.net_cash_delta
 		if net_delta < 0:
 			self.account.assert_funds_invariant(-net_delta)
 
-		# 3. Position mutation (all checks passed; handles shorts properly).
+		# 3. Position mutation — all checks passed.
 		position = self.position_manager.process_position_update(transaction)
 		transaction.position_id = position.id
 
-		# PERF-02 (D-02): feed the running realised-PnL accumulator the increment
-		# from THIS fill. Decimal('0') on pure-open/scale-in (realised_pnl
-		# unchanged), the realised delta on partial/full closes — applied
-		# unconditionally (byte-safe; never gated behind a branch that could skip a
-		# partial close). Facade->manager call; the manager keeps no back-reference.
+		# Feed the accumulator the increment from THIS fill. Applied unconditionally —
+		# never gated behind a branch that could skip a partial close.
 		realised_increment = position.realised_pnl - prior_realised
 		self.position_manager.apply_realised_increment(realised_increment)
 
-		# 4. Cash apply — full-precision signed delta, one ledger entry with
-		#    fee field and event-derived timestamp (D-05/D-06, Pitfalls 1/5).
+		# 4. Cash apply — full-precision signed delta, one ledger entry.
 		self.account.apply_fill_cash_flow(
 			amount=net_delta,
-			# spot-base-fee-drift-halt: the QUOTE-cash commission portion included in
-			# ``net_delta`` (0 for a base-denominated fee, which is netted out of the
-			# position quantity instead). Identity to transaction.commission on the
-			# default / oracle path (byte-exact).
+			# The QUOTE-cash commission portion already inside ``net_delta`` (0 for a
+			# base-denominated fee, which is netted out of the position quantity
+			# instead). Identical to transaction.commission on the oracle path.
 			fee=transaction.quote_commission,
 			description=f"Transaction {transaction.type.name} {transaction.ticker}",
 			reference_id=str(transaction.id),
 			timestamp=transaction.time,
 		)
 
-		# 5. Record — the applied Transaction entity IS the audit record (D-11).
+		# 5. Record — the applied Transaction entity IS the audit record.
 		self.transaction_manager.record(transaction)
 
 	def _require_margin_account(self, operation: str) -> SimulatedMarginAccount:
-		"""D-02: narrow ``self.account`` to the margin superset, or fail LOUD.
+		"""Narrow ``self.account`` to the margin superset, or fail LOUD.
 
-		Replaces the two bare ``cast(...)`` margin narrowings on ``self.account``
-		(V17-14). A ``cast`` is a type-level no-op, so a venue-linked or
-		cash-linked portfolio driven through a margin operation used to reach a
-		margin-only method (``lock_margin`` / ``accrue_borrow_interest``) on a leaf
-		that does not implement it — an ``AttributeError`` MID-settlement, AFTER the
-		position had already mutated (the partial-mutation-on-margin hazard). This
-		guard raises a typed ``StateError`` BEFORE any mutation instead, so a wrong
-		account-type configuration fails at the boundary and never corrupts money
-		state. Returns the narrowed margin account on the happy path.
+		A runtime guard, NOT a ``cast``: a ``cast`` is a type-level no-op, so a
+		venue-linked or cash-linked portfolio driven through a margin operation would
+		reach a margin-only method (``lock_margin`` / ``accrue_borrow_interest``) on a
+		leaf that does not implement it — an ``AttributeError`` MID-settlement, AFTER
+		the position had already mutated. This raises a typed ``StateError`` BEFORE any
+		mutation instead, so a wrong account-type configuration never corrupts money
+		state.
 		"""
 		if not isinstance(self.account, SimulatedMarginAccount):
 			raise StateError(
@@ -565,37 +487,29 @@ class Portfolio(object):
 		return self.account
 
 	def _process_transaction_margin(self, transaction: Transaction) -> None:
-		"""Lock-and-settle margin settlement (enable_margin=True, D-09/D-11).
+		"""Lock-and-settle margin settlement (enable_margin=True).
 
-		The position-keyed locked-margin lifecycle is driven HERE (this method
-		holds the returned Position + the CashManager); PositionManager stays
-		cash-agnostic (OQ2). Four observed transitions, dispatched by comparing
-		the position state captured BEFORE the mutation against the result:
+		The position-keyed locked-margin lifecycle is driven HERE (this method holds the
+		returned Position + the margin ``Account``); PositionManager stays cash-agnostic.
+		Four transitions, dispatched by comparing the position state captured BEFORE the
+		mutation against the result:
 
-		* OPEN (no prior position): lock `aggregate_notional / L`, debit ONLY
-		  the commission (D-08, Pitfall 3 — NEVER the full notional, T-02-11).
+		* OPEN (no prior position): lock `aggregate_notional / L`, debit ONLY the
+		  commission — NEVER the full notional.
 		* SCALE-IN (same-direction add): recompute the lock to the new
 		  `aggregate_notional / L` (release old, lock new), debit ONLY commission.
-		* PARTIAL CLOSE (opposite-direction reduce, still open): release the
-		  closed fraction `p` of the lock (recompute to the remaining
-		  `aggregate_notional / L`), settle `p × realized_PnL` + re-credit the
-		  closed fraction's pre-debited open commission (D-11).
-		* FULL CLOSE (position closed): release the whole lock, settle the
-		  realized PnL (which already nets commissions, so re-credit the open
-		  commission once → round-trip cash delta == realized PnL).
+		* PARTIAL CLOSE (opposite-direction reduce, still open): release the closed
+		  fraction `p` of the lock, settle `p × realized_PnL` + re-credit the closed
+		  fraction's pre-debited open commission.
+		* FULL CLOSE: release the whole lock, settle the realized PnL (which already
+		  nets commissions, so re-credit the open commission once → round-trip cash
+		  delta == realized PnL).
 
-		Decimal end-to-end, full precision (no intermediate quantize). The lock
-		basis `aggregate_notional / L` rides the margin arm ONLY — the spot arm
-		never divides (Pitfall 4).
+		Decimal end-to-end, full precision (no intermediate quantize). The lock basis
+		`aggregate_notional / L` rides the margin arm ONLY — the spot arm never divides.
 		"""
-		# D-03/ACCT-02: this arm is reached ONLY when enable_margin=True, so the
-		# account leaf is the margin superset — narrow to its margin surface
-		# (lock_margin / release_margin / assert_lock_fits_buying_power). D-02: the
-		# narrowing is a runtime isinstance guard (not a bare cast), raising a typed
-		# StateError BEFORE any mutation if the account is not a margin leaf (closes
-		# the V17-14 partial-mutation hazard). The spot byte-exact path
-		# (_process_transaction_spot) never enters here, so this is dark on the
-		# SMA_MACD oracle.
+		# enable_margin=True, so the leaf is the margin superset — narrow to it. Dark
+		# on the SMA_MACD oracle, which never enters this arm.
 		account = self._require_margin_account("process_transaction_margin")
 		ticker = transaction.ticker
 
@@ -613,8 +527,7 @@ class Portfolio(object):
 		else:
 			prior_entry_commission = Decimal("0")
 
-		# Is this fill increasing the position (open / scale-in) or reducing it
-		# (partial / full close)? An increase moves in the position's own side.
+		# An increase moves in the position's OWN side (open / scale-in).
 		if prior is None:
 			is_increase = True
 		else:
@@ -623,23 +536,13 @@ class Portfolio(object):
 				or (prior.side == PositionSide.SHORT and transaction.type == TransactionType.SELL)
 			)
 
-		# CR-02 (Phase-2 mitigation): fail loud on an over-close / flip fill.
-		# A reducing fill (not an increase) whose quantity EXCEEDS the open
-		# quantity would leave a residual flipped position; the close arm below
-		# clamps closed_qty but reads realised_increment after the FULL
-		# transaction.quantity mutated the position, re-locking margin on a
-		# flipped position at the original side's leverage and settling a wrong
-		# cash delta. Reject it BEFORE any mutation/settlement. The full
-		# flip-settlement economics (split into full-close + fresh-open) are a
-		# Phase-3 (shorts) concern, where flips become reachable.
-		# Raise ONLY on a GROSS over-close — a real flip (the 64-BTC
-		# phantom-equity logic error, .planning/debug/spot-long-only-oversell.md;
-		# spot guard origin: quick task 260623-gao). A sub-close-tolerance excess
-		# (1E-27 per-add bracket-child requantization on a pyramided position) is
-		# Decimal quantization noise, NOT a flip — absorb it as a clean full
-		# close: it passes here and `_should_close_position` (abs(net) <=
-		# tolerance) settles the residual to flat (260623-h6i debug session).
-		# Reuse the existing PositionManager.tolerance (1e-5).
+		# Fail loud on an over-close / flip fill BEFORE any mutation. A reducing fill
+		# exceeding the open quantity would leave a residual flipped position: the close
+		# arm clamps closed_qty but reads realised_increment after the FULL
+		# transaction.quantity mutated the position, re-locking margin at the ORIGINAL
+		# side's leverage and settling a wrong cash delta. Raise ONLY on a GROSS
+		# over-close — a sub-tolerance excess is Decimal quantization noise, absorbed as
+		# a clean full close by `_should_close_position`.
 		if not is_increase and (transaction.quantity - prior_qty) > self.position_manager.tolerance:
 			raise InvalidTransactionError(
 				"Margin close fill exceeds open quantity (flip not supported "
@@ -647,39 +550,29 @@ class Portfolio(object):
 				{"closed": str(transaction.quantity), "open": str(prior_qty)},
 			)
 
-		# Funds invariant (D-10/OQ3): in margin mode the open/scale debit is
-		# ONLY the commission, so feed the invariant the commission-only delta
-		# (locked-margin sufficiency was enforced pre-trade by the admission
-		# reservation gate, Plan 02-03). Commission is always non-negative.
+		# In margin mode the open/scale debit is ONLY the commission — locked-margin
+		# sufficiency was enforced pre-trade by the admission reservation gate.
 		commission = transaction.commission
 		if is_increase and commission > 0:
 			account.assert_funds_invariant(commission)
 
-		# Position mutation (all checks passed; handles shorts properly).
+		# Position mutation — all checks passed.
 		position = self.position_manager.process_position_update(transaction)
 		transaction.position_id = position.id
 
-		# D-06: the position carries the authoritative ONE effective leverage
-		# (a scale-in's differing signal leverage was clamped). The lock basis
-		# ALWAYS uses position.leverage, never the transaction's leverage.
+		# The lock basis ALWAYS uses position.leverage (the authoritative ONE effective
+		# leverage — a scale-in's differing signal leverage was clamped), never the
+		# transaction's.
 		leverage = position.leverage
 
 		if is_increase:
-			# OPEN or SCALE-IN: recompute the lock to the (new) aggregate
-			# notional / L; debit ONLY the commission.
-			# WR-03 (T-03-16): release THEN re-lock is symmetric — release returns
-			# the position's own prior lock (0 on a fresh open; the prior
-			# aggregate lock on a scale-in), and lock_margin replaces it. No
-			# un-paired lock can leak because the key is the same position id.
+			# OPEN or SCALE-IN: recompute the lock to the (new) aggregate notional / L;
+			# debit ONLY the commission. Release THEN re-lock is symmetric — no un-paired
+			# lock can leak because the key is the same position id.
 			new_lock = position.aggregate_notional / leverage
-			# WR-01 (T-03-15): settlement-side solvency assertion — the lock must
-			# fit buying power, which credits back the position's OWN prior lock.
-			# WR-04 (Plan 04-02): assert BEFORE release so the assertion's add-back
-			# (``get_locked_margin_for``) reads the TRUE prior lock, not ``0``.
-			# Releasing first pops this position's lock, which the assertion is
-			# documented to credit back — running the guard while the prior lock is
-			# still present is the correct call order. Fail loud BEFORE applying the
-			# new lock — never silently over-lock.
+			# Assert BEFORE release so the add-back (``get_locked_margin_for``) reads the
+			# TRUE prior lock, not ``0`` — releasing first pops the very lock the assertion
+			# credits back. Fail loud before applying the new lock; never over-lock.
 			account.assert_lock_fits_buying_power(new_lock, str(position.id))
 			account.release_margin(str(position.id))
 			account.lock_margin(str(position.id), new_lock)
@@ -691,16 +584,11 @@ class Portfolio(object):
 				closed_qty = prior_qty
 			fraction = (closed_qty / prior_qty) if prior_qty > 0 else Decimal("0")
 
-			# Re-lock the remaining (0 on a full close — position.is_open is
-			# False and aggregate_notional is 0), then release the prior whole
-			# lock. WR-03 (T-03-16): the release/re-lock pair stays symmetric on
-			# the same position key — the remaining lock replaces the released one.
+			# Re-lock the remaining, then release the prior whole lock. The pair stays
+			# symmetric on the same position key.
 			if position.is_open:
 				remaining_lock = position.aggregate_notional / leverage
-				# WR-01 (T-03-15) / WR-04 (Plan 04-02): assert BEFORE release so
-				# the recomputed remaining lock is checked against buying power
-				# that still credits the position's TRUE prior whole lock (the
-				# add-back reads ``get_locked_margin_for``, not ``0``).
+				# Assert BEFORE release — same ordering as the increase arm.
 				account.assert_lock_fits_buying_power(
 					remaining_lock, str(position.id)
 				)
@@ -709,35 +597,19 @@ class Portfolio(object):
 			else:
 				account.release_margin(str(position.id))
 
-			# Settle the realized-PnL increment for the closed portion. The
-			# position's realised_pnl already nets BOTH commissions; the open
-			# commission for the closed fraction was already debited at open, so
-			# re-credit it to avoid double-count — the round-trip cash delta then
-			# equals the realized PnL exactly.
-			#
-			# WR-05 (T-03-16): re-credit the EXACT open commission the realised
-			# increment charged for THIS closed portion, tracked as a per-lock
-			# accumulator (``_open_commission_settled`` below). The prior
-			# ``fraction × prior_entry_commission`` proxy (fraction = closed_qty /
-			# net_qty) drifts from realised_pnl's own open-commission term
-			# (charged as closed_qty / total_open_qty) after a non-uniform-
-			# commission scale-in or a staged partial close, because the
-			# denominators differ once net_qty < total open qty. The accumulator
-			# settles against the actual realised-pnl open-commission term, so the
-			# cumulative round-trip cash delta == realized PnL with NO drift.
+			# Settle the realized-PnL increment for the closed portion. realised_pnl
+			# already nets BOTH commissions and the open commission for the closed
+			# fraction was debited at open, so re-crediting exactly that term makes the
+			# round-trip cash delta equal the realized PnL.
 			realised_increment = position.realised_pnl - prior_realised
-			# PERF-02 (D-02): feed the running realised-PnL accumulator the SAME
-			# realised increment already computed here for the cash settle. CLOSE
-			# arm ONLY — the is_increase open/scale-in branch never changes
-			# realised_pnl (03-INVARIANT-AUDIT.md §4). Facade->manager call.
+			# CLOSE arm ONLY — the is_increase branch never changes realised_pnl.
 			self.position_manager.apply_realised_increment(realised_increment)
 			open_commission_credit = self._open_commission_credit_for_close(
 				position, closed_qty
 			)
 			cash_delta = realised_increment + open_commission_credit
 
-		# ONE ledger entry: signed cash delta + the commission fee field +
-		# event-derived timestamp (D-06, Pitfalls 1/5).
+		# ONE ledger entry: signed cash delta + commission fee + event-derived time.
 		account.apply_fill_cash_flow(
 			amount=cash_delta,
 			fee=commission,
@@ -746,34 +618,27 @@ class Portfolio(object):
 			timestamp=transaction.time,
 		)
 
-		# Record — the applied Transaction entity IS the audit record (D-11).
+		# Record — the applied Transaction entity IS the audit record.
 		self.transaction_manager.record(transaction)
 
 	def update_market_value(self, bar_event: BarEvent) -> None:
-		"""
-		Updates the value of all positions that are currently open.
-		"""
-		# Close-marked equity (D-05): the Bar struct's close is already
-		# Decimal (D-14); a ticker with no bar at T is absent from the dict.
+		"""Mark every open position at this bar's close."""
+		# The Bar struct's close is already Decimal; a ticker with no bar at T is absent.
 		current_prices: Dict[str, Any] = {}
 
 		for ticker, bar in bar_event.bars.items():
 			current_prices[ticker] = bar.close
 
-		# Update all positions with new prices
 		self.position_manager.update_position_market_values(current_prices, bar_event.time)
 
 	def record_metrics(self, time: datetime) -> None:
-		"""Record portfolio metrics using the metrics manager."""
 		self.metrics_manager.record_snapshot(time)
 
 	def get_open_position(self, ticker: str) -> Any:
-		"""Get an open position by ticker."""
 		return self.position_manager.get_position(ticker)
 
-	# Health and Validation
 	def validate_health(self) -> Dict[str, Any]:
-		"""Perform comprehensive health check."""
+		"""Health check: negative cash, position count, concentration."""
 		health_report: Dict[str, Any] = {
 			'portfolio_id': self.portfolio_id,
 			'state': self.state.value,
@@ -783,30 +648,25 @@ class Portfolio(object):
 			'timestamp': datetime.now(UTC).isoformat()
 		}
 			
-		# Check cash consistency
 		if self.account.balance < 0:
 			health_report['is_healthy'] = False
 			health_report['issues'].append('Negative cash balance')
 			
-		# Check position limits
 		if self.n_open_positions > self.config.limits.max_positions:
 			health_report['is_healthy'] = False
 			health_report['issues'].append(f'Too many positions: {self.n_open_positions} > {self.config.limits.max_positions}')
 			
-		# Check concentration limits
 		if self.total_equity > 0:
 			max_position_pct = self._get_max_position_percentage()
 			if max_position_pct > self.config.risk_management.max_concentration_pct:
 				health_report['is_healthy'] = False
 				health_report['issues'].append(f'Position concentration too high: {max_position_pct:.2%} > {self.config.risk_management.max_concentration_pct:.2%}')
 			
-		# Update health check timestamp
 		self._health_metrics['last_health_check'] = datetime.now(UTC)
 			
 		return health_report
 	
 	def _get_max_position_percentage(self) -> float:
-		"""Get the percentage of the largest position."""
 		if self.total_equity <= 0:
 			return 0.0
 
@@ -814,34 +674,22 @@ class Portfolio(object):
 		if not positions:
 			return 0.0
 
-		# M5-10: total_equity is now Decimal end-to-end. pos.market_value is
-		# Decimal (M2a entity money) — keep the ratio Decimal-native (no
-		# float/Decimal mix), then coerce only the final reporting ratio to float.
-		# IN-03: trust the Decimal source — no defensive Decimal(str(...)) wrap
-		# (which would silently mask a stray-float type regression).
+		# Decimal-native ratio, float only at the reporting edge. No defensive
+		# Decimal(str(...)) wrap — it would silently mask a stray-float regression.
 		max_position_value = max(abs(pos.market_value) for pos in positions.values())
 		return float(max_position_value / self.total_equity)
 	
-	# Enhanced Transaction Processing
 	def transact_shares(self, transaction: Transaction) -> None:
-		"""Execute transaction with state and config validation.
-
-		D-10 contract: returns ``None`` on success, raises typed exceptions
-		on failure — no bool channel (propagated from process_transaction).
-		"""
-		# Validate portfolio can trade
+		"""Execute a transaction after state + config validation; raises on failure."""
 		if not self.can_trade():
 			# FL-01: cannot trade in the current state — state-machine guard.
 			raise StateError(self.portfolio_id, self.state.value, required_state=PortfolioState.ACTIVE.value, operation="transact_shares")
 
-		# Validate against configuration
 		if self.config.validation.validate_transactions:
 			self._validate_transaction(transaction)
 
-		# Update activity timestamp
 		self._last_activity = datetime.now(UTC)
 
-		# Delegate to the validate-first settlement sequence (D-12)
 		try:
 			self.process_transaction(transaction)
 		except Exception:
@@ -849,68 +697,45 @@ class Portfolio(object):
 			raise
 	
 	def _validate_transaction(self, transaction: Transaction) -> None:
-		"""Validate transaction against portfolio configuration."""
-		# Check position limits — gate the OPEN/GROW checks on the transaction
-		# TYPE, not the magnitude (WR-01): quantity is always a positive magnitude
-		# (direction rides transaction.type), so `quantity > 0` was ALWAYS true and
-		# wrongly ran the buy-only limits for closing SELLs — blocking exits at the
-		# position cap (and, in live, failing settlement into a drift-halt).
+		# Gate the OPEN/GROW checks on the transaction TYPE, not the magnitude: quantity
+		# is always a positive magnitude (direction rides transaction.type), so a
+		# `quantity > 0` gate is ALWAYS true and runs the buy-only limits for closing
+		# SELLs too — blocking exits at the position cap.
 		if transaction.type == TransactionType.BUY:
 			if self.n_open_positions >= self.config.limits.max_positions:
 				# FL-01: domain limit breach (not state/field validation) — PortfolioError base.
 				raise PortfolioError(f"Maximum positions limit reached: {self.config.limits.max_positions}")
 
-			# Check position value limits
 			transaction_value = abs(transaction.quantity * transaction.price)
 			if transaction_value > self.config.limits.max_position_value:
 				# FL-01: domain limit breach — PortfolioError base.
 				raise PortfolioError(f"Transaction value {transaction_value} exceeds limit {self.config.limits.max_position_value}")
 	
-	# Enhanced Market Value Update
 	def update_market_value_of_portfolio(self, prices: Mapping[str, float | Decimal],
 			bar_time: Optional[datetime] = None, universe: Any = None) -> None:
-		"""Update portfolio market values, then accrue per-bar short carry (CARRY-01).
+		"""Update portfolio market values, then accrue per-bar short carry.
 
 		``bar_time`` is the bar's BUSINESS time threaded down from
-		``PortfolioHandler.update_portfolios_market_value`` (D-04 — the carry
-		days basis and the carry op timestamp derive from it, NEVER
-		``datetime.now(UTC)``; a wall-clock stamp breaks the determinism
-		double-run gate). It defaults to ``None`` for legacy callers that only
-		mark; in that case the mark falls back to the wall clock and no carry
-		accrues (no bar time, no days basis).
+		``PortfolioHandler.update_portfolios_market_value``. The carry days basis and
+		the carry op timestamp derive from it, NEVER ``datetime.now(UTC)`` — a
+		wall-clock stamp breaks the determinism double-run gate. ``None`` (legacy
+		mark-only callers) falls back to the wall clock and accrues no carry.
 
-		``universe`` is the injected ``Universe`` read-model used to resolve each
-		open short's ``Instrument.borrow_rate`` (D-01), mirroring the
-		``maintenance_margin`` read pattern in ``PortfolioHandler``. With no
-		``universe`` (or ``borrow_rate == 0`` / no open shorts) nothing accrues
-		and SMA_MACD stays byte-exact under default-off.
+		``universe`` is the injected ``Universe`` read-model resolving each open short's
+		``Instrument.borrow_rate``. With no ``universe`` (or ``borrow_rate == 0`` / no
+		open shorts) nothing accrues and SMA_MACD stays byte-exact.
 		"""
 		if not self.can_trade():
 			return  # Skip updates for inactive portfolios
 
-		# D-04: mark positions at the bar's business time, NOT the wall clock,
-		# so the equity curve is deterministic. Legacy mark-only callers (no
-		# bar_time) keep the prior wall-clock behaviour.
 		mark_time = bar_time if bar_time is not None else datetime.now(UTC)
 		self.position_manager.update_position_market_values(prices, mark_time)
 
-		# CARRY-01: accrue per-bar borrow interest on every OPEN SHORT (D-02/D-03/
-		# D-08). Skipped entirely when carry can't apply (no bar time / no
-		# universe) — the default-off no-op that keeps the oracle byte-exact.
-		# WR-02 (T-03-17): the carry borrow_rate read (``universe.instrument(...)``
-		# inside ``_accrue_short_carry``) is reached ONLY when ``universe is not
-		# None``, so it can never hit the bare ``AttributeError`` the
-		# ``maintenance_margin`` site exposed — it is None-safe by construction.
-		# A legacy mark-only caller (no universe) leaves carry as a silent no-op,
-		# which is the correct default-off behaviour (SMA_MACD byte-exact). The
-		# fail-loud universe-unwired guard lives at the ``maintenance_margin`` read
-		# in ``PortfolioHandler`` (the actual deferred WR-02 site).
+		# The borrow_rate read inside ``_accrue_short_carry`` is reached ONLY when
+		# ``universe is not None``, so it is None-safe by construction.
 		if bar_time is not None and universe is not None:
-			# CR-01: only shorts whose ticker was actually re-marked this tick
-			# (price present in `prices`) may accrue carry — a short absent from
-			# this tick's prices keeps a STALE current_price, so accruing on it
-			# books financing against a wrong mark. The marked set IS the keys of
-			# `prices` (position_manager updates `if ticker in price_data`).
+			# Only shorts re-marked this tick may accrue: a short absent from `prices`
+			# keeps a STALE current_price, so carry would book against a wrong mark.
 			marked_tickers = set(prices.keys())
 			self._accrue_short_carry(bar_time, universe, marked_tickers)
 
@@ -918,50 +743,41 @@ class Portfolio(object):
 
 	def _accrue_short_carry(self, bar_time: datetime, universe: Any,
 			marked_tickers: set[str]) -> None:
-		"""Accrue per-bar borrow interest on every open short (CARRY-01).
+		"""Accrue per-bar borrow interest on every open short.
 
 		For each OPEN SHORT, debit
 		``days × close × |net_quantity| × borrow_rate / Decimal("365")``
 		(Decimal end-to-end — ``borrow_rate`` is already Decimal; NEVER
 		``Decimal(float)``) from realized cash via a ``BORROW_INTEREST``
 		``CashOperation``. ``days`` = ``(bar_time − last_accrual)`` from the bar's
-		BUSINESS time (D-04). The per-short ``last_accrual`` advances to
-		``bar_time`` after debiting (it seeds from the position entry date). LONG
-		positions and ``borrow_rate == 0`` accrue nothing. Carry NEVER folds into
-		``Position.realised_pnl`` (D-08 — clean trade PnL; carry nets at cash).
+		BUSINESS time; the per-short ``last_accrual`` advances to ``bar_time`` after
+		debiting (seeded from the position entry date). LONG positions and
+		``borrow_rate == 0`` accrue nothing. Carry NEVER folds into
+		``Position.realised_pnl`` — clean trade PnL; carry nets at cash.
 
-		``marked_tickers`` is the set of tickers actually re-marked this tick (the
-		keys of ``prices``). CR-01: a short whose ticker is absent from it carries a
-		STALE ``current_price``, so its accrual is SKIPPED and its clock is NOT
-		advanced — the next priced bar then accrues the full elapsed interval on a
-		correct mark. WR-02: a ticker the Universe no longer carries an Instrument
-		for fails LOUD with a ``StateError`` (mirroring ``maintenance_margin``).
-		WR-03: a non-positive ``current_price`` is skipped (never a wrong debit).
-		WR-05: the ``borrow_rate == 0`` branch is a plain ``continue`` — no
-		clock-advance (the frozen-Instrument static-rate contract).
+		``marked_tickers`` is the set of tickers actually re-marked this tick. Four skip
+		rules: a short absent from it carries a STALE ``current_price``, so its accrual
+		is SKIPPED and its clock is NOT advanced (the next priced bar accrues the full
+		elapsed interval on a correct mark); a ticker the Universe no longer carries an
+		Instrument for fails LOUD with a ``StateError``; a non-positive
+		``current_price`` is skipped; and ``borrow_rate == 0`` is a plain ``continue``
+		with no clock-advance.
 		"""
 		positions = self.position_manager.get_all_positions()
 		for ticker, position in positions.items():
 			if position.side != PositionSide.SHORT or not position.is_open:
 				continue
 
-			# CR-01: no fresh mark this tick (ticker absent from `prices`) —
-			# defer carry; do NOT advance the clock, so the next priced bar
-			# accrues the full elapsed interval on a correct price.
+			# No fresh mark — defer carry and do NOT advance the clock.
 			if ticker not in marked_tickers:
 				continue
 
-			# WR-03: defend the money operand. A zero/unset mark must never
-			# silently produce a wrong financing debit — skip rather than book
-			# carry on a non-positive price.
+			# A zero/unset mark must never silently produce a wrong financing debit.
 			if position.current_price <= Decimal("0"):
 				continue
 
-			# WR-02: resolve the Instrument via the injected Universe. A short on
-			# a ticker the Universe no longer carries an Instrument for raises a
-			# bare KeyError that would abort the run with an opaque message — fail
-			# LOUD with a context-rich StateError instead, mirroring the
-			# maintenance_margin universe guard in PortfolioHandler.
+			# A bare KeyError here would abort the run with an opaque message — fail LOUD
+			# with a context-rich StateError instead.
 			try:
 				borrow_rate = universe.instrument(ticker).borrow_rate
 			except KeyError as exc:
@@ -972,13 +788,12 @@ class Portfolio(object):
 					operation="accrue_short_carry",
 				) from exc
 			if borrow_rate == Decimal("0"):
-				# WR-05: no clock-advance. Instrument is frozen and borrow_rate is
-				# static-over-time, so the rate can never transition 0 -> non-zero
-				# within a run — advancing the clock here was dead rationale and
-				# would suppress carry across a transition if the type ever changed.
+				# No clock-advance: Instrument is frozen so borrow_rate can never go
+				# 0 -> non-zero within a run, but advancing here would suppress carry across
+				# such a transition if the type ever stopped being frozen.
 				continue
 
-			# D-04 days basis from the bar gap (seed from the position entry).
+			# Days basis from the bar gap (seed from the position entry).
 			last_accrual = position._last_accrual_time or position.entry_date
 			elapsed_seconds = Decimal(str((bar_time - last_accrual).total_seconds()))
 			days = elapsed_seconds / Decimal("86400")
@@ -992,12 +807,8 @@ class Portfolio(object):
 				* borrow_rate
 				/ Decimal("365")
 			)
-			# ACCT-02: borrow carry is a margin-only surface. This loop body is
-			# reached only for an OPEN SHORT with a non-zero borrow_rate (a margin
-			# concept); the account is therefore the margin superset here. D-02: the
-			# narrowing is a runtime isinstance guard raising a typed StateError
-			# BEFORE the accrual mutation if the leaf is not a margin account — never
-			# reached on the LONG-only spot oracle.
+			# Borrow carry is a margin-only surface — never reached on the LONG-only spot
+			# oracle. The narrowing raises BEFORE the accrual mutation.
 			self._require_margin_account("accrue_borrow_interest").accrue_borrow_interest(
 				amount=carry,
 				reference_id=str(position.id),
@@ -1009,7 +820,7 @@ class Portfolio(object):
 	def _open_commission_credit_for_close(
 		self, position: Position, closed_qty: Decimal
 	) -> Decimal:
-		"""WR-05 (T-03-16): the EXACT open commission to re-credit for a close.
+		"""The EXACT open commission to re-credit for a close.
 
 		``realised_pnl`` deducts the entry-side commission proportionally to the
 		closed fraction of the OPENING side's total quantity:
@@ -1020,10 +831,10 @@ class Portfolio(object):
 		Settling the realised increment therefore re-introduces the open
 		commission for the closed portion as ``(closed_qty / open_side_qty) ×
 		open_side_commission``. Re-crediting EXACTLY that term cancels the
-		double-count so the round-trip cash delta equals realized PnL — even
-		after a non-uniform-commission scale-in or staged partial close, where
-		the legacy ``closed_qty / net_quantity`` proxy drifts (the denominators
-		diverge once ``net_quantity < open_side_qty``). Decimal end-to-end.
+		double-count so the round-trip cash delta equals realized PnL — even after a
+		non-uniform-commission scale-in or staged partial close, where a
+		``closed_qty / net_quantity`` proxy drifts (the denominators diverge once
+		``net_quantity < open_side_qty``). Decimal end-to-end.
 		"""
 		if position.side == PositionSide.LONG:
 			open_side_qty = position.buy_quantity
@@ -1036,9 +847,7 @@ class Portfolio(object):
 		return (closed_qty / open_side_qty) * open_side_commission
 
 
-	# Enhanced to_dict with new information
 	def to_dict(self) -> Dict[str, Any]:
-		"""Convert portfolio to dictionary."""
 		base_dict = {
 			'portfolio_id': self.portfolio_id,
 			'id': self.portfolio_id,  # Keep backward compatibility
@@ -1048,10 +857,8 @@ class Portfolio(object):
 			'current_time': self.current_time.isoformat(),
 			'state': self.state.value,
 			'cash': self.cash,
-			# WR-07: the reservation gate is live (Plan 05-06) — available is
-			# a real, distinct figure (total - reserved), the D-14 single
-			# trading-decision figure. Reporting total here would inflate
-			# buying power by the sum of outstanding reservations.
+			# `available` (total - reserved) is the trading-decision figure; reporting
+			# total here would inflate buying power by outstanding reservations.
 			'available_cash': self.account.available_balance,
 			'reserved_cash': self.account.reserved_balance,
 			'total_market_value': self.total_market_value,

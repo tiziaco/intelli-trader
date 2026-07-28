@@ -80,9 +80,27 @@ class _RecordingBundles:
 
 
 def _handler() -> tuple[PortfolioHandler, _RecordingBundles]:
+    """A handler whose factory's compute authority wraps a recording ``VenueBundles``.
+
+    D-24 (11.2-09): the handler builds leaves through an injected ``PortfolioFactory``.
+    Its backtest authority is a ``ComputeAccountAuthority`` over the bundle memo — so
+    wrapping THAT memo in ``_RecordingBundles`` still observes every minted account, the
+    identity these tests assert.
+    """
+    from itrader.portfolio_handler.portfolio_factory import (
+        ComputeAccountAuthority,
+        PortfolioFactory,
+    )
+    from itrader.venues.registry import COMPUTE_VENUE
+
     bus = queue.Queue()
     bundles = _RecordingBundles(backtest_venue_bundles(bus))
-    return PortfolioHandler(bus, venue_bundles=bundles), bundles
+    factory = PortfolioFactory(
+        authority=ComputeAccountAuthority(
+            venue_bundles=bundles, compute_venue=COMPUTE_VENUE),
+        environment="backtest",
+    )
+    return PortfolioHandler(bus, portfolio_factory=factory), bundles
 
 
 # ---------------------------------------------------------------------------
@@ -212,11 +230,14 @@ def test_the_margin_flag_reaches_the_plugin_from_the_portfolio_config() -> None:
     assert not isinstance(cash_account, SimulatedMarginAccount)
 
 
-def test_a_handler_without_venue_bundles_refuses_rather_than_minting() -> None:
+def test_a_handler_without_a_factory_refuses_rather_than_minting() -> None:
     """The tempting inline fallback is a second account-kind selection — so: refuse.
 
-    A ``SimulatedCashAccount(...)`` here would only ever run in misconfigured wiring,
-    so it would reinstate the duplicate branch D-03 deleted on a path nothing covers.
+    D-24 (11.2-09): the handler builds leaves through an injected ``PortfolioFactory``. A
+    handler built without one (the direct-construction arm) must REFUSE loudly rather than
+    mint a ``SimulatedCashAccount(...)`` inline — that fallback would only ever run in
+    misconfigured wiring and would reinstate the duplicate account-kind branch D-03
+    deleted on a path nothing covers.
     """
     handler = PortfolioHandler(queue.Queue())
     with pytest.raises(PortfolioConfigurationError):
@@ -305,3 +326,73 @@ def test_the_handler_opens_the_ledger_at_exactly_the_requested_cash() -> None:
         venue_name="paper"))
 
     assert portfolio.account.balance == Decimal("1234.56")
+
+
+# ---------------------------------------------------------------------------
+# 11.1-REVIEW WR-04 — the persistence seam has no default
+# ---------------------------------------------------------------------------
+
+
+def test_a_cash_leaf_cannot_be_built_without_naming_its_persistence_seam() -> None:
+    """Omitting ``state_storage`` is a ``TypeError``, not a private in-memory backend.
+
+    Pins 11.1-REVIEW **WR-04**. The deleted default was
+    ``PortfolioStateStorageFactory.create("backtest")``: a leaf that fell back to it
+    kept its reserved cash, locked margin and cash-operation audit trail on a backend
+    NOBODY else held. In backtest nothing else reads those containers, so the oracle
+    and the whole suite stayed green; in live the restart path
+    (``state_storage.rehydrate(account)``) repopulated the PORTFOLIO's instance and
+    the account silently lost every reservation. The account reported itself live
+    while persisting nothing.
+
+    A required keyword-only argument turns that into a construction-time refusal, so
+    a new portfolio-creation path (ACCT-05) structurally cannot reach the defect.
+    """
+    with pytest.raises(TypeError):
+        SimulatedCashAccount(Decimal("1000"))  # type: ignore[call-arg]
+
+
+def test_a_margin_leaf_cannot_be_built_without_naming_its_persistence_seam() -> None:
+    """The margin superset carries the same refusal (11.1-REVIEW WR-04).
+
+    Asserted separately from the cash leaf because ``SimulatedMarginAccount`` declares
+    its OWN ``__init__`` rather than inheriting one — narrowing only the superclass
+    would leave this arm defaulted, and the margin leaf is the one that also keeps
+    position-keyed margin locks on the seam.
+    """
+    with pytest.raises(TypeError):
+        SimulatedMarginAccount(Decimal("1000"))  # type: ignore[call-arg]
+
+
+def test_neither_leaf_declares_a_default_for_its_persistence_seam() -> None:
+    """Asserted on the SIGNATURE, so the refusal cannot be "fixed" back into a default.
+
+    The behavioural tests above would still pass under a re-defaulted
+    ``state_storage: ... = None`` paired with an explicit ``raise`` in the body — but
+    that shape reintroduces exactly what this phase removes: an Optional production
+    collaborator whose absence is a runtime discovery rather than a call-site one.
+    ``inspect`` is the durable form of the property (the same convention
+    ``test_paper_plugin.py`` uses on the ``account_factory`` closure).
+    """
+    for leaf in (SimulatedCashAccount, SimulatedMarginAccount):
+        parameter = inspect.signature(leaf.__init__).parameters["state_storage"]
+        assert parameter.kind is inspect.Parameter.KEYWORD_ONLY, (
+            f"{leaf.__name__}.state_storage must be keyword-only: {parameter!r}")
+        assert parameter.default is inspect.Parameter.empty, (
+            f"{leaf.__name__}.state_storage must carry NO default "
+            f"(11.1-REVIEW WR-04): {parameter!r}")
+
+
+def test_a_named_seam_is_the_one_the_leaf_routes_through() -> None:
+    """The positive half: naming a seam binds THAT instance, unchanged behaviour.
+
+    Guards against "fixing" the refusal by reintroducing a default under another
+    name — the leaf must still adopt exactly the object it was handed.
+    """
+    from itrader.portfolio_handler.storage import PortfolioStateStorageFactory
+
+    seam = PortfolioStateStorageFactory.create("backtest")
+    account = SimulatedCashAccount(Decimal("1000"), state_storage=seam)
+
+    assert account.state_storage is seam
+    assert account.balance == Decimal("1000.00")

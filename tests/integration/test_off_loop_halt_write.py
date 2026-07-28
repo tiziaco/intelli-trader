@@ -15,21 +15,18 @@ RED (pre-P7): the connector-fatal signal drove ``halt()`` synchronously on the l
 ``record_halt`` ran on THAT loop thread. GREEN (after the CONTROL-event handoff): the loop
 thread only puts an event; ``SafetyController.halt`` on the engine thread does the durable write.
 
-Fully offline: dummy OKX creds build the okx arm with NO network. 4-space indentation
-(``tests/unit/execution/*``); folder-derived ``unit`` marker.
+11.2-07 (D-20): the OKX account set is now STORE-DERIVED, so an OKX arm assembles only
+against a durable ``venue_accounts`` row. This test therefore uses the ``provisioned_okx``
+Postgres spine (it moved from ``tests/unit/execution/`` to ``tests/integration/`` for that
+reason) and reads the single assembled OKX lifecycle rather than the deleted
+``_primary_lifecycle``. 4-space indentation; folder-derived ``integration`` marker.
 """
 
 import threading
 
 from itrader.events_handler.events import ConnectorFatalEvent
 from itrader.trading_system.live_trading_system import LiveTradingSystem
-
-
-def _set_okx_env(monkeypatch) -> None:
-    """Dummy OKX credential triple so the okx arm constructs offline (no network)."""
-    monkeypatch.setenv("OKX_API_KEY", "test-key")
-    monkeypatch.setenv("OKX_API_SECRET", "test-secret")
-    monkeypatch.setenv("OKX_API_PASSPHRASE", "test-pass")
+from tests.support.live_okx import the_okx_lifecycle
 
 
 class _CapturingHaltStore:
@@ -69,15 +66,15 @@ def _drain_connector_fatal(system: LiveTradingSystem) -> None:
             system._safety.halt(ev.reason)
 
 
-def test_connector_fatal_durable_write_runs_off_the_loop_thread(monkeypatch) -> None:
+def test_connector_fatal_durable_write_runs_off_the_loop_thread(provisioned_okx) -> None:
     """A connector-fatal escalation writes the durable halt OFF the loop thread (SAFE-03/§11c)."""
-    _set_okx_env(monkeypatch)
     system = LiveTradingSystem.for_exchange("okx")
     store = _CapturingHaltStore()
     system._safety._halt_record_store = store
     try:
+        exchange = the_okx_lifecycle(system).bundle.exchange
         # The PRODUCTION-wired connector-fatal signal (wired at construction on the okx arm).
-        assert system._primary_lifecycle.bundle.exchange._halt_signal is not None
+        assert exchange._halt_signal is not None
 
         # Drive the escalation on a dedicated "connector asyncio loop" thread — exactly the
         # thread the fatal/ceiling/catch-all supervisor arms escalate from.
@@ -85,7 +82,7 @@ def test_connector_fatal_durable_write_runs_off_the_loop_thread(monkeypatch) -> 
 
         def loop() -> None:
             loop_ident["id"] = threading.get_ident()
-            system._primary_lifecycle.bundle.exchange._supervisor._escalate_halt(
+            exchange._supervisor._escalate_halt(
                 "fills", RuntimeError("secret-bearing venue error"), "fatal auth/permission error")
 
         t = threading.Thread(target=loop, name="connector-loop")
@@ -108,14 +105,13 @@ def test_connector_fatal_durable_write_runs_off_the_loop_thread(monkeypatch) -> 
         system.stop()
 
 
-def test_connector_fatal_winner_only_single_durable_write(monkeypatch) -> None:
+def test_connector_fatal_winner_only_single_durable_write(provisioned_okx) -> None:
     """Two connector-fatal escalations still write the durable halt exactly ONCE (winner-only)."""
-    _set_okx_env(monkeypatch)
     system = LiveTradingSystem.for_exchange("okx")
     store = _CapturingHaltStore()
     system._safety._halt_record_store = store
     try:
-        signal = system._primary_lifecycle.bundle.exchange._halt_signal
+        signal = the_okx_lifecycle(system).bundle.exchange._halt_signal
 
         def loop() -> None:
             # Two escalations from the loop (e.g. both stream arms fail) only put events.

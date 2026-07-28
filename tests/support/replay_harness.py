@@ -403,6 +403,20 @@ def build_paper_replay_system(
     # offline replay fixture OVERRIDES the injected policy back to a FailFastPolicy here —
     # honouring D-06's "backtest/replay inject FailFastPolicy; live injects ErrorPolicy".
     system.event_handler._error_policy = FailFastPolicy()
+
+    # 11.2-07 (D-20/D-36): the boot is now STORE-DERIVED — offline (no Postgres spine) it
+    # provisions no ``venue_accounts`` rows, so the FeedConnectionBinder never builds or
+    # binds the replay data provider (that binding only fires for a streaming account on the
+    # SQL arm). The offline replay harness therefore wires the provider BY HAND — the same
+    # three calls the old boot's provider->feed block made (``TestDataPlugin.build_provider``
+    # ignores ctx/spec/connectors, building the provider from the parity-window constants) —
+    # so ``feed.warmup`` / ``feed.update`` have a provider and the TestRunner can replay the
+    # golden bars through the real live seam. Production paper re-points to the OKX live feed
+    # (D-21); this hand-wiring is a fixture concern, never production.
+    provider = plugin.build_provider(None, None, None)
+    system.feed.set_provider(provider)
+    provider.set_bar_sink(system.feed.update)
+    provider.set_global_queue(system.global_queue)
     assert plugin.provider is not None, (
         "TestDataPlugin.build_provider was never called — the paper data registry did not "
         "select the injected 'replay' plugin (check the data_plugins injection seam)")

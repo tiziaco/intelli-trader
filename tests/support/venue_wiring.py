@@ -57,11 +57,55 @@ def backtest_venue_bundles(
     return VenueBundles(registry, ConnectorProvider({}), ctx)
 
 
+def backtest_exchange_registry(
+    bus: Any,
+    *,
+    exchange_config: Optional[Any] = None,
+    rng: Optional[random.Random] = None,
+) -> Any:
+    """Build the backtest-shaped ``(venue, account_id) -> exchange`` registry (D-43).
+
+    ``ExecutionHandler`` no longer builds/holds its own registry — the map is
+    composition-root-owned and injected (D-43). Every direct-construction test site that
+    builds an ``ExecutionHandler`` therefore needs the SAME seed production uses: build the
+    backtest bundles, then seed the paper exchange into a fresh dict through the shared
+    ``seed_exchange_registry`` helper. This is the exact recipe ``compose_engine`` runs, so a
+    directly-built handler resolves the identical paper exchange under the same pair key.
+    """
+    from itrader.execution_handler.execution_handler import seed_exchange_registry
+
+    registry: dict[tuple[str, str], Any] = {}
+    seed_exchange_registry(
+        registry,
+        backtest_venue_bundles(bus, exchange_config=exchange_config, rng=rng),
+    )
+    return registry
+
+
+def in_memory_state_storage() -> Any:
+    """A throwaway in-memory ``PortfolioStateStorage`` for a leaf-focused test.
+
+    11.1-REVIEW **WR-04**: ``SimulatedCashAccount`` / ``SimulatedMarginAccount`` now
+    REQUIRE their persistence seam, because a leaf that quietly minted its own lost
+    every reservation across a live restart while backtest — which reads those
+    containers nowhere else — stayed byte-exact. Tests that build a leaf in isolation
+    genuinely have no portfolio seam to share, so they say ``state_storage=`` out
+    loud and get this. The default is gone from production; the convenience lives
+    here, where "in-memory is fine" is a test's own statement rather than a
+    production constructor's assumption.
+    """
+    from itrader.portfolio_handler.storage import PortfolioStateStorageFactory
+
+    return PortfolioStateStorageFactory.create("backtest")
+
+
 def compute_account(
     initial_cash: Any = 0.0,
     *,
     enable_margin: bool = False,
     state_storage: Optional[Any] = None,
+    account_id: Optional[str] = None,
+    venue_name: Optional[str] = None,
 ) -> Any:
     """The compute ``Account`` the paper plugin would mint for these settings (11.1-09).
 
@@ -77,36 +121,92 @@ def compute_account(
     the first time that rule changed. Going through the plugin means every site
     follows automatically.
 
-    ``state_storage`` is normally omitted: the leaf then builds a private in-memory
+    ``state_storage`` may be omitted: THIS RECIPE then mints a plain in-memory
     backend, and ``Portfolio`` ADOPTS that instance as its own seam, so the account
     and the three managers still share exactly one backend (the invariant the live
     restart path depends on). Pass one explicitly only to model a portfolio wired to
     a specific durable store.
+
+    11.1-REVIEW **WR-04**: the in-memory choice lives HERE, in test wiring, and no
+    longer inside ``SimulatedCashAccount.__init__``. That relocation is the whole
+    point of the change — a production leaf that named no seam used to fabricate one
+    silently and lose every reservation across a live restart, invisibly to backtest.
+    Tests genuinely do want a throwaway backend, so they say so; production must
+    name the seam the portfolio's other managers hold.
     """
     from itrader.venues.bundle import VenueAccountConfig
 
+    seam = (
+        state_storage if state_storage is not None
+        else in_memory_state_storage()
+    )
     return PaperVenuePlugin(default_exchange_config()).new_account(
         VenueAccountConfig(
             initial_cash=initial_cash,
             enable_margin=enable_margin,
-            state_storage=state_storage,
+            state_storage=seam,
+            # D-23 (11.2-08): the compute leaf is the ONE storage site for the
+            # (venue_name, account_id) pair. A direct-construction test that wants
+            # its Portfolio to REPORT an identity must build the account with it —
+            # ``Portfolio.venue_name`` / ``.account_id`` now read the leaf, not a
+            # second copy the portfolio used to store.
+            account_id=account_id,
+            venue_name=venue_name,
         )
     )
 
 
+def backtest_portfolio_factory(
+    bus: Any,
+    *,
+    environment: str = "backtest",
+    sql_engine: Any = None,
+    exchange_config: Optional[Any] = None,
+    rng: Any = None,
+) -> Any:
+    """A backtest-shaped ``PortfolioFactory`` over a ``ComputeAccountAuthority`` (D-24).
+
+    ``PortfolioHandler`` now builds every portfolio's account leaf THROUGH an injected
+    ``PortfolioFactory`` (D-24), whose account authority on the backtest arm is the
+    bundles-backed ``ComputeAccountAuthority`` (``account_id`` None, never raises). Every
+    direct-construction test site that creates portfolios needs the same recipe; this is
+    it. ``environment`` / ``sql_engine`` thread the durable state-storage selectors so the
+    factory scopes state storage exactly as the handler expects.
+    """
+    from itrader.portfolio_handler.portfolio_factory import (
+        ComputeAccountAuthority,
+        PortfolioFactory,
+    )
+
+    authority = ComputeAccountAuthority(
+        venue_bundles=backtest_venue_bundles(
+            bus, exchange_config=exchange_config, rng=rng),
+        compute_venue=COMPUTE_VENUE,
+    )
+    return PortfolioFactory(
+        authority=authority, environment=environment, sql_engine=sql_engine)
+
+
 def backtest_portfolio_handler(bus: Optional[Any] = None, **kwargs: Any) -> Any:
-    """A ``PortfolioHandler`` wired to a backtest-shaped ``VenueBundles`` (11.1-09).
+    """A ``PortfolioHandler`` wired to a backtest-shaped ``PortfolioFactory`` (D-24).
 
-    ``add_portfolio`` now builds each portfolio's account through the venue plugin
-    (D-02/D-08), so a handler constructed without the shared bundle memo REFUSES
-    rather than minting one inline. Every direct-construction test site that creates
-    portfolios needs the same recipe; this is it.
+    ``add_portfolio`` now builds each portfolio's account leaf THROUGH the injected
+    factory (D-24), so a handler constructed without one REFUSES rather than minting one
+    inline. Every direct-construction test site that creates portfolios needs the same
+    recipe; this is it.
 
-    The memo is built over the bus so the exchange the paper plugin mints publishes
-    onto the same queue the handler does — the shape production wires. The queue may
-    arrive positionally or as ``global_queue=``; both call shapes exist in the tree.
+    The factory's authority is built over the bus so the exchange the paper plugin mints
+    publishes onto the same queue the handler does — the shape production wires. The queue
+    may arrive positionally or as ``global_queue=``; both call shapes exist in the tree.
+    ``environment`` / ``sql_engine`` (if supplied) are threaded into the factory too so its
+    state-storage selectors match the handler's.
     """
     if bus is None:
         bus = kwargs.pop('global_queue')
-    kwargs.setdefault('venue_bundles', backtest_venue_bundles(bus))
+    if 'portfolio_factory' not in kwargs:
+        kwargs['portfolio_factory'] = backtest_portfolio_factory(
+            bus,
+            environment=kwargs.get('environment', 'backtest'),
+            sql_engine=kwargs.get('sql_engine'),
+        )
     return PortfolioHandler(bus, **kwargs)

@@ -8,7 +8,7 @@
 - Python 3.13 (CPython 3.13.1) - all application and test code under `itrader/` and `tests/`. Pinned `>=3.13,<3.14` in `pyproject.toml`; `.python-version` pins `3.13`.
 
 **Secondary:**
-- YAML - domain configuration under `settings/domains/` (e.g. `settings/domains/portfolio.default.yaml`)
+- YAML - domain configuration files under `settings/domains/` (e.g. `settings/domains/portfolio.default.yaml`) — present on disk but NOT read by any code path today (see Configuration below)
 - Make - developer task runner (`Makefile`, loads `.env` via `include .env`)
 - INI - Alembic config (`alembic.ini`)
 
@@ -54,10 +54,10 @@
 - uuid-utils ^0.16.0 - Rust-backed UUIDv7 generation; `uuid_utils.compat.uuid7()` → native `uuid.UUID` (`itrader/outils/id_generator.py`)
 - pydantic ^2.13 - domain config models (`itrader/config/*.py`)
 - pydantic-settings ^2.14 - `BaseSettings` env-var layers: `LogConfig` reads `ITRADER_*` (`itrader/config/log.py`), `SqlSettings` reads `ITRADER_DATABASE_*` (`itrader/config/sql.py`), `OkxSettings` reads plain `OKX_API_*`/`OKX_SANDBOX`/`OKX_REGION` (`itrader/config/okx_settings.py`, `env_prefix=""`, `SecretStr` end-to-end)
-- msgspec ^0.21.1 - the `Event` base class IS `msgspec.Struct(frozen=True, kw_only=True, gc=False)`, not a frozen dataclass (`itrader/events_handler/events/base.py`) — the top-level CLAUDE.md description of events as `@dataclass(frozen=True, slots=True, kw_only=True)` is stale/incorrect for the event hierarchy; msgspec is also used across other hot-path value objects and SQL codecs (`core/bar.py`, `execution_handler/matching_engine.py`, `strategy_handler/signal_record.py`)
+- msgspec ^0.21.1 - the `Event` base class IS `msgspec.Struct(frozen=True, kw_only=True, gc=False)`, not a frozen dataclass (`itrader/events_handler/events/base.py`); the top-level CLAUDE.md now describes events the same way (its old `@dataclass` wording has been corrected). msgspec is also used across other hot-path value objects — `core/bar.py`, `execution_handler/matching_engine.py`, `strategy_handler/signal_record.py`, `portfolio_handler/transaction/transaction.py` (the complete set of msgspec importers under `itrader/`). There is NO msgspec-based SQL/JSON codec: `msgspec.json` / `msgspec.msgpack` appear nowhere in the package.
 
 **Analytics / Strategy:**
-- scipy ^1.17.1 - `linregress` for performance metrics (`itrader/reporting/`)
+- scipy ^1.17.1 - declared dependency, but NOT imported anywhere under `itrader/` (transitive need of scikit-learn/statsmodels; carries a mypy `ignore_missing_imports` override). `itrader/reporting/metrics.py` computes every metric with pure pandas/numpy — `linregress` appears nowhere in the repo.
 - scikit-learn ^1.9.0 - `LinearRegression`, `PolynomialFeatures` for custom indicators
 - statsmodels ^0.14.6 - cointegration tests (`coint`, `OLS`) for pairs trading
 - ta ^0.11.0 - technical indicator library (`itrader/strategy_handler/`)
@@ -68,11 +68,11 @@
 - sqlalchemy-utils ^0.41.2 - `database_exists`, `create_database` helpers
 - psycopg2-binary ^2.9.12 - PostgreSQL adapter (`postgresql+psycopg2://`)
 - ccxt ^4.5.56 - unified crypto-exchange interface; `ccxt.pro` provides the live WebSocket client for the OKX connector (`itrader/connectors/okx.py`)
-- websocket-client (`websocket`) - Binance live kline streaming (`itrader/price_handler/providers/binance_stream.py`)
+- websocket-client (`websocket`) - imported by `itrader/price_handler/providers/binance_stream.py` for Binance live kline streaming, but **NOT declared in `pyproject.toml` and not installed in `.venv`** — importing that module raises `ModuleNotFoundError: No module named 'websocket'` today. Deferred subsystem; nothing on the backtest or OKX live path imports it.
 - structlog ^24.4.0 - structured logging with context binding (`itrader/logger.py`)
 - plotly ^6.8.0 - interactive charts for performance reporting (`itrader/reporting/plots.py`)
 - tqdm ^4.67.3 - progress bars during data-download loops
-- pyyaml ^6.0.3 - YAML parsing for domain config (`itrader/config/`, `settings/domains/`)
+- pyyaml ^6.0.3 - declared dependency, but no `import yaml` exists anywhere under `itrader/`, `tests/`, `scripts/`, or `perf/`. Nothing parses the `settings/` YAML today.
 
 **Dev REPL:**
 - ipython ^9.14.0, ipykernel ^6.31.0 - REPL / Jupyter kernel
@@ -91,7 +91,7 @@
   - `model_config = ConfigDict(frozen=True, extra="forbid")`.
   - **Confirmed removed / do not carry forward:** the legacy `SystemConfig` root, the old `Settings` env class, `PerformanceSettings`, and `MonitoringSettings` are all absent from `itrader/config/` as of this refresh (v1.8 Phase 9 + follow-ups) — `ITraderConfig()` is constructed directly, no registry/provider getter layer exists.
 - `PortfolioConfig` (`itrader/config/portfolio.py`) and `ExchangeConfig` (`itrader/config/exchange.py`) are standalone domain models outside the `ITraderConfig` tree; `ExchangeConfig` ships classmethod presets (`.default()`, `.high_fee()`).
-- Domain YAML loaded from `settings/`; defaults shipped as `settings/domains/{domain}.default.yaml`
+- `settings/` holds YAML files (`portfolio_handler*.yaml`, `portfolio.yaml`, `settings/domains/portfolio.default.yaml`) but NO code loads them — there is no `import yaml` anywhere in the repo. Treat `settings/` as inert until a loader is reintroduced; `ITraderConfig` is constructed from defaults + `ITRADER_*` env only.
 - Process-wide singletons (`config`, `logger`, `idgen`) initialized in `itrader/__init__.py` on import
 
 **Build:**
@@ -114,7 +114,7 @@
 - PostgreSQL on port 5544 (NOT 5432 — occupied by another DB on the target machine) as the operational SQL backend (`SqlSettings` driver `postgresql+psycopg2`); SQLite is the default backtest/results arm (`SqlSettings.default()` → in-memory, `SqlSettings.results_default()` → on-disk `output/results.db`)
 - Alembic migration chain applied to the operational Postgres store (repo-root `migrations/versions/`)
 - OKX demo/live account with API key + secret + passphrase for the live path (paper-first, sandbox default `True`), region-aware host routing (`OkxSettings.region`: `global`/`eea`)
-- OANDA API credentials in an `oanda.cfg` file (`itrader/price_handler/providers/oanda_provider.py` via `tpqoa`) — deferred subsystem (mypy `ignore_errors`)
+- OANDA API credentials in an `oanda.cfg` file (`itrader/price_handler/providers/oanda_provider.py` via `tpqoa`) — deferred subsystem (mypy `ignore_errors`); like `websocket-client`, `tpqoa` is NOT declared in `pyproject.toml`, so that module is un-importable as installed
 - Binance WebSocket access for live streaming (`itrader/price_handler/providers/binance_stream.py`) — deferred subsystem
 - No Dockerfile, docker-compose, or CI workflow file detected in the repo root
 

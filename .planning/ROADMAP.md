@@ -116,7 +116,7 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 - [x] **Phase 10.1: StrategiesHandler Decomposition** - Split `strategies_handler.py` into a thin handler + `ManagedStrategies` holder + `StrategyLifecycleManager`; constructor-own the three live deps; dissolve every function-local import; rename `calculate_signals`→`on_bar` (DECOMP-01, 01a, 02, 03) (INSERTED — follow-up to Phase 10) (completed 2026-07-20)
 - [x] **Phase 11 ★: Multi-Portfolio-Live** - Per-`account_id` account factory, distinct-`account_id` invariant (fail loud), per-portfolio reconcile, `clOrdId→client_order_id` (MPORT-01..06) (completed 2026-07-22)
 - [x] **Phase 11.1: Account Provisioning + Mandatory Account Identity** - Domain objects stop participating in their own wiring, and backtest and live converge on one venue path: `Portfolio` receives a built `Account`, `PaperVenuePlugin` becomes the sole account + `SimulatedExchange` factory, the backtest venue is renamed `paper` (the `('csv', DEFAULT_ACCOUNT_ID)` alias retired), a memoized `VenueBundles` is shared by both handlers, `rng` joins `EngineContext`, and the commission estimator is decomposed (VENUE-01..08) (INSERTED — follow-up to Phase 11) (completed 2026-07-22) *(title and directory are historical — the `ACCT-*` provisioning work this name describes moved to Phase 11.2 under D-16)*
-- [ ] **Phase 11.2: Account Provisioning Bootstrap + Review Closures** - Make the live composition root trust the account identity the DB already enforces: derive the account set from `venue_accounts` (not the spec), replace boot-time minting with a deliberate provisioning path, hard-raise on an account-less live portfolio, attach the venue account on every creation path, delete the six live `or DEFAULT_ACCOUNT_ID` coercions (ACCT-01..10 + three folded 11.1-review findings) (INSERTED — split out of Phase 11.1)
+- [x] **Phase 11.2: Account Provisioning Bootstrap + Review Closures** - Make the live composition root trust the account identity the DB already enforces: derive the account set from `venue_accounts` (not the spec), replace boot-time minting with a deliberate provisioning path, hard-raise on an account-less live portfolio, attach the venue account on every creation path, delete the six live `or DEFAULT_ACCOUNT_ID` coercions (ACCT-01..10 + three folded 11.1-review findings) (INSERTED — split out of Phase 11.1) (completed 2026-07-24)
 - [ ] **Phase 11.3: D-09 Config-Move Migration Guard** - The D-09 config move refuses rather than silently skipping, with a migration test staged from the real pre-upgrade shape (`portfolio_account_state` rows only) (ACCT-11) (INSERTED — split out of Phase 11.2)
 - [ ] **Phase 12: Live Composition-Root Dissolution** - `build_live_system` disappears: the 687-line builder dissolves into independently-constructible composition steps, the facade sheds its remaining non-facade concerns (config-ingress validation, the stats/status read-model, the connector-loop signal callbacks), and the nine-field None-then-assign wiring pattern is eliminated — every collaborator a required constructor argument (COMP-01..06)
 - [ ] **Phase 13: Test Migration + Gates** - live-smoke / config-restart / multi-portfolio-attribution gates (TEST-02..04; TEST-01 replay relocation pulled forward into P6)
@@ -641,6 +641,7 @@ measured per file, never generalized per package (`live_trading_system.py` is 4-
 
   9. `ExecutionHandler.on_order`'s fail-closed paths emit a `FillEvent(REFUSED)` instead of only logging (code-review **WR-10**), so a misconfigured live engine no longer drops 100% of its orders while `get_status()` reports `RUNNING` / `errors_count: 0`. Criterion 3 makes the `account_id is None` branch unreachable, so this covers two paths and deletes the third (ACCT-09).
   10. Runtime portfolio deactivation persists (code-review **WR-04**) — `PortfolioDefinitionStore.set_enabled(portfolio_id, enabled)` is written and called from whatever flips `PortfolioState`, so a portfolio an operator stops does not come back ACTIVE and trading on the next restart, and rehydrate's present-but-inactive branch becomes reachable as designed (ACCT-10).
+
 *(Criterion 11 — the D-09 config-move guard, ACCT-11 — was split out to **Phase 11.3** on 2026-07-23. The
 remaining ten criteria keep their numbering: it was last in the list, so nothing renumbers.)*
 
@@ -666,6 +667,47 @@ live while persisting nothing, with a fully green backtest. Any wave plan that s
 change is wrong regardless of how the rest of the dependency graph falls out.
 
 **Sizing note (split TAKEN 2026-07-23)**: this phase reached 11 requirements even after the D-16 split, and the three folded 11.1-review findings pushed it to roughly 14 requirements-worth of work. The cut this note previously *proposed* has now been **taken**: ACCT-11 (the D-09 migration guard) moved to **Phase 11.3** — thematically separate from account identity, with no dependency on ACCT-01..10. The phase now carries **ACCT-01..ACCT-10 plus the three folded 11.1-review findings** (11.1-REVIEW CR-02, WR-04+WR-08, WR-01), which is ~13 requirements-worth. If it needs cutting again, the next cleanest seam is the read-model/plumbing group — ACCT-08 (`all_portfolios()`/`has_portfolio()` + the four `_portfolios` reach-ins) and ACCT-06 (the two phantom-invariant docstrings) — both of which are corrections rather than behaviour changes and depend on the rest only for their call sites.
+
+**Plans**: 14 plans
+
+Plans:
+**Wave 1** — D-39's W1 foundations (all four are independent; the `state_storage` kwarg is the ordering constraint)
+
+- [x] 11.2-01-PLAN.md — 11.1-REVIEW WR-04+WR-08: `state_storage` becomes a required kwarg on both simulated account leaves and on the paper `account_factory` closure; the `create("backtest")` fallback and the `getattr(config, "initial_cash", 0.0)` float default are deleted (ACCT-05 ordering constraint)
+- [x] 11.2-02-PLAN.md — D-32 schema: `portfolios.is_deleted` + a partial unique index `WHERE NOT is_deleted`, in the registrar **and** a new Alembic revision; includes a partial-index spike and a one-way `checkpoint:decision` (ACCT-10)
+- [x] 11.2-03-PLAN.md — 11.1-REVIEW WR-01: `fee_model_provider` becomes `(venue, account_id)`-aware across four files, and the false comment in the live root is replaced with the truth
+- [x] 11.2-04-PLAN.md — 11.1-REVIEW CR-02: reject the `enable_margin` runtime flip at the `ConfigRouter` allowlist **and** in `Portfolio.update_config`
+
+**Wave 2** *(blocked on Wave 1)* — the tracer
+
+- [x] 11.2-05-PLAN.md — **TRACER**: one durable `venue_accounts` row travels end-to-end — `read_enabled_for` → `VenueAccountManager.bring_online` (with the relocated `secret_ref` read) → registered exchange → `VenueBundles.account_for` → account leaf; plus `provision` (create-only, D-11) (ACCT-01, ACCT-02, ACCT-03; D-21/D-26/D-27/D-28/D-34)
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [x] 11.2-06-PLAN.md — D-38 account `config_json` precedence merge with a raising three-key allowlist, the `market_type` hardcode cleared, and D-40's per-pair UID-guard outcome+reason (ACCT-02)
+- [x] 11.2-07-PLAN.md — D-20 boot reorder + ACCT-01/ACCT-02 handoff: six helpers and the spec `portfolios` field deleted, D-36 removes "primary account" and moves the feed binding out, plus the 10-file test blast-radius rewrite and a deleted-symbol static gate (ACCT-01, ACCT-02)
+
+**Wave 4** *(blocked on Wave 3)*
+
+- [x] 11.2-08-PLAN.md — D-23 one storage site for `(venue_name, account_id)` + D-24 `PortfolioFactory` owns the definition→runtime-graph mapping, wired at all three composition roots (ACCT-05)
+
+**Wave 5** *(blocked on Wave 4)*
+
+- [x] 11.2-09-PLAN.md — D-25 `create`/`materialize` split, rehydrate materializes only, ACCT-07's early return and the absence gate deleted, and the mandatory WR-11 fixture rewrite (ACCT-03, ACCT-05, ACCT-07)
+
+**Wave 6** *(blocked on Wave 5; the two run in parallel)*
+
+- [x] 11.2-10-PLAN.md — ACCT-04: all **eight** live-path `or DEFAULT_ACCOUNT_ID` sites dispositioned explicitly, plus a two-halved static gate covering the deletions and the KEPT backtest identity (ACCT-04)
+- [x] 11.2-11-PLAN.md — ACCT-10 lifecycle persistence: targeted `set_enabled`/`set_deleted`, `deactivate_portfolio`/`activate_portfolio` (D-30), `delete_portfolio` writes `is_deleted` (D-32), and D-33's account-disable refusal (ACCT-10)
+
+**Wave 7** *(blocked on Wave 6; the two run in parallel)*
+
+- [x] 11.2-12-PLAN.md — ACCT-08 `all_portfolios()`/`has_portfolio()`, the surviving `_portfolios` reach-in converted, and WR-02's degrade guard moved inside **both** `_layer_persisted_overrides` loops (ACCT-08)
+- [x] 11.2-13-PLAN.md — ACCT-09 `FillEvent(REFUSED)` on both surviving fail-closed paths with two new `ExecutionErrorCode` members (D-42), the unreachable branch deleted, and ACCT-06's **three** phantom-invariant docstrings corrected (ACCT-06, ACCT-09)
+
+**Wave 8** *(blocked on Wave 7)*
+
+- [x] 11.2-14-PLAN.md — D-29's six-step fresh-deployment gate, existing scripts become the `provision` callers, D-37's residue, and the full phase gate incl. all three static gates (ACCT-01..ACCT-04)
 
 *Cross-cutting constraints (apply to every plan): the backtest path is untouched — SMA_MACD oracle byte-exact
 `134 / 46189.87730727451`; GATE-01 import inertness preserved (`test_okx_inertness.py` green, no new eager

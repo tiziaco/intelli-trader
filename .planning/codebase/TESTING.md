@@ -5,7 +5,7 @@
 ## Test Framework
 
 **Runner:**
-- pytest ^8.4.2 (`minversion = "8.0"`), config in `pyproject.toml::[tool.pytest.ini_options]`
+- pytest ^9.0.3 (`minversion = "8.0"` — the floor, not the pin), config in `pyproject.toml::[tool.pytest.ini_options]`
 - `testpaths = ["tests"]` (NOT `test/`)
 - pytest-asyncio 1.4.0 — `asyncio_mode = "auto"` (every `async def test_*` runs without a per-test `@pytest.mark.asyncio`), `asyncio_default_fixture_loop_scope = "function"` (both keys REQUIRED under `--strict-config`; an unset loop scope emits a config warning that escalates to an error under `filterwarnings=["error"]`). The plugin's own `asyncio` marker is exempt from `--strict-markers`.
 
@@ -41,43 +41,49 @@ poetry run pytest tests/unit/order/test_order.py -k "test_name" -v
 
 ## Test File Organization
 
-**Location — real tree (verified 2026-07-21):**
+**Location — real tree (verified 2026-07-28):**
 ```
 tests/
-├── conftest.py                    # root: folder-derived TYPE marker auto-apply, global_queue fixture, DB-env guard, bar helpers
-├── unit/                          # 220 test_*.py files, 2606 total tests collected repo-wide
+├── conftest.py                    # root: folder-derived TYPE marker auto-apply, global_queue fixture, DB-env guard, bar helpers, fake_venue_connector
+├── unit/                          # 242 test_*.py files, 2670 tests
 │   ├── conftest.py                #   unit-layer documentation/marker anchor
-│   ├── config/                    #   ~56 tests
-│   ├── connectors/                #   ~44 tests (+ fixtures/)
-│   ├── core/                      #   ~170 tests
-│   ├── events/                    #   ~132 tests
-│   ├── execution/                 #   ~259 tests (+ exchanges/)
-│   ├── order/                     #   ~278 tests
-│   ├── outils/                    #   ~28 tests
-│   ├── portfolio/                 #   ~360 tests (+ positions/, reconcile/, transaction/) — has __init__.py
-│   ├── price/, price_handler/     #   ~108 + 24 tests
-│   ├── reporting/                 #   ~65 tests
-│   ├── results/                   #   ~33 tests
-│   ├── storage/                   #   ~58 tests
-│   ├── strategy/                  #   ~321 tests
-│   ├── trading_system/            #   ~66 tests
-│   ├── universe/                  #   ~92 tests
-│   └── venues/                    #   ~32 tests
-├── integration/                   # 54 test_*.py files
+│   ├── config/                    #   71 tests
+│   ├── connectors/                #   56 tests (+ fixtures/)
+│   ├── core/                      #   189 tests
+│   ├── events/                    #   189 tests
+│   ├── execution/                 #   286 tests (+ exchanges/)
+│   ├── order/                     #   302 tests
+│   ├── outils/                    #   58 tests
+│   ├── portfolio/                 #   461 tests (+ positions/, reconcile/, transaction/) — has __init__.py
+│   ├── price/, price_handler/     #   108 + 24 tests
+│   ├── reporting/                 #   65 tests
+│   ├── results/                   #   33 tests
+│   ├── storage/                   #   98 tests
+│   ├── strategy/                  #   361 tests
+│   ├── trading_system/            #   120 tests
+│   ├── universe/                  #   92 tests
+│   └── venues/                    #   147 tests
+├── integration/                   # 63 test_*.py files, 281 tests
 │   ├── conftest.py                #   integration-layer fixtures: golden-file paths + backtest_engine factory
 │   ├── test_backtest_oracle.py    #   the byte-exact SMA_MACD oracle test (see below)
 │   ├── _oracle_harness.py         #   shared repo-root/output-dir constants + importlib loader for the oracle generator
 │   ├── pair_exit_safety/, storage/
 │   └── (cross-component cascade, reconciliation, OKX connectivity/store-drive tests)
-├── e2e/                           # 62 test_*.py files across ~35 scenario subdirs (admission/, cash/, cost/, matching/, multi/, sltp/, sizing/, robust/, smoke/, strategies/, levered_long*/, short_*/, trailing_*/, forced_liq_*/, partial_cover/), each with its own __init__.py
-├── golden/                        # 0 test_*.py files — frozen ARTIFACTS only (trades.csv, equity.csv, summary.json, pair/, + REFREEZE-*.md / CROSS-VALIDATION*.md decision notes)
-└── support/                       # shared test doubles (e.g. tests/support/fake_venue_connector.py) + fixtures/
+├── e2e/                           # 62 test_*.py files, 76 tests, across 21 scenario subdirs (admission/, cash/, cost/, matching/, multi/, sltp/, sizing/, robust/, smoke/, strategies/, levered_long*/, short_*/, trailing_*/, forced_liq_*/, partial_cover/), each with its own __init__.py
+├── golden/                        # 0 test_*.py files, COLLECTS 0 TESTS — frozen ARTIFACTS only (trades.csv, equity.csv, summary.json, pair/, + REFREEZE-*.md / CROSS-VALIDATION*.md decision notes)
+└── support/                       # shared test doubles (e.g. tests/support/fake_venue_connector.py) + fixtures/ — has __init__.py
 ```
-2606 tests collected via `pytest --collect-only -q` on 2026-07-21.
+Suite total as of 2026-07-28: **3027 collected — 3021 passed, 6 skipped** via
+`poetry run pytest tests -q -p no:cacheprovider`. Every count above decays on each commit;
+the durable claim is the *shape*: all 6 skips are OKX-credential-gated (3 in
+`tests/e2e/test_okx_sandbox_recon.py`, 1 in `tests/e2e/test_okx_dynamic_universe.py`, 1 in
+`tests/integration/test_okx_connectivity.py`, 1 in `tests/integration/test_okx_smoke.py`) —
+a green run with 0 failures and only OKX skips is the expected steady state. Re-measure
+rather than trust the numbers.
 
 **Naming:** `test_<module>.py` mirroring `itrader/` source module names; test functions `test_*`; test classes `Test*` (all per `pyproject.toml::python_files/python_classes/python_functions`).
 
-**`__init__.py` collision — currently NOT reproducible.** Only `tests/unit/portfolio/__init__.py` exists as a package marker outside the `tests/e2e/` tree (which uses `__init__.py` throughout its scenario subdirs by design). `tests/integration/` currently has **zero** `__init__.py` files, so there is no `tests/unit/<x>` + `tests/integration/<x>` same-name package collision today. This was a real historical gotcha (see prior project memory) but the conflicting `tests/integration/portfolio/__init__.py` is gone — do not add a new `__init__.py` to any `tests/unit/<x>` or `tests/integration/<x>` directory that shares a name with a directory on the other side, or the collision can reappear.
+**`__init__.py` collision — currently NOT reproducible.** Outside the `tests/e2e/` tree (which uses `__init__.py` throughout its scenario subdirs by design) exactly two package markers exist: `tests/unit/portfolio/__init__.py` and `tests/support/__init__.py`. `tests/integration/` currently has **zero** `__init__.py` files, so there is no `tests/unit/<x>` + `tests/integration/<x>` same-name package collision today. This was a real historical gotcha (see prior project memory) but the conflicting `tests/integration/portfolio/__init__.py` is gone — do not add a new `__init__.py` to any `tests/unit/<x>` or `tests/integration/<x>` directory that shares a name with a directory on the other side, or the collision can reappear.
 
 ## Markers
 
@@ -117,7 +123,7 @@ Pytest-asyncio's own `asyncio` marker is separately registered by the plugin and
 - `_block_dev_database_env` (session-scoped, `autouse=True`) — pops the six `ITRADER_DATABASE_*` dev-DB env vars (`PASSWORD`, `URL`, `HOST`, `PORT`, `USER`, `NAME` — NOT `ITRADER_DATABASE_DATABASE`, the sqlite path) from `os.environ` at session start, restores in `finally`. Guarantees no test can reach the operational dev Postgres unless it explicitly opts in via function-scoped `monkeypatch.setenv` (which wins over the session-scope pop and is undone at teardown).
 - `global_queue` — fresh `queue.Queue()` per test (matches the constructor convention `global_queue`).
 - `make_bar_struct` / `make_bar` / `make_bar_event` — factory fixtures building a bare `Bar` (`_bar_struct`) or a one-ticker `BarEvent` with `dict[str, Bar]` payload (`_bar_event`); money fields entered via `Decimal(str(x))` per the money-boundary rule.
-- `fake_venue_connector` — connected, teardown-safe `FakeLiveConnector` for the reconciliation cluster (Phase 5, D-09/RECON-06); wraps a fake `ccxt.pro` client driven by canned `watch_*`/`fetch_*` payloads from `tests/support/fixtures/okx_recon_payloads.json`. The import of `tests.support.fake_venue_connector` is deferred into the fixture body so root conftest collection never depends on `tests.support` being importable early.
+- `fake_venue_connector` — connected, teardown-safe `FakeLiveConnector` for the reconciliation cluster (Phase 5, RECON-06); wraps a fake `ccxt.pro` client driven by canned `watch_*`/`fetch_*` payloads from `tests/support/fixtures/okx_recon_payloads.json`. The import of `tests.support.fake_venue_connector` is deferred into the fixture body so root conftest collection never depends on `tests.support` being importable early.
 
 **Layer-specific:**
 - `tests/unit/conftest.py` — documentation/marker anchor only (no unit-only fixtures of note beyond what root provides).
@@ -126,14 +132,14 @@ Pytest-asyncio's own `asyncio` marker is separately registered by the plugin and
 ## Mocking
 
 - No `unittest.mock`/`pytest-mock` pattern dominates; the established convention is hand-written fake/double objects (e.g. `FakeLiveConnector` in `tests/support/fake_venue_connector.py`) driving canned JSON payloads (`tests/support/fixtures/okx_recon_payloads.json`) rather than `Mock()`/`MagicMock()` patching. Prefer hand-written fakes over `unittest.mock.patch` for connector/exchange doubles, consistent with `fake_venue_connector`.
-- `ReplayDataProvider` (`itrader/price_handler/providers/replay_provider.py`) replays the golden CSV through `LiveBarFeed` for the offline, CI-safe paper-replay parity gate — used as a data double rather than a mock.
+- `TestLiveDataProvider` (`tests/support/replay_harness.py`) replays the golden CSV through `LiveBarFeed` for the offline, CI-safe paper-replay parity gate (`tests/integration/test_paper_parity.py`) — used as a data double rather than a mock. It lives in the TEST tree: the former `itrader/price_handler/providers/replay_provider.py::ReplayDataProvider` was relocated here and that path no longer exists.
 
 ## Golden / Oracle Tests
 
 **The byte-exact SMA_MACD oracle:** `tests/integration/test_backtest_oracle.py`, sharing repo-root/output-dir constants and an importlib loader with `tests/integration/_oracle_harness.py` (also used by `test_reservation_inertness.py` so the two copies cannot drift).
 
 - Runs the FULL 2018→2026 `SMA_MACD` backtest by invoking `scripts/run_backtest.py::main()` in-process (writes fresh `output/{trades,equity}.csv` + `output/summary.json`), then diffs against the committed `tests/golden/` equivalents.
-- Diff mechanic: loads both CSVs to pandas DataFrames, `pandas.testing.assert_frame_equal` on deterministic columns — NOT a byte-compare. Trades keyed by `(entry_date, exit_date, side)` + `pair` (behavioral identity, asserted exact); equity keyed by `timestamp`; summary keyed by `trade_count` (identity) plus `final_cash`/`final_equity`/`total_realised_pnl` (numeric, asserted EXACT — no float tolerance, per the D-16 M2b re-freeze and the later M5b re-freeze).
+- Diff mechanic: loads both CSVs to pandas DataFrames, `pandas.testing.assert_frame_equal` on deterministic columns — NOT a byte-compare. Trades keyed by `(entry_date, exit_date, side)` + `pair` (behavioral identity, asserted exact); equity keyed by `timestamp`; summary keyed by `trade_count` (identity) plus `final_cash`/`final_equity`/`total_realised_pnl` (numeric, asserted EXACT — no float tolerance, per the M2b re-freeze and the later M5b re-freeze).
 - Carries `integration` + `slow` markers automatically via its `tests/integration/` path (folder-derived, not hand-added).
 - **Current frozen golden values** (`tests/golden/summary.json`, verified 2026-07-21):
   - `final_cash` = `final_equity` = **`46189.87730727451`**
@@ -141,7 +147,7 @@ Pytest-asyncio's own `asyncio` marker is separately registered by the plugin and
   - `trade_count` = **134**
   - `starting_cash` = `10000.0`, window `2018-01-01` → `2026-06-03`, ticker `BTCUSD` / `1d`
   - `metrics`: `cagr` 0.19910032815485068, `max_drawdown` -0.538256823181407, `profit_factor` 1.291149869385797, `sharpe` 0.6583614133806527, `sortino` 1.038504038796619, `win_rate` 0.3656716417910448
-  - Also asserted: presence of `slippage_entry`/`slippage_exit` columns in `trades.csv` (D-17 auto-lock).
+  - Also asserted: presence of `slippage_entry`/`slippage_exit` columns in `trades.csv` (slippage auto-lock).
 - This matches the CLAUDE.md-cited oracle value `46189.87730727451` — confirmed current, not stale.
 - Other frozen-golden decision notes live alongside the artifacts: `tests/golden/FINAL-ORACLE.md`, `REFREEZE-M5A.md`, `REFREEZE-M5B-DIRECTION.md`, `REFREEZE-M5B-INCREASE.md`, `REFREEZE-M5C-DECIMAL.md`, `REFREEZE-06-04.md`, and the cross-validation notes `CROSS-VALIDATION.md` / `CROSS-VALIDATION-ACCOUNTING.md` / `CROSS-VALIDATION-LIMIT.md` / `CROSS-VALIDATION-SCALE-IN.md` / `CROSS-VALIDATION-TRAILING.md` (gating oracles: `backtesting.py` 0.6.5, `backtrader` 1.9.78.123; non-gating: `nautilus-trader` 1.227.0).
 - `tests/golden/pair/` holds a second frozen `trades.csv`/`equity.csv` pair (pairs-trading scenario).
@@ -156,9 +162,10 @@ Pytest-asyncio's own `asyncio` marker is separately registered by the plugin and
 
 ## Known Operational Gotchas
 
-- **`make test` disables logs, breaking `caplog` assertions — CONFIRMED by code, not by Makefile itself.** `itrader/logger.py` reads `ITRADER_DISABLE_LOGS` (default `"false"`) as a full-off kill-switch (D-08). `Makefile` does `include .env` + `.EXPORT_ALL_VARIABLES` (`Makefile:1-3`), so if `.env` sets `ITRADER_DISABLE_LOGS=true` it is exported into every `make test*` target's pytest process. The var is NOT set directly in `Makefile` (`grep` for `DISABLE_LOGS` in `Makefile` returns nothing) — the `.env` file contents could not be read here (forbidden-file policy) to confirm the literal value, but this exact failure mode is independently corroborated by module docstrings in `tests/unit/strategy/test_reconfigure_atomic.py`, `tests/unit/strategy/test_strategy_command_verbs.py`, `tests/unit/strategy/test_rehydrate.py`, `tests/unit/connectors/test_stream_supervisor.py`, and `tests/integration/test_store_live_drive.py:297`, all of which instruct running under `poetry run pytest` (NOT `make test`) for exactly this reason. Treat as confirmed operational behavior; run `poetry run pytest ...` directly (bypassing `make test`) for any test asserting on `caplog` warning/error records.
+- **`tests/golden/` collects 0 tests — it is an artifact directory, not a test suite.** `poetry run pytest tests/golden --collect-only -q` prints `no tests collected`. Pointing a verification gate at `tests/golden/` therefore passes vacuously. The byte-exact SMA_MACD oracle lives at **`tests/integration/test_backtest_oracle.py`**; `tests/golden/` only holds the frozen CSV/JSON it diffs against. That oracle drives `scripts/run_backtest.py::main()`, which constructs `BacktestTradingSystem(...)` **directly** — NOT the `build_backtest_system(spec)` factory (`itrader/trading_system/backtest_trading_system.py:481`) — so a change made only inside the factory arm is invisible to the oracle and goes false-green.
+- **`make test` disables logs, breaking `caplog` assertions — CONFIRMED by code, not by Makefile itself.** `itrader/logger.py` reads `ITRADER_DISABLE_LOGS` (default `"false"`) as a full-off kill-switch. `Makefile` does `include .env` + `.EXPORT_ALL_VARIABLES` (`Makefile:1-3`), so if `.env` sets `ITRADER_DISABLE_LOGS=true` it is exported into every `make test*` target's pytest process. The var is NOT set directly in `Makefile` (`grep` for `DISABLE_LOGS` in `Makefile` returns nothing) — the `.env` file contents could not be read here (forbidden-file policy) to confirm the literal value, but this exact failure mode is independently corroborated by module docstrings in `tests/unit/strategy/test_reconfigure_atomic.py`, `tests/unit/strategy/test_strategy_command_verbs.py`, `tests/unit/strategy/test_rehydrate.py`, `tests/unit/connectors/test_stream_supervisor.py`, and `tests/integration/test_store_live_drive.py:297`, all of which instruct running under `poetry run pytest` (NOT `make test`) for exactly this reason. Treat as confirmed operational behavior; run `poetry run pytest ...` directly (bypassing `make test`) for any test asserting on `caplog` warning/error records.
 - **`make test` aborts in git worktrees on missing `.env`.** `Makefile:2` does `include .env` unconditionally; a worktree checkout that lacks its own `.env` file fails Make immediately. Could not independently reproduce in this pass (no worktree spun up) — carried forward from prior verified project experience; use `poetry run pytest tests` directly inside a worktree, or `PYTHONPATH="$PWD" poetry run pytest tests` when an editable-install `.venv` is shadowing worktree edits.
-- **`tests/unit/<x>` + `tests/integration/<x>` `__init__.py` package collision — NOT currently reproducible.** As of 2026-07-21 only `tests/unit/portfolio/__init__.py` exists outside the `tests/e2e/` tree; `tests/integration/` has zero `__init__.py` files, so there is no live collision today. This was a real historical defect (full-suite collection breaks when both `tests/unit/<x>/__init__.py` and `tests/integration/<x>/__init__.py` exist for the same `<x>`, creating two top-level `<x>` packages) — do not reintroduce it by adding `__init__.py` to a `tests/unit/`/`tests/integration/` directory whose name is mirrored on the other side.
+- **`tests/unit/<x>` + `tests/integration/<x>` `__init__.py` package collision — NOT currently reproducible.** As of 2026-07-28 only `tests/unit/portfolio/__init__.py` and `tests/support/__init__.py` exist outside the `tests/e2e/` tree; `tests/integration/` has zero `__init__.py` files, so there is no live collision today. This was a real historical defect (full-suite collection breaks when both `tests/unit/<x>/__init__.py` and `tests/integration/<x>/__init__.py` exist for the same `<x>`, creating two top-level `<x>` packages) — do not reintroduce it by adding `__init__.py` to a `tests/unit/`/`tests/integration/` directory whose name is mirrored on the other side.
 - **Dev-DB env leak is systemically blocked, not just documented.** `tests/conftest.py::_block_dev_database_env` (session-scoped `autouse=True`) pops all six `ITRADER_DATABASE_*` vars for the whole session, so `make test`'s `include .env` exporting real dev-Postgres credentials cannot silently leak into a `LiveTradingSystem`/`SqlSettings` construction inside a test — a test must explicitly `monkeypatch.setenv` to opt back in.
 
 ---

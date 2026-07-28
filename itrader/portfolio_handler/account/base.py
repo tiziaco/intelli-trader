@@ -53,6 +53,25 @@ class Account(ABC):
     mid-stream quantize (rounding happens only at money boundaries).
     """
 
+    #: D-23 (11.2-08): the venue-account identity this leaf belongs to — the
+    #: ``(venue_name, account_id)`` pair that names WHICH venue account a
+    #: portfolio's orders and reconciliation route to. Declared HERE, on the ABC,
+    #: so ``Portfolio.venue_name`` / ``Portfolio.account_id`` can be read-only
+    #: PROPERTIES over ``self.account``: ONE storage site for the pair, so a
+    #: portfolio's idea of its account can never DRIFT from the account leaf's own
+    #: identity (two storage sites for one identity is the defect the single
+    #: source makes structurally impossible rather than merely guarded).
+    #:
+    #: Every concrete leaf sets the real values in ``__init__`` (the ``Simulated*``
+    #: compute leaves and the ``VenueAccount`` cache alike). The ``None`` class
+    #: default is deliberate: it keeps ANY ``Account`` — including a test double
+    #: that never sets them — safe to READ (``account.venue_name``) rather than
+    #: raising ``AttributeError`` under the property seam. ``VenueAccount`` still
+    #: REQUIRES its ``account_id`` at construction (D-11), so the ``None`` default
+    #: only ever stands for the compute leaves' unnamed (backtest) case.
+    account_id: str | None = None
+    venue_name: str | None = None
+
     #: The cash scale of an account, and its SINGLE home (WR-05).
     #:
     #: Declared on the ABC rather than on each leaf because the scale is a

@@ -3,22 +3,17 @@ import threading
 from datetime import datetime, UTC
 from decimal import Decimal
 from typing import (
-    Optional, Dict, List, Any, Callable, Iterable, Mapping, TYPE_CHECKING)
+    Optional, Dict, List, Any, Callable, Mapping, TYPE_CHECKING)
 
 from itrader.core.enums import HaltReason, SystemStatus
-from itrader.core.exceptions import StateError, ValidationError
+from itrader.core.exceptions import StateError
 from itrader.execution_handler.execution_handler import COMPUTE_VENUE, DEFAULT_ACCOUNT_ID
 from itrader.outils.time_parser import to_timedelta
 from itrader.trading_system.alert_sink import LogAlertSink
 from itrader.trading_system.venue_spec import build_venue_spec
-# 06.1-04 (SEAM-04/D-13): pure imports HOISTED to module top. Safe now because the
-# barrel drop (06.1-04 Task 1, D-12) removed this module from the backtest import graph,
-# so their module-top execution never touches the backtest path. session_initializer /
-# engine_context / universe_handler are all pure (no ccxt.pro/SQL/venue substrate) — the
-# P6 register-vs-build inertness block in test_okx_inertness proves importing this module
-# pulls no heavy backend. The genuinely-HEAVY imports (LiveBarFeed / SqlSettings / SQL
-# spine / ConnectorProvider / okx_plugin / assemble_venue / LiveRunner) STAY lazy inside
-# build_live_system's body (D-13).
+# Only PURE imports belong at module top: no ccxt.pro, SQL, or venue substrate. Every
+# heavy import MUST stay lazy inside a function body, or importing this module drags it
+# onto the backtest import graph. tests/integration/test_okx_inertness.py is the gate.
 from itrader.trading_system.session_initializer import SessionInitializer
 from itrader.trading_system.engine_context import EngineContext
 from itrader.universe import Universe
@@ -29,89 +24,28 @@ from itrader.events_handler.bus import PriorityEventBus
 from itrader.events_handler.events import EventType, StreamStateEvent, ConnectorFatalEvent
 
 if TYPE_CHECKING:
-    # Pure forward-refs for the pure-injection facade signature (06.1-02/D-10) — under
-    # TYPE_CHECKING so importing this module pulls neither onto the graph (compose is a
-    # pure import; VenueLifecycle is import-inert). The facade module is mypy ignore_errors.
+    # Forward-refs only — importing either eagerly would pull them onto the graph.
     from itrader.trading_system.compose import Engine
     from itrader.venues.lifecycle import VenueLifecycle
 
-# RUN-01/RUN-02 (D-06): the live drain-loop timing knobs. Formerly loose
-# ``__init__`` params (``queue_timeout``/``max_idle_time``); the pure-injection
-# facade sheds them and ``build_live_system`` injects these values into the
-# ``LiveRunner`` (which now OWNS the drain loop). Values preserve the historical
-# facade defaults exactly (1.0s queue poll, 300s idle-warn window).
-_LIVE_QUEUE_TIMEOUT = 1.0
-_LIVE_MAX_IDLE_TIME = 300.0
+# Live drain-loop timing knobs, injected into the LiveRunner.
+_LIVE_QUEUE_TIMEOUT = 1.0   # queue poll
+_LIVE_MAX_IDLE_TIME = 300.0  # idle-warn window
 
-# D-10/D-23 (WR — the primary external-surface security control): ``add_event`` is the
-# engine's PUBLIC external/web ingress. It is FAIL-CLOSED (default-deny, ASVS V4/V5):
-# ONLY the THREE sanctioned externally-originated event types are admissible — a
-# ``SIGNAL`` (routes through ``OrderHandler.on_signal`` -> ``AdmissionManager`` for
-# validation + sizing + reservation + mirror), a ``STRATEGY_COMMAND`` (an operator
-# add/remove-ticker command), and (D-23) a ``CONFIG_UPDATE`` (a runtime-config mutation
-# routed on the engine thread to its owning store + handler, ingress-400-validated here
-# BEFORE the queue). EVERY other event type — every internal-fact type
-# (FILL / BAR / UNIVERSE_UPDATE / UNIVERSE_POLL / BARS_LOADED / BARS_LOAD_FAILED /
-# TIME / ORDER / ERROR / PORTFOLIO_UPDATE ...) — is rejected by default. Internal
-# order flow is UNAFFECTED: handlers put their events on ``global_queue`` directly,
-# never through this external ``add_event`` surface (RESEARCH OQ7: zero internal
-# production callers of ``add_event``).
+# ``add_event``'s default-deny allowlist. Internal flow is unaffected — handlers put
+# onto ``global_queue`` directly, never through ``add_event``.
 _EXTERNALLY_ADMISSIBLE = frozenset(
     {EventType.SIGNAL, EventType.STRATEGY_COMMAND, EventType.CONFIG_UPDATE}
 )
 
-# Live operational store credential surface (D-live wiring completed). The live order +
-# signal store is selected by ENV-PRESENCE of a Postgres credential on the unified
-# ``ITRADER_DATABASE_*`` surface — ``ITRADER_DATABASE_PASSWORD`` (component-var arm) or the
-# ``ITRADER_DATABASE_URL`` verbatim escape hatch — and built from the unified ``SqlSettings``
-# Postgres arm, the SAME credential source Alembic ``migrations/env.py`` uses (one canonical
-# source; no separate legacy env-var seam). WR-10: no hardcoded credential fallback — an
-# unconfigured env falls back to in-memory order + signal storage with a loud warning. The
-# presence check runs a lazy default ``SqlSettings()`` probe inside ``build_live_system``
-# (below) so it honors per-construction env: the SQLite default driver skips
-# ``_require_pg_credentials`` (so the probe never raises when creds are absent) while still
-# sourcing ``ITRADER_DATABASE_*`` into ``probe.password`` / ``probe.url`` (IN-01). It gates
-# BEFORE constructing ``SqlSettings(driver=POSTGRESQL_PSYCOPG2)``, which RAISES
-# ``ValidationError`` (``_require_pg_credentials``) when no credential is present.
-
-# WR-03 / CFG-03 / D-08 / IN-01: the SINGLE wiring source for the live OKX subscription
-# now lives in ``config.stream`` (the eager ``ITraderConfig.stream`` field, backed by
-# StreamSettings in config/stream.py). The OKX data provider stamps this
-# symbol/timeframe into every ClosedBar (the feed's ring key), the feed warms up on
-# the same pair, and universe membership is checked against it — so the
-# OkxDataProvider constructor args and the feed.warmup() args can never drift into a
-# ring-key vs membership mismatch (which would otherwise surface only as a
-# MissingPriceDataError at first window()). Live-only read sites source
-# ``config.stream`` (the process-wide singleton) via a local ``from itrader import
-# config`` import; composition-root injection (and the universe-driven pair) land later.
-# BTC/USDC (not BTC/USDT): the OKX EEA entity restricts USDT spot pairs under MiCA —
-# an order on BTC/USDT returns sCode 51155 "local compliance restrictions".
-
-# TEST-01/D-18/D-21: the paper/backtest parity window + the offline replay driver left
-# this module for the test harness (tests/support/replay_harness.py). Production paper
-# re-points to the OKX live data feed (D-21), so this module carries NO replay apparatus
-# and NO parity constants.
-
-
-# VENUE-04/D-09 — the venue-precision resolver + the precision->scale helper that lived
-# here have been retired: precision_to_scale is now a shared money util in `core/money.py`
-# and precision resolution is a first-class `AbstractExchange.resolve_precision` capability
-# (implemented on `OkxExchange`). The universe handler binds directly on the exchange.
-
-
-# SystemStatus now lives in its canonical home ``core/enums/system.py`` and is
-# imported above; the ``SystemStatus.X`` usages below resolve unchanged.
-
 
 class LiveTradingSystem:
+    """Live-trading facade: a thin delegator over an injected engine and collaborators.
+
+    Drains the global queue on a background daemon thread rather than the backtest
+    system's synchronous for-loop.
     """
-    Encapsulates the settings and components for carrying out live trading.
-    Processes events from a global queue in a separate thread instead of 
-    using a for-loop like the backtest system.
-    
-    Enhanced with web control capabilities for REST API and WebSocket integration.
-    """
-    
+
     def __init__(
         self,
         *,
@@ -122,51 +56,35 @@ class LiveTradingSystem:
         exchange: str,
         status_callback: Optional[Callable[[SystemStatus, Dict[str, Any]], None]] = None,
     ):
-        """Pure-injection facade constructor (RUN-01/RUN-03/D-09/D-10).
+        """Pure-injection constructor: pre-built collaborators in, fresh runtime state out.
 
-        DIRECT pure injection over the pre-built collaborators — NO ``components``
-        bag: the compose ``engine`` (the single source of truth for the handler
-        graph + its handler-owned storages + ``store=None``), the per-account
-        ``VenueLifecycle`` MAP (D-07/11-09 — the venue/connector cluster, read
-        THROUGH each lifecycle with the paper ``connector``-None guard applied at the
-        use site, D-08), and the SEPARATE SQL spine +
-        halt store (D-09 — storage/durable infra, NOT venue/connector). ``exchange``
-        (the venue-name string) + ``status_callback`` are the remaining loose params.
-        Holds NO wiring logic; initialises fresh per-instance RUNTIME state
-        (status/locks/flags/stats). Mirrors ``compose_engine -> Engine ->
-        BacktestRunner`` (the injected engine is the source of truth; the holder is thin).
-
-        D-03 boundary honesty: the ~200-line facade is a P7-EXIT gate (P7 owns the
-        ~500 lines of safety/reconcile/stream extraction). The interim P6 facade is
-        ~600-700 lines and that is CORRECT — RUN-03 acceptance here is STRUCTURAL.
+        Holds NO wiring logic.
 
         Parameters
         ----------
         engine : Engine
-            The compose ``Engine`` — the wired handler graph (+ handler-owned storages,
-            ``store=None`` on live). Source of truth for ``_initialize_live_session``.
+            The composed handler graph plus its handler-owned storages. The single
+            source of truth — every handler/feed/storage field is sourced off it.
         lifecycles : Mapping[str, VenueLifecycle], optional
-            ONE venue/connector holder PER ACCOUNT, keyed by account id, as
-            ``assemble_venues`` returns it (D-07/11-09). PRIMARY FIRST — insertion
-            order is the contract. Empty/``None`` when the venue is unregistered;
-            paper carries lifecycles with ``connector=None``.
-        system_db_backend, halt_record_store : optional
-            The SEPARATE SQL spine + durable halt-record store (D-09) — storage/durable
-            infra, never folded into the venue holder.
+            ONE venue/connector holder PER ACCOUNT, keyed by account id. Empty or
+            ``None`` when the venue is unregistered; paper carries a lifecycle with
+            ``connector=None``.
+        system_db_backend : Any, optional
+            The shared ``SqlEngine`` spine, or ``None`` on the in-memory fallback.
+        halt_record_store : Any, optional
+            Durable halt-record store, so a halt survives a process restart.
         exchange : str
-            The venue-name string (``spec.execution_venue``-derived).
+            The venue-name string, derived from ``spec.execution_venue``.
         status_callback : callable, optional
-            Callback to notify status changes to external systems.
+            Invoked as ``(new_status, status_data)`` on each status transition.
         """
         self.logger = get_itrader_logger().bind(component="LiveTradingSystem")
         self.status_callback = status_callback
 
-        # -- Injected compose Engine: the SINGLE source of truth for the handler graph;
-        #    handlers/feed/storages are sourced OFF it (no duplicate fields, D-10). --
         self._engine = engine
         self.exchange = exchange
         self.global_queue = engine.global_queue
-        # D-02: engine.store is None on live — HELD, never read as a real store.
+        # None on live — held for interface parity, never read as a real store.
         self.store = engine.store
         self.feed = engine.feed
         self.screeners_handler = engine.screeners_handler
@@ -178,82 +96,43 @@ class LiveTradingSystem:
         self._signal_store = engine.strategies_handler.signal_store
         self._order_storage = engine.order_handler.storage
 
-        # -- SQL spine + halt store: SEPARATE infra handles (D-09, NOT venue/connector). --
         self._system_db_backend: Optional[Any] = system_db_backend
         self._halt_record_store: Optional[Any] = halt_record_store
 
-        # -- ONE VenueLifecycle PER ACCOUNT, keyed by account id (11-09, D-19). --
-        #
-        # This field REPLACES the six scalar aliases the facade used to hold
-        # (``_venue_lifecycle`` / ``_venue_bundle`` / ``_okx_connector`` /
-        # ``_okx_exchange`` / ``_venue_account`` / ``_okx_data_provider``), five of
-        # which were literally ``lifecycle.<something>`` pre-derived at construction
-        # and three of which were then passed back DOWN into the reconciliation
-        # coordinator as separate scalars. You cannot have six scalars per account;
-        # you can have one lifecycle per account, and ``VenueLifecycle`` already
-        # exposes ``.bundle`` / ``.provider``, so every former alias is now a read
-        # THROUGH the lifecycle at its use site. This is a SUBTRACTION: six fields
-        # collapse to one, and no new type was introduced (``assemble_venues`` is a
-        # plain function beside ``assemble_venue``).
-        #
-        # Insertion order is the PRIMARY contract: ``_account_ids_for_spec`` puts the
-        # spec-level account first, so ``_primary_lifecycle`` below is deterministic
-        # across restarts — load-bearing because ONE data provider is bound to the ONE
-        # feed and it must be the same account's provider on every boot.
-        #
-        # The ``bundle.connector is not None`` streaming-venue discriminator is NOT
-        # applied here any more: it is applied at each use site, unchanged in meaning
-        # (paper carries a lifecycle with connector=None and reaches no venue arm).
+        # ONE VenueLifecycle per account, keyed by account id. No account is privileged —
+        # the feed binds to a CONNECTION via FeedConnectionBinder, not to a lifecycle — so
+        # insertion order carries no meaning. Used only for per-account iteration.
         self._venue_lifecycles: Dict[str, Any] = dict(lifecycles) if lifecycles else {}
+        # Owns the ONE feed's borrowed connection + provider; re-borrows when an account is
+        # retired. None on the in-memory arm.
+        self._feed_binder: Optional[Any] = None
 
-        # -- Fresh per-instance RUNTIME state (NOT wiring) ----------------------
-        # P7 (SAFE-01/03/§11e): the status latch + halt/pause machinery + the
-        # deferred-protective queue moved to the injected SafetyController; the
-        # connector stream-recovery I/O to StreamRecoveryHandler; the pre-submit caps to
-        # PreTradeThrottle; and the startup reconcile to ReconciliationCoordinator. The
-        # facade is a THIN delegator over them. build_live_system constructs + ATTACHES
-        # them after construction (they reference the facade's own callbacks, so they can
-        # only be built once this instance exists) — mirrors the _live_runner attach.
+        # ATTACHED by build_live_system after construction: each references this facade's
+        # own callbacks, so none can be built until the facade exists. All stay None on a
+        # facade built outside build_live_system.
         self._safety: Optional[Any] = None
         self._stream_recovery: Optional[Any] = None
         self._throttle: Optional[Any] = None
-        # D-22/D-23 (Wave 3): the engine-thread ConfigRouter — the CONFIG_UPDATE consumer.
-        # ATTACHED by build_live_system after construction (it references the assembled
-        # stores + handler graph); threaded into SessionInitializer -> LiveRouteRegistrar
-        # so the CONFIG_UPDATE CONTROL route resolves to a live consumer. None on a facade
-        # built outside build_live_system (the route stays the pre-declared empty slot).
         self._config_router: Optional[Any] = None
-        # D-19 (10-05): the strategy names that could NOT be rehydrated at boot (a retired
-        # class, or a config blob that no longer deserializes). Surfaced on the get_status
-        # read-model. A DEDICATED field, not folded into `last_error`: `last_error` is
-        # single-valued and the next error would overwrite it, losing the list — and this
-        # list is what tells an operator which strategies are silently not trading. Empty
-        # on a clean boot and on a facade built outside build_live_system.
+        # Strategies that could NOT be rehydrated at boot. A DEDICATED field, not folded
+        # into ``last_error``: that is single-valued, so the next error would overwrite the
+        # list — and this list is what tells an operator which strategies silently do not
+        # trade.
         self._quarantined_strategies: list[str] = []
 
-        # RTCFG-06 read-model sinks (D-18/D-19). ATTACHED by build_live_system after
-        # construction, gated on the SQL spine (None on backtest / in-memory fallback):
-        #   - _system_store: the durable KV where ``state.last_started_at`` is upserted at
-        #     start() (SafetyController writes state.status/state.halt_reason into the SAME
-        #     store at its own event source; the ErrorHandler writes state.last_error).
-        #   - _system_stats_store: the append-only engine-operational stats series the thin
-        #     stats writer snapshots into on each status transition (NO entity duplication).
+        # Read-model sinks, gated on the SQL spine. _system_store is the durable KV for
+        # state.*; _system_stats_store is the append-only engine-operational stats series.
         self._system_store: Optional[Any] = None
         self._system_stats_store: Optional[Any] = None
 
-        # Threading control. The shared _stop_event is honoured by BOTH the injected
-        # LiveRunner drain loop and its composed WorkerSupervisor (build_live_system
-        # threads it into them); the facade owns it so stop() can latch shutdown.
+        # The facade owns _stop_event so stop() can latch shutdown; both the LiveRunner
+        # drain loop and its composed WorkerSupervisor honour it.
         self._running = False
         self._stop_event = threading.Event()
 
-        # Statistics tracking
         self._stats = {
             'events_processed': 0,
             'orders_executed': 0,
-            # WR-02: an ORDER the pre-submit throttle REFUSED never reached execution
-            # (it only emitted a FillEvent(REFUSED)); count it here, not in
-            # orders_executed, so the read-model never over-reports submissions.
             'orders_throttle_rejected': 0,
             'last_event_time': None,
             'uptime_start': None,
@@ -261,52 +140,24 @@ class LiveTradingSystem:
         }
         self._stats_lock = threading.Lock()
 
-        # WR-04: "not yet wired" sentinels populated by _initialize_live_session.
+        # "Not yet wired" sentinels, populated by _initialize_live_session.
         self.universe: Optional[Universe] = None
         self._universe_handler: Optional[Any] = None
-        # D-12 (interim): session init stays DEFERRED to start() (and the offline test
-        # driver TestRunner, which calls _initialize_live_session before its per-bar
-        # drive). The construction-time flip conflicts with the pervasive
-        # add-strategy-after-construction + monkeypatch-_initialize_live_session-
-        # before-start() contracts across the live test suite (06-06 kept it deferred).
-        # The idempotency guard makes a second call a no-op so no path double-inits.
+        # Session init stays DEFERRED to start(). Moving it to construction time breaks the
+        # add-strategy-after-construction and monkeypatch-before-start() contracts the live
+        # test suite relies on. The idempotency guard makes a second call a no-op.
         self._session_initialized = False
 
-        # RUN-02 loop runtime — ATTACHED by build_live_system AFTER construction
-        # (LiveRunner + ErrorPolicy reference the facade's own gate/hook methods, so
-        # they can only be built once this facade instance exists). start()/stop()
-        # delegate the drain-loop lifecycle to the injected LiveRunner.
         self._live_runner: Optional[Any] = None
         self._error_policy: Optional[Any] = None
 
         self.logger.info('Live trading system initialized')
 
-    # ---- Venue reads THROUGH the per-account lifecycle map (11-09) ----------------
-    # Two derived accessors, no stored state. They exist so the multi-account shape has
-    # ONE spelling: "the primary account's lifecycle" and "every streaming lifecycle".
-    # Note what is deliberately NOT here: no ``_okx_exchange`` / ``_venue_account`` /
-    # ``_okx_data_provider`` back-compat properties. Re-adding them as read-throughs
-    # would keep six names alive while pretending to delete them, and the whole point
-    # of holding the object instead of its pieces is that there is nothing left to
-    # keep in sync.
-
-    @property
-    def _primary_lifecycle(self) -> Optional[Any]:
-        """The PRIMARY account's ``VenueLifecycle``, or ``None`` when none is assembled.
-
-        The primary is the FIRST inserted entry (``_account_ids_for_spec`` puts the
-        spec-level account first, then portfolio accounts in stable order), so this is
-        deterministic across restarts — required because the ONE live feed is bound to
-        exactly one data provider and that binding must not move between boots.
-        """
-        return next(iter(self._venue_lifecycles.values()), None)
-
     def _streaming_lifecycles(self) -> List[Any]:
         """Every assembled lifecycle whose bundle carries a live connector.
 
-        ``bundle.connector is not None`` is the streaming-venue discriminator used
-        throughout this module (paper carries a lifecycle with no connector). Returning
-        a list rather than filtering at each call site keeps that one rule in one place.
+        ``bundle.connector is not None`` is the streaming-venue discriminator (paper
+        carries a lifecycle with no connector).
         """
         return [
             lifecycle for lifecycle in self._venue_lifecycles.values()
@@ -321,20 +172,27 @@ class LiveTradingSystem:
         status_callback: Optional[Callable[[SystemStatus, Dict[str, Any]], None]] = None,
         **overrides: Any,
     ) -> "LiveTradingSystem":
-        """Thin spec-builder over the ONE factory ``build_live_system`` (RUN-01/D-09).
+        """Ergonomic entry point: build a declarative live ``spec`` and delegate.
 
-        NOT a second construction path (D-09): it builds a declarative live ``spec``
-        (``execution_venue=exchange``; ``data_provider`` selected as today — ``okx`` for
-        the okx venue, the OKX live feed for paper (D-21), else ``okx``; ``account_id``
-        the single logical default) and delegates to ``build_live_system(spec)``. This is
-        the ergonomic entry point the ~45 former direct ``LiveTradingSystem(exchange=...)``
-        construction sites migrate to (LANDMINE 1). ``status_callback`` threads through
-        unchanged; ``**overrides`` may carry an explicit ``data_provider``/``account_id``
-        for a bespoke spec, or a ``data_plugins`` map for a TEST-only data provider
-        injection (the paper↔replay pairing now lives ONLY in the test fixture, D-21).
+        NOT a second construction path — ``build_live_system`` remains the one factory.
+
+        Parameters
+        ----------
+        exchange : str
+            The execution venue to build a spec for (e.g. ``'okx'``, ``'paper'``).
+        status_callback : callable, optional
+            Forwarded to the facade; invoked on each status transition.
+        **overrides
+            ``data_provider`` / ``account_id`` for a bespoke spec, or ``data_plugins``
+            for TEST-only data-provider injection.
+
+        Returns
+        -------
+        LiveTradingSystem
+            The fully built facade.
         """
         data_plugins = overrides.pop('data_plugins', None)
-        # build_venue_spec owns the {okx,paper}->okx default-provider map (D-11 — one home).
+        # build_venue_spec is the one home for the {okx,paper}->okx default-provider map.
         spec = build_venue_spec(
             exchange,
             data_provider=overrides.pop('data_provider', None),
@@ -344,70 +202,72 @@ class LiveTradingSystem:
             spec, status_callback=status_callback, data_plugins=data_plugins)
 
     def _on_loop_start(self) -> None:
-        """LiveRunner loop-entry hook (RUN-02/D-04): stamp RUNNING + uptime_start.
-
-        The drain loop's loop-entry facade bookkeeping, reached via the injected
-        ``on_loop_start`` callback so the status/stats side-effects stay on the
-        facade (the LiveRunner owns no ``SystemStatus``).
-        """
+        """LiveRunner loop-entry hook: the status/stats side-effects the runner cannot own."""
         self._safety.update_status(SystemStatus.RUNNING)
         with self._stats_lock:
             self._stats['uptime_start'] = datetime.now(UTC).isoformat()
 
     def _increment_error_count(self) -> None:
-        """ErrorPolicy/LiveRunner error-counter hook (RUN-02/D-04): bump errors_count.
-
-        Preserves the facade's ``_stats['errors_count']`` bookkeeping when the
-        injected ``ErrorPolicy`` publishes an ErrorEvent (WR-05 path).
-        """
         with self._stats_lock:
             self._stats['errors_count'] += 1
 
     def _on_loop_error(self, exc: BaseException) -> None:
-        """LiveRunner loop catch-all hook (RUN-02/D-04): count a loop-level error."""
         self._increment_error_count()
 
-    # ---- Thin safety delegators (§11e) — the extracted donor bodies live on the
-    # ---- injected SafetyController; the facade forwards so the ~45 external call
-    # ---- sites + the live test suite keep working over one source of truth. --------
+    # ---- Safety delegators. Bodies live on the injected SafetyController; the facade
+    # ---- forwards so external call sites work over one source of truth. HALTED is
+    # ---- latched — reset_halt() is its only legal exit — while pause_submission is the
+    # ---- reversible disconnect quiesce, resumed after a fresh REST snapshot. ---------
 
     def halt(self, reason: str) -> None:
-        """Freeze-in-place halt of the whole engine (delegates to SafetyController, §11e)."""
+        """Latch the freeze-in-place halt.
+
+        Parameters
+        ----------
+        reason : str
+            Operator-facing cause, recorded on the durable halt record.
+        """
         self._safety.halt(reason)
 
     def reset_halt(self) -> bool:
-        """Operator-only clear of the latched HALTED state (delegates, D-05/F/U-9)."""
+        """Operator-only clear of the latched halt.
+
+        Returns
+        -------
+        bool
+            True if a halt was cleared, False if the engine was not halted.
+        """
         return self._safety.reset_halt()
 
     def is_halted(self) -> bool:
-        """Whether the engine is in the freeze-in-place HALTED state (delegates, D-02)."""
+        """Whether the engine is in the latched HALTED state."""
         return self._safety.is_halted()
 
     def pause_submission(self, reason: str) -> None:
-        """Reversibly pause NEW order submission on a disconnect (delegates, D-19)."""
+        """Reversibly quiesce NEW order submission.
+
+        Parameters
+        ----------
+        reason : str
+            Operator-facing cause, surfaced as ``paused_reason`` in the status view.
+        """
         self._safety.pause_submission(reason)
 
     def resume_submission(self) -> None:
-        """Clear the reversible pause after reconnect + a fresh REST snapshot (delegates, D-19)."""
+        """Clear the reversible pause after reconnect and a fresh REST snapshot."""
         self._safety.resume_submission()
 
     def _build_reconciliation_coordinator(self) -> Any:
-        """Construct the startup ReconciliationCoordinator from CURRENT venue state (SAFE-05/§11d).
+        """Construct the startup ReconciliationCoordinator from CURRENT venue state.
 
-        Built at ``start()`` (not ``build_live_system``) so it reads the LIVE handler
-        graph — an offline run swaps collaborators before ``start()`` and the reconcile
-        must honour the current values. ``halt`` is the facade delegator (->
-        ``SafetyController.halt``) so a baseline residual latches the freeze-in-place
-        halt. The import is lazy so the backtest import path never pulls the reconcile
-        module (inertness gate).
+        Built at ``start()`` rather than in ``build_live_system`` because an offline run
+        swaps collaborators before ``start()``, so a build-time capture would reconcile
+        against stale ones.
 
-        11-09 (D-19/MPORT-05): the three per-account SCALARS this used to pass down —
-        ``venue_account`` / ``connector`` / ``exchange`` — are GONE. The coordinator now
-        asks each portfolio for its OWN account, takes that account's connector from the
-        account itself, and resolves that account's exchange out of the pair-keyed
-        ``ExecutionHandler.exchanges`` registry. Passing a scalar account here is what
-        made "compare portfolio A against account B" expressible in the first place;
-        with the parameters removed it is not a rule any more, it is a type error.
+        It takes NO per-account scalars: each portfolio supplies its own account, that
+        account supplies its connector, and the exchange resolves out of the pair-keyed
+        registry. "Compare portfolio A against account B" is therefore a type error
+        rather than a rule someone has to follow.
         """
         from itrader.portfolio_handler.reconcile.reconciliation_coordinator import (
             ReconciliationCoordinator,
@@ -422,12 +282,11 @@ class LiveTradingSystem:
         )
 
     def _on_venue_stream_down(self, stream_name: str) -> None:
-        """Connector-loop callback (SAFE-03/§11c): emit a STREAM_STATE(down) CONTROL event.
+        """Connector-loop callback: emit a STREAM_STATE(down) CONTROL event.
 
-        Thread-safe ``bus.put`` ONLY — NO blocking venue I/O and NO flag flip on the
-        connector asyncio loop (Pitfall 9). The engine-thread STREAM_STATE route actuates
-        it as ``SafetyController.pause_submission`` (down). Fires once per sustained
-        disconnect (past the debounce).
+        Thread-safe ``bus.put`` ONLY — no blocking venue I/O on the connector asyncio
+        loop. The engine-thread STREAM_STATE route actuates it as
+        ``SafetyController.pause_submission``. Fires once per sustained disconnect.
         """
         self.logger.warning(
             'Venue %s stream disconnected — emitting STREAM_STATE(down)', stream_name)
@@ -435,12 +294,12 @@ class LiveTradingSystem:
             time=datetime.now(UTC), stream_name=stream_name, up=False))
 
     def _on_venue_stream_up(self, stream_name: str) -> None:
-        """Connector-loop callback (SAFE-03/§11c): emit a STREAM_STATE(up) CONTROL event.
+        """Connector-loop callback: emit a STREAM_STATE(up) CONTROL event.
 
-        Thread-safe ``bus.put`` ONLY — it must not perform the fresh REST snapshot /
-        catch-up here (a ``connector.call`` on the connector loop would deadlock,
-        Pitfall 9). The engine-thread STREAM_STATE route actuates it as
-        ``StreamRecoveryHandler.on_reconnect`` (the blocking resume I/O runs there).
+        Thread-safe ``bus.put`` ONLY: the fresh REST snapshot / catch-up must NOT run
+        here, because a ``connector.call`` on the connector loop deadlocks it. The
+        engine-thread STREAM_STATE route actuates it as
+        ``StreamRecoveryHandler.on_reconnect``, where the blocking resume I/O belongs.
         """
         self.logger.info(
             'Venue %s stream reconnected — emitting STREAM_STATE(up)', stream_name)
@@ -448,16 +307,14 @@ class LiveTradingSystem:
             time=datetime.now(UTC), stream_name=stream_name, up=True))
 
     def _request_connector_halt(self, reason: str) -> None:
-        """Connector-loop callback (SAFE-03/§11c): emit a CONNECTOR_FATAL CONTROL event.
+        """Connector-loop callback: emit a CONNECTOR_FATAL CONTROL event.
 
-        Injected as the OKX stream arms' halt signal (``set_halt_signal``). Fired from the
-        connector ASYNCIO LOOP thread on a fatal connector error / exhausted retry ceiling /
-        the unclassified catch-all. It ONLY puts a CONTROL event — it must NOT drive the
-        blocking ``halt()`` here (its durable ``record_halt`` SQL write would stall every
-        stream sharing the loop, Pitfall 9). The engine-thread CONNECTOR_FATAL route runs
-        the blocking ``SafetyController.halt`` off the loop. The event carries a FIXED reason
-        literal (``HaltReason.CONNECTOR_FATAL.value``), NEVER ``str(exc)`` / the passed
-        ``reason`` — so no connector secret crosses the loop->engine boundary (V7, T-07-01).
+        Puts a CONTROL event and nothing else. Driving the blocking ``halt()`` here would
+        run its durable ``record_halt`` SQL write on the connector loop and stall every
+        stream sharing it; the engine-thread CONNECTOR_FATAL route runs that off-loop.
+
+        The event carries a FIXED reason literal, NEVER ``str(exc)`` or the passed
+        ``reason``, so no connector secret crosses the loop->engine boundary.
         """
         self.global_queue.put(ConnectorFatalEvent(
             time=datetime.now(UTC), reason=HaltReason.CONNECTOR_FATAL.value))
@@ -468,14 +325,11 @@ class LiveTradingSystem:
         new_status: SystemStatus,
         error_msg: Optional[str],
     ) -> None:
-        """Facade status-change enrichment callback injected into SafetyController (§11e).
+        """Status-change enrichment callback injected into SafetyController.
 
-        The pure ``SafetyController`` owns the status flip + its own log; it invokes THIS
-        callback (OUTSIDE its ``_status_lock``, on the winning transition only) to fire the
-        external ``status_callback`` with the facade-side exchange / queue-size enrichment
-        the machine deliberately does not hold.
+        SafetyController owns the flip and invokes this OUTSIDE its ``_status_lock``, on
+        the winning transition only, to add facade-side detail the machine does not hold.
         """
-        # Notify external systems via callback
         if self.status_callback:
             try:
                 status_data = {
@@ -489,23 +343,16 @@ class LiveTradingSystem:
             except Exception as e:
                 self.logger.error(f'Error in status callback: {e}')
 
-        # D-18 (RTCFG-06): a status transition is a low-rate engine event — the thin stats
-        # writer snapshots the engine-operational counters it already holds and appends one
-        # row to the append-only ``system_stats`` series. Event-driven, no aggregation
-        # layer, NO domain-entity data (D-17 — equity/orders/halts read from their own
-        # stores). A no-op when no durable stats sink is wired (backtest / in-memory).
+        # A status transition is low-rate, so snapshotting here needs no aggregation.
         self._snapshot_system_stats()
 
     def _snapshot_system_stats(self) -> None:
-        """Append one engine-operational counter row to ``system_stats`` (D-18/RTCFG-06).
+        """Append one engine-operational counter row to ``system_stats``.
 
-        Snapshots ONLY the counters the engine already holds in memory — the P7 throttle
-        breach counter, the facade error count, the event-bus queue depth, uptime, and
-        connector/stream health (derived from the safety latch). It copies NO domain-store
-        entity data (D-17 — no portfolio equity) and NO secret (V7). Best-effort: a durable
-        append failure (e.g. an un-migrated stats schema) is swallowed-and-logged so it can
-        never abort the engine event that triggered it. A no-op when no durable sink is
-        wired (backtest / in-memory fallback → ``_system_stats_store is None``).
+        Snapshots ONLY counters the engine already holds in memory — no domain-store
+        entity data (equity and friends are read from their own stores) and no secret.
+        Best-effort: a durable append failure is swallowed so it can never abort the
+        engine event that triggered it.
         """
         if self._system_stats_store is None:
             return
@@ -523,20 +370,17 @@ class LiveTradingSystem:
                 if self._safety is not None else False)
             halted = self._safety.is_halted() if self._safety is not None else False
             row = {
-                # P7 breach counter (D-09/D-14) — 0 until the throttle is wired.
                 'throttle_breach_count': (
                     self._throttle.breach_count if self._throttle is not None else 0),
-                # Error counts by severity (D-18, start minimal): the facade holds ONE
-                # aggregate error counter today — snapshot it into error_count_error; the
-                # per-severity split is a future extension the schema already leaves room
-                # for (warning/critical stay 0 until a per-severity surface exists).
+                # ONE aggregate error counter; warning/critical stay 0 until a
+                # per-severity surface exists.
                 'error_count_warning': 0,
                 'error_count_error': errors,
                 'error_count_critical': 0,
                 'queue_depth': self.get_queue_size(),
                 'uptime_seconds': uptime_seconds,
-                # Connector/stream health proxies from the safety latch (event-driven
-                # CONNECTOR_FATAL→halt / STREAM_STATE→pause_submission are the sources).
+                # Health proxies from the safety latch: CONNECTOR_FATAL->halt and
+                # STREAM_STATE->pause_submission are the sources.
                 'connector_up': not halted,
                 'stream_up': not paused,
             }
@@ -546,27 +390,21 @@ class LiveTradingSystem:
                 'Failed to append system_stats (swallowed): %s', exc)
 
     def _update_stats(self, event_type: Optional[str] = None):
-        """Update internal statistics."""
         with self._stats_lock:
             if event_type:
                 self._stats['events_processed'] += 1
                 self._stats['last_event_time'] = datetime.now(UTC).isoformat()
 
-                # IN-04: compare against the enum name (caller passes event.type.name,
-                # so EventType.ORDER.name == 'ORDER' holds the same str contract).
+                # Caller passes event.type.name, so compare against the enum name.
                 if event_type == EventType.ORDER.name:
                     self._stats['orders_executed'] += 1
 
     def _on_order_throttle_rejected(self) -> None:
-        """LiveRunner hook (WR-02 / D-04): a pre-submit-throttle-REFUSED ORDER.
+        """LiveRunner hook: a pre-submit-throttle-REFUSED ORDER.
 
-        The pre-submit throttle rejected this ORDER at the execution boundary: it
-        emitted only a ``FillEvent(REFUSED)`` and NEVER executed, so the runner skips
-        the dispatch gate AND ``_update_stats`` for it (which would bump
-        ``orders_executed`` and over-report submissions). The order was still dequeued
-        and processed, so count it in ``events_processed`` and on its own
-        ``orders_throttle_rejected`` counter — never ``orders_executed``. Facade body
-        stays put; reached via an injected callable exactly like ``_update_stats``.
+        The throttle rejected this ORDER at the execution boundary, so the runner skips
+        ``_update_stats`` — which would bump ``orders_executed`` and over-report
+        submissions. The order WAS dequeued, so it still counts in ``events_processed``.
         """
         with self._stats_lock:
             self._stats['events_processed'] += 1
@@ -574,20 +412,12 @@ class LiveTradingSystem:
             self._stats['orders_throttle_rejected'] += 1
 
     def _record_bar_metrics(self, event) -> None:
-        """Record the per-bar equity curve on ``EventType.BAR`` (D-16 / WR-01 fix).
+        """Record the per-bar equity curve on ``EventType.BAR``.
 
-        The live daemon previously keyed metric recording on ``EventType.TIME``, but
-        ``LiveBarFeed`` emits ONLY ``BarEvent`` on the live path (no ``TimeEvent`` —
-        the bar's arrival IS the event), so the TIME key never fired and the live
-        equity curve was always empty (WR-01). Key on ``EventType.BAR`` and stamp each
-        snapshot with the bar-open BUSINESS time (``event.time``), never wall-clock
-        (D-09), iterating the active portfolios exactly like the backtest path (the
-        offline ``TestRunner`` direct ``record_metrics`` per bar is the reference).
-
-        Runs on the engine (queue-draining) thread — off the connector asyncio
-        coroutine — on the async/best-effort path (D-10): a lost tail of the equity
-        curve is harmless/recomputable, so recording it must never stall the loop.
-        Non-BAR events are a no-op (guard-clause early exit).
+        Must key on BAR, not TIME: ``LiveBarFeed`` emits only ``BarEvent`` on the live
+        path — the bar's arrival IS the event — so a TIME key never fires and leaves the
+        live equity curve permanently empty. Stamp each snapshot with the bar-open
+        BUSINESS time, never wall-clock.
         """
         if getattr(event, 'type', None) != EventType.BAR:
             return
@@ -597,73 +427,46 @@ class LiveTradingSystem:
     def _initialize_live_session(self):
         """Initialize the live trading session by delegating to ``SessionInitializer``.
 
-        RUN-04 live / RUN-05 / RUN-06 / D-12: the ~175-line inline wiring collapses
-        into the ``SessionInitializer`` collaborator over the shared phase seams
-        (``wire_universe`` / ``register_strategy_warmup`` / the first-class
-        ``UniverseHandler`` / ``LiveRouteRegistrar``). Invoked at ``start()`` (and by the
-        offline test driver ``TestRunner`` before its per-bar drive). IDEMPOTENT
-        (D-12/06-06): a ``self._session_initialized`` guard early-returns on a second
-        call, so no lifecycle path double-inits. The ``try/except`` maps a wiring failure
-        to ``SystemStatus.ERROR``. Per D-04 the facade's safety/reconcile/stream method
-        bodies are untouched.
+        Invoked at ``start()``, and by the offline ``TestRunner`` before its per-bar
+        drive. IDEMPOTENT via the ``_session_initialized`` guard.
         """
         if self._session_initialized:
             return
         self.logger.info('Initializing live trading session')
 
         try:
-            # 06.1-04 (D-13): SessionInitializer / UniverseHandlerConfig hoisted to
-            # module top (the barrel drop removed this module from the backtest import
-            # graph, so their module-top import no longer touches the backtest path).
-            # ``config`` stays lazy here — it is read only inside this body.
             from itrader import config as _system_config
 
-            # 06.1-02 (D-10): read the REAL compose Engine injected at construction
-            # (build_live_system now calls compose_engine and injects the result). The
-            # interim hand-assembled Engine holder (with its placeholder clock /
-            # time_generator) is gone — self._engine IS the compose graph.
             engine = self._engine
 
-            # The uniformly-resolved venue exchange (D-11): the OKX exchange when
-            # present, else the 'paper' exchange (permissive validate_symbol /
-            # resolve_precision defaults). set_venue_metadata is UNCONDITIONAL over this
-            # inside SessionInitializer — no OKX guard, zero OKX coupling.
-            # 11-09: read through the PRIMARY streaming lifecycle instead of the deleted
-            # ``_okx_exchange`` alias. Venue metadata (validate_symbol / resolve_precision)
-            # is a VENUE property, not an account property — every account on one venue
-            # shares it — so the primary's exchange is the right (and unchanged) source.
-            # The non-streaming fallback is a SUBSCRIPT, not a soft `.get`: a None here
-            # reaches SessionInitializer and degrades validate_symbol / resolve_precision
-            # with no exception raised anywhere near the defect. It cannot fire on a wired
-            # engine — ExecutionHandler.init_exchanges always resolves the compute-venue
-            # arm under the default account.
+            # Venue metadata (validate_symbol / resolve_precision) is a VENUE property,
+            # not an account property, so any streaming lifecycle's exchange is an equally
+            # correct source. The fallback is a SUBSCRIPT, not a soft ``.get``: a None here
+            # would reach SessionInitializer and silently degrade validate_symbol /
+            # resolve_precision with no exception raised anywhere near the defect.
             streaming = self._streaming_lifecycles()
             venue_exchange = (
                 streaming[0].bundle.exchange if streaming
                 else self.execution_handler.exchanges[
-                    (COMPUTE_VENUE, DEFAULT_ACCOUNT_ID)])  # D-27/D-05 pair key
+                    (COMPUTE_VENUE, DEFAULT_ACCOUNT_ID)])
 
-            # RUN-06/D-11 live-plane config: poll timeframe + remove_policy READ FROM the
-            # LIVE universe sub-model (NOT the frozen determinism base — P9 D-09 keeps the
-            # backtest oracle config untouched; ex-config.monitoring.universe_remove_policy).
+            # Read from the LIVE universe sub-model, never the frozen determinism base,
+            # so the backtest oracle config stays untouched.
             universe_config = UniverseHandlerConfig(
                 poll_timeframe=_system_config.stream.okx_stream_timeframe,
                 remove_policy=_system_config.universe.remove_policy,
             )
 
-            # D-12: delegate the whole live session wiring to SessionInitializer
-            # (wire_universe -> register_strategy_warmup -> subscription guard ->
-            # first-class UniverseHandler -> LiveRouteRegistrar). SAFE-03/§11c: the
-            # freeze-gate now reads the injected SafetyController, and safety +
-            # stream_recovery are threaded to the registrar so it can SET the CONTROL
-            # routes (STREAM_STATE/CONNECTOR_FATAL) to their engine-thread actuators.
+            # safety + stream_recovery are threaded through so the registrar can point
+            # the CONTROL routes at their engine-thread actuators.
             initializer = SessionInitializer(
                 engine,
                 universe_config=universe_config,
                 venue_exchange=venue_exchange,
-                # ONE feed, so ONE data provider: the primary streaming account's.
+                # ONE feed, so ONE data provider: the connection the binder borrowed.
                 data_provider=(
-                    streaming[0].provider if streaming else None),
+                    self._feed_binder.feed_provider
+                    if self._feed_binder is not None else None),
                 freeze_gate=(
                     lambda: self._safety.is_halted()
                     or self._safety.is_submission_paused()),
@@ -672,13 +475,10 @@ class LiveTradingSystem:
                 config_router=self._config_router,
             )
             self._universe_handler = initializer.initialize()
-            # wire_universe set engine.universe; mirror it onto the facade (start()
-            # reads self.universe.members).
+            # wire_universe set engine.universe; start() reads self.universe.members.
             self.universe = engine.universe
 
-            # Idempotency latch (D-12): a second call (a restart start(), or a direct
-            # test re-invocation) is a no-op — set AFTER the wiring succeeds so a failed
-            # init can be retried.
+            # Set AFTER wiring succeeds, so a failed init can be retried.
             self._session_initialized = True
             self.logger.info('Live trading session initialized')
             
@@ -688,18 +488,22 @@ class LiveTradingSystem:
             raise
     
     def start(self):
-        """
-        Start the live trading system by initializing the session
-        and starting the event processing thread.
+        """Initialize the session, then start the event-processing thread.
+
+        Returns
+        -------
+        bool
+            True once the drain thread is running. False when the system was already
+            running, when a durable halt record refused the start, when the engine
+            halted during session init, or when start failed (status -> ERROR).
         """
         if self._running:
             self.logger.warning('Live trading system is already running')
             return False
 
-        # WR-02: hard programming-error signal for a facade constructed outside
-        # build_live_system() (LiveRunner/ErrorPolicy unwired). MUST sit ABOVE the
-        # start() try-block below — inside it the broad `except Exception` would
-        # swallow this and mask it as SystemStatus.ERROR + return False.
+        # MUST sit ABOVE the try below: inside it, the broad `except Exception` would
+        # swallow this and mask a facade built outside build_live_system() as a mere
+        # SystemStatus.ERROR.
         if (self._live_runner is None or self._error_policy is None
                 or self._safety is None):
             raise StateError(
@@ -712,9 +516,7 @@ class LiveTradingSystem:
         self.logger.info('Starting live trading system')
         self._safety.update_status(SystemStatus.STARTING)
 
-        # D-19 (RTCFG-06): record the read-model ``state.last_started_at`` at THIS event
-        # source (facade start()). Best-effort — a durable-write failure must not abort
-        # start (mirrors SafetyController._persist_state); a no-op with no durable sink.
+        # Best-effort: a durable-write failure must not abort start.
         if self._system_store is not None:
             try:
                 self._system_store.upsert(
@@ -726,125 +528,63 @@ class LiveTradingSystem:
                     'Failed to persist state.last_started_at (swallowed): %s', exc)
 
         try:
-            # SAFE-02/§11b (D-20 / WR-01): the DURABLE halt refusal gate runs FIRST —
-            # right after STARTING and BEFORE any session init / OKX connect / feed warmup
-            # / stream spawn / VenueAccount.snapshot() / VenueReconciler.reconcile().
-            # ``SafetyController.check_durable_halt_on_start()`` re-latches this fresh
-            # instance HALTED from an unresolved durable record (via update_status, NOT
-            # halt() — no second durable write) and returns True so start() refuses
-            # RUNNING INERT: zero venue I/O, no state-mutating reconcile, no second durable
-            # record. A clean/absent store is a no-op (False). Sits before the D-17
-            # error-policy bind so a refused start does not even install the live policy.
+            # The DURABLE halt gate MUST run FIRST — before session init, venue connect,
+            # feed warmup, stream spawn, or reconcile — so a durably-halted engine refuses
+            # to start INERT: zero venue I/O, no state-mutating reconcile, no second
+            # durable record.
             if self._safety.check_durable_halt_on_start():
                 self._running = False
                 return False
 
-            # 08-03 (D-06): the live publish-and-continue policy is injected at
-            # EventHandler construction now (compose_engine, via build_live_system) — the
-            # old start()-only handler-failure-policy monkeypatch on the dispatcher is GONE.
-            # The offline deterministic ``TestRunner`` replay driver overrides the injected
-            # policy back to a FailFastPolicy in its build fixture (build_paper_replay_system),
-            # so the parity gate stays fail-fast BY DEFAULT and can't false-green (T-05-28 / D-19).
-
-            # Initialize the live session
             self._initialize_live_session()
 
-            # CR-02 / 05-06 (VENUE-06, D-06): perform the venue connector's network
-            # connect HERE via the VenueLifecycle (build client + load_markets on the
-            # daemon-thread loop), deferred out of __init__ so construction stays
-            # I/O-free. A failure propagates to the except below, which sets
-            # SystemStatus.ERROR and returns False — never an unhandled raise.
-            # lifecycle.start() connects the connector ONLY when the bundle carries one
-            # (a paper bundle has connector=None, so start() no-ops the connector step
-            # via a structural None-guard, D-10); an unregistered venue has no
-            # lifecycle at all. stop() tears the connector down unconditionally (CR-01).
-            # 11-09: EVERY assembled account's lifecycle is started, not just the
-            # primary's. Before this plan a second account's connector was assembled,
-            # registered in ExecutionHandler.exchanges and halt-wired — but NEVER
-            # connected, so every order routed to it would have failed against an
-            # unconnected session. Starting one lifecycle per account is the direct
-            # consequence of holding one lifecycle per account. At N=1 this is
-            # byte-identical to the former single call.
+            # The venue connector's network connect happens HERE, deferred out of
+            # __init__ so construction stays I/O-free. EVERY account is started: an
+            # assembled-but-unconnected account would still be registered in
+            # ExecutionHandler.exchanges and halt-wired, yet every order routed to it
+            # would fail against an unconnected session. Paper no-ops the connector step.
             for lifecycle in self._venue_lifecycles.values():
                 lifecycle.start()
 
-            # Phase 3 (FEED-05, RESEARCH Thread hand-off): warm the LIVE feed BEFORE
-            # the socket goes live so every update() stays on the one thread until the
-            # stream starts (single-writer ring/guard). Gated to the OKX arm — a
-            # non-OKX venue has no provider, so the None provider is never dereferenced
-            # (mirrors the CR-02 venue-guard). Warmup MUST precede start_stream.
-            # 11-09: ONE feed, so ONE provider — the primary streaming account's
-            # (unchanged: the facade only ever wired the primary's provider to the feed).
             streaming = self._streaming_lifecycles()
-            primary_provider = streaming[0].provider if streaming else None
-            if primary_provider is not None:
-                # Plan 06-05 (D-05): un-hardcode the stream symbol — the live
-                # subscription set is now SOURCED FROM MEMBERSHIP. For each member,
-                # warm the feed FIRST (REST replay sets the ring) THEN subscribe the
-                # live socket (warmup-before-subscribe, Pitfall 6 — never reorder),
-                # replacing the single-symbol start_stream() with the per-member
-                # dynamic subscribe() seam (plan 02). A one-symbol universe subscribes
-                # exactly that one symbol, so the single wiring-time default falls out
-                # naturally. The config.stream timeframe remains the live timeframe.
+            data_provider = (
+                self._feed_binder.feed_provider
+                if self._feed_binder is not None else None)
+            if data_provider is not None:
+                # Subscription set is SOURCED FROM MEMBERSHIP. Per member: warm the feed
+                # FIRST (REST replay sets the ring), THEN subscribe the live socket.
+                # Never reorder — subscribing first races the ring's first write, and
+                # warming before the socket is live keeps every update() on one thread
+                # (single-writer ring guard).
                 from itrader import config as _system_config
                 members = self.universe.members if self.universe is not None else []
                 for sym in members:
                     self.feed.warmup(sym, _system_config.stream.okx_stream_timeframe)
-                    primary_provider.subscribe(sym)
+                    data_provider.subscribe(sym)
 
-            # CR-01 (RECON-02, RES-01): spawn the order-arm venue streams. This is
-            # the SOLE spawn site for OkxExchange._stream_fills()/_stream_orders()
-            # (okx.py connect() -> connector.spawn) — without it no real FillEvent
-            # ever streams back, the order mirror stays PENDING forever and the
-            # 05-08 order-arm reconnect supervisor is dead code in production.
-            # Done AFTER the connector client + load_markets are live (the watch_*
-            # streams need them) and BEFORE the VenueReconciler.reconcile() below,
-            # so the fill/order streams are live during reconcile (the 05-05 fill-ID
-            # dedup covers the concurrent-stream case). connect() RETURNS a
-            # ConnectionResult and never raises (unlike the connector), so a bare
-            # call would swallow a failure — check .success and re-raise so the
-            # failure flows through the existing except block (SystemStatus.ERROR,
-            # return False); do NOT invent a second error path.
-            # 11-09: spawn EVERY streaming account's order arm. A second account whose
-            # exchange was registered but whose fill/order streams were never spawned
-            # would leave that account's order mirror PENDING forever while looking
-            # healthy — the same defect CR-01 fixed for the primary. N=1 is unchanged.
+            # SOLE spawn site for OkxExchange._stream_fills()/_stream_orders(). Without
+            # it no real FillEvent ever streams back and every order mirror stays PENDING
+            # forever while looking healthy. Must run AFTER the connector client +
+            # load_markets are live (the watch_* streams need them) and BEFORE the
+            # reconcile, so the streams are live during it (fill-ID dedup covers the
+            # concurrent-stream case). connect() RETURNS a ConnectionResult and never
+            # raises, so a bare call would swallow the failure.
             for lifecycle in streaming:
                 result = lifecycle.bundle.exchange.connect()
                 if not result.success:
                     raise RuntimeError(
                         f'OKX exchange stream connect failed: {result.error_message}')
 
-            # SAFE-05/§11d (D-17): the startup rehydrate -> venue-reconcile (venue-truth
-            # accounts ONLY) -> baseline-guard sequence is owned by the
-            # ReconciliationCoordinator (replaces the former inline rehydrate + venue
-            # snapshot/link/reconcile + baseline-guard block). It runs on the ENGINE
-            # thread BEFORE RUNNING: durable ledger RESTORE (D-23, any account kind), then
-            # — keyed on account KIND (Account.is_venue_truth, NOT exchange=='okx') — the
-            # venue REST reconcile + the baseline guard that HALTs (via the injected
-            # SafetyController.halt) on an unexplained base-asset residual. Built HERE from
-            # the CURRENT venue fields (they are live/swappable before start()); a paper/
-            # simulated (compute) account restores its ledger and returns without the venue
-            # reconcile; a None venue account is a clean skip.
+            # Engine thread, before RUNNING: durable ledger restore for any account kind,
+            # then — keyed on account KIND (Account.is_venue_truth, never
+            # exchange == 'okx') — the venue REST reconcile plus the baseline guard that
+            # HALTs on an unexplained base-asset residual.
             self._build_reconciliation_coordinator().run_startup_reconcile()
 
-            # 05.3-08 (D-20 / WR-01): the DURABLE halt refusal gate that used to sit HERE
-            # (after the full OKX handshake + reconcile) was moved to the TOP of start()
-            # so a durably-HALTED engine refuses INERT — zero venue I/O, no state-mutating
-            # reconcile, no second durable record. Only the D-05 in-process check below
-            # remains at this position, to latch a halt raised DURING this run's
-            # reconcile/baseline guard.
-
-            # D-05 (V17-03): a reconcile/guard halt during session init must LATCH.
-            # The VenueReconciler.reconcile() above (or the baseline guard) may have
-            # called self.halt(...) because it could not trust venue state. REFUSE to
-            # enter RUNNING from HALTED: do NOT spawn the processing thread (its first
-            # action is the unconditional _update_status(RUNNING) stamp) and do NOT open
-            # the SIGNAL/ORDER gate. The engine stays HALTED until an explicit operator
-            # reset_halt() re-runs the verify-then-trust sequence. update_status already
-            # refuses HALTED->RUNNING as a second line of defence; this check keeps
-            # start() from even spawning the loop and returns False so the caller sees the
-            # refusal. The stop() teardown in the caller's finally is safe (no thread).
+            # A reconcile/baseline-guard halt during session init must LATCH. The
+            # processing thread's first action is an unconditional RUNNING stamp, so it
+            # must not be spawned at all — update_status refusing HALTED->RUNNING is only
+            # the second line of defence.
             if self._safety.is_halted():
                 self.logger.error(
                     'start() refused RUNNING: engine HALTED during session init '
@@ -854,12 +594,8 @@ class LiveTradingSystem:
                 self._running = False
                 return False
 
-            # RUN-02 (D-05/D-06): delegate the drain-loop + poll-timer lifecycle to the
-            # injected LiveRunner. LiveRunner.start() clears the shared _stop_event once,
-            # spawns the drain daemon (ex _event_processing_loop), and starts its composed
-            # WorkerSupervisor (ex _run_poll_timer) — so the facade owns neither thread.
-            # _running is set BEFORE start() so a status callback fired from the loop-entry
-            # hook (_on_loop_start -> RUNNING stamp) already observes the running facade.
+            # LiveRunner owns both threads. _running is set BEFORE start() so a status
+            # callback fired from the loop-entry hook already observes a running facade.
             self._running = True
             self._live_runner.start()
 
@@ -873,44 +609,30 @@ class LiveTradingSystem:
             return False
     
     def stop(self, timeout=10.0):
-        """
-        Stop the live trading system gracefully.
-        
+        """Stop the live trading system gracefully.
+
         Parameters
         ----------
         timeout : float
-            Maximum time to wait for the thread to stop (seconds)
+            Maximum seconds to wait for the drain thread to join.
+
+        Returns
+        -------
+        bool
+            True on a clean stop, including the "was not running" path. Venue teardown
+            runs on every path regardless (see below).
         """
-        # CR-01: tear down the OKX connector UNCONDITIONALLY, independent of
-        # _running. The connector is constructed (and, once started, connected) in
-        # the live wiring; any lifecycle that constructs-then-stops without a
-        # successful start() — validation, a failed start(), status inspection, or
-        # GC — must still cancel every spawned stream task and close the
-        # ccxt/native sessions, or an authenticated demo/live socket leaks (a
-        # ResourceWarning under the strict suite, a dangling venue connection in
-        # production). The disconnect therefore lives in a finally so it runs on
-        # every return path, including the early "not running" exit. disconnect()
-        # is a safe no-op when the connector was never connected (its loop is None).
-        # 05-06 (VENUE-06, D-06): teardown is delegated to VenueLifecycle.stop(),
-        # which drives ConnectorProvider.close_all() (disconnect every memoized
-        # connector) — a safe no-op for paper (empty memo) and for an unregistered
-        # venue (lifecycle is None, guarded below).
-        # WR-08: tear down EVERY account's lifecycle, symmetric with the start() loop
-        # above. The previous shortcut (stop only the primary) held for just ONE of
-        # VenueLifecycle.stop()'s two branches — the `self._connectors is not None` one,
-        # where ConnectorProvider.close_all() disconnects every memoized connector for
-        # the run. Its documented fallback, `elif self._bundle.connector is not None:
-        # disconnect()`, exists for lifecycles built WITHOUT a shared provider and covers
-        # only THAT bundle, so every non-primary connector leaked: a dangling
-        # authenticated venue socket in production, a ResourceWarning (hard failure)
-        # under filterwarnings=["error"]. The shared-provider case is unaffected by the
-        # extra calls — close_all() clears its memo in a finally
-        # (connectors/provider.py:82-91), so a second call iterates an empty memo.
-        # Snapshot into a list (not a live view) so a teardown that mutates the map
-        # cannot raise "dictionary changed size during iteration", and keep it BEFORE
-        # the try so the finally holds the full map on every return path. Read
-        # defensively (getattr) because stop() must survive a partially-constructed
-        # facade.
+        # Venue teardown runs UNCONDITIONALLY, independent of _running: any lifecycle that
+        # constructs-then-stops without a successful start() (validation, a failed start(),
+        # status inspection, GC) must still cancel every spawned stream task and close the
+        # ccxt/native sessions, or an authenticated socket leaks — a dangling venue
+        # connection in production, and a ResourceWarning (a hard failure) under
+        # filterwarnings=["error"]. The finally covers every return path, over EVERY
+        # account, symmetric with start().
+        # Snapshot into a list, not a live view, so a teardown that mutates the map cannot
+        # raise "dictionary changed size during iteration"; it sits BEFORE the try so the
+        # finally holds the full map on every path. getattr because stop() must survive a
+        # partially-constructed facade.
         lifecycles = list((getattr(self, '_venue_lifecycles', None) or {}).items())
         try:
             if not self._running:
@@ -920,10 +642,6 @@ class LiveTradingSystem:
             self.logger.info('Stopping live trading system')
             self._safety.update_status(SystemStatus.STOPPING)
 
-            # RUN-02 (D-05/D-06): delegate the drain-loop + poll-timer teardown to the
-            # injected LiveRunner — it sets the shared _stop_event, joins the drain thread,
-            # then stops the composed WorkerSupervisor. Replaces the facade-owned
-            # _thread/_poll_timer_thread join bookkeeping.
             if self._live_runner is not None:
                 self._live_runner.stop(timeout=timeout)
 
@@ -933,29 +651,19 @@ class LiveTradingSystem:
             self.logger.info('Live trading system stopped')
             return True
         finally:
-            # Plan 02-05 / 05-06 (D-04 shutdown): tear down the venue connector via the
-            # VenueLifecycle — cancel every spawned stream task and close the
-            # ccxt/native sessions so no leaked socket / ResourceWarning survives
-            # across runs. lifecycle.stop() drives ConnectorProvider.close_all().
-            # WR-08 (guard placement, DECISION): the try/except sits INSIDE the loop, at
-            # this call site, per iteration — NOT inside VenueLifecycle.stop(). That
-            # method stays honest and keeps raising for its own single-lifecycle callers
-            # and its unit contract (tests/unit/venues/test_lifecycle.py); isolating here
-            # is what stops one bad venue from stranding the remaining venues' sockets or
-            # blocking the SQL-spine dispose below. Swallowing here also stops a teardown
-            # failure from masking an exception already propagating out of the try body.
-            # The old `if lifecycle is not None` guard is gone because the loop is
-            # self-guarding on an empty map — not a lost check.
+            # The try/except sits per-iteration, deliberately NOT inside
+            # VenueLifecycle.stop(), which stays honest and keeps raising for its own
+            # callers. Isolating here stops one bad venue from stranding the other venues'
+            # sockets or the SQL dispose below, and stops a teardown failure from masking
+            # an exception already propagating out of the try body.
             for account_id, lifecycle in lifecycles:
                 try:
                     lifecycle.stop()
                 except Exception as e:
                     self.logger.error(
                         f'Error disconnecting venue connector for account {account_id}: {e}')
-            # 05-06: dispose the operational SQL spine (the CachedSql* stores compose it)
-            # so its connection pool is closed at shutdown — an undisposed engine leaks a
-            # socket / ResourceWarning under filterwarnings=["error"]. Safe no-op when the
-            # in-memory fallback was used (backend is None). Runs on every return path.
+            # Dispose the SQL spine so its connection pool closes — an undisposed engine
+            # leaks a socket / ResourceWarning under filterwarnings=["error"].
             backend = getattr(self, '_system_db_backend', None)
             if backend is not None:
                 try:
@@ -964,54 +672,47 @@ class LiveTradingSystem:
                     self.logger.error(f'Error disposing operational SQL backend: {e}')
     
     def is_running(self) -> bool:
-        """
-        Check if the live trading system is currently running.
-        
+        """Whether the system is live.
+
         Returns
         -------
         bool
-            True if the system is running, False otherwise
+            True only when the facade is running AND its drain thread is alive.
         """
         runner = self._live_runner
         thread = runner._thread if runner is not None else None
         return self._running and thread is not None and thread.is_alive()
     
     def get_status(self) -> Dict[str, Any]:
-        """
-        Get comprehensive system status information.
-        
+        """Merge the SafetyController status latch with facade-side stats.
+
         Returns
         -------
         dict
-            System status information including statistics
+            Status, ``halt_reason``, the reversible ``paused`` state, thread liveness,
+            queue depth, throttle/breaker counters, quarantined strategies, and the
+            ``statistics`` block with derived ``uptime_seconds``.
         """
-        # §11e: the status latch lives on the injected SafetyController — read its
-        # snapshot (status + halt/pause reasons) and MERGE the facade-side stats + the
-        # D-09 throttle breach counter (the P9 read-model) into one status view.
         snap = self._safety.status_snapshot()
         status = snap['status']
         with self._stats_lock:
             uptime = None
             if self._stats['uptime_start'] and status == SystemStatus.RUNNING:
                 start_time = datetime.fromisoformat(self._stats['uptime_start'])
-                # WR-05: uptime_start is now stored tz-aware (datetime.now(UTC)),
-                # so the comparand must also be tz-aware or this subtraction
-                # raises "can't subtract offset-naive and offset-aware datetimes".
+                # uptime_start is tz-aware, so the comparand must be too, or this raises
+                # "can't subtract offset-naive and offset-aware datetimes".
                 uptime = (datetime.now(UTC) - start_time).total_seconds()
 
             return {
                 'status': status.value,
-                # 05-04 (D-07): the machine-readable halt reason (None unless HALTED).
                 'halt_reason': snap['halt_reason'],
-                # 05-08 (D-19): the reversible pause-on-disconnect state, surfaced
-                # DISTINCTLY from the terminal halt (paused != HALTED).
+                # The reversible pause-on-disconnect state, surfaced DISTINCTLY from the
+                # terminal halt — paused != HALTED.
                 'paused': snap['paused'],
                 'paused_reason': snap['paused_reason'],
                 'is_running': self.is_running(),
                 'exchange': self.exchange,
                 'queue_size': self.get_queue_size(),
-                # D-09 (SAFE-06): the pre-trade throttle breach counter read-model
-                # (0 until the throttle is wired by build_live_system).
                 'throttle_breach_count': (
                     self._throttle.breach_count if self._throttle is not None else 0),
                 'thread_alive': (
@@ -1023,17 +724,11 @@ class LiveTradingSystem:
                     if self._live_runner is not None and self._live_runner._thread
                     else None),
                 'last_error': snap['last_error'],
-                # D-19 (10-05): the strategies that could not be rehydrated at boot and are
-                # therefore NOT trading, despite their registry rows still declaring them
-                # enabled (the row is never rewritten — the DB holds operator INTENT). A
-                # DEDICATED field rather than part of 'last_error': that one is
-                # single-valued and would be overwritten by the next error, losing exactly
-                # the list an operator needs to see. Directly renderable by the future UI.
+                # NOT trading, despite their registry rows still declaring them enabled:
+                # the row is never rewritten, because the DB holds operator INTENT.
                 'quarantined_strategies': list(self._quarantined_strategies),
-                # D-13 (08-03): the CF-1 tripwire snapshot (per-FailureClass in-window hit
-                # counts + last-trip HaltReason). Read None-safely — the ErrorPolicy is
-                # unwired on a facade built outside build_live_system. P8 scope = get_status
-                # ONLY (the SystemStore stats read-model is P9).
+                # Read None-safely — ErrorPolicy is unwired on a facade built outside
+                # build_live_system.
                 'breaker': (
                     self._error_policy.breaker_snapshot()
                     if self._error_policy is not None else {}),
@@ -1045,76 +740,57 @@ class LiveTradingSystem:
             }
     
     def get_queue_size(self) -> int:
-        """
-        Get the current size of the global event queue.
-        
+        """The current depth of the global event queue."""
+        return self.global_queue.qsize()
+
+    def get_signal_records(self):
+        """The signals captured during the live run.
+
+        A read-model sink read, NOT a cross-domain handler call, so the queue-only
+        contract holds.
+
         Returns
         -------
-        int
-            Number of events in the queue
-        """
-        return self.global_queue.qsize()
-    
-    def get_signal_records(self):
-        """Return the signals captured during the live run (WR-03).
-
-        Mirrors ``TradingSystem.get_signal_records``: reads the injected
-        signal-store sink. A read-model sink read, NOT a cross-domain handler
-        call — the queue-only contract is preserved.
+        list
+            Every recorded signal, in capture order.
         """
         return self._signal_store.get_all()
 
     def get_signal_store(self):
-        """Return the signal-store itself for filtered queries (WR-03).
+        """The signal store itself, for its query surface.
 
-        Exposes ``by_strategy`` / ``by_ticker`` for inspection, mirroring
-        ``TradingSystem.get_signal_store``.
+        Returns
+        -------
+        SignalStore
+            Exposes ``by_strategy`` / ``by_ticker`` in addition to ``get_all``.
         """
         return self._signal_store
 
     def add_event(self, event):
-        """
-        Add an event to the global queue for processing.
+        """Enqueue an externally-originated event.
 
-        D-10/D-23 (fail-closed, ASVS V4/V5): ``add_event`` is the engine's PUBLIC external/web
-        surface, so it is DEFAULT-DENY. Only the THREE sanctioned externally-originated event
-        types in ``_EXTERNALLY_ADMISSIBLE`` are admitted — a ``SIGNAL`` (routes through
-        ``OrderHandler.on_signal`` -> ``AdmissionManager`` so validation + sizing + cash
-        reservation + order-mirror engage before any ``OrderEvent`` is emitted), a
-        ``STRATEGY_COMMAND`` (an operator add/remove-ticker command), and a ``CONFIG_UPDATE``
-        (a runtime-config mutation — D-23 opens it as the third external type). EVERY other type
-        is rejected: every internal-fact type (FILL / BAR / UNIVERSE_UPDATE / UNIVERSE_POLL /
-        BARS_LOADED / BARS_LOAD_FAILED / TIME / ORDER / ERROR / PORTFOLIO_UPDATE ...) is not
-        admissible from the external surface — a raw ``OrderEvent`` here would otherwise reach
-        the execution queue with NO admission control (elevation-of-privilege / input-validation
-        defect). This inverts the prior narrow ORDER-only denylist (fail-open -> fail-closed):
-        the sanctioned entry stays SIGNAL-form. The internal order flow is UNAFFECTED —
-        handlers emit ``OrderEvent``s by putting them on ``global_queue`` directly, never
-        through ``add_event`` (RESEARCH OQ7: zero internal production callers).
-
-        D-23/D-16 (ingress 400-validation, defense-in-depth): a ``CONFIG_UPDATE`` gets a
-        SYNCHRONOUS fail-closed structural + type/range check HERE (a bad type/range on a KNOWN
-        field, or a malformed scope/key, returns ``False`` — the 400 once FastAPI exists) BEFORE
-        it reaches the queue, with the engine-thread ``ConfigRouter`` re-checking behind it.
+        The engine's PUBLIC external/web surface, and therefore DEFAULT-DENY. The
+        sanctioned order entry is SIGNAL-form: a raw ``OrderEvent`` admitted here would
+        reach the execution queue with NO admission control, so only ``SIGNAL`` (which
+        routes through ``AdmissionManager``), ``STRATEGY_COMMAND`` and ``CONFIG_UPDATE``
+        are allowed through.
 
         Parameters
         ----------
         event
-            The event to add to the queue
+            The event to enqueue. Must be one of the three admissible types; a
+            ``CONFIG_UPDATE`` is additionally validated synchronously here.
 
         Returns
         -------
         bool
-            True if event was added successfully, False otherwise
+            True once queued. False when the system is not running, the type is not
+            admissible, ingress validation refused it, or the put itself failed.
         """
         if not self._running:
             self.logger.warning('Cannot add event: Live trading system is not running')
             return False
 
-        # D-10/D-23: FAIL-CLOSED allowlist. Admit ONLY the sanctioned externally-originated
-        # types (SIGNAL + STRATEGY_COMMAND + CONFIG_UPDATE); reject every other type by default
-        # (default-deny). This covers the prior narrow ORDER reject and every other internal-fact
-        # type in one gate — a raw internal-fact event (e.g. OrderEvent) is still rejected.
         event_type = getattr(event, 'type', None)
         if event_type not in _EXTERNALLY_ADMISSIBLE:
             self.logger.warning(
@@ -1124,10 +800,8 @@ class LiveTradingSystem:
                 'the engine internally, never the public queue directly', event_type)
             return False
 
-        # D-23/D-16: ingress 400-style validation for CONFIG_UPDATE — a synchronous fail-closed
-        # reject at the admission boundary (bad type/range on a known field, or malformed
-        # scope/key). The engine-thread ConfigRouter re-checks (validate -> persist -> apply)
-        # behind it (defense-in-depth). Every other admitted type is unaffected.
+        # Synchronous reject at the boundary; the engine-thread ConfigRouter re-checks
+        # behind it for defense-in-depth.
         if event_type is EventType.CONFIG_UPDATE and not self._validate_config_ingress(event):
             return False
 
@@ -1139,16 +813,13 @@ class LiveTradingSystem:
             return False
 
     def _validate_config_ingress(self, event) -> bool:
-        """Synchronous ingress 400-validation for a ``CONFIG_UPDATE`` (D-23/D-16).
+        """Synchronous ingress validation for a ``CONFIG_UPDATE``.
 
-        Structural + type/range check WITHOUT persisting: resolves the ``(scope, key)`` to its
-        owning mutable sub-model on the imported ``config`` singleton (the structure IS the
-        allowlist — D-11/D-12) and dry-validates the value on a throwaway ``model_copy``
-        (``validate_assignment`` re-coerces). Returns ``False`` (the 400) on a malformed
-        scope/key or a bad type/range on a KNOWN field; the engine-thread ``ConfigRouter``
-        re-checks everything behind it (defense-in-depth). The ``venue`` / ``portfolio`` scopes
-        get a STRUCTURAL shape check only here — the venue-kind predicate (D-14) and
-        portfolio-existence + section resolution (D-21) are engine-thread state-dependent checks.
+        Structural + type/range check WITHOUT persisting: resolves ``(scope, key)`` to its
+        owning mutable sub-model — the model STRUCTURE is the allowlist — and dry-validates
+        the value. The ``venue`` / ``portfolio`` scopes get a shape check only, because
+        venue-kind and portfolio-existence are state-dependent and belong on the engine
+        thread.
         """
         import uuid
 
@@ -1156,11 +827,8 @@ class LiveTradingSystem:
         from itrader.config.system import SystemSettings
         from itrader.config.universe import UniverseConfig
 
-        # CR-01 (D-23 fail-closed): with no durable store there is no ConfigRouter wired
-        # (build_live_system only constructs it when system_store is not None) and no target
-        # to persist to. Reject the update at ingress so the external caller gets a truthful
-        # False instead of a silent enqueue-then-drop (the CONFIG_UPDATE route also stays the
-        # pre-declared empty slot in that wiring — route_registrar.install()).
+        # No durable store means no ConfigRouter and no target to persist to. Reject here
+        # so the caller gets a truthful False rather than a silent enqueue-then-drop.
         if self._config_router is None:
             self.logger.warning(
                 'Rejected CONFIG_UPDATE ingress: no durable config store wired (in-memory '
@@ -1200,13 +868,12 @@ class LiveTradingSystem:
                     'Rejected CONFIG_UPDATE ingress: malformed venue scope/key (%r/%r)',
                     scope, key)
                 return False
-            # WR-01: ``enabled`` is a real boolean — reject a truthy non-bool at ingress so
-            # the string "false" cannot silently enable a venue (mirrors the router's guard).
+            # Reject a truthy non-bool, or the string "false" silently ENABLES a venue.
             if key == 'enabled' and not isinstance(value, bool):
                 self.logger.warning(
                     'Rejected CONFIG_UPDATE ingress: non-bool venue enabled value %r', value)
                 return False
-            return True  # venue-kind is a state-dependent engine-thread predicate (D-14)
+            return True  # venue-kind is a state-dependent engine-thread predicate
 
         if scope.startswith('portfolio:'):
             pid = scope[len('portfolio:'):]
@@ -1216,7 +883,7 @@ class LiveTradingSystem:
                 self.logger.warning(
                     'Rejected CONFIG_UPDATE ingress: malformed portfolio id %r', pid)
                 return False
-            return True  # portfolio-existence + section resolution are engine-thread (D-21)
+            return True  # portfolio-existence + section resolution are engine-thread
 
         self.logger.warning('Rejected CONFIG_UPDATE ingress: unrouted scope %r', scope)
         return False
@@ -1224,18 +891,16 @@ class LiveTradingSystem:
     def _dry_validate_config_ingress(self, model_cls: Any, key: str, value: Any) -> bool:
         """Dry-validate ``value`` against ``model_cls[key]`` on a FRESH default instance.
 
-        W4/LR-12: this ingress check runs on the EXTERNAL caller thread, so it must NOT read
-        the live mutable ``config`` sub-models the ENGINE thread writes (a cross-thread read
-        of the single-writer overlay). Instead of copying the live singleton, it constructs a
-        FRESH default instance of the SAME sub-model TYPE and setattrs the value on THAT:
-        ``validate_assignment=True`` re-runs the field's own type coercion + ``Field(...)``
-        constraints — the SAME single source of truth the engine-thread router applies (one
-        validator, no drift), evaluated per-field so sibling field values are irrelevant.
+        Runs on the EXTERNAL caller thread, so it must NOT read the live mutable ``config``
+        sub-models the ENGINE thread writes — that would be a cross-thread read of the
+        single-writer overlay. A fresh instance of the same sub-model TYPE gives the same
+        check: ``validate_assignment=True`` re-runs the field's own coercion and
+        ``Field(...)`` constraints per-field, so siblings are irrelevant.
         """
         import pydantic
 
         try:
-            candidate = model_cls()  # fresh default — never the shared live sub-model
+            candidate = model_cls()
             setattr(candidate, key, value)
         except pydantic.ValidationError:
             self.logger.warning(
@@ -1244,12 +909,10 @@ class LiveTradingSystem:
         return True
 
     def __enter__(self):
-        """Context manager entry."""
         self.start()
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit."""
         self.stop()
 
 
@@ -1262,32 +925,18 @@ def _layer_persisted_overrides(
     portfolio_handler: Any,
     execution_handler: Any,
 ) -> None:
-    """Boot restart-layering: apply each scope's persisted config from its OWN store (D-10/D-22).
+    """Boot restart-layering: apply each scope's persisted config from its OWN store.
 
-    The layering sequence is ``defaults <- YAML <- env <- persisted`` — the frozen base params
-    (``rng_seed`` / ``environment`` / identity) are already resolved at CONSTRUCTION and are NEVER
-    persisted-overridden at runtime (RTCFG-04 / D-10); persisted overrides apply ONLY to the
-    mutable sub-models, each read back from its OWNING module store (config is NEVER read back
-    from SystemStore for the order/portfolio scopes — D-21/D-25):
+    The sequence is ``defaults <- env <- persisted``. Frozen base params
+    (``rng_seed`` / ``environment`` / identity) resolve at CONSTRUCTION and are never
+    persisted-overridden. Each scope is read back from its OWNING module store — system
+    from ``SystemStore``, order from the ORDER store, venue from ``VenueStore``, portfolio
+    from each Portfolio's own bound ``state_storage`` — so config is never read back from
+    ``SystemStore`` for the order/portfolio scopes.
 
-    * ``system``    — ``SystemStore.read_all()`` rows keyed ``config.system.*`` / ``config.universe.*``
-      -> ``setattr`` field-wise into the owning mutable sub-model (``validate_assignment`` re-coerces).
-    * ``order``     — the ORDER store's ``load_config()`` -> ``setattr`` ``OrderConfig`` field(s) +
-      ``order_handler.update_config`` push (NOT SystemStore).
-    * ``venue``     — ``VenueStore.read_all()`` rows -> push each venue's fee/slippage to the
-      execution handler (real-venue rows were only ever accepted for simulated venues, D-14).
-    * ``portfolio`` — each Portfolio's OWN bound ``state_storage.load_config()`` -> apply via
-      ``portfolio.update_config(...)`` (NOT SystemStore).
-
-    This LOADING touches SQL and lives ONLY here (never at import — Pitfall 3 / GATE-01). It is a
-    pure module function so P9's restart-layering integration test can drive it directly.
-
-    Degrade-clean contract: the durable config schema is Alembic-owned in production (the
-    ``order_config`` table + ``portfolio_account_state.config_json`` migration lands in Plan 04).
-    A boot against a not-yet-provisioned schema (a fresh DB, or the interim Plan-03/pre-migration
-    state) must NOT crash — a missing config table simply means "no persisted overrides yet". So a
-    store-read ``SQLAlchemyError`` is logged and layering is skipped (mirrors the None-backend skip
-    at the call site). Never ``create_all`` here — the store stays schema-pure (WR-03/D-14).
+    Degrade-clean: the durable config schema is Alembic-owned, so a boot against a
+    not-yet-provisioned schema must NOT crash — a missing config table just means "no
+    persisted overrides yet". Never ``create_all`` here; the store stays schema-pure.
     """
     import pydantic
     from sqlalchemy.exc import SQLAlchemyError
@@ -1299,17 +948,12 @@ def _layer_persisted_overrides(
 
     logger = get_itrader_logger().bind(component="build_live_system")
 
-    # WR-03 degrade-clean contract — each scope is layered under its OWN guard so a bad
-    # persisted override (a not-yet-provisioned schema -> SQLAlchemyError; OR a present-but-
-    # now-invalid stored value after schema evolution / model-field tightening / a poisoned
-    # row -> ConfigurationError / pydantic.ValidationError / ValueError) is LOGGED and SKIPPED
-    # rather than crashing build_live_system on boot. Per-scope isolation means one bad scope
-    # never aborts the others. NOT a bare Exception — a genuine programming error still
-    # surfaces. RTCFG-03 is a best-effort restore; a fresh/un-migrated DB simply has none.
+    # Each scope layers under its OWN guard, so a bad persisted override is logged and
+    # skipped rather than crashing boot, and one bad scope never aborts the others.
+    # Deliberately NOT a bare Exception: a genuine programming error still surfaces.
     _degrade_clean = (
         SQLAlchemyError, ConfigurationError, pydantic.ValidationError, ValueError)
 
-    # (system) — SystemStore.read_all() rows (config.system.* / config.universe.*).
     try:
         for row in system_store.read_all():
             key = row["key"]
@@ -1328,7 +972,6 @@ def _layer_persisted_overrides(
             "Skipping persisted SYSTEM-config restart layering — schema unavailable or a "
             "stored override is invalid (%s); boot degrades clean", exc)
 
-    # (order) — the ORDER store's own load_config (NOT SystemStore) + the handler push.
     try:
         order_cfg = order_handler.storage.load_config()
         if order_cfg:
@@ -1346,9 +989,17 @@ def _layer_persisted_overrides(
             "Skipping persisted ORDER-config restart layering — schema unavailable or a "
             "stored override is invalid (%s); boot degrades clean", exc)
 
-    # (venue) — VenueStore rows push their fee/slippage to the execution handler.
+    # The read_all() acquisition keeps its own guard; the per-row push is then guarded PER
+    # ENTRY so one poisoned venue degrades only that venue.
     try:
-        for row in venue_store.read_all():
+        venue_rows = venue_store.read_all()
+    except _degrade_clean as exc:
+        logger.warning(
+            "Skipping persisted VENUE-config restart layering — schema unavailable "
+            "(%s); boot degrades clean", exc)
+        venue_rows = []
+    for row in venue_rows:
+        try:
             venue_cfg = row.get("config") or {}
             push = {
                 k: v
@@ -1357,380 +1008,24 @@ def _layer_persisted_overrides(
             }
             if push:
                 execution_handler.update_config(push)
-    except _degrade_clean as exc:
-        logger.warning(
-            "Skipping persisted VENUE-config restart layering — schema unavailable or a "
-            "stored override is invalid (%s); boot degrades clean", exc)
+        except _degrade_clean as exc:
+            logger.warning(
+                "Skipping persisted VENUE-config layering for %s — stored override "
+                "invalid (%s); boot degrades clean", row.get("venue_name"), exc)
 
-    # (portfolio) — each Portfolio's OWN bound store (NOT SystemStore); resolve via the handler.
-    try:
-        for _pid, portfolio in portfolio_handler._portfolios.items():
+    # Resolved via the handler's PUBLIC all_portfolios(), never the private registry. The
+    # guard is PER ENTRY so one poisoned config_json degrades only that portfolio;
+    # all_portfolios() is a pure copy, so the loop needs no acquisition guard.
+    for _pid, portfolio in portfolio_handler.all_portfolios().items():
+        try:
             portfolio_cfg = portfolio.state_storage.load_config()
             if portfolio_cfg:
                 portfolio.update_config(portfolio_cfg)
-    except _degrade_clean as exc:
-        logger.warning(
-            "Skipping persisted PORTFOLIO-config restart layering — schema unavailable or a "
-            "stored override is invalid (%s); boot degrades clean", exc)
-
-
-def _read_account_secret_ref(
-    venue_account_store: Optional[Any],
-    venue_name: str,
-    account_id: Optional[str],
-) -> Optional[str]:
-    """This account's credential POINTER off its ``venue_accounts`` row (11-04, D-02).
-
-    Returns ``None`` — the legacy single-account path, where the connector plugin
-    constructs ``OkxSettings()`` from the ambient ``OKX_API_*`` environment — when
-    there is no SQL arm, no row for the pair, or a NULL ``secret_ref`` (the D-06 paper
-    shape). Those are all "this account has no per-account credentials", NOT the
-    T-11-18 fail-open case: a well-formed pointer that resolves to no material RAISES
-    inside the resolver and is never degraded here.
-
-    A read failure degrades clean with a WARNING rather than aborting the boot: the
-    account row is a credentials-ROUTING optimisation, and a schema/storage outage
-    should not take down a single-account deployment that never needed it.
-
-    The pair is normalized with the same ``account_id or 'default'`` idiom the venue
-    plugins apply inside ``build_bundle``, so the lookup key matches the row the
-    account was minted under (plan 11-07).
-    """
-    if venue_account_store is None:
-        return None
-    # NOTE: ``logger`` is a FUNCTION-LOCAL binding everywhere else in this module
-    # (build_live_system / _layer_persisted_overrides each bind their own), so this
-    # helper must bind its own — a module-level ``logger`` does not exist here. This
-    # module is under a mypy ``ignore_errors`` override, so the resulting NameError
-    # was invisible to mypy and surfaced only in tests/integration/test_store_live_drive.py.
-    logger = get_itrader_logger().bind(component="build_live_system")
-    try:
-        row = venue_account_store.get(venue_name, account_id or DEFAULT_ACCOUNT_ID)
-    except Exception as exc:
-        logger.warning(
-            "Could not read the venue account row for credential resolution "
-            "(%s); falling back to the ambient single-account credentials", exc)
-        return None
-    if row is None:
-        return None
-    secret_ref = row.get('secret_ref')
-    return str(secret_ref) if secret_ref else None
-
-
-def _venue_of(portfolio: Any) -> Optional[str]:
-    """The venue a portfolio belongs to, or ``None`` when it cannot be resolved (CR-01).
-
-    ``Portfolio.venue_name`` is the SOURCE OF TRUTH (``portfolio.py:111``) and
-    ``self.exchange`` is derived from it, but a portfolio created the LEGACY way —
-    ``add_portfolio(name, 'okx', cash)`` — carries ``venue_name is None`` and
-    ``exchange == 'okx'``. Reading ``venue_name`` alone would treat every legacy live
-    portfolio as foreign and silently strip its venue account, which is a worse
-    regression than the defect this closes. Hence ``venue_name or exchange``.
-
-    Both reads are ``getattr`` because the callers duck-type over live ``Portfolio``
-    objects AND over spec rows / test fakes; a resolved venue of ``None`` is treated as
-    FOREIGN by every caller (there is no ambient default venue, and a real ``Portfolio``
-    always carries one).
-    """
-    return getattr(portfolio, 'venue_name', None) or getattr(
-        portfolio, 'exchange', None)
-
-
-def _account_ids_for_spec(
-    spec: Any,
-    portfolios: "Iterable[Any]" = (),
-    *,
-    venue_name: str,
-) -> list[Optional[str]]:
-    """Every distinct venue account this run must assemble a bundle for (11-07/11-09).
-
-    The account set is derived from the PORTFOLIOS, not from a single spec-level
-    ``account_id``. Before 11-07 the composition root built ONE venue spec and
-    performed ONE registration write, so "one exchange per account" read as
-    satisfied only because there was never more than one account.
-
-    11-09 widened the derivation to the UNION of the spec's portfolios and the
-    REHYDRATED ones. 11-08 flagged this gap deliberately rather than building a second
-    path: a portfolio restored from a durable definition row has no entry in the spec,
-    so a spec-only derivation assembles no account for it — and after this plan's
-    per-portfolio attach that is not a cosmetic omission, it is a boot that FAILS LOUD
-    (correct) or, before the attach existed, one that silently left a restored
-    portfolio on its simulated leaf while the engine believed it was trading live.
-
-    Ordering rules, all of them load-bearing:
-
-    * the spec-level ``account_id`` (when present) comes FIRST and is the PRIMARY.
-      The facade binds ONE data provider to the ONE feed, so which account is primary
-      must be deterministic rather than dict-ordering dependent.
-    * portfolio account ids follow in spec order, de-duplicated. Two portfolios on
-      one account share that account's bundle — one connector per
-      ``(venue, account_id)`` pair, not one per portfolio (D-12).
-    * REHYDRATED portfolio account ids come last, in the handler's registration order.
-      ``PortfolioDefinitionStore.read_all`` is a documented ``portfolio_id ASC`` read
-      and ``add_portfolio`` preserves it, so this tail is reproducible across runs —
-      which is what keeps the primary stable across a restart.
-    * when NOTHING names an account the result is ``[None]``, which is EXACTLY the
-      pre-11-07 single-account call shape. N=1 is the same code path, not a separate
-      branch — a second branch is how the two drift apart.
-
-    A ``VenueSpec`` (the ``for_exchange`` shape) carries no ``portfolios`` at all and
-    therefore yields the single-account list when no portfolios are supplied either.
-
-    CR-01 — identity is the ``(venue_name, account_id)`` PAIR, never the bare id. The
-    same account-id string on two venues names two DIFFERENT real accounts; that is the
-    doctrine ``portfolio_handler/rehydrate/distinct_account_invariant.py`` already
-    encodes (it keys its ``_claim`` on the cross-venue pair) and which this derivation
-    discarded. ``rehydrate_portfolios`` restores EVERY persisted portfolio regardless of
-    venue, so a binance portfolio named "main" made an OKX boot mint an ``('okx','main')``
-    ``venue_accounts`` row AND assemble an OKX bundle for an account belonging to a
-    completely different venue. The rehydrated half of the union is therefore filtered by
-    ``venue_name``, and a portfolio whose venue cannot be resolved at all is treated as
-    FOREIGN.
-
-    The return stays a list of IDS rather than a list of pairs precisely because every id
-    it yields is scoped to ``venue_name`` BY CONSTRUCTION — a pair return would be
-    redundancy, not information, and ``assemble_venues`` keys its lifecycle map on the
-    bare id for the same reason (one ``assemble_venues`` call is single-venue by
-    construction).
-
-    Parameters
-    ----------
-    venue_name : str
-        The venue this boot is assembling. REQUIRED and keyword-only: a defaulted venue
-        is how the venue half gets dropped again by a caller that forgets it.
-    """
-    ordered: list[Optional[str]] = []
-    primary = getattr(spec, 'account_id', None)
-    if primary is not None:
-        ordered.append(primary)
-    for portfolio_spec in getattr(spec, 'portfolios', None) or ():
-        account_id = getattr(portfolio_spec, 'account_id', None)
-        if account_id is not None and account_id not in ordered:
-            ordered.append(account_id)
-    # 11-09: the rehydrated half of the union. Live ``Portfolio`` objects, not spec
-    # rows — the two are read through the same ``account_id`` attribute name, so no
-    # adapter is needed and neither side is privileged. Spec portfolios above carry NO
-    # venue and belong to the booted venue by definition (the same premise
-    # ``assert_distinct_accounts`` documents), so only THIS half is venue-filtered.
-    for portfolio in portfolios:
-        if _venue_of(portfolio) != venue_name:
-            continue
-        account_id = getattr(portfolio, 'account_id', None)
-        if account_id is not None and account_id not in ordered:
-            ordered.append(account_id)
-    if not ordered:
-        ordered.append(None)
-    return ordered
-
-
-def _mint_account_rows(
-    venue_account_store: Optional[Any],
-    venue_name: str,
-    account_ids: list[Optional[str]],
-) -> None:
-    """Ensure a ``venue_accounts`` row EXISTS for each account (11-07, MPORT-01).
-
-    Minting is gated on ABSENCE and writes ``secret_ref=None``. That gate is not a
-    micro-optimisation: ``VenueAccountStore.upsert`` is a delete-then-insert over the
-    composite key, so an unconditional write would CLOBBER the operator's own
-    ``secret_ref`` and ``venue_uid`` on every boot — silently reverting a configured
-    per-account credential pointer to the ambient single-account path.
-
-    Why mint at all when the minted row carries no credentials: the D-04
-    trust-on-first-use guard records the observed venue UID through
-    ``record_venue_uid``, which is a TARGETED UPDATE and a silent no-op when no row
-    matches. Without a row the identity guard has nowhere to write and stays inert.
-
-    Degrades clean with a WARNING rather than aborting the boot, matching
-    ``_read_account_secret_ref``: the row is routing/observability state, and a
-    storage outage should not take down a deployment that never needed it.
-    """
-    if venue_account_store is None:
-        return
-    # NOTE: ``logger`` is FUNCTION-LOCAL throughout this module — there is no
-    # module-level binding, and this module is under a mypy ``ignore_errors``
-    # override, so a missing binding ships as a NameError invisible to mypy AND to
-    # the suite (exactly what happened in 11-04).
-    logger = get_itrader_logger().bind(component="build_live_system")
-    for account_id in account_ids:
-        key = account_id or DEFAULT_ACCOUNT_ID
-        try:
-            if venue_account_store.get(venue_name, key) is not None:
-                continue
-            venue_account_store.upsert(
-                venue_name,
-                key,
-                secret_ref=None,
-                venue_uid=None,
-                enabled=True,
-                config={},
-                at=datetime.now(UTC),
-            )
-        except Exception as exc:
+        except _degrade_clean as exc:
             logger.warning(
-                "Could not mint the venue account row for (%s, %s): %s — the "
-                "venue-UID guard has no row to record into for this account",
-                venue_name, key, exc)
-
-
-def _build_account_specs(
-    spec: Any,
-    venue_account_store: Optional[Any],
-    exchange: str,
-    portfolios: "Iterable[Any]" = (),
-) -> list[Any]:
-    """One ``VenueSpec`` per account, each carrying ITS OWN credential pointer.
-
-    This is what moves MPORT-06 from dormant to live. Plan 11-04 shipped the
-    ``CredentialResolver`` wired and tested, but ``OkxConnectorPlugin.build``
-    short-circuits to the ambient ``OkxSettings()`` whenever ``secret_ref is None``,
-    and the pointer was read exactly ONCE for the spec-level account. Reading it PER
-    ACCOUNT is what makes two accounts authenticate with two different credential
-    sets instead of both silently using the one global ``OKX_API_*`` triple.
-
-    ``build_venue_spec`` stays the single home of the default-provider map (D-11).
-
-    ``portfolios`` (11-09) are the ALREADY-REHYDRATED live portfolios, unioned into the
-    account set so a restored portfolio's account is assembled too.
-    """
-    # CR-01: the booted venue is threaded into the derivation so the rehydrated half of
-    # the union is venue-scoped — without it a foreign-venue portfolio's account id mints
-    # a row and assembles a bundle on THIS venue.
-    account_ids = _account_ids_for_spec(spec, portfolios, venue_name=exchange)
-    _mint_account_rows(venue_account_store, exchange, account_ids)
-    data_provider = getattr(spec, 'data_provider', None)
-    return [
-        build_venue_spec(
-            exchange,
-            data_provider=data_provider,
-            account_id=account_id,
-            secret_ref=_read_account_secret_ref(
-                venue_account_store, exchange, account_id),
-        )
-        for account_id in account_ids
-    ]
-
-
-def _attach_venue_accounts(
-    portfolio_handler: Any,
-    lifecycles: Dict[str, Any],
-    *,
-    venue_name: str,
-) -> Dict[str, Any]:
-    """Give each portfolio the ``Account`` minted from ITS OWN account's bundle (11-09).
-
-    This is the attach half of MPORT-05. 11-07 delivered per-account MINTING (durable
-    ``venue_accounts`` rows plus one bundle per account); it explicitly did NOT attach
-    the resulting accounts to portfolios, and said so. Until this function existed the
-    ONLY code that ever assigned ``portfolio.account`` was
-    ``ReconciliationCoordinator._link_venue_account_to_portfolios``, which assigned ONE
-    scalar account to every active portfolio and refused outright at N>1.
-
-    Why here and not at construction: ``Portfolio._initialize_components`` builds its own
-    simulated leaf, and ``build_live_system`` does not construct portfolios, so there is
-    no injection seam at construction time. Attachment happens once the portfolio exists
-    and once its account's lifecycle has been assembled — which is exactly this point in
-    the boot.
-
-    The rules, each of which is a defect if inverted:
-
-    * ``portfolio.account_id`` is the SINGLE answer to "which account does this
-      portfolio use". ``lifecycles`` is a LOOKUP keyed by it, never an independent
-      assignment — there is no second source of truth to drift.
-    * A portfolio naming an account with NO assembled lifecycle FAILS LOUD. It is never
-      quietly given the primary's account (that is the cross-account conflation D-11
-      exists to prevent) and never left on its simulated leaf (which would make
-      ``is_venue_truth`` False, silently skipping the entire venue reconcile — snapshot,
-      streaming, ``VenueReconciler`` AND the D-04 baseline HALT gate — behind a fully
-      green suite).
-    * A portfolio naming NO account keeps its construction-time compute leaf. That is
-      the paper/backtest shape, not an error: there is nothing to scope and nothing to
-      conflate, and re-minting would reset its opening cash to the factory default.
-    * A NON-streaming (paper, ``connector is None``) lifecycle is skipped for the same
-      reason — its factory mints a fresh simulated leaf whose ``initial_cash`` would
-      clobber the portfolio's real opening balance.
-    * ONE account object per account id, memoized. Two portfolios sharing an account is
-      refused upstream by 11-08's distinct-account invariant, but minting per portfolio
-      would quietly build two independent caches of one real venue balance if that
-      invariant were ever relaxed, and memoizing also lets the reconcile coordinator
-      dedupe by account IDENTITY.
-    * A portfolio on ANOTHER VENUE is not ours to attach (CR-01). ``lifecycles`` is keyed
-      by bare account id and one ``assemble_venues`` call is single-venue by
-      construction, so a venue-blind lookup handed a binance portfolio named "main" the
-      OKX "main" ``VenueAccount`` — and that account object is the identity the
-      ``ReconciliationCoordinator`` snapshot, the D-04 baseline HALT guard and
-      ``VenueReconciler`` all act on. This is NOT a silent hole: the portfolio's account
-      belongs to a venue THIS boot did not assemble, so there is nothing correct to give
-      it, and giving it the booted venue's account is exactly the cross-venue conflation
-      D-14/D-15 exist to prevent.
-
-    Parameters
-    ----------
-    venue_name : str
-        The venue this boot assembled ``lifecycles`` for. REQUIRED and keyword-only — a
-        defaulted venue is how the venue half gets dropped again by a caller that
-        forgets it.
-
-    Returns
-    -------
-    dict[str, Any]
-        The minted accounts by account id — returned rather than discarded so the caller
-        can wire the reconnect-snapshot path over the SAME objects the portfolios hold.
-    """
-    # NOTE: ``logger`` is FUNCTION-LOCAL throughout this module — there is no module-level
-    # binding, and this module is under a mypy ``ignore_errors`` override, so a missing
-    # binding ships as a NameError invisible to mypy AND to the suite (11-04 shipped
-    # exactly that). Bind before any use.
-    logger = get_itrader_logger().bind(component="build_live_system")
-    minted: Dict[str, Any] = {}
-    for portfolio in portfolio_handler._portfolios.values():
-        account_id = getattr(portfolio, 'account_id', None)
-        if not account_id:
-            continue
-        # CR-01 — guard ORDER is load-bearing. The venue guard must precede the lookup
-        # so a FOREIGN-venue portfolio naming an unassembled account is skipped rather
-        # than raising, while a SAME-venue portfolio naming an unassembled account still
-        # hits the fail-loud refusal below, unchanged.
-        portfolio_venue = _venue_of(portfolio)
-        if portfolio_venue != venue_name:
-            logger.debug(
-                "Skipping portfolio '%s' on venue %r: this boot assembled venue %r, "
-                "so it has no account of ours to attach",
-                getattr(portfolio, 'name', None), portfolio_venue, venue_name)
-            continue
-        lifecycle = lifecycles.get(account_id)
-        if lifecycle is None:
-            raise ValidationError(
-                "account_id",
-                str(account_id),
-                f"Portfolio '{portfolio.name}' names venue account "
-                f"'{account_id}', but no venue lifecycle was assembled for it. "
-                "Refusing to fall back to the primary account (that would conflate "
-                "two real venue balances) and refusing to leave the portfolio on its "
-                "simulated leaf (that would silently disable the whole venue "
-                "reconcile). Check that the account is reachable from the spec or "
-                "from a persisted portfolio definition row.",
-            )
-        if lifecycle.bundle.connector is None:
-            # Paper/compute venue: the portfolio's construction-time leaf is already
-            # the correct account kind and already carries its opening cash.
-            continue
-        account = minted.get(account_id)
-        if account is None:
-            # 11.1-09 (D-03): the factory is KEYWORD-ONLY and no longer takes a
-            # portfolio. The account id this loop already resolved off
-            # ``portfolio.account_id`` is passed EXPLICITLY, so the venue arm mints
-            # under the SAME id the lifecycle was looked up by. It is never omitted
-            # here: an omitted id falls back to the BUNDLE's own, which is correct
-            # only for the facade's no-portfolio call site.
-            account = lifecycle.bundle.account_factory(account_id=account_id)
-            minted[account_id] = account
-        portfolio.account = account
-    if minted:
-        logger.info(
-            "Attached %d venue account(s) to their portfolios by account_id",
-            len(minted))
-    return minted
+                "Skipping persisted PORTFOLIO-config restart layering for %s — schema "
+                "unavailable or a stored override is invalid (%s); boot degrades clean",
+                _pid, exc)
 
 
 def build_live_system(
@@ -1740,135 +1035,98 @@ def build_live_system(
     data_plugins: Optional[Dict[str, Any]] = None,
     strategy_catalog: Optional[Dict[str, type]] = None,
 ) -> LiveTradingSystem:
-    """The live composition root (RUN-01/D-09) — the ONLY live construction path.
+    """The live composition root — the ONLY live construction path.
 
     The live analog of ``build_backtest_system -> compose_engine -> BacktestRunner``:
-    reads centralized config, builds the ONE live ``sql_engine`` (Postgres-gated),
-    builds the live component graph off the **PriorityEventBus** (D-23 — inert without
-    CONTROL events), relocates the P5 ``assemble_venue`` call out of ``__init__``,
-    constructs the facade via PURE INJECTION, and composes the ``LiveRunner`` (owning
-    the drain loop, D-06) + its ``WorkerSupervisor`` (D-05) + the minimal ``ErrorPolicy``
-    (D-07) around it. Returns the fully-wired facade.
+    reads config, builds the ONE live ``sql_engine`` (Postgres-gated), builds the component
+    graph off the ``PriorityEventBus``, assembles venues, constructs the facade via pure
+    injection, and composes the ``LiveRunner``, its ``WorkerSupervisor`` and the
+    ``ErrorPolicy`` around it. Live session wiring stays DEFERRED to ``start()``.
 
-    D-12 (interim): live session wiring (``SessionInitializer`` via
-    ``_initialize_live_session``) stays DEFERRED to ``start()`` (06-06 kept the
-    construction-time flip deferred — it conflicts with the pervasive
-    add-strategy-after-construction + monkeypatch-``_initialize_live_session``-before-
-    ``start()`` contracts across the live test suite). The offline test driver
-    ``TestRunner`` (tests/support/replay_harness) invokes it before its per-bar drive.
+    ``data_plugins`` and ``strategy_catalog`` are CODE artifacts the application hands in,
+    as opposed to ``spec``, which is persisted config.
 
-    D-21: production ``paper`` re-points to the OKX live data feed; the offline replay
-    DATA provider left this module for the test harness (TEST-01/D-18). A test fixture
-    injects a ``'replay'`` plugin via ``data_plugins`` — production never registers one.
+    Parameters
+    ----------
+    spec : VenueSpec
+        The declarative venue spec; ``spec.execution_venue`` names the venue.
+    status_callback : callable, optional
+        Forwarded to the facade; invoked on each status transition.
+    data_plugins : dict[str, Any], optional
+        TEST-only data-provider plugins, registered AFTER the production ones.
+    strategy_catalog : dict[str, type], optional
+        The only thing that turns a stored ``strategy_type`` string into a class, so
+        the app decides what is instantiable at boot. With registry rows present, a
+        missing catalog fails LOUD rather than booting an engine that looks healthy
+        and trades nothing.
 
-    D-01: ``strategy_catalog`` is the injected strategy-TYPE allowlist, mirroring
-    ``data_plugins`` — both are CODE artifacts the application hands in, as opposed to
-    ``spec`` (persisted config). It is the only thing that turns a stored ``strategy_type``
-    string into a class, so the app decides WHICH classes are instantiable at boot. The
-    ``None`` default keeps every existing caller working: with an empty registry there is
-    nothing to instantiate (D-21), and with rows present a missing catalog fails LOUD
-    rather than booting a healthy-looking engine that trades nothing (D-19).
-
-    All live/venue/SQL imports live INSIDE this function body (lazy) so importing this
-    module (via the ``trading_system`` barrel, on the backtest import graph) pulls NO
-    ccxt.pro / SqlSettings — the recurring inertness gate (``test_okx_inertness.py``).
+    Returns
+    -------
+    LiveTradingSystem
+        The facade, fully wired but NOT started.
     """
     logger = get_itrader_logger().bind(component="LiveTradingSystem")
     exchange = spec.execution_venue
 
-    # D-23: live drains the PriorityEventBus (replacing the raw queue.Queue) — inert
-    # without CONTROL events (everything flows BUSINESS-tier; the monotonic seq keeps
-    # strict FIFO, so live behavior is unchanged in P6). LiveRunner drains it; CONTROL
-    # routes are NOT registered (their P7/P9 consumers don't exist yet).
+    # Inert without CONTROL events: everything flows BUSINESS-tier and the monotonic seq
+    # keeps strict FIFO.
     global_queue = PriorityEventBus()
-    # Phase 3 (FEED-05): LiveBarFeed is the live driver — LAZY-imported here so the
-    # BACKTEST import path never pulls live_bar_feed (inertness gate). D-02: live carries
-    # store=None (the LiveBarFeed reads no store); the whole handler graph — screeners
-    # included — now comes from compose_engine below, so no store/screeners are built here.
+    # Live carries store=None — the LiveBarFeed reads no store.
     from itrader.price_handler.feed.live_bar_feed import LiveBarFeed
     feed = LiveBarFeed(provider=None, base_timeframe=to_timedelta('1d'))
 
-    # ------------------------------------------------------------------
-    # v1.6 operational store live-drive (05-06, RECON-04, D-10/D-11).
-    # SYNC-DURABLE working set (orders) persists store-first; DERIVED signal store is
-    # async/best-effort. Both share ONE SqlEngine. All SQL imports LAZY inside the
-    # Postgres arm (inertness). Credential presence read at build time (per-construction)
-    # through a lazy default ``SqlSettings()`` probe — the SQLite default driver skips
-    # ``_require_pg_credentials``, so the probe never raises when credentials are absent
-    # while still sourcing ``ITRADER_DATABASE_*`` env into ``password``/``url`` (IN-01).
+    # Storage is selected by ENV-PRESENCE of a Postgres credential on the unified
+    # ITRADER_DATABASE_* surface — the same source Alembic's env.py uses — with no
+    # hardcoded credential fallback. Probed at BUILD time so it honors per-construction
+    # env, and BEFORE constructing a Postgres SqlSettings, which raises when no credential
+    # is present. The SQLite default driver skips _require_pg_credentials, so the probe
+    # itself never raises.
     from itrader.config.sql import SqlSettings
     probe = SqlSettings()
     if probe.password is None and probe.url is None:
-        # WR-10: fail loudly into the in-memory fallback (no default credential string).
+        # Fail loudly into the in-memory fallback — never a default credential string.
         logger.warning(
             "No Postgres credential in env (ITRADER_DATABASE_PASSWORD / "
             "ITRADER_DATABASE_URL unset) — using in-memory order + signal storage "
             "(orders/signals will NOT survive a restart)"
         )
-        # 06.1-02 (SEAM-01/D-05): the arm now selects ONLY the environment string + the
-        # shared SQL spine — compose_engine's handler-OWNED storage init derives the
-        # concrete backends from (environment, sql_engine). 'backtest' with sql_engine=None
-        # yields the in-memory order + signal stores byte-identical to the former explicit
-        # fallback construction (OrderStorageFactory.create('backtest') / create_in_memory()).
+        # Each arm selects ONLY the environment string + the shared SQL spine;
+        # compose_engine's handler-OWNED storage init derives the concrete backends from
+        # (environment, sql_engine). 'backtest' with sql_engine=None yields in-memory order
+        # + signal stores.
         environment = 'backtest'
         system_db_backend: Optional[Any] = None
     else:
-        # CR-01/RECON-04: honor the unified ITRADER_DATABASE_* Postgres surface — one
-        # SqlEngine drives the whole v1.6 operational store (same source Alembic uses).
         from itrader.config.sql import SqlDriver, SqlSettings
         from itrader.storage import SqlEngine
 
-        # 06.1-02 (SEAM-01/D-05): 'live' + the shared SqlEngine drive compose's
-        # handler-OWNED storage to the SAME durable path the former explicit construction
-        # built — orders via CachedSqlOrderStorage(SqlOrderStorage(backend)) (store-first
-        # working set, rehydrate() on restart), the signal store live-driven over the same
-        # spine (see OrderStorageFactory / SignalStorageFactory '.create('live', ...)').
+        # 'live' + the shared SqlEngine drive that same init to the durable path: orders
+        # via CachedSqlOrderStorage over SqlOrderStorage (store-first working set,
+        # rehydrate() on restart), the signal store live-driven over the same spine.
         backend = SqlEngine(SqlSettings(driver=SqlDriver.POSTGRESQL_PSYCOPG2))
         environment = 'live'
         system_db_backend = backend
 
-    # 05.2-06 (D-10 / ARCH-4 Layer 2): durable halt-record store over the shared spine
-    # (survives a process restart) — None on the in-memory fallback (degrade cleanly).
-    # D-09: the SQL spine (system_db_backend) + halt_record_store stay SEPARATE facade/
-    # infra handles — NOT folded into the venue holder (folding would recreate the bag).
+    # Durable halt-record store over the shared spine, so a halt survives a process
+    # restart. A SEPARATE infra handle from the venue holder — folding it in would
+    # recreate the collaborator bag.
     if system_db_backend is not None:
         from itrader.storage.halt_record_store import HaltRecordStore
         halt_record_store: Optional[Any] = HaltRecordStore(system_db_backend)
     else:
         halt_record_store = None
 
-    # ------------------------------------------------------------------
-    # 06.1-02 (SEAM-01 live consumption / D-05): obtain the live handler graph from the
-    # now spec-free compose_engine instead of hand-rolling a parallel copy. The shared
-    # EngineContext is the mode-injection seam: feed=the LiveBarFeed, store=None (the
-    # LiveBarFeed reads no store, D-02), and environment + sql_engine reflect the
-    # credential-probe arm so compose's handler-OWNED storage init lands the identical
-    # durable path (Postgres arm -> CachedSqlOrderStorage over the SQL spine; in-memory
-    # arm -> InMemoryOrderStorage). 11.1-07: the former ``exchange_config=None`` argument
-    # is GONE — compose no longer builds an exchange. Live now hands it a built
-    # ``VenueBundles`` whose paper plugin holds ``default_exchange_config()``, which is
-    # the SAME default-preset config the old ``None`` resolved to, so live behaviour is
-    # preserved. ``results_store`` stays None. compose_engine builds the admission
-    # fee-model provider (11.1-10 / D-18 — the former single-adapter class it replaced
-    # is gone), retiring the re-inlined commission
-    # closure. compose_engine is a PURE import, taken lazily here to mirror the module's
-    # lazy-import discipline (inertness gate). 06.1-04 (D-13): EngineContext is now
-    # hoisted to module top (pure — off the backtest graph after the barrel drop).
+    # The live handler graph comes from the shared compose_engine, never a hand-rolled
+    # parallel copy. EngineContext is the mode-injection seam: feed = the LiveBarFeed,
+    # store = None, and environment + sql_engine reflect the credential-probe arm.
     from itrader import config as _system_config
     from itrader.trading_system.compose import compose_engine
 
-    # 08-03 (D-03/D-04/D-05): build the live ERROR-route collaborators BEFORE compose so
-    # they ride into the ErrorHandler + the injected handler-failure policy via
-    # compose_engine (the single mode-agnostic build site) — no post-build monkeypatch.
-    #   - alert_sink: the CRITICAL/halt egress (only declared ErrorEvent fields bound;
-    #     no connector secret leaks, Pitfall 16 / T-05-01).
-    #   - system_store: a freshly-minted SystemStore over the SAME SqlEngine (D-05
-    #     NEGATIVE — there is NO existing SystemStore to share and NO second engine to
-    #     build), gated on system_db_backend exactly like halt_record_store above; the
-    #     import stays LAZY inside the gate (storage.system_store is OKX-inertness _FORBIDDEN).
-    #   - error_policy: the live publish-and-continue tripwire, built with the static
-    #     D-14 failure-rate settings; halt + error_counter are late-bound below once
-    #     SafetyController + the facade exist (D-12 resolves the construction cycle).
+    # The ERROR-route collaborators are built BEFORE compose so they ride in through
+    # compose_engine, the one mode-agnostic build site, never a post-build monkeypatch.
+    # alert_sink is the CRITICAL/halt egress and binds only declared ErrorEvent fields, so
+    # no connector secret can leak. error_policy's halt + error_counter are late-bound
+    # below, once SafetyController and the facade exist.
     from itrader.events_handler.error_policy import ErrorPolicy
 
     alert_sink = LogAlertSink()
@@ -1882,24 +1140,11 @@ def build_live_system(
         failure_settings=_system_config.safety.failure_rate,
     )
 
-    # ------------------------------------------------------------------
-    # VENUE REGISTRATION (hoisted here by 11.1-07, D-08).
-    #
-    # WHY IT MOVED: compose_engine now receives a BUILT ``VenueBundles``, so the
-    # registry it reads has to exist BEFORE compose runs. The move is safe because
-    # registration is INERT — it stores plugin objects and runs no ``build*()``, so it
-    # pulls no ccxt and changes no import-time behaviour — and because every input it
-    # reads (``system_db_backend``, ``credential_resolver``, ``data_plugins``) is
-    # already resolved above this point. The one thing that USED to force it below
-    # compose was the reach-in into ``execution_handler.exchanges``; that is gone
-    # (D-06 — the plugin builds its own exchange), which is the ordering inversion this
-    # phase exists to enable.
-    #
-    # The whole OKX/paper venue stack stays LAZY-imported here so the BACKTEST import
-    # path stays async/ccxt/credential-free (the hot-path inertness gate).
+    # VENUE REGISTRATION. Must precede compose, which receives a BUILT ``VenueBundles``.
+    # Safe here because registration is INERT: it stores plugin objects and runs no
+    # ``build*()``, so it pulls no ccxt and changes no import-time behaviour.
     from itrader.connectors.provider import ConnectorProvider
     from itrader.execution_handler.execution_handler import default_exchange_config
-    from itrader.venues.assemble import assemble_venues
     from itrader.venues.bundles import VenueBundles
     from itrader.venues.okx_plugin import (
         OkxConnectorPlugin,
@@ -1912,20 +1157,12 @@ def build_live_system(
         ExecutionVenueRegistry,
     )
 
-    # (0) 11-04 (D-02/D-04): the credentials boundary's two collaborators.
-    #   - venue_account_store: the durable (venue_name, account_id) home. It supplies
-    #     the account's secret_ref POINTER for credential resolution AND is where the
-    #     D-04 trust-on-first-use venue_uid is recorded/asserted. Gated on the SQL arm
-    #     exactly like system_store above; the import stays LAZY inside the gate
-    #     (storage.venue_store, which it composes, is OKX-inertness _FORBIDDEN).
-    #     11.1-07: the ``system_db_backend is not None`` gate MOVED WITH this block —
-    #     ``system_db_backend`` is resolved well above here, so the SQL gate applies
-    #     exactly as before and the in-memory arm still yields ``None``.
-    #   - credential_resolver: the env-backed CredentialResolver injected into the OKX
-    #     connector plugin. WITHOUT this injection the plugin falls back to a bare
-    #     OkxSettings() reading the ONE global OKX_API_* set, so two account_ids would
-    #     connect with IDENTICAL credentials while the system believes they are
-    #     separate accounts (the D-12 caveat) — the exact misroute D-04 detects.
+    # The credentials boundary. venue_account_store is the durable (venue_name,
+    # account_id) home: it supplies each account's secret_ref POINTER and records/asserts
+    # the trust-on-first-use venue_uid. credential_resolver is injected into the OKX
+    # connector plugin — WITHOUT it the plugin falls back to a bare OkxSettings() reading
+    # the ONE global OKX_API_* set, so two account_ids would connect with IDENTICAL
+    # credentials while the system believes they are separate accounts.
     from itrader.config.credential_resolver import EnvCredentialResolver
 
     if system_db_backend is not None:
@@ -1935,35 +1172,24 @@ def build_live_system(
         venue_account_store = None
     credential_resolver = EnvCredentialResolver()
 
-    # (1) Build the two registries + the shared ConnectorProvider and register the
-    # concrete plugins (store-only — no build*() runs, so this pulls no ccxt).
     exec_registry = ExecutionVenueRegistry()
     data_registry = DataProviderRegistry()
     connectors = ConnectorProvider(
         {'okx': OkxConnectorPlugin(resolver=credential_resolver)})
     exec_registry.register('okx', OkxVenuePlugin())
-    # 11.1-07 (D-06/D-17): the reach-in into ``execution_handler.exchanges`` is GONE —
-    # the plugin builds its own SimulatedExchange from the config it is given.
-    # ``default_exchange_config()`` preserves today's live behaviour EXACTLY: live
-    # previously passed no exchange config into compose, so its simulated exchange was
-    # built from this same default preset (∪ {BTCUSD}). Seeding a LIVE-derived symbol
-    # set is deliberately out of scope for this phase — doing it here would change live
-    # admission behaviour under cover of a wiring change.
+    # The plugin builds its own SimulatedExchange from the config it is given. Seeding a
+    # LIVE-derived symbol set instead of the default preset would change live admission.
     exec_registry.register('paper', PaperVenuePlugin(default_exchange_config()))
     data_registry.register('okx', OkxDataPlugin())
 
-    # TEST-only DATA provider injection (D-21): production registers NO replay/test data
-    # provider (the replay harness left this package for tests/), but a test fixture may
-    # inject one (the relocated TestDataPlugin) so the paper↔replay pairing lives ONLY in
-    # the fixture, never in production. Registered AFTER the production plugins.
+    # TEST-only DATA provider injection, registered AFTER production: the paper<->replay
+    # pairing lives ONLY in the fixture.
     if data_plugins:
         for _name, _plugin in data_plugins.items():
             data_registry.register(_name, _plugin)
 
-    # 11.1-04 (D-07): the ONE seeded determinism RNG for the live run, built here at the
-    # wiring seam and injected on ctx rather than derived inside ExecutionHandler. Same
-    # resolution the retired ExecutionHandler._resolve_rng_seed performed —
-    # int(config.rng_seed), default 42, off the frozen ITraderConfig base.
+    # The ONE seeded determinism RNG, built at the wiring seam and injected on ctx rather
+    # than derived inside a handler.
     rng = random.Random(int(_system_config.rng_seed))
 
     ctx = EngineContext(
@@ -1973,74 +1199,112 @@ def build_live_system(
         feed=feed, rng=rng, store=None,
         sql_engine=system_db_backend,
     )
-    # 11.1-07 (D-08): the ONE bundle memo, built AFTER ctx (it needs one) and BEFORE
-    # compose. The SAME instance the venue-assembly loop below shares, so the execution
-    # arm and the per-account assembly can never hold two exchanges for one
-    # (venue, account_id) — two OkxExchange objects per account would double-spawn that
-    # account's fill/order streams.
+    # The ONE bundle memo, shared with the venue-assembly loop below, so the execution arm
+    # and the per-account assembly can never hold two exchanges for one (venue,
+    # account_id) — two OkxExchange objects per account would double-spawn that account's
+    # fill/order streams.
     venue_bundles = VenueBundles(exec_registry, connectors, ctx)
+    # The ONE (venue, account_id) -> exchange map, created BEFORE compose so the execution
+    # handler (built inside compose, reads it on order) and VenueAccountManager (built
+    # below, writes each brought-online exchange into it) hold the SAME object. Distinct
+    # from ``exec_registry``: that is the venue PLUGIN registry the bundle memo builds
+    # over; this is the exchange OBJECT registry.
+    exchange_registry: Dict[tuple, Any] = {}
+
+    # The account AUTHORITY and factory are built BEFORE compose, each with a REAL
+    # collaborator at construction — no late-init, no Optional manager, no
+    # post-construction attribute set. The mode difference lives ONLY in WHICH authority is
+    # injected: the SQL arm validates the pair through the real VenueAccountManager
+    # (raising VenueAccountNotProvisionedError on missing/disabled/not-online) and then
+    # builds a COMPUTE leaf carrying the real pair, while the in-memory arm uses the
+    # bundles-backed authority that never raises, so a manager-less boot is not stranded.
+    # The venue-truth VenueAccount leaf CANNOT be the construction-time leaf: its balance
+    # raises until the first snapshot, and Portfolio.__init__ reads balance.
+    from itrader.portfolio_handler.portfolio_factory import (
+        ComputeAccountAuthority,
+        PortfolioFactory,
+        VenueValidatedComputeAuthority,
+    )
+
+    venue_manager: Optional[Any] = None
+    # The ONE feed's connection binder: the feed borrows the first available venue
+    # CONNECTION and re-borrows when that account is retired/disabled. It owns the provider
+    # build, the feed wiring and the re-borrow rule; the manager drives it from
+    # bring_online.
+    feed_binder: Optional[Any] = None
+    if system_db_backend is not None:
+        from itrader.venues.feed_binder import FeedConnectionBinder
+        from itrader.venues.venue_account_manager import VenueAccountManager
+
+        feed_binder = FeedConnectionBinder(
+            feed=feed,
+            data_registry=data_registry,
+            ctx=ctx,
+            connectors=connectors,
+            global_queue=global_queue,
+        )
+        # The venue-ACCOUNT domain owner. It EXCLUSIVELY owns the durable
+        # ``venue_accounts`` store and shares the ONE ``venue_bundles`` memo +
+        # ``connectors`` provider the execution arm holds. It receives the shared
+        # ``exchange_registry`` — the SAME map compose hands the execution handler — and
+        # NOT the handler itself: ``bring_online`` writing that map directly is the cut
+        # that lets the manager be built here, above compose.
+        venue_manager = VenueAccountManager(
+            venue_account_store,
+            venue_bundles,
+            connectors,
+            exchange_registry,
+            alert_sink=alert_sink,
+            feed_binder=feed_binder,
+        )
+        account_authority: Any = VenueValidatedComputeAuthority(
+            manager=venue_manager,
+            compute=ComputeAccountAuthority(
+                venue_bundles=venue_bundles, compute_venue=COMPUTE_VENUE),
+        )
+    else:
+        account_authority = ComputeAccountAuthority(
+            venue_bundles=venue_bundles, compute_venue=COMPUTE_VENUE)
+
+    # The sole leaf-builder ``PortfolioHandler`` constructs every portfolio through.
+    # ``environment`` / ``system_db_backend`` select the durable state-storage backend the
+    # factory scopes per portfolio_id.
+    portfolio_factory = PortfolioFactory(
+        authority=account_authority,
+        environment=environment,
+        sql_engine=system_db_backend,
+    )
+
     engine = compose_engine(
         ctx, venue_bundles=venue_bundles, results_store=None,
         alert_sink=alert_sink, system_store=system_store, error_policy=error_policy,
         strategy_catalog=strategy_catalog,
-        # D-27/MPORT-07: LIVE resolves each order's venue account from its
-        # portfolio through the injected read-model, so an account's orders can
-        # never be submitted through another account's authenticated session.
-        # The backtest arm deliberately leaves this False — see compose_engine.
+        exchange_registry=exchange_registry,
+        portfolio_factory=portfolio_factory,
+        # LIVE resolves each order's venue account from its portfolio through the
+        # injected read-model, so an account's orders can never be submitted through
+        # another account's authenticated session. Backtest deliberately leaves it False.
         route_orders_by_account=True)
 
-    # compose already wired portfolio_handler.set_order_storage(order_handler.storage) and
-    # the admission fee-model provider (D-05; 11.1-10 / D-18 narrowed that seam to wiring
-    # only), so the former inline commission
-    # closure + the duplicate set_order_storage call are gone. NOTE (T-11.1-48, KNOWN and
-    # DELIBERATELY DEFERRED): the live OKX exchange exposes no ``fee_model`` attribute, so
-    # the provider yields None here and admission reserves NO fee headroom on a venue that
-    # charges real fees. D-18 made this VISIBLE (an explicit no-fee-model contract replacing
-    # an isinstance guard) without fixing it — a fix changes reservation amounts on the
-    # golden path and must arrive as its own decision, not as a refactor. build_live_system only needs
-    # the three handles its remaining venue + post-facade wiring touches; the facade sources
-    # the FULL graph (+ storages, store=None) off the engine in __init__ (D-10), so no
-    # duplicate locals are threaded through here.
     execution_handler = engine.execution_handler
     portfolio_handler = engine.portfolio_handler
     event_handler = engine.event_handler
 
-    # ------------------------------------------------------------------
-    # PORTFOLIO BOOTSTRAP (11-08, D-08/D-14/D-15 — the W4 bootstrap boundary).
+    # PORTFOLIO + VENUE BOOTSTRAP. The account SET is STORE-DERIVED — read off durable
+    # ``venue_accounts`` rows through VenueAccountManager, never re-derived from the spec —
+    # so no account identity is computed in this file.
     #
-    # Placed HERE, ABOVE the venue-wiring block below, and that position is the whole
-    # decision. The two steps run in this order and no other:
+    # Boot order is distinct-account check -> venue assembly -> rehydrate. Assembly MUST
+    # precede rehydrate so the manager's ``_online`` map is full when rehydrate
+    # materializes each row; otherwise a portfolio naming a not-provisioned / disabled /
+    # not-online account silently sits on a compute leaf instead of raising.
     #
-    #  (1) THE DISTINCT-ACCOUNT INVARIANT, over the UNION of persisted rows and the
-    #      spec-supplied portfolios. It runs FIRST because D-15 says a collision must be
-    #      refused BEFORE any account exists. Running it after rehydrate would leave
-    #      portfolios built but unusable; running it after the account minting below would
-    #      be worse still — by then a colliding pair has already satisfied 11-07's
-    #      required-account_id guard and two portfolios are wired to one real balance.
-    #  (2) PORTFOLIO REHYDRATE, which creates the portfolio objects with their PERSISTED
-    #      ids so the seven portfolio-scoped child tables reattach to the right portfolio
-    #      (T-11-41) and the persisted strategy-subscription rows bind to portfolios that
-    #      still exist.
-    #
-    # Everything downstream then falls into place WITHOUT moving it: `_build_account_specs`
-    # (which mints the venue_accounts rows) is below, and `_layer_persisted_overrides` is
-    # below that inside the `system_store is not None` gate. Note for anyone re-reading the
-    # 11-08 plan text: it predicted the layering call would have to MOVE below rehydrate
-    # because it iterates `portfolio_handler._portfolios` and would otherwise apply nothing.
-    # That hazard is real but the move is NOT needed as the code now stands — plan 11-07
-    # restructured this function and the layering call already sits well below this point.
-    # It is pinned executably by
-    # tests/integration/test_distinct_account_invariant.py::
-    # test_a_persisted_portfolio_config_override_is_applied_on_the_rehydrated_portfolio,
-    # which reddens if rehydrate is ever moved back below the layering call.
-    #
-    # NOT inside _initialize_live_session, for the same reason the strategy rehydrate is
-    # not: two integration test files (three sites) monkeypatch that method to a no-op,
-    # including a RESTART test, so a rehydrate placed there is silently discarded exactly
-    # in the scenario it exists for — and a zero-portfolio boot still passes every
-    # assertion that only checks strategies.
-    #
-    # Imports stay LAZY in-body and neither module is barrel-exported (GATE-01).
+    # Both maps are declared here so facade construction, StreamRecoveryHandler and the
+    # halt-signal wiring see them on EVERY path — a boot with no SQL spine comes up RUNNING
+    # and empty.
+    venue_lifecycles: Dict[str, Any] = {}
+    venue_accounts: Dict[str, Any] = {}
+
     if system_db_backend is not None:
         from sqlalchemy import inspect as _sa_inspect
 
@@ -2051,16 +1315,14 @@ def build_live_system(
             rehydrate_portfolios,
         )
 
-        # The store the handler already OWNS (DECOMP-01a — the same shape as reading the
-        # strategy registry store back off strategies_handler). One instance, so the
-        # rehydrate read and the add_portfolio write-back can never diverge.
+        # The store the handler already OWNS. One instance, so the rehydrate read and the
+        # add_portfolio write-back can never diverge.
         definition_store = portfolio_handler.definition_store
 
-        # A not-yet-provisioned `portfolios` table is the D-21 first-start state (a fresh
-        # DB, or a deployment whose Alembic chain has not run), NOT a fault: degrade with
-        # a WARNING. This is deliberately narrow — it probes for the TABLE and nothing
-        # else, so a genuine store fault still propagates LOUD out of rehydrate rather
-        # than being converted into the silent zero-portfolio boot D-19 forbids.
+        # A not-yet-provisioned `portfolios` table is the first-start state, NOT a fault.
+        # Deliberately narrow — it probes for the TABLE and nothing else, so a genuine
+        # store fault still propagates LOUD rather than becoming a silent zero-portfolio
+        # boot.
         has_table = definition_store is not None and _sa_inspect(
             system_db_backend.engine).has_table("portfolios")
         if definition_store is not None and not has_table:
@@ -2069,173 +1331,39 @@ def build_live_system(
                 "rehydrate (first start, or the Alembic chain has not run). No "
                 "portfolio will be restored until the schema exists.")
 
+        # Runs FIRST, so a collision is refused before any account exists.
         if has_table:
-            assert_distinct_accounts(
-                persisted=definition_store.read_all(),
-                spec_portfolios=getattr(spec, 'portfolios', None) or (),
-                venue_name=exchange,
-            )
+            assert_distinct_accounts(persisted=definition_store.read_all())
+
+        # VENUE ASSEMBLY. ``bring_online`` builds the account's VenueSpec (carrying its
+        # OWN ``secret_ref`` and config overrides), assembles the bundle through the shared
+        # memo, registers the exchange under the row's (venue, account_id) pair VERBATIM,
+        # and arms the UID guard. ``read_enabled_for`` carries its own table probe, so a
+        # boot before ``venue_accounts`` exists brings up zero accounts rather than
+        # raising. The lifecycle map is keyed by the row's account id — the same key the
+        # exchange registry and the facade's per-account reads use.
+        for row in venue_manager.read_enabled_for(exchange):
+            record = venue_manager.bring_online(row)
+            venue_lifecycles[str(row["account_id"])] = record.lifecycle
+        # Finalize the feed's connection binding once the bring-up loop is done. A boot
+        # with zero streaming accounts leaves the feed UNBOUND and logs the cause here,
+        # since bring_online's per-row rebind never ran.
+        venue_manager.rebind_feed()
+
+        # Recreates the portfolio objects with their PERSISTED ids, so portfolio-scoped
+        # child tables and strategy-subscription rows reattach to portfolios that still
+        # exist. Assembly running first changes neither WHICH portfolios rehydrate nor
+        # their order — that contract is the store's.
+        if has_table:
             rehydrate_portfolios(
                 store=definition_store,
                 portfolio_handler=portfolio_handler,
             )
 
-    # ------------------------------------------------------------------
-    # Venue ASSEMBLY (Plan 02-05, D-04 / CONN-04 — relocated P5 D-06 assemble_venue call).
-    # 11.1-07: only the ASSEMBLY stays here. Plugin REGISTRATION (the registries, the
-    # ConnectorProvider and the credential collaborators) moved ABOVE compose_engine —
-    # see the hoisted block there for why.
-    # 11-09: ONE VenueLifecycle PER ACCOUNT, keyed by account id and PRIMARY FIRST. The
-    # three former locals (venue_lifecycle / okx_connector / okx_exchange) that were
-    # hand-unpacked out of the primary bundle inside the assembly loop are gone — every
-    # downstream consumer reads through the lifecycle now.
-    venue_lifecycles: Dict[str, Any] = {}
-    # The ONE data provider bound to the ONE feed (the primary account's), or None when
-    # the venue is unregistered. Declared here so the post-facade wiring below sees it
-    # on every path.
-    provider: Optional[Any] = None
 
-    # (2) The shared mode-injection EngineContext built above (06.1-02) is REUSED for
-    # venue assembly — the venue plugins read ctx.bus / ctx.config.stream (they never read
-    # ctx.environment / ctx.store / ctx.sql_engine), so the arm-dependent environment is
-    # transparent to venue assembly (D-23: live drains the PriorityEventBus ctx.bus wires).
-    # D-21: production paper re-points to the OKX live data feed (the offline replay
-    # feed left production for tests/). A TEST fixture injects a 'replay' plugin via
-    # data_plugins and passes data_provider='replay' explicitly; production never does.
-    # build_venue_spec owns the {okx,paper}->okx default-provider map (D-11 — one home).
-    # 11-07 (MPORT-01/MPORT-06): ONE VenueSpec PER ACCOUNT, each carrying its OWN
-    # credential pointer read off its own durable row. Before this plan the pointer
-    # was read once for a single spec-level account_id, which is why MPORT-06's
-    # resolver was shipped-but-dormant: with one account there was never a second
-    # pointer to resolve. `_build_account_specs` also mints an absent account row so
-    # the D-04 venue-UID guard has somewhere to record into.
-    #
-    # 11-04 (D-02): a missing store or a missing row yields secret_ref=None, which is
-    # the legacy single-account path — NOT the T-11-18 fail-open case (a well-formed
-    # pointer that resolves to nothing RAISES inside the resolver).
-    #
-    # 11-09: the account set is the UNION of the spec's portfolios and the ones
-    # rehydrated ABOVE, so a portfolio restored from a durable definition row gets an
-    # account assembled for it. Spec-only derivation is why 11-08 had to flag the
-    # rehydrated portfolio as unserved.
-    account_specs = _build_account_specs(
-        spec, venue_account_store, exchange,
-        portfolio_handler._portfolios.values())
-
-    # (3) Delegate venue assembly (registry membership replaces the venue-string branch).
-    # 11-09: ONE call builds ONE lifecycle per account, keyed by account id and PRIMARY
-    # FIRST (insertion order). The assembly LOGIC stays authored once in
-    # ``venues/assemble.py`` and unit-testable with no LiveTradingSystem.
-    if exchange in exec_registry:
-        # (3a) THE ONE DATA PROVIDER (11.1-08, D-14). ONE feed means ONE provider, and it
-        # is built HERE, explicitly, for the PRIMARY account — the FIRST element of
-        # `account_specs`, the ordering contract `assemble_venues` documents. A
-        # non-primary account's provider is therefore never CONSTRUCTED at all.
-        #
-        # That is `11-REVIEW.md` WR-07's real fix. `assemble_venue` used to build a data
-        # provider per account and this root discarded all but the first. Each
-        # construction resolves that account's OWN credentials through the
-        # `CredentialResolver`, so a discarded provider is a live credential-bearing
-        # object with no owner, no lifecycle and no halt path. The review's alternative —
-        # wire `set_halt_signal` / `set_stream_state_listener` onto EVERY provider — is
-        # REJECTED: it contradicts the single-feed decision preserved in the
-        # facade-dependent wiring block below, and 11-09 collapsed the primary/secondary
-        # split for the exchange/connector arms precisely so a second account cannot keep
-        # trading after a connector-fatal halt. There is one feed; wiring N providers into
-        # it is meaningless, and doing so makes the defect look intentional.
-        #
-        # The provider is built BEFORE assembly so it can be INJECTED at the primary
-        # lifecycle's construction rather than assigned onto it afterwards — a lifecycle
-        # is never observable half-wired. `DataProviderRegistry.get` fails loud (KeyError)
-        # on an unregistered data_provider, the guard `assemble_venue` used to carry.
-        # D-09/VENUE-07 empty edge: a boot with ZERO account specs builds ZERO providers
-        # and does not raise — a live boot with no accounts is the normal fresh-deployment
-        # state. (The former read of the first lifecycle's own provider raised
-        # StopIteration there.)
-        if account_specs:
-            primary_spec = account_specs[0]
-            provider = data_registry.get(
-                primary_spec.data_provider).build_provider(
-                    ctx, primary_spec, connectors)
-
-        # 11-04 (D-04): account_store + alert_sink are what make the trust-on-first-use
-        # UID guard RUN. They are optional kwargs, which means omitting them here would
-        # ship the only high-severity spoofing mitigation in this phase as dead code
-        # behind a fully green suite. tests/unit/venues/test_venue_uid_guard.py asserts
-        # they are passed.
-        #
-        # 11.1-08 (D-08): assembly takes the SHARED `venue_bundles` memo instead of the
-        # exec registry, so `lifecycle.bundle` and the registration write below are
-        # provably the same object per (venue, account_id). Before this, assembly called
-        # the registry directly and a live paper boot built a SECOND, unread
-        # SimulatedExchange — inert only because every reader of it was connector-gated.
-        # The same gap would build a second OkxExchange per account the moment anything
-        # asked the memo for ('okx', account_id), and `OkxExchange.connect()` is the sole
-        # spawn site for `_stream_fills`/`_stream_orders`.
-        venue_lifecycles = assemble_venues(
-            account_specs, connectors, venue_bundles,
-            primary_provider=provider,
-            account_store=venue_account_store, alert_sink=alert_sink)
-
-        for account_spec in account_specs:
-            account_id = account_spec.account_id or DEFAULT_ACCOUNT_ID
-            # D-08: read the bundle from the SHARED memo. This is a memo HIT — assembly
-            # above populated the same key through the same object — so it is one build
-            # per (venue, account_id) tree-wide, not a second one here.
-            bundle = venue_bundles.get(exchange, account_id, account_spec)
-            # bundle.connector is the STREAMING-venue discriminator (okx present,
-            # paper None). A paper (connector=None) bundle has no streaming okx
-            # exchange; its data provider is still wired to the feed below (the
-            # injected TEST 'replay' provider in tests, or the OKX data provider in
-            # production paper — D-21).
-            if bundle.connector is None:
-                continue
-            # D-27/MPORT-07: register under the (venue, account_id) PAIR, using
-            # the account this bundle was actually built for. Registering under
-            # DEFAULT_ACCOUNT_ID here would blackhole every live order for a
-            # NAMED account: on_order resolves the portfolio's real account, so
-            # the lookup would miss and fail closed — silently, with no test
-            # covering it. The `or DEFAULT_ACCOUNT_ID` fallback is the same
-            # `spec.account_id or "default"` idiom the shipped venue plugins
-            # already use to memoize connectors, so venue and exchange agree on
-            # one key. (This is a REGISTRATION-side default for an unnamed
-            # account, NOT a resolution-side fallback — on_order must never
-            # coerce a None account into the default.)
-            execution_handler.exchanges[(exchange, account_id)] = bundle.exchange
-
-        # (4) UNIFORM provider->feed wiring (D-10) that needs NO facade method.
-        # ONE feed, so ONE provider: the PRIMARY account's, built at (3a) above. A
-        # second account's data provider would push the same venue's bars into the
-        # same feed a second time — which is why there is no second one to wire.
-        if provider is not None:
-            feed.set_provider(provider)
-            provider.set_bar_sink(feed.update)
-            provider.set_global_queue(global_queue)
-
-        # (5) 11-09 (MPORT-05) — THE ATTACH. Each portfolio receives the Account minted
-        # from ITS OWN account's bundle, resolved by ``portfolio.account_id``. This is
-        # the step that makes the reconcile per-portfolio: without it every portfolio
-        # keeps the SimulatedCashAccount leaf built in Portfolio._initialize_components,
-        # ``is_venue_truth`` is False for all of them, and the whole venue reconcile
-        # (snapshot / streaming / VenueReconciler / the D-04 baseline HALT gate) silently
-        # no-ops behind a green suite. Fails LOUD on a named account with no lifecycle.
-        #
-        # CR-01: the attach is VENUE-SCOPED. `rehydrate_portfolios` restores every
-        # persisted portfolio regardless of venue, and `venue_lifecycles` is keyed by
-        # bare account id (one `assemble_venues` call is single-venue by construction),
-        # so without the booted venue a portfolio on another venue was handed THIS
-        # venue's VenueAccount — the identity the reconcile snapshot, the D-04 baseline
-        # HALT gate and VenueReconciler all act on.
-        venue_accounts = _attach_venue_accounts(
-            portfolio_handler, venue_lifecycles, venue_name=exchange)
-    else:
-        venue_accounts = {}
-
-    # Construct the facade via DIRECT PURE INJECTION (RUN-03/D-09/D-10): the compose Engine
-    # is the single source of truth for the handler graph; the per-account VenueLifecycle
-    # MAP is the venue/connector holder (D-07/11-09); the SQL spine + halt store stay
-    # SEPARATE infra handles (D-09). No LiveSystemComponents bag — the facade sources
-    # everything off these directly.
+    # DIRECT PURE INJECTION, no collaborator bag: the compose Engine is the single source
+    # of truth for the handler graph, the VenueLifecycle map is the venue/connector holder,
+    # and the SQL spine + halt store stay separate infra handles.
     facade = LiveTradingSystem(
         engine=engine,
         lifecycles=venue_lifecycles,
@@ -2245,15 +1373,11 @@ def build_live_system(
         status_callback=status_callback,
     )
 
-    # ------------------------------------------------------------------
-    # RUNTIME-CONFIG PLATFORM (Wave 3 — D-22/D-23/D-25). Construct VenueStore + the
-    # engine-thread ConfigRouter over the OWNING module stores per D-21 (system->SystemStore,
-    # order->the ORDER store via order_handler.storage, venue->VenueStore, portfolio->each
-    # Portfolio's OWN bound state_storage — NOT SystemStore), attach it to the facade so
-    # _initialize_live_session threads it into SessionInitializer -> LiveRouteRegistrar (the
-    # CONFIG_UPDATE CONTROL route). All storage/venue imports stay LAZY inside the gate
-    # (inertness-forbidden at module top). Degrades cleanly to no router / no layering when
-    # there is no SQL spine (in-memory fallback) — the CONFIG_UPDATE route stays the empty slot.
+    # RUNTIME-CONFIG PLATFORM: the engine-thread ConfigRouter over the OWNING module
+    # stores — system -> SystemStore, order -> the ORDER store, venue -> VenueStore,
+    # portfolio -> each Portfolio's OWN bound state_storage, never SystemStore. Attached to
+    # the facade so _initialize_live_session threads it into the CONFIG_UPDATE route.
+    # Degrades to no router / no layering without a SQL spine.
     order_handler = engine.order_handler
     if system_store is not None:
         from itrader.core.clock import WallClock
@@ -2263,12 +1387,11 @@ def build_live_system(
         venue_store: Optional[Any] = VenueStore(system_db_backend)
 
         def _venue_kind(venue_name: str) -> bool:
-            """(venue_name) -> True when the venue's execution arm is a SimulatedExchange (D-14).
+            """True when the venue's execution arm is a SimulatedExchange.
 
-            D-27: the registry is pair-keyed, so this matches every registered
-            account on the named venue. The parameter stays a bare VENUE string
-            because the question ("is this venue simulated?") is a property of
-            the venue, not of one account on it.
+            The registry is pair-keyed, so this matches every registered account on the
+            named venue. The parameter stays a bare VENUE string because "is this venue
+            simulated?" is a property of the venue, not of one account on it.
             """
             from itrader.execution_handler.exchanges.simulated import SimulatedExchange
             return any(
@@ -2288,9 +1411,7 @@ def build_live_system(
             clock=WallClock(),
         )
 
-        # RESTART LAYERING (D-10/D-22): apply persisted overrides on boot from each OWNING
-        # store. Base params already resolved at construction (frozen); persisted overrides
-        # touch only the mutable sub-models.
+        # Base params are already resolved at construction (frozen).
         _layer_persisted_overrides(
             _system_config,
             system_store=system_store,
@@ -2300,61 +1421,30 @@ def build_live_system(
             execution_handler=execution_handler,
         )
 
-        # STRATEGY REHYDRATE (D-01/STRAT-01): the stored roster becomes live instances.
-        # THIS EXACT POSITION satisfies four independent constraints at once:
-        #  (1) portfolios already EXIST, with RESTART-STABLE ids — so subscribe_portfolio
-        #      below binds each stored subscription to a portfolio that is really there and
-        #      will still carry the same id after the next restart. 11-08 REWROTE this
-        #      clause because it was TRUE ONLY VACUOUSLY when it was written: the live
-        #      system had ZERO portfolio-creation call sites, so "portfolios already exist"
-        #      held because there were none, and _layer_persisted_overrides — which this
-        #      clause used to point at — only ITERATES portfolio_handler._portfolios and
-        #      never created any. What now supplies the guarantee is named explicitly:
-        #      rehydrate_portfolios (11-08), which runs ABOVE the venue-wiring block and
-        #      recreates each portfolio with its PERSISTED id, and plan 11-05, which made
-        #      those ids survive a restart instead of being regenerated per construction.
-        #      Do NOT relax this back to a positional claim: the ordering is only
-        #      meaningful now that portfolios are real.
-        #  (2) session init BELOW reads the strategy list: wire_universe derives membership
-        #      from it via StrategyDerivedSelectionModel, and register_strategy_warmup sizes
-        #      the feed ring from it. A strategy registered after either would never enter
-        #      the universe and never size the ring — so rehydrate MUST precede them.
-        #  (3) NOT inside _initialize_live_session: two integration test FILES (three call
-        #      sites) — including a RESTART test — monkeypatch that method to a no-op, so
-        #      a rehydrate placed there would be silently lost exactly where it matters
-        #      most. This clause now does DOUBLE DUTY: it is the same reasoning that keeps
-        #      the 11-08 portfolio rehydrate in the builder, where a swallowed call would
-        #      boot zero portfolios and still pass every strategy-only assertion.
-        #  (4) the rehydrate collaborator import stays LAZY inside this gate and is never
-        #      barrel-exported, keeping the backtest import path SQL-free (GATE-01). The
-        #      STORE's own SQL imports moved with it into StrategyRegistryStorageFactory,
-        #      where they stay equally lazy inside that factory's 'live' arm.
-        # Deliberately NOT wrapped in try/except _degrade_clean: D-19's semantics are finer
-        # grained than that pattern. Per-instance failures are ALREADY handled inside
-        # rehydrate_strategies (skip + CRITICAL alert + the row left untouched), while an
-        # infrastructure failure must fail LOUD — the opposite of degrade-clean. A blanket
-        # wrap would convert the loud arm into a silent boot with zero strategies, which is
-        # precisely the outcome D-19 rates as worse than not booting.
+        # STRATEGY REHYDRATE: the stored roster becomes live instances. THIS EXACT
+        # POSITION is pinned by three constraints. Portfolios must already EXIST with
+        # restart-stable ids, so each stored subscription binds to a portfolio that is
+        # really there and still carries that id after the next restart. Session init
+        # BELOW reads the strategy list — wire_universe derives membership from it,
+        # register_strategy_warmup sizes the feed ring from it — so a strategy registered
+        # after either would never enter the universe and never size the ring. And it must
+        # NOT live inside _initialize_live_session, which integration tests (including a
+        # RESTART test) monkeypatch to a no-op, silently losing the rehydrate exactly where
+        # it matters most.
+        #
+        # Deliberately NOT wrapped in try/except _degrade_clean: per-instance failures are
+        # ALREADY handled inside rehydrate_strategies (skip + CRITICAL alert + the row left
+        # untouched), while an infrastructure failure must fail LOUD. A blanket wrap would
+        # convert the loud arm into a silent boot with zero strategies.
         from itrader.strategy_handler.registry.rehydrate import rehydrate_strategies
 
-        # DECOMP-01a: the store is READ BACK off the handler that now OWNS it, derived in
-        # StrategiesHandler.__init__ from (environment, sql_engine) via
-        # StrategyRegistryStorageFactory — no post-construction dep assignment happens
-        # here any more. The D-09 ordering constraint that used to justify assigning
-        # registry_store BEFORE rehydrate (so a rehydrated strategy's FIRST runtime verb
-        # already has a store to persist to — otherwise an enable/disable landing between
-        # boot and the next wiring step would apply live and vanish at restart) is now
-        # satisfied STRUCTURALLY: the store exists from construction, which is strictly
-        # earlier than any point this function could have assigned it.
-        #
-        # A None store here is the D-21 first-start state (unprovisioned strategy_registry
-        # table) or an unwired SQL spine; the factory owns that probe and its WARNING. It
-        # is NOT a D-19 infrastructure failure, so skipping rehydrate cannot produce the
-        # zero-strategies-while-rows-exist outcome D-19 forbids — a genuine store fault
-        # still PROPAGATES loud out of rehydrate_strategies.
-        #
-        # rehydrate_strategies itself stays HERE: it needs a fully-built handler and is a
-        # genuine runtime operation, not dependency injection.
+        # The store is READ BACK off the handler that OWNS it, so a rehydrated strategy's
+        # first runtime verb always has a store to persist to; without that, an
+        # enable/disable landing between boot and the next wiring step would apply live and
+        # vanish at restart. A None store is the first-start state (unprovisioned
+        # strategy_registry table) or an unwired SQL spine — not an infrastructure failure,
+        # so skipping cannot produce the zero-strategies-while-rows-exist outcome, and a
+        # genuine store fault still PROPAGATES loud out of rehydrate_strategies.
         strategy_registry_store = engine.strategies_handler.registry_store
         if strategy_registry_store is not None:
             facade._quarantined_strategies = rehydrate_strategies(
@@ -2364,12 +1454,8 @@ def build_live_system(
                 alert_sink=alert_sink,
             )
 
-    # ------------------------------------------------------------------
-    # SAFE-01..06 (§11): construct + ATTACH the four safety collaborators (P7). All
-    # imports are LAZY in-body so importing this module (on the backtest import graph)
-    # pulls no live safety stack — never barrel-exported (inertness Pitfall 5). Each is
-    # a plain injected collaborator with NO facade back-reference beyond the callbacks it
-    # is handed; the facade is a thin delegator over them.
+    # The safety collaborators. Each is a plain injected collaborator with NO facade
+    # back-reference beyond the callbacks it is handed.
     from itrader.core.clock import WallClock
     from itrader.trading_system.safety.pre_trade_throttle import PreTradeThrottle
     from itrader.trading_system.safety.safety_controller import SafetyController
@@ -2377,55 +1463,46 @@ def build_live_system(
         StreamRecoveryHandler,
     )
 
-    # SAFE-01/02: the pure state machine. dispatch_fn is LATE-BOUND (lambda over
-    # event_handler._dispatch) so the gate always dispatches through the CURRENT inner
-    # dispatch — preserving the donor _dispatch_live's live read (a test/monkeypatch of
-    # event_handler._dispatch is honoured, and gate_and_dispatch replay reaches it too).
-    # notify_status_change is the facade's enrichment callback (external status_callback +
-    # exchange/queue-size); halt_record_store is the durable spine (None on in-memory).
+    # dispatch_fn is LATE-BOUND so the gate always dispatches through the CURRENT inner
+    # dispatch: a test monkeypatch of event_handler._dispatch is honoured, and
+    # gate_and_dispatch replay reaches it too.
     safety = SafetyController(
         bus=global_queue,
         halt_record_store=halt_record_store,
         dispatch_fn=lambda ev: event_handler._dispatch(ev),
         notify_status_change=facade._notify_status_change,
-        # D-19 (RTCFG-06): the durable read-model KV sink for state.status/state.halt_reason
-        # at their event source. None on the in-memory fallback (degrade cleanly).
+        # Durable read-model KV sink for state.status / state.halt_reason.
         system_store=system_store,
     )
-    # SAFE-04: engine-thread reconnect-resume I/O (catch-up + snapshot + all-streams gate
-    # -> resume). 11-09: injected with the per-account LIFECYCLE MAP instead of the three
-    # scalar venue arms — so the catch-up and the health gate cover EVERY account rather
-    # than only the primary's. ``venue_accounts`` is a callable over the accounts the
-    # portfolios actually hold, so the reconnect snapshot refreshes the same objects the
-    # engine reads (a build-time capture would go stale the moment an account is
-    # re-attached). Both are empty on a non-OKX wiring — every call is guard-claused.
+    # Engine-thread reconnect-resume I/O: catch-up + snapshot + all-streams gate -> resume.
+    # Injected with the per-account LIFECYCLE MAP so catch-up and the health gate cover
+    # EVERY account. ``venue_accounts`` is a CALLABLE over the accounts the portfolios
+    # actually hold — a build-time capture goes stale the moment an account is
+    # re-attached.
     stream_recovery = StreamRecoveryHandler(
         safety=safety,
         lifecycles=venue_lifecycles,
         venue_accounts=lambda: list(venue_accounts.values()),
+        # Read LIVE through the binder so the all-streams health gate covers the candle arm
+        # and tracks a runtime re-borrow.
+        feed_provider=(
+            lambda: feed_binder.feed_provider if feed_binder is not None else None),
     )
-    # SAFE-06: pre-trade risk backstop (rate + notional caps). Off the WALL clock (the
-    # live determinism seam) + the static config.safety.throttle caps.
+    # Pre-trade risk backstop (rate + notional caps), off the WALL clock.
     throttle = PreTradeThrottle(
         settings=_system_config.safety.throttle,
         clock=WallClock(),
         bus=global_queue,
     )
-    # SAFE-05: the ReconciliationCoordinator is constructed at start() (in
-    # _build_reconciliation_coordinator) rather than here — it must read the CURRENT
-    # handler graph at reconcile time (collaborators are swappable before start() for
-    # offline runs), not a build-time capture. 11-09: it takes no venue scalars at all
-    # now — each portfolio supplies its own account and that account's connector.
     facade._safety = safety
     facade._stream_recovery = stream_recovery
     facade._throttle = throttle
+    facade._feed_binder = feed_binder
 
-    # RTCFG-06 read-model sinks (D-18/D-19). Attach the durable KV (state.last_started_at
-    # at start(); SafetyController/ErrorHandler own the other state.* keys) and construct
-    # the append-only system_stats series over the SAME SqlEngine — the thin stats writer
-    # (_snapshot_system_stats) appends on each status transition. Both gated on the SQL
-    # spine (import stays LAZY inside the gate — system_stats_store is inertness-_FORBIDDEN)
-    # and degrade to None on the in-memory fallback (backtest never reaches here).
+    # Read-model sinks: the durable KV (state.last_started_at at start();
+    # SafetyController/ErrorHandler own the other state.* keys) plus the append-only
+    # system_stats series over the SAME SqlEngine, which _snapshot_system_stats appends to
+    # on each status transition. Both degrade to None on the in-memory fallback.
     facade._system_store = system_store
     if system_db_backend is not None:
         from itrader.storage.system_stats_store import SystemStatsStore
@@ -2433,30 +1510,23 @@ def build_live_system(
     else:
         facade._system_stats_store = None
 
-    # Facade-dependent wiring (references the constructed facade's own callbacks). The
-    # provider/exchange/connector halt-signal + stream-state listeners for a registered
-    # venue now emit CONTROL events (§11c): _request_connector_halt -> ConnectorFatalEvent,
-    # _on_venue_stream_down/up -> StreamStateEvent(down/up). No flag flips.
+    # Facade-dependent wiring: the halt-signal + stream-state listeners emit CONTROL
+    # events (_request_connector_halt -> ConnectorFatalEvent, _on_venue_stream_down/up ->
+    # StreamStateEvent), never flag flips.
     #
-    # 11-09: the former primary/secondary SPLIT (an ``if okx_exchange is not None``
-    # block for account 0, then a ``for secondary in secondary_bundles`` loop for the
-    # rest, doing the same three calls twice) is collapsed into ONE loop over every
-    # streaming lifecycle. Two copies of one wiring rule is how a second account ends up
-    # accepting orders after a connector-fatal halt latched the first — a
-    # partially-halted engine is worse than a single-account one, because the surviving
-    # arm looks healthy. The DATA provider stays deliberately single (one feed, the
-    # primary's provider), so it is wired outside the loop.
+    # ONE loop over every streaming lifecycle, deliberately not a primary/secondary split.
+    # Two copies of one wiring rule is how a second account ends up accepting orders after
+    # a connector-fatal halt latched the first — a partially-halted engine is worse than a
+    # single-account one, because the surviving arm looks healthy.
     #
-    # 11.1-08 (D-14): it is now BUILT outside the loop as well as wired outside it — see
-    # (3a) in the venue-assembly block above. That is what makes this comment's claim
-    # structural rather than aspirational: previously N providers existed and N-1 reached
-    # neither this halt-signal wiring nor the feed (WR-07). The review's proposal to loop
-    # this block over every provider was REJECTED for the reason stated above — there is
-    # ONE feed. The ``is not None`` guard stays: the unregistered-venue arm and a
-    # zero-account boot (D-09) both legitimately yield no provider.
-    if provider is not None:
-        provider.set_halt_signal(facade._request_connector_halt)
-        provider.set_stream_state_listener(
+    # The DATA provider stays deliberately single (one feed), so it is wired outside the
+    # loop, read through the FeedConnectionBinder. The ``is not None`` guard stays: the
+    # unregistered-venue arm, a zero-account boot and the in-memory arm all legitimately
+    # yield no provider.
+    feed_provider = feed_binder.feed_provider if feed_binder is not None else None
+    if feed_provider is not None:
+        feed_provider.set_halt_signal(facade._request_connector_halt)
+        feed_provider.set_stream_state_listener(
             facade._on_venue_stream_down, facade._on_venue_stream_up)
     for lifecycle in venue_lifecycles.values():
         bundle = lifecycle.bundle
@@ -2467,31 +1537,20 @@ def build_live_system(
             facade._on_venue_stream_down, facade._on_venue_stream_up)
         bundle.connector.set_halt_signal(facade._request_connector_halt)
 
-    # 08-03 (D-03/D-04): the CRITICAL/halt alert sink now rides into the ErrorHandler via
-    # compose_engine (built above as ``alert_sink``, injected at construction) — the old
-    # post-build alert-sink assignment on the event handler is GONE (the dispatcher holds
-    # no egress state, D-03).
-    # 05-04 (D-01/D-02): engine-thread drift-halt signal -> freeze-in-place halt (the
-    # facade delegator forwards to SafetyController.halt).
+    # Engine-thread drift-halt signal -> freeze-in-place halt.
     portfolio_handler.set_halt_signal(facade.halt)
 
-    # 08-03 (D-12): late-bind the tripwire's runtime collaborators now that the
-    # SafetyController + the facade exist. compose_engine already injected the ErrorPolicy
-    # object (built above, before safety) as the dispatcher's failure policy AND the
-    # ErrorHandler's failure_sink; bind() resolves the construction cycle by wiring the
-    # deferred collaborators — ``halt=safety.halt`` (D-12 same-thread direct freeze) and
-    # ``error_counter=facade._increment_error_count`` (preserves the facade's errors_count
-    # bookkeeping). Both are only needed when a failure actually occurs at runtime.
+    # Late-bind the tripwire's runtime collaborators now that SafetyController and the
+    # facade exist. compose_engine already injected the ErrorPolicy object as the
+    # dispatcher's failure policy AND the ErrorHandler's failure_sink; bind() resolves the
+    # construction cycle with the two deferred collaborators, both needed only when a
+    # failure actually occurs.
     error_policy.bind(halt=safety.halt, error_counter=facade._increment_error_count)
 
-    # RUN-02 (D-05/D-06/D-07/D-08): the live runtime engine. LiveRunner OWNS the drain
-    # loop; it COMPOSES the WorkerSupervisor (poll timer, D-05). SAFE-03/D-06 (P7): the
-    # dispatch gate is repointed to SafetyController.gate_and_dispatch (the freeze-in-place
-    # gate), and the pre-submit throttle (PreTradeThrottle.allow) fires at the
-    # ORDER->execution boundary ahead of it. The former resume/halt per-tick drain hooks
-    # are GONE (CONTROL events replace the flag side-channel). 08-03/D-06: the handler-
-    # failure policy is injected at EventHandler construction (compose) now — LiveRunner no
-    # longer carries it, and the old start() monkeypatch is gone.
+    # The live runtime engine. LiveRunner OWNS the drain loop and COMPOSES the
+    # WorkerSupervisor; the dispatch gate is SafetyController.gate_and_dispatch (the
+    # freeze-in-place gate), with the pre-submit throttle firing at the ORDER->execution
+    # boundary ahead of it.
     from itrader.trading_system.live_runner import LiveRunner
     from itrader.trading_system.worker_supervisor import WorkerSupervisor
 

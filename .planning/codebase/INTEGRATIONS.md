@@ -16,8 +16,8 @@
 - Reconnect supervision: `itrader/connectors/stream_supervisor.py` — exponential backoff/reconnect budget.
 
 **Crypto exchange — Binance (data streaming):**
-- Live kline streaming: `itrader/price_handler/providers/binance_stream.py` (`websocket-client`)
-- Auth env: `BINANCE_MAIN_API_KEY`/`_SECRET`, `BINANCE_SPOT_TESTNET_API_KEY`/`_SECRET`, `BINANCE_FUTURE_TESTNET_API_KEY`/`_SECRET` (per-file usage — verify current names in the provider before wiring new consumers; these are not passed through the `pydantic-settings` layer like OKX/DB creds)
+- Live kline streaming: `itrader/price_handler/providers/binance_stream.py::BINANCELiveStreamer` (`websocket-client`)
+- Auth env: **none** — the streamer reads no credentials at all (public unauthenticated kline socket); no `BINANCE_*` name appears anywhere in `itrader/`. It is a quarantined D-live module, imported on no run path (see its module header), so any future authenticated consumer must introduce its own settings layer.
 
 **Generic crypto exchange access — CCXT:**
 - Unified provider: `itrader/price_handler/providers/ccxt_provider.py` (historical OHLCV download) — deferred subsystem (mypy `ignore_errors`/`ignore_missing_imports`)
@@ -27,7 +27,7 @@
 - Auth: `oanda.cfg` file (external to `.env`)
 
 **Offline replay (test/CI seam):**
-- `itrader/price_handler/providers/replay_provider.py` — replays the golden CSV as confirm-gated `ClosedBar` dicts through the SAME live feed seam an OKX provider drives (`set_bar_sink` → `LiveBarFeed.update`). Used for deterministic, single-thread, CI-safe live-path exercise (paper-replay parity gate).
+- `tests/support/replay_harness.py::TestLiveDataProvider` — replays the golden `CsvPriceStore` frame as confirm-gated `ClosedBar` dicts through the SAME live feed seam an OKX provider drives (`set_bar_sink` → `LiveBarFeed`). Used for deterministic, single-thread, CI-safe live-path exercise (paper-replay parity gate, `tests/integration/test_paper_parity.py`). It lives in the TEST tree, not in `itrader/` — the former `itrader/price_handler/providers/replay_provider.py::ReplayDataProvider` was relocated here (TEST-01/D-18) and that path no longer exists.
 
 ## Data Storage
 
@@ -35,13 +35,13 @@
 - Shared SQL spine: `itrader/storage/engine.py::SqlEngine` — a single Engine + fresh MetaData and NOTHING else (no query methods); every storage concern *composes* one `SqlEngine` by reference rather than inheriting a shared base. This is the successor to the file previously named `itrader/storage/backend.py::SqlBackend` — the module has been renamed/restructured to `engine.py::SqlEngine` as of this refresh; do not reference the old `backend.py` path.
 - Backend selection: `SqlSettings` (`itrader/config/sql.py`), `env_prefix="ITRADER_DATABASE_"` — component vars `ITRADER_DATABASE_HOST`/`_PORT`/`_USER`/`_NAME`/`_PASSWORD` (default port `5544`, deliberately not 5432); URL assembled via `sqlalchemy.URL.create`. Optional verbatim override `ITRADER_DATABASE_URL`. Backend switch is config-not-code: `SqlDriver` enum (`SQLITE_PYSQLITE` default, `POSTGRESQL_PSYCOPG2`, `SQLITE_LIBSQL` reserved Turso slot).
 - Fail-loud: `SqlSettings._require_pg_credentials` validator raises `pydantic.ValidationError` if Postgres is selected with no password/URL.
-- Storage concerns riding the spine: `itrader/storage/halt_record_store.py`, `itrader/storage/strategy_registry_store.py`, `itrader/storage/system_stats_store.py`, `itrader/storage/system_store.py`, `itrader/storage/venue_store.py`. Order-mirror persistence has its own concern (see below).
-- Order storage: `itrader/order_handler/storage/storage_factory.py::OrderStorageFactory` selects by environment string — `backtest`/`test` → `itrader/order_handler/storage/in_memory_storage.py::InMemoryOrderStorage`; `live` → `itrader/order_handler/storage/cached_sql_storage.py::CachedSqlOrderStorage` wrapping `itrader/order_handler/storage/sql_storage.py::SqlOrderStorage`. **Confirmed:** `order_handler/storage/postgresql_storage.py` no longer exists in the codebase — the `NotImplementedError` placeholder referenced by the 2026-07-07 doc and top-level CLAUDE.md is gone, replaced by the SQL/cached-SQL pair (D-05/D-06).
+- Storage concerns riding the spine: `itrader/storage/halt_record_store.py`, `itrader/storage/portfolio_definition_store.py`, `itrader/storage/strategy_registry_store.py`, `itrader/storage/system_stats_store.py`, `itrader/storage/system_store.py`, `itrader/storage/venue_account_store.py`, `itrader/storage/venue_store.py`. Order-mirror persistence has its own concern (see below); `itrader/portfolio_handler/storage/` is a further separate concern.
+- Order storage: `itrader/order_handler/storage/storage_factory.py::OrderStorageFactory` selects by environment string — `backtest`/`test` → `itrader/order_handler/storage/in_memory_storage.py::InMemoryOrderStorage`; `live` → `itrader/order_handler/storage/cached_sql_storage.py::CachedSqlOrderStorage` wrapping `itrader/order_handler/storage/sql_storage.py::SqlOrderStorage`. **Confirmed:** `order_handler/storage/postgresql_storage.py` no longer exists and there is deliberately no `'postgresql'` environment arm — the `live` arm builds `CachedSqlOrderStorage(SqlOrderStorage(...))`, lazy-imported inside the branch so the backtest import path stays SQL-free. (`itrader/order_handler/storage/__init__.py:14` still carries a commented-out `postgresql_storage` import — a dead reference, cosmetic only.)
 - Price database: PostgreSQL (`itrader/price_handler/store/sql_store.py`, read-only on the run path)
 
 **Schema migrations:**
 - Alembic chain at repo-root `migrations/` (`migrations/env.py`, `alembic.ini::script_location = migrations`) — this is a RELOCATION from the previously-documented `itrader/storage/migrations/`; that path no longer holds the chain.
-- Versions present: `2cbf0bf6b0b6_operational_baseline.py`, `47f2b41f3ffe_portfolio_account_state.py`, `d10_halt_records.py`, `hl5_transaction_venue_trade_id.py`, `p05_venue_order_id.py`, `module_config.py`, `p10_strategy_portfolio_subs.py`, `strategy_registry.py`, `system_stats.py`, `system_store.py`, `venue_config.py` — the last six are new since 2026-07-07, reflecting the v1.8 Phase 9 (runtime config) and Phase 10/10.1 (strategies registry + strategy-handler refactor) schema additions.
+- Versions present (14): `2cbf0bf6b0b6_operational_baseline.py`, `47f2b41f3ffe_portfolio_account_state.py`, `d10_halt_records.py`, `hl5_transaction_venue_trade_id.py`, `p05_venue_order_id.py`, `module_config.py`, `p10_strategy_portfolio_subs.py`, `strategy_registry.py`, `system_stats.py`, `system_store.py`, `venue_config.py`, `p11_b2_uuid_fk_config_move.py`, `p11_venue_accounts_portfolios.py`, `p112_portfolios_is_deleted.py` — everything from `module_config.py` onward is new since 2026-07-07, reflecting the v1.8 Phase 9 (runtime config), Phase 10/10.1 (strategies registry + strategy-handler refactor) and Phase 11/11.2 (venue accounts + portfolio bootstrap) schema additions.
 
 **File Storage:**
 - Committed golden OHLCV CSVs under `data/` (e.g. `data/BTCUSD_1d_ohlcv_2018_2026.csv`); run artifacts under `output/`
@@ -59,7 +59,7 @@
 
 **Error Tracking / Alerting:**
 - `itrader/trading_system/alert_sink.py` — `AlertSink` Protocol (swap-a-fake egress seam) with a `LogAlertSink` implementation (structured `logger.critical`, `alert=True`). External push (PagerDuty/Slack/webhook) remains architected-but-deferred. CRITICAL/halt `ErrorEvent`s route through this sink.
-- Error route consumer: `itrader/events_handler/full_event_handler.py::EventHandler._log_error_event` — structured log sink for the `ERROR` route, self-guarded against error→error livelock (source-tagged, never republishes its own failures as new `ErrorEvent`s).
+- Error route consumer: `itrader/events_handler/error_handler.py::ErrorHandler.on_error` — the `ERROR` route's severity-mapped structured log sink (plus CRITICAL alert-sink escalation and `state.last_error` persist), self-guarded against error→error livelock: the whole `on_error` body is wrapped in a swallow so a raising sink/logger/store can never escape back into `_dispatch`, and the paired source guard in `itrader/events_handler/error_policy.py::ErrorPolicy.on_handler_error` never republishes a failing `ErrorEvent` as a new one.
 
 **Logs:**
 - structlog (`itrader/logger.py`); console (color) or JSON renderer. Env knobs: `ITRADER_LOG_LEVEL`, `ITRADER_DISABLE_LOGS` (via `itrader/config/log.py::LogConfig`). Bind context via `get_itrader_logger().bind(component="...")`.
@@ -78,7 +78,7 @@
 - Logging: `ITRADER_LOG_LEVEL`, `ITRADER_DISABLE_LOGS`
 - Operational DB: `ITRADER_DATABASE_HOST`, `ITRADER_DATABASE_PORT` (default 5544), `ITRADER_DATABASE_USER`, `ITRADER_DATABASE_NAME`, `ITRADER_DATABASE_PASSWORD` (or verbatim `ITRADER_DATABASE_URL`)
 - OKX (live only): `OKX_API_KEY`, `OKX_API_SECRET`, `OKX_API_PASSPHRASE`, `OKX_SANDBOX` (default true), `OKX_REGION` (`global`/`eea`)
-- Binance (live only, per `itrader/price_handler/providers/binance_stream.py`): `BINANCE_MAIN_API_KEY`/`_SECRET`, `BINANCE_SPOT_TESTNET_API_KEY`/`_SECRET`, `BINANCE_FUTURE_TESTNET_API_KEY`/`_SECRET`
+- Binance: none — `itrader/price_handler/providers/binance_stream.py` reads no env vars (public kline socket, quarantined D-live module)
 - OANDA (live only): credentials via `oanda.cfg`, not `.env`
 
 **Secrets location:**
