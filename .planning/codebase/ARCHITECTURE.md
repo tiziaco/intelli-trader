@@ -7,7 +7,7 @@
 
 ```text
 ┌───────────────────────────────────────────────────────────────────────────┐
-│  TradingSystem / LiveTradingSystem  (composition root + run loop)         │
+│  BacktestTradingSystem / LiveTradingSystem  (composition root + run loop) │
 │  `itrader/trading_system/backtest_trading_system.py`,                     │
 │  `itrader/trading_system/live_trading_system.py`                          │
 └───────────────────────────────┬───────────────────────────────────────────┘
@@ -71,18 +71,18 @@ the backtest per-tick path stays inert (`tests/integration/test_okx_inertness.py
 | `EventHandler` | Drain queue; dispatch each event through `self.routes` (dict of lists, list order = execution order); delegate handler failures to injected `HandlerErrorPolicy` | `itrader/events_handler/full_event_handler.py` |
 | `ErrorHandler` | The formalized `ERROR`-route consumer: severity-mapped logging, CRITICAL alert-sink escalation, `last_error` persistence | `itrader/events_handler/error_handler.py` |
 | `HandlerErrorPolicy` (`FailFastPolicy` / `ErrorPolicy`) | Injected per-mode failure seam consumed by `EventHandler._dispatch`'s except-block — backtest re-raises, live publishes `ErrorEvent` and continues | `itrader/events_handler/error_policy.py` |
-| `EventBus` / `PriorityEventBus` | The `global_queue` implementation (backtest FIFO / live priority variant) | `itrader/events_handler/bus.py` |
+| `FifoEventBus` / `PriorityEventBus` | The two `global_queue` implementations (backtest FIFO / live priority variant); both structurally satisfy the `EventBus` `runtime_checkable` Protocol in the same module | `itrader/events_handler/bus.py` |
 | `compose_engine` | Shared, mode-agnostic component-graph wiring seam (queue, clock, store, feed, handlers, `EventHandler`) returned as an `Engine` holder | `itrader/trading_system/compose.py` |
 | `EngineContext` | Post-compose context object threading the built `Engine` + config through backtest/live wiring | `itrader/trading_system/engine_context.py` |
-| `TradingSystem` | Backtest composition root; owns the golden-run wiring on top of `compose_engine` | `itrader/trading_system/backtest_trading_system.py` |
+| `BacktestTradingSystem` (+ `build_backtest_system` factory) | Backtest composition root; owns the golden-run wiring on top of `compose_engine`. Renamed from `TradingSystem` in v1.8 Phase 4 — no backward-compat alias is exported | `itrader/trading_system/backtest_trading_system.py` |
 | `BacktestRunner` | Drives the synchronous fail-fast `for` loop over `TimeGenerator` | `itrader/trading_system/backtest_runner.py` |
 | `TimeGenerator` | Yield `TimeEvent`s across a pinned bar-date grid | `itrader/trading_system/simulation/time_generator.py` |
 | `LiveTradingSystem` | Live composition-root facade: `add_event` fail-closed ingress, lifecycle (`start`/`stop`/status latch), delegates run-loop ownership to `LiveRunner` | `itrader/trading_system/live_trading_system.py` |
 | `build_live_system` | Live-mode factory (module-level function in `live_trading_system.py`) selecting concrete live backends (SQL/in-memory storage, connectors, safety, config router) and injecting them into `compose_engine` | `itrader/trading_system/live_trading_system.py` |
-| `SessionInitializer` | Builds live-only collaborators (`StrategiesHandler`, `UniverseHandler`, etc.) consumed by `LiveRouteRegistrar` | `itrader/trading_system/session_initializer.py` |
+| `SessionInitializer` | Wires the live session over the `compose_engine` `Engine` holder and builds the live-only `UniverseHandler` consumed by `LiveRouteRegistrar` (`StrategiesHandler` itself comes from `compose_engine`, not from here) | `itrader/trading_system/session_initializer.py` |
 | `LiveRouteRegistrar` | THE single declarative live/BUSINESS route table; installs live-only routes into the one shared `EventHandler.routes` dict once, never mutated again | `itrader/trading_system/route_registrar.py` |
 | `LiveRunner` | Owns the live background drain loop (queue timeout / idle-warn), started/stopped by `LiveTradingSystem` | `itrader/trading_system/live_runner.py` |
-| `WorkerSupervisor` | Supervises live worker thread(s)/tasks lifecycle | `itrader/trading_system/worker_supervisor.py` |
+| `WorkerSupervisor` | Owns the live dynamic-universe poll-timer daemon worker (`start`/`stop`, shared `stop_event` latch) | `itrader/trading_system/worker_supervisor.py` |
 | `ConfigRouter` | Engine-thread runtime-config actuator: validate → persist → apply → push for scoped `ConfigUpdateEvent`s | `itrader/trading_system/config_router.py` |
 | `SafetyController` | Halt / pause-submission safety latch, CRITICAL alert escalation, durable halt-record persistence | `itrader/trading_system/safety/safety_controller.py` |
 | `StreamRecoveryHandler` | Reconnect-resume collaborator: missed-fill catch-up + REST snapshot + all-streams-healthy gate → resume | `itrader/trading_system/safety/stream_recovery_handler.py` |
@@ -123,14 +123,14 @@ their component graph from.
 **Composition / run-loop layer:**
 - Purpose: Wire all components around one `global_queue`; drive the run.
 - Location: `itrader/trading_system/`
-- Contains: `compose_engine` (shared seam), `TradingSystem`/`BacktestRunner` (backtest for-loop), `LiveTradingSystem`/`build_live_system`/`LiveRunner`/`SessionInitializer`/`LiveRouteRegistrar`/`WorkerSupervisor`/`ConfigRouter`/`safety/` (live), `TimeGenerator`.
+- Contains: `compose_engine` (shared seam), `BacktestTradingSystem`/`build_backtest_system`/`BacktestRunner` (backtest for-loop), `LiveTradingSystem`/`build_live_system`/`LiveRunner`/`SessionInitializer`/`LiveRouteRegistrar`/`WorkerSupervisor`/`ConfigRouter`/`safety/` (live), `TimeGenerator`.
 - Depends on: All handlers, `EventHandler`, `BacktestBarFeed`/`CsvPriceStore`, `reporting`.
 - Used by: `scripts/run_backtest.py`, notebooks, external/web callers (live).
 
 **Event dispatch layer:**
 - Purpose: Drain the queue and route each event to its registered handler callables.
 - Location: `itrader/events_handler/` (`full_event_handler.py`, `bus.py`, `error_handler.py`, `error_policy.py`, `events/`)
-- Contains: `EventHandler.process_events()`, `_dispatch()`, `ErrorHandler.on_error`, `EventBus`/`PriorityEventBus`, `FailFastPolicy`/`ErrorPolicy`.
+- Contains: `EventHandler.process_events()`, `_dispatch()`, `ErrorHandler.on_error`, the `EventBus` Protocol and its `FifoEventBus`/`PriorityEventBus` implementations, `FailFastPolicy`/`ErrorPolicy`.
 - Depends on: All handlers, `core/enums.EventType`.
 - Used by: Both run loops.
 
@@ -184,7 +184,7 @@ their component graph from.
 1. External caller invokes `LiveTradingSystem.add_event(event)` (`itrader/trading_system/live_trading_system.py`).
 2. `add_event` is fail-closed/default-deny: only `SIGNAL`, `STRATEGY_COMMAND`, and `CONFIG_UPDATE` are admissible; everything else is rejected.
 3. An admitted `SIGNAL` is put on `global_queue` and flows through the SAME `SIGNAL → OrderHandler.on_signal → AdmissionManager` path as the backtest flow, so validation/sizing/cash-reservation always run before any `OrderEvent` is emitted.
-4. `LiveRunner` owns the background drain loop (`process_events()` on a daemon thread) started/stopped by `LiveTradingSystem`.
+4. `LiveRunner` owns the background drain loop on a daemon thread, started/stopped by `LiveTradingSystem`. It does NOT call `EventHandler.process_events()` (that drain is backtest-only): `LiveRunner._run_loop` pulls one event at a time via `bus.get(timeout=...)` and pushes it through the injected dispatch gate — `SafetyController.gate_and_dispatch` → `EventHandler._dispatch`.
 5. On a handler exception, the injected `ErrorPolicy` (not `FailFastPolicy`) emits an `ErrorEvent` and the loop keeps draining (publish-and-continue).
 
 ### Live Control-Plane Path (BUS-03)
@@ -195,10 +195,10 @@ their component graph from.
 
 **State Management:**
 - Portfolio positions/cash: owned by each `Portfolio`; sub-managers in `cash/`, `position/`, `transaction/`, `metrics/`.
-- Order mirror: `OrderManager` over a pluggable `OrderStorage` (`in_memory` / `postgresql`, selected via `OrderStorageFactory`).
+- Order mirror: `OrderManager` over a pluggable `OrderStorage`, selected by `OrderStorageFactory` on an environment string — `'backtest'`/`'test'` → `InMemoryOrderStorage`, `'live'` → `CachedSqlOrderStorage` wrapping `SqlOrderStorage` (there is deliberately no `'postgresql'` arm).
 - Resting-order book: `MatchingEngine._resting`, one per `SimulatedExchange`.
 - Strategy control-plane state: `ManagedStrategies` roster + `StrategyLifecycleManager` (pending removals, etc.).
-- Live run status: `LiveTradingSystem._status_lock` + `threading.Event`, `HaltRecordStore` for durable halt state.
+- Live run status: `SafetyController._status_lock` (`threading.Lock`, guards the status/halt-reason flip) + `LiveTradingSystem._stop_event` (`threading.Event`), `HaltRecordStore` for durable halt state.
 
 ## Key Abstractions
 
@@ -242,8 +242,8 @@ their component graph from.
 
 ## Entry Points
 
-**TradingSystem.run() (backtest):**
-- Location: `itrader/trading_system/backtest_trading_system.py`; loop mechanics in `itrader/trading_system/backtest_runner.py::BacktestRunner`.
+**BacktestTradingSystem.run() (backtest):**
+- Location: `itrader/trading_system/backtest_trading_system.py` (class `BacktestTradingSystem`, plus the `build_backtest_system(spec)` factory); loop mechanics in `itrader/trading_system/backtest_runner.py::BacktestRunner`.
 - Triggers: `scripts/run_backtest.py` (`make backtest`), notebooks.
 - Responsibilities: Wire components via `compose_engine`, derive membership + ping grid, precompute resampled frames, drive the for-loop, print/record metrics.
 
@@ -264,7 +264,7 @@ their component graph from.
 ## Architectural Constraints
 
 - **Threading (backtest):** Single-threaded synchronous for-loop; no locking needed for correctness. `PortfolioHandler` has no collection lock — the **single-writer contract** makes one unnecessary: all portfolio state mutations happen on the engine thread, and `queue.Queue` is the thread boundary (other threads only put events), so composite reads are consistent because nothing mutates concurrently.
-- **Threading (live):** Event processing runs on one daemon thread owned by `LiveRunner`; individual portfolios use `threading.RLock`; `SimulatedExchange` uses `threading.RLock` for config updates; connector-loop callbacks only flip thread-safe flags — blocking venue I/O always runs on the engine thread, never the asyncio loop.
+- **Threading (live):** Event processing runs on one daemon thread owned by `LiveRunner`; connector-loop callbacks only flip thread-safe flags — blocking venue I/O always runs on the engine thread, never the asyncio loop. `Portfolio` carries NO lock (single-writer contract), and `SimulatedExchange.update_config` is lock-free too: it does an atomic GIL-safe reference swap of the validated `ExchangeConfig` and then re-derives every config-derived cache. The actual `threading.RLock` sites are the cache wrappers and the venue cache — `order_handler/storage/cached_sql_storage.py::CachedSqlOrderStorage`, `portfolio_handler/storage/cached_sql_storage.py::CachedSqlPortfolioStateStorage`, `portfolio_handler/account/venue.py::VenueAccount` — plus `threading.Lock` in `SafetyController` (`_status_lock`) and `execution_handler/exchanges/venue_correlation.py::VenueCorrelationIndex`.
 - **Global state:** `config`, `logger`, `idgen` are module-level singletons in `itrader/__init__.py`, initialised at import time. `MatchingEngine._resting` is instance-level.
 - **Import side effects:** importing anything from `itrader` triggers singleton init. Do not import `itrader` in fixtures without understanding this.
 - **Circular imports:** `OrderHandler` ↔ `OrderManager` resolved by constructor injection, not module imports. Avoid new module-level cross-imports between handlers.
@@ -308,7 +308,7 @@ their component graph from.
 - `EventHandler._dispatch` wraps each handler call in `try/except Exception` and delegates the decision to the injected `HandlerErrorPolicy.on_handler_error(event, handler)` — `FailFastPolicy` bare-re-raises (backtest, byte-exact oracle); `ErrorPolicy` emits an `ErrorEvent` and returns (live, keeps draining).
 - `ErrorHandler.on_error` (`itrader/events_handler/error_handler.py`) is the real `ERROR`-route consumer: severity-mapped structured logging, CRITICAL alert-sink escalation, `last_error` persistence.
 - `PortfolioHandler._operation_context()` tracks active operations and publishes `PortfolioErrorEvent` on failure.
-- Execution failures flow as `FillEvent(REFUSED)` events, not exceptions — `SimulatedExchange.execute_order()` returns `ExecutionResult(success=False, ...)` so the order mirror reconciles via the normal FILL route.
+- Execution failures flow as `FillEvent(REFUSED)` events, not exceptions. There is no synchronous execution result object: `ExecutionResult` and the immediate `execute_order` path were deleted (single matching path) — `SimulatedExchange.on_order` runs `_admit_order`, and every rejected outcome is emitted by `_emit_rejection` as a `FillEvent(REFUSED)` so the order mirror reconciles via the normal FILL route. The DTOs left in `execution_handler/result_objects.py` (`ConnectionResult`, `HealthStatus`, `OrderPreflightResult`) are connection/health/preflight metadata, not execution results.
 - `ExecutionHandler.on_order`/`on_market_data` catch per-exchange exceptions and log without re-raising (prevents queue stalls).
 - Live CONTROL-plane fatal conditions route through `SafetyController.halt(reason)` — a latched freeze with no legal exit except operator `reset_halt()`, durably recorded via `HaltRecordStore`.
 

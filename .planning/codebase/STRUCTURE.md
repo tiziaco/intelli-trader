@@ -15,7 +15,7 @@ intelli-trader/
 │   ├── execution_handler/         # Order execution: exchanges/, fee_model/, slippage_model/, matching engine
 │   ├── order_handler/             # Order lifecycle: admission/, brackets/, lifecycle/, reconcile/, storage/
 │   ├── outils/                    # Small shared utility functions (dict_merge, time_parser, id_generator)
-│   ├── portfolio_handler/         # Portfolio state: cash/, position/, transaction/, metrics/, account/, reconcile/, storage/
+│   ├── portfolio_handler/         # Portfolio state: cash/, position/, transaction/, metrics/, account/, reconcile/, rehydrate/, storage/
 │   ├── price_handler/             # Data engine: store/, feed/, providers/
 │   ├── reporting/                 # Pure report builders (frames.py, metrics.py, plots.py)
 │   ├── results/                   # Run-results persistence and serialization
@@ -54,7 +54,7 @@ intelli-trader/
 
 **`itrader/events_handler/`:**
 - Purpose: The event bus, event type definitions, dispatcher, and error handling for the queue.
-- Contains: `bus.py` (`EventBus`/`PriorityEventBus`), `full_event_handler.py` (`EventHandler`, the single dispatch-order literal), `error_handler.py` (`ErrorHandler`, the ERROR-route consumer), `error_policy.py` (`FailFastPolicy`/`ErrorPolicy`), `events/` (per-domain event definitions).
+- Contains: `bus.py` (the `EventBus` Protocol + its `FifoEventBus`/`PriorityEventBus` implementations), `full_event_handler.py` (`EventHandler`, the single dispatch-order literal), `error_handler.py` (`ErrorHandler`, the ERROR-route consumer), `error_policy.py` (`FailFastPolicy`/`ErrorPolicy`), `events/` (per-domain event definitions).
 - Key files: `itrader/events_handler/full_event_handler.py`, `itrader/events_handler/events/base.py`.
 
 **`itrader/strategy_handler/`:**
@@ -74,12 +74,12 @@ intelli-trader/
 
 **`itrader/portfolio_handler/`:**
 - Purpose: Portfolio lifecycle and state.
-- Contains: `portfolio_handler.py`, `portfolio.py`, `cash/`, `position/`, `transaction/`, `metrics/`, `account/` (`SimulatedCashAccount`/`SimulatedMarginAccount`/`VenueAccount`), `reconcile/` (`venue_reconciler.py`, `drift.py`), `storage/`, `validators.py`.
+- Contains: `portfolio_handler.py`, `portfolio.py`, `portfolio_factory.py`, `cash/`, `position/`, `transaction/`, `metrics/`, `account/` (`SimulatedCashAccount`/`SimulatedMarginAccount`/`VenueAccount`), `reconcile/` (`venue_reconciler.py`, `drift.py`), `rehydrate/`, `storage/`, `validators.py`.
 - Key files: `itrader/portfolio_handler/portfolio_handler.py`, `itrader/portfolio_handler/portfolio.py`.
 
 **`itrader/price_handler/`:**
 - Purpose: Look-ahead-safe price storage and bar feeds.
-- Contains: `store/` (`csv_store.py`, `sql_store.py`), `feed/` (`bar_feed.py` — bar-timing contract, `live_bar_feed.py`), `providers/` (`ccxt_provider.py`, `oanda_provider.py`, `binance_stream.py`, `okx_provider.py`, `replay_provider.py`).
+- Contains: `store/` (`csv_store.py`, `sql_store.py`), `feed/` (`bar_feed.py` — bar-timing contract, `live_bar_feed.py`, `cache_registration.py`), `providers/` (`ccxt_provider.py`, `oanda_provider.py`, `binance_stream.py`, `okx_provider.py`, `live_provider.py`, `exchange_base.py`), `ingestion.py`. The replay provider is NOT in the package — it now lives in the test harness as `tests/support/replay_harness.py::TestLiveDataProvider`.
 - Key files: `itrader/price_handler/feed/bar_feed.py`.
 
 **`itrader/core/`:**
@@ -94,7 +94,7 @@ intelli-trader/
 
 **`itrader/storage/`:**
 - Purpose: Shared SQL spine used across live subsystems.
-- Contains: `engine.py` (`SqlEngine`), `types.py`, `halt_record_store.py`, `venue_store.py`, `system_store.py`, `system_stats_store.py`, `strategy_registry_store.py`.
+- Contains: `engine.py` (`SqlEngine`), `types.py`, `halt_record_store.py`, `venue_store.py`, `venue_account_store.py`, `system_store.py`, `system_stats_store.py`, `strategy_registry_store.py`, `portfolio_definition_store.py`.
 
 **`itrader/universe/`, `itrader/connectors/`, `itrader/venues/`:**
 - Purpose: Live-only subsystems — dynamic universe polling/membership, venue connector protocol + OKX implementation, venue assembly/registry/lifecycle.
@@ -111,7 +111,7 @@ intelli-trader/
 ## Key File Locations
 
 **Entry Points:**
-- `itrader/trading_system/backtest_trading_system.py`: Backtest composition root (`TradingSystem.run()`)
+- `itrader/trading_system/backtest_trading_system.py`: Backtest composition root (`BacktestTradingSystem.run()`, `build_backtest_system`)
 - `itrader/trading_system/live_trading_system.py`: Live composition root (`LiveTradingSystem`, `build_live_system`)
 - `scripts/run_backtest.py`: CLI entry point (`make backtest`)
 

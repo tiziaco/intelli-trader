@@ -6,9 +6,11 @@
 > **Discoverable from:** `.planning/PROJECT.md` → `## Key Decisions` (the
 > "v1.1 opportunistic-cleanup standard" pointer row).
 >
-> **Companion artifact:** `.planning/codebase/FIX-LIST.md` (the harvested, categorized fix-list
-> this standard operates over; `FL-NN` schema, `open` / `done (phase N)` / `deferred` status,
-> `Golden-path? yes|no` flag, eligible-in-phase tags).
+> **Companion artifact:** `.planning/milestones/v1.1-FIX-LIST.md` (the harvested, categorized
+> fix-list this standard operates over; `FL-NN` schema, `open` / `done (phase N)` / `deferred`
+> status, `Golden-path? yes|no` flag, eligible-in-phase tags). It was archived out of
+> `.planning/codebase/` at v1.1 close — that is the ONLY `FIX-LIST.md` in the repo, and every
+> bare `FIX-LIST.md` reference below means this file.
 
 ## Purpose
 
