@@ -7,7 +7,7 @@ the REAL factory, because the seam under test IS the wiring.
 
 Placement is the load-bearing property (RESEARCH Item 2): rehydrate runs at CONSTRUCTION
 time, inside the ``system_store is not None`` gate, immediately after
-``_layer_persisted_overrides``. Test 5 pins the consequence — the strategies are registered
+``layer_persisted_overrides``. Test 5 pins the consequence — the strategies are registered
 BEFORE ``start()``, so ``wire_universe`` (``StrategyDerivedSelectionModel`` derives
 membership FROM the strategies) and ``register_strategy_warmup`` (the feed ring is sized
 FROM them) both see the full roster.

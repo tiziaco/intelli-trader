@@ -1,0 +1,49 @@
+# Successor manifest for the venue/account redesign must-have gate.
+#
+# Every file that replaces, absorbs or renames one of the 27 baseline files, plus every
+# module the redesign introduces. Measured against the frozen baseline (3,886 code lines)
+# by:
+#
+#   poetry run python scripts/measure_redesign_baseline.py \
+#       --manifest scripts/redesign_successor_manifest.txt
+#
+# Kept in sync AS THE STAGES LAND rather than authored at the end, so the sign of the
+# must-have is observable throughout: a stage that trends it positive is a stop-and-report
+# event, and that is only detectable if the manifest is current. Entries are added when a
+# module appears and removed when one is deleted.
+#
+# Stage 1: the backtest root moved (paths updated in place); trading_system/live/ appeared.
+
+# --- surviving / relocated baseline files ---
+itrader/trading_system/compose.py
+itrader/trading_system/backtest/backtest_trading_system.py
+itrader/trading_system/live_trading_system.py
+itrader/trading_system/venue_spec.py
+itrader/trading_system/session_initializer.py
+itrader/portfolio_handler/portfolio_factory.py
+itrader/connectors/provider.py
+itrader/connectors/base.py
+itrader/venues/lifecycle.py
+itrader/venues/feed_binder.py
+itrader/venues/paper_plugin.py
+itrader/venues/okx_plugin.py
+itrader/venues/assemble.py
+itrader/venues/bundle.py
+itrader/venues/bundles.py
+itrader/venues/registry.py
+itrader/storage/venue_store.py
+itrader/storage/venue_account_store.py
+itrader/storage/portfolio_definition_store.py
+itrader/venues/venue_account_manager.py
+itrader/venues/venue_uid_guard.py
+itrader/connectors/okx.py
+itrader/connectors/stream_supervisor.py
+itrader/portfolio_handler/account/base.py
+itrader/portfolio_handler/account/conformance.py
+itrader/portfolio_handler/account/simulated.py
+itrader/portfolio_handler/account/venue.py
+
+# --- new in the redesign ---
+itrader/trading_system/backtest/__init__.py
+itrader/trading_system/live/__init__.py
+itrader/trading_system/live/bootstrap.py

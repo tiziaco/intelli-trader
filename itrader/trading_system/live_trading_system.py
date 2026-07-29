@@ -11,9 +11,14 @@ from itrader.execution_handler.execution_handler import COMPUTE_VENUE, DEFAULT_A
 from itrader.outils.time_parser import to_timedelta
 from itrader.trading_system.alert_sink import LogAlertSink
 from itrader.trading_system.venue_spec import build_venue_spec
-# Only PURE imports belong at module top: no ccxt.pro, SQL, or venue substrate. Every
-# heavy import MUST stay lazy inside a function body, or importing this module drags it
-# onto the backtest import graph. tests/integration/test_okx_inertness.py is the gate.
+# The boot sequence and the restart config-layering pass both live under
+# ``trading_system/live/`` — inside the live import-graph boundary, so they may pull SQL at
+# module top. tests/integration/test_okx_inertness.py asserts by PREFIX that nothing under
+# that package reaches the backtest graph.
+from itrader.trading_system.live.bootstrap import (
+    bootstrap_session,
+    layer_persisted_overrides,
+)
 from itrader.trading_system.session_initializer import SessionInitializer
 from itrader.trading_system.engine_context import EngineContext
 from itrader.universe import Universe
@@ -916,118 +921,6 @@ class LiveTradingSystem:
         self.stop()
 
 
-def _layer_persisted_overrides(
-    config: Any,
-    *,
-    system_store: Any,
-    venue_store: Any,
-    order_handler: Any,
-    portfolio_handler: Any,
-    execution_handler: Any,
-) -> None:
-    """Boot restart-layering: apply each scope's persisted config from its OWN store.
-
-    The sequence is ``defaults <- env <- persisted``. Frozen base params
-    (``rng_seed`` / ``environment`` / identity) resolve at CONSTRUCTION and are never
-    persisted-overridden. Each scope is read back from its OWNING module store — system
-    from ``SystemStore``, order from the ORDER store, venue from ``VenueStore``, portfolio
-    from each Portfolio's own bound ``state_storage`` — so config is never read back from
-    ``SystemStore`` for the order/portfolio scopes.
-
-    Degrade-clean: the durable config schema is Alembic-owned, so a boot against a
-    not-yet-provisioned schema must NOT crash — a missing config table just means "no
-    persisted overrides yet". Never ``create_all`` here; the store stays schema-pure.
-    """
-    import pydantic
-    from sqlalchemy.exc import SQLAlchemyError
-
-    from itrader.config.order import OrderConfig
-    from itrader.config.system import SystemSettings
-    from itrader.config.universe import UniverseConfig
-    from itrader.core.exceptions.base import ConfigurationError
-
-    logger = get_itrader_logger().bind(component="build_live_system")
-
-    # Each scope layers under its OWN guard, so a bad persisted override is logged and
-    # skipped rather than crashing boot, and one bad scope never aborts the others.
-    # Deliberately NOT a bare Exception: a genuine programming error still surfaces.
-    _degrade_clean = (
-        SQLAlchemyError, ConfigurationError, pydantic.ValidationError, ValueError)
-
-    try:
-        for row in system_store.read_all():
-            key = row["key"]
-            value = row["value"]
-            stored = value.get("value") if isinstance(value, dict) else value
-            if key.startswith("config.system."):
-                field = key[len("config.system."):]
-                if field in SystemSettings.model_fields:
-                    setattr(config.system, field, stored)
-            elif key.startswith("config.universe."):
-                field = key[len("config.universe."):]
-                if field in UniverseConfig.model_fields:
-                    setattr(config.universe, field, stored)
-    except _degrade_clean as exc:
-        logger.warning(
-            "Skipping persisted SYSTEM-config restart layering — schema unavailable or a "
-            "stored override is invalid (%s); boot degrades clean", exc)
-
-    try:
-        order_cfg = order_handler.storage.load_config()
-        if order_cfg:
-            applied = {
-                field: val
-                for field, val in order_cfg.items()
-                if field in OrderConfig.model_fields
-            }
-            for field, val in applied.items():
-                setattr(config.order, field, val)
-            if applied:
-                order_handler.update_config(applied)
-    except _degrade_clean as exc:
-        logger.warning(
-            "Skipping persisted ORDER-config restart layering — schema unavailable or a "
-            "stored override is invalid (%s); boot degrades clean", exc)
-
-    # The read_all() acquisition keeps its own guard; the per-row push is then guarded PER
-    # ENTRY so one poisoned venue degrades only that venue.
-    try:
-        venue_rows = venue_store.read_all()
-    except _degrade_clean as exc:
-        logger.warning(
-            "Skipping persisted VENUE-config restart layering — schema unavailable "
-            "(%s); boot degrades clean", exc)
-        venue_rows = []
-    for row in venue_rows:
-        try:
-            venue_cfg = row.get("config") or {}
-            push = {
-                k: v
-                for k, v in venue_cfg.items()
-                if k in {"fee_model", "slippage_model"}
-            }
-            if push:
-                execution_handler.update_config(push)
-        except _degrade_clean as exc:
-            logger.warning(
-                "Skipping persisted VENUE-config layering for %s — stored override "
-                "invalid (%s); boot degrades clean", row.get("venue_name"), exc)
-
-    # Resolved via the handler's PUBLIC all_portfolios(), never the private registry. The
-    # guard is PER ENTRY so one poisoned config_json degrades only that portfolio;
-    # all_portfolios() is a pure copy, so the loop needs no acquisition guard.
-    for _pid, portfolio in portfolio_handler.all_portfolios().items():
-        try:
-            portfolio_cfg = portfolio.state_storage.load_config()
-            if portfolio_cfg:
-                portfolio.update_config(portfolio_cfg)
-        except _degrade_clean as exc:
-            logger.warning(
-                "Skipping persisted PORTFOLIO-config restart layering for %s — schema "
-                "unavailable or a stored override is invalid (%s); boot degrades clean",
-                _pid, exc)
-
-
 def build_live_system(
     spec: Any,
     *,
@@ -1302,63 +1195,15 @@ def build_live_system(
     # Both maps are declared here so facade construction, StreamRecoveryHandler and the
     # halt-signal wiring see them on EVERY path — a boot with no SQL spine comes up RUNNING
     # and empty.
-    venue_lifecycles: Dict[str, Any] = {}
+    # The boot sequence itself lives in ``live/bootstrap.py`` — the ordering is a contract
+    # (assembly BEFORE rehydrate), and a contract needs a name and a testable home.
+    venue_lifecycles: Dict[str, Any] = bootstrap_session(
+        sql_engine=system_db_backend,
+        venue_manager=venue_manager,
+        portfolio_handler=portfolio_handler,
+        execution_venue=exchange,
+    )
     venue_accounts: Dict[str, Any] = {}
-
-    if system_db_backend is not None:
-        from sqlalchemy import inspect as _sa_inspect
-
-        from itrader.portfolio_handler.rehydrate.distinct_account_invariant import (
-            assert_distinct_accounts,
-        )
-        from itrader.portfolio_handler.rehydrate.portfolio_rehydrate import (
-            rehydrate_portfolios,
-        )
-
-        # The store the handler already OWNS. One instance, so the rehydrate read and the
-        # add_portfolio write-back can never diverge.
-        definition_store = portfolio_handler.definition_store
-
-        # A not-yet-provisioned `portfolios` table is the first-start state, NOT a fault.
-        # Deliberately narrow — it probes for the TABLE and nothing else, so a genuine
-        # store fault still propagates LOUD rather than becoming a silent zero-portfolio
-        # boot.
-        has_table = definition_store is not None and _sa_inspect(
-            system_db_backend.engine).has_table("portfolios")
-        if definition_store is not None and not has_table:
-            logger.warning(
-                "The `portfolios` table is not provisioned — skipping portfolio "
-                "rehydrate (first start, or the Alembic chain has not run). No "
-                "portfolio will be restored until the schema exists.")
-
-        # Runs FIRST, so a collision is refused before any account exists.
-        if has_table:
-            assert_distinct_accounts(persisted=definition_store.read_all())
-
-        # VENUE ASSEMBLY. ``bring_online`` builds the account's VenueSpec (carrying its
-        # OWN ``secret_ref`` and config overrides), assembles the bundle through the shared
-        # memo, registers the exchange under the row's (venue, account_id) pair VERBATIM,
-        # and arms the UID guard. ``read_enabled_for`` carries its own table probe, so a
-        # boot before ``venue_accounts`` exists brings up zero accounts rather than
-        # raising. The lifecycle map is keyed by the row's account id — the same key the
-        # exchange registry and the facade's per-account reads use.
-        for row in venue_manager.read_enabled_for(exchange):
-            record = venue_manager.bring_online(row)
-            venue_lifecycles[str(row["account_id"])] = record.lifecycle
-        # Finalize the feed's connection binding once the bring-up loop is done. A boot
-        # with zero streaming accounts leaves the feed UNBOUND and logs the cause here,
-        # since bring_online's per-row rebind never ran.
-        venue_manager.rebind_feed()
-
-        # Recreates the portfolio objects with their PERSISTED ids, so portfolio-scoped
-        # child tables and strategy-subscription rows reattach to portfolios that still
-        # exist. Assembly running first changes neither WHICH portfolios rehydrate nor
-        # their order — that contract is the store's.
-        if has_table:
-            rehydrate_portfolios(
-                store=definition_store,
-                portfolio_handler=portfolio_handler,
-            )
 
 
     # DIRECT PURE INJECTION, no collaborator bag: the compose Engine is the single source
@@ -1412,7 +1257,7 @@ def build_live_system(
         )
 
         # Base params are already resolved at construction (frozen).
-        _layer_persisted_overrides(
+        layer_persisted_overrides(
             _system_config,
             system_store=system_store,
             venue_store=venue_store,

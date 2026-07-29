@@ -155,19 +155,45 @@ assert not _sql_leaked, (
     "never a module-top import)"
 )
 
-# Phase 06.1 (SEAM-04, D-12): the trading_system barrel DROPPED the live surface
-# entirely — importing the backtest root (above) pulls ONLY the backtest composition
-# root, so the live module itself must be ABSENT from sys.modules at this point. Before
-# the barrel drop, `trading_system/__init__.py` eagerly imported LiveTradingSystem /
-# build_live_system, silently dragging the whole live module onto the backtest import
-# graph (the root cause of the pervasive lazy-imports-inside-methods). The later
-# explicit `from itrader.trading_system.live_trading_system import build_live_system`
-# (in the P6 register-vs-build block below) runs AFTER this assertion and legitimately
-# pulls the module for the register-vs-build check — it does not weaken this guard.
-assert "itrader.trading_system.live_trading_system" not in sys.modules, (
-    "SEAM-04/D-12 INERTNESS VIOLATION: importing the backtest root pulled "
-    "itrader.trading_system.live_trading_system onto the backtest import graph — the "
-    "trading_system barrel must NOT re-import (or re-export) the live module (D-12)"
+# The two-roots import boundary, asserted by PREFIX (supersedes the exact-name SEAM-04
+# check it grew out of).
+#
+# The original assertion named ``itrader.trading_system.live_trading_system`` exactly,
+# which was sufficient while the live root was ONE module. Now that the live side is a
+# PACKAGE, exact-name matching is insufficient in the precise way that matters: a leaked
+# ``itrader.trading_system.live.bootstrap`` would satisfy an exact check on
+# ``itrader.trading_system.live`` while dragging SQLAlchemy onto the backtest graph. The
+# boundary is therefore stated over ROOTS, and a root matches itself or anything beneath
+# it.
+#
+# Matching is on module-path BOUNDARIES (``name == root`` or ``name.startswith(root +
+# ".")``), never a bare string prefix — a bare prefix would make the coincidental overlap
+# between ``...live`` and ``...live_trading_system`` do the work by accident. Both are
+# listed explicitly instead, so each is forbidden on purpose.
+#
+# Why this set and not the full boundary: ``itrader.connectors`` and
+# ``itrader.venues.accounts`` cannot join yet — the backtest root deliberately wires a real
+# (empty) connector provider today. They join once the backtest root stops touching them.
+#
+# The later explicit ``from itrader.trading_system.live_trading_system import
+# build_live_system`` (in the register-vs-build block below) runs AFTER this assertion and
+# legitimately pulls the module for that check — it does not weaken this guard.
+_BOUNDARY_ROOTS = (
+    "itrader.trading_system.live",
+    "itrader.trading_system.live_trading_system",
+    "itrader.execution_handler.exchanges.okx",
+    "itrader.price_handler.providers.okx_provider",
+)
+_boundary_leaked = sorted(
+    name for name in sys.modules
+    for root in _BOUNDARY_ROOTS
+    if name == root or name.startswith(root + ".")
+)
+assert not _boundary_leaked, (
+    "IMPORT-BOUNDARY VIOLATION: importing the backtest root pulled live-only modules "
+    "onto the backtest import graph: " + repr(_boundary_leaked)
+    + " — the backtest and live composition roots must not reach each other, and the "
+    "trading_system barrel must re-export only the backtest surface"
 )
 
 # Phase 1 (CFG-02, D-05/D-06 register-vs-build): importing itrader runs

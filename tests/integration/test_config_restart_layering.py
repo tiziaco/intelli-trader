@@ -48,7 +48,7 @@ from itrader.portfolio_handler.storage.sql_storage import SqlPortfolioStateStora
 from itrader.storage import SqlEngine
 from itrader.storage.system_store import SystemStore
 from itrader.storage.venue_store import VenueStore
-from itrader.trading_system.live_trading_system import _layer_persisted_overrides
+from itrader.trading_system.live.bootstrap import layer_persisted_overrides
 from tests.support.schema import provision_schema, seed_portfolio_definitions
 
 _NOW = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)
@@ -218,7 +218,7 @@ def test_restart_layering_reapplies_every_scope_from_its_own_store(wiring):
     assert config.order.market_execution is MarketExecution.IMMEDIATE
     assert config.rng_seed == 42
 
-    _layer_persisted_overrides(
+    layer_persisted_overrides(
         config,
         system_store=wiring.system_store,
         venue_store=wiring.venue_store,
@@ -285,7 +285,7 @@ def test_layering_is_a_noop_with_no_persisted_overrides(wiring):
     portfolio_handler = _PortfolioHandlerDouble({wiring.portfolio_id: portfolio})
 
     config = ITraderConfig()
-    _layer_persisted_overrides(
+    layer_persisted_overrides(
         config,
         system_store=wiring.system_store,
         venue_store=wiring.venue_store,
@@ -327,7 +327,7 @@ def test_boot_degrades_clean_on_invalid_persisted_override(wiring):
     config = ITraderConfig()
 
     # MUST NOT raise — the invalid system override degrades clean.
-    _layer_persisted_overrides(
+    layer_persisted_overrides(
         config,
         system_store=wiring.system_store,
         venue_store=wiring.venue_store,
@@ -365,7 +365,7 @@ def test_portfolio_arm_isolates_a_poisoned_first_entry(wiring):
     config = ITraderConfig()
 
     # MUST NOT raise — the poisoned portfolio degrades clean.
-    _layer_persisted_overrides(
+    layer_persisted_overrides(
         config,
         system_store=wiring.system_store,
         venue_store=wiring.venue_store,
@@ -399,7 +399,7 @@ def test_venue_arm_isolates_a_poisoned_first_entry(wiring):
     config = ITraderConfig()
 
     # MUST NOT raise — the poisoned venue degrades clean.
-    _layer_persisted_overrides(
+    layer_persisted_overrides(
         config,
         system_store=wiring.system_store,
         venue_store=venue_store,
@@ -432,7 +432,7 @@ def test_venue_read_all_schema_unavailable_still_degrades_clean(wiring):
     config = ITraderConfig()
 
     # MUST NOT raise despite read_all() blowing up.
-    _layer_persisted_overrides(
+    layer_persisted_overrides(
         config,
         system_store=wiring.system_store,
         venue_store=venue_store,

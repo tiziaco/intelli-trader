@@ -25,10 +25,24 @@ Usage::
     poetry run python scripts/measure_redesign_baseline.py
     poetry run python scripts/measure_redesign_baseline.py --manifest <file>
 
-With no ``--manifest`` the hard-coded 27-file baseline manifest below is measured, and at
-the pre-redesign HEAD it must print 27 files / 9,243 raw / 3,886 code. ``--manifest``
-takes a newline-delimited list of repo-relative paths (``#`` comments and blank lines
-ignored) and is how the successor set is measured in the final stage.
+**The baseline is a frozen NUMBER, not a re-measurement.** Measuring the hard-coded
+manifest reproduces 27 files / 9,243 raw / 3,886 code only at the pre-redesign HEAD. Once
+the refactor starts relocating code, that manifest necessarily under-reports: a line that
+moves from ``live_trading_system.py`` into a new module leaves the measured set without
+being deleted. Comparing a mutated tree against the baseline manifest would therefore make
+the must-have look satisfied by relocation alone — the exact false-green this script exists
+to prevent. The frozen totals are pinned in ``BASELINE_TOTALS`` and the script says so
+loudly when the default manifest stops matching them.
+
+The real gate runs against a SUCCESSOR manifest — every file that replaces, absorbs or
+renames one of the 27, plus every module the redesign introduces — and is a comparison
+against the frozen number:
+
+    poetry run python scripts/measure_redesign_baseline.py \\
+        --manifest scripts/redesign_successor_manifest.txt
+
+That form exits non-zero unless the successor code total is strictly below the frozen
+baseline, so the must-have is a command with an exit code rather than a judgement call.
 """
 
 from __future__ import annotations
@@ -74,6 +88,12 @@ BASELINE_MANIFEST: tuple[str, ...] = (
     "itrader/portfolio_handler/account/simulated.py",
     "itrader/portfolio_handler/account/venue.py",
 )
+
+# The frozen yardstick: what BASELINE_MANIFEST measured at the pre-redesign HEAD, as
+# (files, raw, code). Pinned as data because it is a historical fact about one commit — the
+# must-have compares the successor set against THIS, never against a re-measurement of the
+# baseline manifest on a mutated tree.
+BASELINE_TOTALS = (27, 9243, 3886)
 
 _DOCSTRING_OWNERS = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
 
@@ -151,6 +171,13 @@ def main(argv: list[str] | None = None) -> int:
         help="file listing repo-relative source paths (default: the baseline manifest)",
     )
     parser.add_argument(
+        "--gate",
+        action="store_true",
+        help="exit non-zero unless the measured code total is strictly below the frozen "
+             "baseline (the final must-have check; mid-refactor runs omit it, since the "
+             "sign is only required to be negative once the deletions have landed)",
+    )
+    parser.add_argument(
         "--repo-root",
         type=pathlib.Path,
         default=pathlib.Path(__file__).resolve().parent.parent,
@@ -180,6 +207,31 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{raw_total:>7} {code_total:>7}  TOTAL over {len(rows)} files")
     print()
     print(f"files: {len(rows)} | raw: {raw_total} | code: {code_total}")
+
+    baseline_files, baseline_raw, baseline_code = BASELINE_TOTALS
+    if args.manifest is None:
+        if (len(rows), raw_total, code_total) != BASELINE_TOTALS:
+            print()
+            print(
+                "NOTE: the baseline manifest no longer reproduces the frozen totals "
+                f"({baseline_files} / {baseline_raw} / {baseline_code}). That is expected "
+                "once the refactor relocates code: a line moved into a NEW module leaves "
+                "this manifest without being deleted, so this total is NOT the yardstick. "
+                "Measure the successor manifest instead.")
+        return 0
+
+    # Successor measurement, always compared against the frozen number.
+    delta = code_total - baseline_code
+    print(f"frozen baseline code: {baseline_code} | delta: {delta:+d}")
+    if not args.gate:
+        return 0
+    if delta >= 0:
+        print(
+            "GATE FAILED: the successor set is not strictly smaller than the baseline "
+            f"({code_total} >= {baseline_code}). The refactor must delete more source "
+            "than it adds.", file=sys.stderr)
+        return 1
+    print(f"GATE PASSED: {-delta} fewer code lines than the frozen baseline.")
     return 0
 
 

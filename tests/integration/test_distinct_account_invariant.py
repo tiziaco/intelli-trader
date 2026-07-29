@@ -483,7 +483,7 @@ def test_a_persisted_portfolio_config_override_is_applied_on_the_rehydrated_port
 ) -> None:
     """The BOOT-ORDERING gate, executable — layering must run AFTER rehydrate.
 
-    ``_layer_persisted_overrides`` iterates ``portfolio_handler._portfolios``. If
+    ``layer_persisted_overrides`` iterates ``portfolio_handler._portfolios``. If
     rehydrate ran after it, that collection would be empty at layering time and the
     persisted config would be silently never applied — no exception, no warning, and
     invisible in any test that only counts portfolios. This test reddens in exactly

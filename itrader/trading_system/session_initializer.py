@@ -47,15 +47,13 @@ from typing import TYPE_CHECKING, Any, cast
 from itrader.price_handler.feed.cache_registration import register_strategy_warmup
 from itrader.trading_system.route_registrar import LiveRouteRegistrar
 from itrader.trading_system.universe_wiring import wire_universe
+from itrader.universe.membership import StrategyDerivedSelectionModel
+from itrader.universe.universe_handler import UniverseHandler, UniverseHandlerConfig
 
 if TYPE_CHECKING:
     from itrader.execution_handler.exchanges.base import AbstractExchange
     from itrader.price_handler.feed.live_bar_feed import LiveBarFeed
     from itrader.trading_system.compose import Engine
-    from itrader.universe.universe_handler import (
-        UniverseHandler,
-        UniverseHandlerConfig,
-    )
 
 
 class SessionInitializer:
@@ -103,14 +101,7 @@ class SessionInitializer:
 
         Order: ``wire_universe`` -> ``register_strategy_warmup`` -> subscription guard
         -> build + wire ``UniverseHandler`` (D-11) -> ``LiveRouteRegistrar.install``.
-        The live-only concretions are lazy-imported here (backtest import path stays
-        inert — the recurring ``tests/integration/test_okx_inertness.py`` gate).
         """
-        # LAZY imports of the live-only concretions (mirrors the donor's lazy live
-        # imports) so the backtest import path never pulls them onto its graph.
-        from itrader.universe.membership import StrategyDerivedSelectionModel
-        from itrader.universe.universe_handler import UniverseHandler
-
         engine = self._engine
 
         # (1) The shared RUN-04 unit (06-01): derive membership/instruments -> WR-03
