@@ -917,6 +917,41 @@ class OkxExchange(AbstractExchange):
 		"""No arm-local config today — venue credentials/routing live on the connector."""
 		return True
 
+	def fetch_venue_uid(self) -> Optional[str]:
+		"""OKX's own account UID for this adapter's session, or ``None``.
+
+		Reads ``GET /api/v5/account/config`` through the connector's synchronous ``call``
+		RPC (the only sanctioned async->sync bridge) and returns ``data[0].uid``.
+
+		Defensive by contract: every failure mode — a session that is not connected, an
+		OKX error envelope, a missing ``data`` list, a renamed ``uid`` field — yields
+		``None`` rather than raising, because the identity guard this feeds is
+		observe-only and an exception here would abort an otherwise healthy bring-up. The
+		trade-off is that a renamed field degrades the guard silently, so the miss is
+		logged here and the guard warns again at its own boundary.
+
+		The endpoint/field pair could not be confirmed against a live authenticated
+		session in the build environment (only a single EEA demo sub-account was
+		available) — treat as unverified against a real venue.
+		"""
+		try:
+			response = self._connector.call(
+				self._connector.client.private_get_account_config())
+			entries = (response or {}).get("data") or []
+			uid = entries[0].get("uid") if entries else None
+		except Exception:
+			self.logger.warning(
+				"OKX venue-UID fetch failed; the venue-identity guard is inert for "
+				"this bring-up",
+				exc_info=True)
+			return None
+		if not uid:
+			self.logger.warning(
+				"OKX account config carried no 'uid'; the venue-identity guard is "
+				"inert for this bring-up")
+			return None
+		return str(uid)
+
 	def validate_order(self, event: OrderEvent) -> OrderPreflightResult:
 		"""Execution-domain preflight: reject a non-positive quantity, else pass."""
 		if event.quantity <= Decimal("0"):
@@ -985,3 +1020,82 @@ class OkxExchange(AbstractExchange):
 			maintenance_margin_rate=Decimal("0.005"),
 			max_leverage=Decimal("1"),
 		)
+
+
+#: The OKX venue-level market-type default, applied when an account's own
+#: ``venue_accounts.config_json`` names none. Deliberately NOT delegated to a shared
+#: ``"derivative"`` default: ``market_type`` selects which channel ``OkxExchange.snapshot``
+#: reads position truth from, and ``fetch_positions`` answers ``[]`` on a spot account — so
+#: falling through to a derivative default would report a coin-holding account as FLAT,
+#: which is what the drift sweep halts on.
+_OKX_DEFAULT_MARKET_TYPE = "spot"
+
+
+def build_okx_exchange(
+	*,
+	spec: Any = None,
+	connector: Optional[LiveConnector] = None,
+	ctx: Any = None,
+) -> OkxExchange:
+	"""Build ONE account's OKX execution adapter over its own authenticated session.
+
+	The recipe form the venue-account manager calls: a module-level function beside the
+	class it builds, so the construction knowledge lives with the thing constructed.
+
+	Parameters
+	----------
+	spec : AccountSpec
+		The account-shaped record. ``account_id`` is read UNCOERCED and is REQUIRED;
+		``market_type`` selects the position-truth channel.
+	connector : LiveConnector
+		The account's session, resolved by the pool under the SAME ``account_id`` this
+		spec names. Required: an OKX arm with no session can submit nothing.
+	ctx : EngineContext
+		Supplies the shared bus and ``config.stream`` — the ONE wiring source for the
+		traded pair, so no default pair is constructed inline.
+
+	Notes
+	-----
+	Every value derived here is threaded into the adapter. Deriving them and not passing
+	them leaves the adapter snapshotting on its own constructor defaults: the quote
+	balance dropped, the base leg unknown, and spot truth taken from a channel that is
+	always empty.
+
+	There is exactly ONE account id in play — the session is memoized under the id this
+	same spec names — so the pair cannot disagree with itself. What the id must never do
+	is default: an absent id is a wiring bug, and coercing it to a "default" account here
+	while the registration side keys the real account differently is how a registry and a
+	session memo end up describing different real accounts.
+	"""
+	account_id = getattr(spec, "account_id", None)
+	if account_id is None:
+		raise ValidationError(
+			"account_id",
+			str(account_id),
+			"Cannot build the OKX execution adapter: the account spec names no venue "
+			"account, and there is no legitimate default one (ACCT-04/WR-03)",
+		)
+	if connector is None:
+		raise ValidationError(
+			"connector",
+			str(connector),
+			f"Cannot build the OKX execution adapter for account {account_id!r}: it was "
+			"handed no authenticated session. An arm with no session accepts orders it "
+			"can never submit and reports venue truth it can never read",
+		)
+
+	# The live stream target: ctx.config is the process-wide ITraderConfig singleton wired
+	# at the composition root, so there is one wiring source.
+	stream = ctx.config.stream
+	symbol = stream.okx_stream_symbol
+	# The settlement currency is the wired pair's right leg (USDC for BTC/USDC) — never a
+	# hardcoded USDT default.
+	quote = symbol.split("/")[1]
+	market_type = getattr(spec, "market_type", None) or _OKX_DEFAULT_MARKET_TYPE
+
+	return OkxExchange(
+		ctx.bus, connector,
+		quote_currency=quote,
+		market_type=market_type,
+		symbol=symbol,
+	)

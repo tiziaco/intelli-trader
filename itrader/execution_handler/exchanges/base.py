@@ -139,6 +139,20 @@ class AbstractExchange(Protocol):
 		"""
 		...
 
+	def fetch_venue_uid(self) -> "str | None":
+		"""The venue's own account UID for this adapter's session, or ``None``.
+
+		The one external piece of evidence that a session belongs to the account the
+		engine believes it does, read through the session this adapter already owns.
+		The trust-on-first-use guard compares and alerts; the adapter knows its venue's
+		endpoint and field.
+
+		``None`` means "this venue exposes no account UID" — the clean no-op for a venue
+		with no credentials at all. MUST NOT raise: the guard is observe-only, so an
+		exception here would abort an otherwise-healthy bring-up.
+		"""
+		...
+
 	def resolve_precision(self, symbol: str) -> "Instrument | None":
 		"""Resolve the venue-precision ``Instrument`` for ``symbol`` (VENUE-04/D-09).
 

@@ -156,6 +156,30 @@ class ConnectorPool:
             self._public[venue] = self._build(venue, None)
         return self._public[venue]
 
+    def close_session(self, venue: str, account_id: str) -> None:
+        """Disconnect and forget ONE account's session; a pair with none is a no-op.
+
+        The per-account teardown a retiring account performs. It must reach exactly its
+        OWN session: tearing the whole pool down to retire one account would disconnect
+        every OTHER account's streams too, so the accounts that were not retired stop
+        receiving fills while still looking online.
+
+        The memo entry is dropped whether or not the disconnect raised — a session that
+        failed to close cleanly is still gone, and keeping it memoized would hand the
+        next bring-up a dead connector.
+        """
+        key = (venue, account_id)
+        connector = self._sessions.pop(key, None)
+        self._identities.pop(key, None)
+        if connector is None:
+            return
+        try:
+            connector.disconnect()
+        except Exception:
+            self.logger.error(
+                "connector disconnect failed", exc_info=True,
+                venue=venue, account_id=account_id)
+
     def close_all(self) -> None:
         """Disconnect every session this pool built, exactly once, then drop the memos."""
         try:

@@ -601,6 +601,16 @@ class SimulatedExchange(AbstractExchange):
 		"""
 		return AccountSnapshot.empty()
 
+	def fetch_venue_uid(self) -> "str | None":
+		"""``None`` — a simulated exchange has no venue-side account to be mistaken for.
+
+		The identity guard exists to catch one account connecting with another account's
+		credentials. There are no credentials here and no external account behind the
+		adapter, so there is nothing to record and nothing that could mismatch; the guard
+		reads this ``None`` as its one benign inert outcome.
+		"""
+		return None
+
 	def resolve_precision(self, symbol: str) -> "Instrument | None":
 		"""No markets map — return None so callers fall to the _DEFAULT_* ladder (VENUE-04/D-09).
 

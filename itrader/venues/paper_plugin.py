@@ -26,12 +26,13 @@ Indentation: 4-space. ``mypy --strict`` applies.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from itrader.core.exceptions import ConfigurationError
 
 if TYPE_CHECKING:
     from itrader.config.exchange import ExchangeConfig
+    from itrader.execution_handler.exchanges.base import AbstractExchange
     from itrader.portfolio_handler.account.base import Account
     from itrader.venues.bundle import VenueBundle
 
@@ -162,9 +163,43 @@ class PaperVenuePlugin:
         # credentials, and the parameter exists only to satisfy the VenuePlugin
         # Protocol. Reading anything off it here would put a credential-bearing
         # object on the paper/backtest path.
-        # lifecycle stays None — assemble_venue builds the VenueLifecycle.
         return VenueBundle(
             exchange=exchange,
             account_factory=account_factory,
             connector=None,
         )
+
+
+def paper_exchange_recipe(
+    exchange_config: ExchangeConfig,
+) -> Callable[..., AbstractExchange]:
+    """The paper execution adapter in RECIPE form, bound to this run's exchange config.
+
+    The venue-account manager builds every execution adapter through one uniform
+    ``recipe(spec=..., connector=..., ctx=...)`` call, so the paper venue supplies one
+    too. The build is DELEGATED rather than restated: the exchange this returns is the
+    exchange ``PaperVenuePlugin`` mints, so paper cannot acquire a second construction
+    path that drifts from the one the backtest arm still uses.
+
+    The recipe's permanent home is ``execution_handler/exchanges/paper.py``, beside what
+    it builds, as every other recipe already is; it lives here only while
+    ``PaperVenuePlugin`` is still the construction site.
+
+    ``exchange_config`` is bound at composition rather than read off the process-wide
+    singleton: only the run knows its complete symbol set, and a default preset would
+    silently narrow order admission.
+    """
+    plugin = PaperVenuePlugin(exchange_config)
+
+    def _build(
+        *,
+        spec: Any = None,
+        connector: Any = None,
+        ctx: Any = None,
+    ) -> AbstractExchange:
+        # ``connector`` is deliberately unread: paper holds no venue session, so the
+        # manager opens none for it, and the parameter exists only to keep ONE recipe
+        # shape across venues.
+        return plugin.build_bundle(ctx, spec, None).exchange
+
+    return _build
