@@ -91,6 +91,70 @@ the same commit that lands the fix — a passing xfail fails the suite loudly.
 | CR-03 | the recovery handler's account enumeration is non-empty when an account is online (no mirrored container) | Stage 3 |
 | CR-04 | an injected raising `connect()` during bring-up ⇒ the `(venue, account_id)` routing map stays EMPTY | Stage 4 |
 
+## Settled execution decisions (ED-1..ED-11)
+
+Pre-settled here so execution requires no design judgment. Each ED binds the
+stage that implements it; "code wins" still applies to line references, never to
+these decisions.
+
+- **ED-1 (Stage 6) — new builder signature.**
+  `trading_system/live/build.py::build_live_system(config: ITraderConfig, *,
+  execution_venue: str, data_venue: str | None = None,
+  strategy_catalog: dict[str, type] | None = None, status_callback=None,
+  data_recipes: dict[str, Callable[..., Any]] | None = None) -> LiveTradingSystem`.
+  `data_venue=None` resolves via the execution venue's descriptor
+  `default_data_provider`. `VenueSpec`/`build_venue_spec`/`for_exchange` die with
+  no successor beyond these arguments — the selection is data (D-1 rule 2).
+- **ED-2 (Stage 6) — test injection seam.** `data_recipes` is the successor of
+  today's `data_plugins`: an override mapping merged over the catalogue's data
+  recipes, documented TEST-only, never barrel-exported.
+- **ED-3 (Stages 6–7) — paper recipes home.** New 4-space module
+  `itrader/execution_handler/exchanges/paper.py` holding
+  `build_paper_exchange(...)` (+ the paper compute-account recipe wiring);
+  `simulated.py` stays untouched (D-7: recipes beside what they build).
+- **ED-4 (Stage 3) — `AccountSnapshot` home.** Defined in
+  `execution_handler/exchanges/base.py` beside the existing adapter contract,
+  as `@dataclass(frozen=True, slots=True)`; `snapshot()` joins that contract.
+  base.py is TAB-indented (verified: 61 tab lines, 0 space-indented) — additions
+  are TAB.
+- **ED-5 (Stage 7) — constants re-home.** `COMPUTE_VENUE` / `DEFAULT_ACCOUNT_ID`
+  move INTO `execution_handler/execution_handler.py` — already their re-export
+  site (defined in `venues/registry.py`, re-exported via
+  `execution_handler.py:18` + `__all__` at `:29`; the backtest path already
+  imports them from there). Only `order_handler/admission/admission_manager.py:35`
+  and `portfolio_handler/portfolio_factory.py:55` re-point.
+- **ED-6 (Stage 7) — all FOUR storage factories become module-level functions.**
+  `registry_storage_factory`'s extra branching (the `sql_engine is None` warn
+  path, the first-start `has_table` probe) stays inside its function — branching
+  is not held state, so D-1 rule 2 applies to all four uniformly.
+- **ED-7 (Stages 5–6) — replay harness re-point.**
+  `tests/support/replay_harness.py::build_paper_replay_system` builds via the new
+  builder: `execution_venue="paper", data_venue="replay",
+  data_recipes={"replay": <TestDataPlugin recipe>}`. The `FailFastPolicy`
+  override survives as-is.
+- **ED-8 (Stage 6) — inertness-probe rewrite shape.** The register-vs-build
+  blocks import `venues.catalog`, `connectors.pool`, `venues.accounts`, and
+  `trading_system.live.build` AFTER the boundary assertions (mirroring how
+  `build_live_system` is imported after the SEAM-04 assertion today), construct
+  descriptors + an empty pool (no sessions), and assert
+  `ccxt`/`ccxt.pro`/`itrader.connectors.okx` absent + the `sql` cached_property
+  unresolved. `test_production_build_live_system_registers_no_replay_data_provider`
+  re-targets `trading_system/live/build.py` source.
+- **ED-9 (Stage 3) — `SimulatedExchange.snapshot()`** returns an empty
+  `AccountSnapshot` (uniform contract, trivial body; the reconcile path iterates
+  live online records only).
+- **ED-10 (Stage 6) — `build_compute_account(...)`** lives in
+  `portfolio_handler/account/simulated.py`, beside the leaves it constructs
+  (same D-7 rationale as ED-3).
+- **ED-11 (Stage 3) — drift policy stays on `PortfolioHandler`; derivation moves
+  into the adapter.** `PortfolioHandler._compare_symbol_drift` /
+  `_run_drift_sweep` (tolerance band, fee-aware on-fill absorber, halt/adopt
+  policy) SURVIVE on the handler, re-keyed to consume `AccountSnapshot` inputs.
+  The per-market-type position derivation — including the spot
+  base-balance→holding rule and its authoritative-zero case (today
+  `VenueAccount._spot_positions_from_balance`) — moves into `OkxExchange`'s
+  snapshot building.
+
 ---
 
 ## Stage 0 — Gates before surgery (fixed by prior agreement)
@@ -262,21 +326,25 @@ live today (design §2.1: nothing ever assigns a `VenueAccount` onto
 **Files:**
 - Modify: `itrader/execution_handler/exchanges/base.py` — `AbstractExchange`
   gains the `snapshot() -> AccountSnapshot` surface; define frozen
-  `AccountSnapshot` (balances, positions, all `Decimal`) beside it (TAB/space:
-  measure the file first).
+  `AccountSnapshot` (balances, positions, all `Decimal`) beside it (ED-4:
+  TAB-indented file).
 - Modify: `itrader/execution_handler/exchanges/okx.py` — `OkxExchange` (class at
   `:72`) implements `snapshot()` by moving `account/venue.py`'s REST fetch logic
-  (~60 lines) onto the adapter's own connector via `connector.call`. The
-  RLock-guarded cache and the balance/position websocket streams are NOT carried
-  over (design §4.4 — their only consumers were the inert layer). Also add the
+  (~60 lines) onto the adapter's own connector via `connector.call`, INCLUDING
+  the per-market-type position derivation and the spot base-balance→holding rule
+  with its authoritative-zero case (ED-11). The RLock-guarded cache and the
+  balance/position websocket streams are NOT carried over (design §4.4 — their
+  only consumers were the inert layer). Also add the
   module-level recipe `build_okx_exchange(...)` (absorbing
   `OkxVenuePlugin.build_bundle`'s exchange-construction knowledge incl. the
   mismatched-`account_id` refusal from `okx_plugin.py:356-369`, design §2.2.5) —
   consumed in Stage 4.
-- Modify: `itrader/execution_handler/exchanges/simulated.py` — trivial
-  `snapshot()` (compute-derived/empty; the reconcile path only iterates online
-  live records, but the adapter contract is uniform — design §5 adapter
-  contracts).
+- Modify: `itrader/execution_handler/exchanges/simulated.py` — trivial empty
+  `snapshot()` (ED-9; the adapter contract is uniform — design §5).
+- Modify: `itrader/portfolio_handler/portfolio_handler.py` —
+  `_compare_symbol_drift` / `_run_drift_sweep` re-keyed to consume
+  `AccountSnapshot` inputs; the tolerance-band / fee-aware-absorber / halt-adopt
+  policy is preserved behaviour, not redesigned (ED-11).
 - Modify: `itrader/portfolio_handler/reconcile/venue_reconciler.py` —
   `VenueReconciler` (class at `:76`) takes an adapter + snapshot instead of a
   `VenueAccount`.
@@ -324,20 +392,10 @@ live today (design §2.1: nothing ever assigns a `VenueAccount` onto
 - `itrader/portfolio_handler/account/venue.py` (616 raw lines)
 - The `is_venue_truth` predicate and every guard/scar listed above
 
-**Affected tests (delete or re-target — rule: behaviour that survives per design
-§4.4 gets a re-targeted test; behaviour that dies with the websocket
-streams/cache loses its test):**
-`tests/unit/portfolio/test_account_venue.py`, `test_venue_account_cache.py`,
-`test_venue_account_drift.py`, `test_venue_account_drop_pending.py`,
-`test_venue_account_wiring.py`, `test_venue_cash_no_double_count.py`,
-`test_spot_base_fee_drift_absorber.py`, `test_spot_drift_guard.py`,
-`test_spot_stream_no_clobber.py`, `test_account_conformance.py`,
-`test_reconciliation_coordinator.py`, `reconcile/test_venue_reconciler_fetch.py`,
-`tests/unit/trading_system/test_stream_recovery_handler.py`, plus integration
-re-targets in `test_two_sided_restart.py`, `test_venue_account_restart_restore.py`,
-`test_live_system_okx_wiring.py`, `tests/e2e/test_okx_sandbox_recon.py`.
-New: adapter `snapshot()` unit tests (OKX via fake connector; simulated trivially),
-D-4 alert-and-stay-paused test.
+**Affected tests:** per the Test Disposition Table (appendix) — every Stage-3
+row is pre-settled there; do not re-derive dispositions.
+New: adapter `snapshot()` unit tests (OKX via fake connector incl. the ED-11
+derivation rules; simulated trivially), D-4 alert-and-stay-paused test.
 
 **xfail flip:** CR-03 (recovery enumeration non-empty) — remove the mark in the
 same commit that re-keys `StreamRecoveryHandler`.
@@ -404,11 +462,9 @@ registration-LAST.
 - `itrader/venues/lifecycle.py` (193 raw)
 - `itrader/venues/venue_uid_guard.py` (334 raw)
 
-**Affected tests:** `tests/unit/venues/test_venue_account_manager.py`,
-`test_assemble.py`, `test_lifecycle.py`, `test_venue_uid_guard.py` →
-consolidated into `tests/unit/venues/test_accounts.py` (manager + TOFU + spec);
-`tests/unit/trading_system/test_stop_tears_down_every_lifecycle.py` re-targeted
-to record-based teardown; integration `test_account_provisioning_loop.py`,
+**Affected tests:** per the Test Disposition Table (appendix); the Stage-4
+consolidation target is `tests/unit/venues/test_accounts.py` (manager + TOFU +
+spec). Integration `test_account_provisioning_loop.py`,
 `test_multi_account_composition.py`, `test_distinct_account_invariant.py`,
 `test_multi_portfolio_lifecycle.py` re-pointed at `venues/accounts.py`.
 
@@ -451,12 +507,10 @@ session; the borrow/re-borrow scenario becomes unrepresentable.
 **Deletions (exact):**
 - `itrader/venues/feed_binder.py` (149 raw)
 
-**Affected tests:** `tests/unit/venues/test_feed_binder.py` deleted;
-`tests/integration/test_live_system_okx_wiring.py`,
-`test_multi_account_composition.py` re-targeted;
-`tests/unit/price/test_replay_provider.py` re-pointed if it names the binder.
-New: a test that retiring an execution account leaves the feed's provider wired
-(the CR-02 invariant, now structural).
+**Affected tests:** per the Test Disposition Table (appendix).
+`tests/unit/price/test_replay_provider.py` is UNAFFECTED (verified — it never
+names the binder). New: a test that retiring an execution account leaves the
+feed's provider wired (the CR-02 invariant, now structural).
 
 **xfail flip:** CR-02 — the probe is REWRITTEN to the new invariant (the old
 "re-borrow keeps the feed wired" scenario no longer exists to assert; the new
@@ -511,11 +565,12 @@ required constructor parameter; the FULL §3.2 import boundary is asserted.
   `VenueBundles` wiring; builds the `SimulatedExchange` + registry dict +
   `AccountFactory` directly and calls `build_handler_graph`. Byte-exact oracle
   asserted in the SAME commit.
-- Modify: `itrader/trading_system/system_spec.py`,
-  `itrader/trading_system/venue_spec.py` consumers — the surviving "which venue
-  / which data provider" configuration moves onto `ITraderConfig`-adjacent
-  config or `build_live_system` arguments; `for_exchange` callers
-  (`tests/support/replay_harness.py:371` etc.) re-pointed at the new builder.
+- Modify: `itrader/trading_system/system_spec.py` (docstring prose only — it has
+  no code dependency on assemble/ConnectorProvider) and every
+  `itrader/trading_system/venue_spec.py` consumer — the "which venue / which
+  data provider" choice becomes `build_live_system` arguments per ED-1;
+  `for_exchange` callers (`tests/support/replay_harness.py:371` etc.) re-pointed
+  at the new builder per ED-7 (`data_recipes` per ED-2).
 - Modify: `tests/integration/test_okx_inertness.py` — (a) boundary roots gain
   `itrader.connectors` and `itrader.venues.accounts` (legal now: the backtest
   graph no longer touches them); (b) the register-vs-build probe blocks that
@@ -566,9 +621,9 @@ module is removed, orphaned tests are deleted or already re-targeted, and the
 - `itrader/venues/bundle.py` (199 raw)
 - `itrader/venues/bundles.py` (146 raw)
 - `itrader/venues/registry.py` (115 raw — `COMPUTE_VENUE`/`DEFAULT_ACCOUNT_ID`
-  constants re-homed first, e.g. into `venues/accounts.py`/`catalog.py`)
-- `itrader/venues/paper_plugin.py` (170 raw — paper recipe functions live on,
-  beside `SimulatedExchange` per D-7, keyed from the catalogue)
+  re-homed first per ED-5, into `execution_handler/execution_handler.py`)
+- `itrader/venues/paper_plugin.py` (170 raw — paper recipe functions live on in
+  `execution_handler/exchanges/paper.py` per ED-3)
 - `itrader/venues/okx_plugin.py` (417 raw)
 - `itrader/connectors/provider.py` (154 raw)
 
@@ -651,3 +706,45 @@ override removal + successor measurement (gate: −N code lines vs 3,886)`.
 5. **Tab files:** `compose.py` and the backtest root are TAB-indented; Stage 6
    rewrites replace them with new 4-space modules, which is legal only because
    the FILES are new — never mix within a surviving file.
+
+---
+
+## Appendix — Test Disposition Table (settled; every file read at HEAD)
+
+Dispositions were made by reading each file's actual assertions against the
+target state, not from names. DELETE = the asserted mechanism has no successor.
+RE-TARGET = the invariant survives; rewrite the test against its new home.
+SPLIT = per-function mix (the split is listed). KEEP = untouched.
+
+| test file | disposition | stage |
+|---|---|---|
+| `tests/unit/portfolio/test_account_venue.py` | DELETE (VenueAccount ctor contract) | 3 |
+| `tests/unit/portfolio/test_venue_account_cache.py` | SPLIT — REST-snapshot-populates + Decimal-exactness re-target to `OkxExchange.snapshot()`; stream-push / read-before-snapshot `StateError` / reserve-overlay tests DELETE | 3 |
+| `tests/unit/portfolio/test_venue_account_drift.py` | RE-TARGET — `_compare_symbol_drift`/`_run_drift_sweep` policy stays on `PortfolioHandler` over snapshots (ED-11) | 3 |
+| `tests/unit/portfolio/test_venue_account_drop_pending.py` | SPLIT — the two `stamp_venue_order_id`-via-readmodel-seam tests KEEP; the venue-overlay ack/release tests DELETE | 3 |
+| `tests/unit/portfolio/test_venue_account_wiring.py` | DELETE (leaf holds connector — premise gone) | 3 |
+| `tests/unit/portfolio/test_venue_cash_no_double_count.py` | DELETE (balance-stream re-baseline defect class dies with the streams) | 3 |
+| `tests/unit/portfolio/test_spot_base_fee_drift_absorber.py` | RE-TARGET (ED-11 policy, snapshot inputs) | 3 |
+| `tests/unit/portfolio/test_spot_drift_guard.py` | RE-TARGET (ED-11 policy, snapshot inputs) | 3 |
+| `tests/unit/portfolio/test_spot_stream_no_clobber.py` | SPLIT — base-derivation + authoritative-zero rules re-target into snapshot-build tests (ED-11); the partial-streamed-frame test DELETE | 3 |
+| `tests/unit/portfolio/test_account_conformance.py` | SPLIT — `venue` parametrization + margin-op-on-venue guard DELETE; `cash`/`margin` parametrizations KEEP | 3 |
+| `tests/unit/portfolio/test_reconciliation_coordinator.py` | RE-TARGET (coordinator over manager records; bracket-relink typed error survives) | 3 |
+| `tests/unit/portfolio/reconcile/test_venue_reconciler_fetch.py` | RE-TARGET (`fetch_my_trades` call shape + 90-day-window warning survive on the re-keyed reconciler) | 3 |
+| `tests/unit/trading_system/test_stream_recovery_handler.py` | RE-TARGET (catch-up→snapshot ordering, health gate, stays-paused-on-exception — over manager records) | 3 |
+| `tests/integration/test_two_sided_restart.py` | RE-TARGET | 3 |
+| `tests/integration/test_venue_account_restart_restore.py` | DELETE (`VenueAccount.restore_cash` no-op contract dies with the leaf) | 3 |
+| `tests/e2e/test_okx_sandbox_recon.py` | RE-TARGET (snapshot moves to adapter) | 3 |
+| `tests/unit/venues/test_venue_account_manager.py` | RE-TARGET → `tests/unit/venues/test_accounts.py` | 4 |
+| `tests/unit/venues/test_assemble.py` | DELETE | 4 |
+| `tests/unit/venues/test_lifecycle.py` | SPLIT — connect/disconnect ordering + provider-less/paper noop tests re-target as manager teardown tests; exposure/signature tests DELETE | 4 |
+| `tests/unit/venues/test_venue_uid_guard.py` | RE-TARGET (TOFU function in `venues/accounts.py`; reasons taxonomy kept) | 4 |
+| `tests/unit/trading_system/test_stop_tears_down_every_lifecycle.py` | RE-TARGET (per-record teardown isolation: manager in 4, facade `stop()` in 6) | 4→6 |
+| `tests/unit/venues/test_feed_binder.py` | DELETE | 5 |
+| `tests/integration/test_live_system_okx_wiring.py` | SPLIT — the three binder-wiring tests DELETE (5); the rest (IO-free construction, teardown, halt arming, CONTROL routing) RE-TARGET (6) | 5→6 |
+| `tests/unit/connectors/test_provider.py` | RE-TARGET → `tests/unit/connectors/test_pool.py` (memo, `close_all`, identity-conflict invariants; written in Stage 2, old file deleted Stage 7) | 2→7 |
+| `tests/unit/venues/test_okx_plugin.py` | SPLIT — VenueAccount-minting/bundle tests DELETE; connector-auth/sandbox-region/UID-fetch/no-ccxt-at-import tests RE-TARGET to the `build_okx_connector`/`build_okx_exchange` recipes (2–3); file deleted 7 | 2→7 |
+| `tests/unit/venues/test_paper_plugin.py` | SPLIT — Protocol-conformance framing tests DELETE; exchange-construction / shared-rng / compute-account-minting / Decimal-boundary tests RE-TARGET to the paper recipes (ED-3) | 6→7 |
+| `tests/unit/venues/test_venue_bundles.py` | DELETE | 7 |
+| `tests/unit/venues/test_registry.py` | DELETE | 7 |
+| `tests/unit/trading_system/test_venue_spec.py` | DELETE (ED-1 removes the spec) | 7 |
+| `tests/unit/price/test_replay_provider.py` | KEEP (verified unaffected) | — |
