@@ -13,6 +13,9 @@
 # module appears and removed when one is deleted.
 #
 # Stage 1: the backtest root moved (paths updated in place); trading_system/live/ appeared.
+# Stage 2: venues/catalog.py + connectors/pool.py appeared (their predecessors —
+#          registry.py, provider.py, the plugin modules — die in Stage 7, so both sides are
+#          counted for now and the delta is expected to be positive until then).
 
 # --- surviving / relocated baseline files ---
 itrader/trading_system/compose.py
@@ -47,3 +50,5 @@ itrader/portfolio_handler/account/venue.py
 itrader/trading_system/backtest/__init__.py
 itrader/trading_system/live/__init__.py
 itrader/trading_system/live/bootstrap.py
+itrader/venues/catalog.py
+itrader/connectors/pool.py

@@ -36,7 +36,7 @@ exports: since Phase 11.1 (D-04/GATE-01) the barrel re-exports no connector conc
 ``OkxConnector`` is imported directly from ``itrader.connectors.okx``.
 """
 
-from typing import Any, Awaitable, Protocol, TypeVar, runtime_checkable
+from typing import Any, Awaitable, Callable, Protocol, TypeVar, runtime_checkable
 
 _T = TypeVar("_T")
 
@@ -119,4 +119,19 @@ class LiveConnector(Protocol):
 
     def disconnect(self) -> Any:
         """Cancel spawned stream tasks and stop the loop (lifecycle)."""
+        ...
+
+    def set_halt_signal(self, halt_signal: Callable[[str], None]) -> None:
+        """Inject the freeze-in-place halt entrypoint.
+
+        Declared on the contract because every caller already relies on it: a spawned
+        stream task that dies with an unexpected exception must be able to escalate, and a
+        session whose halt signal was never wired cannot freeze the engine when its
+        connection dies. Leaving it off the Protocol made "does this connector escalate?"
+        a per-implementation question answerable only by reading the concretion, and made
+        the composition root's wiring loop depend on an undeclared member.
+
+        The declared surface is the WHOLE surface: an implementation that omits this is
+        not a ``LiveConnector``.
+        """
         ...

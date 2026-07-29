@@ -71,17 +71,30 @@ class OkxSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="", extra="ignore", populate_by_name=True)  # NO prefix (D-10)
 
-    api_key: SecretStr = Field(validation_alias="OKX_API_KEY")
-    api_secret: SecretStr = Field(validation_alias="OKX_API_SECRET")
-    api_passphrase: SecretStr = Field(validation_alias="OKX_API_PASSPHRASE")
-    sandbox: bool = Field(default=True, validation_alias="OKX_SANDBOX")
+    # Every field declares its KIND. ``secret`` fields are credential material and come
+    # from the resolver; ``routing`` fields are non-secret connection knobs an account may
+    # pin in its own stored config. Declaring it here means a consumer DERIVES both sets
+    # from the model instead of maintaining a parallel hand-written list — and a field
+    # added without a kind is a visible omission rather than a silently mis-sorted value.
+    # The distinction is load-bearing: routing knobs may be logged and persisted, secrets
+    # may be neither.
+    api_key: SecretStr = Field(
+        validation_alias="OKX_API_KEY", json_schema_extra={"kind": "secret"})
+    api_secret: SecretStr = Field(
+        validation_alias="OKX_API_SECRET", json_schema_extra={"kind": "secret"})
+    api_passphrase: SecretStr = Field(
+        validation_alias="OKX_API_PASSPHRASE", json_schema_extra={"kind": "secret"})
+    sandbox: bool = Field(
+        default=True, validation_alias="OKX_SANDBOX",
+        json_schema_extra={"kind": "routing"})
     # Regional entity (OKX-REGION). ``global`` (default) is reached via www.okx.com;
     # ``eea`` via eea.okx.com. A key issued on one entity returns 50119 "API key doesn't
     # exist" on the other, and the demo WS host differs per entity, so region — not a bare
     # sandbox ternary — derives BOTH hosts. The ``Literal`` makes an invalid OKX_REGION
     # fail loud with a pydantic ValidationError (no silent coercion).
     region: Literal["global", "eea"] = Field(
-        default="global", validation_alias="OKX_REGION")
+        default="global", validation_alias="OKX_REGION",
+        json_schema_extra={"kind": "routing"})
 
     @property
     def rest_hostname(self) -> str:
