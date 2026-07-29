@@ -573,8 +573,8 @@ def test_get_status_surfaces_paused_state_distinctly(monkeypatch: Any) -> None:
 def _wire_one_online_adapter(system: LiveTradingSystem) -> MagicMock:
     """Give ``system``'s resume handler ONE online account, and return its adapter.
 
-    Records are what the handler enumerates: ``bundle.connector is not None`` marks the
-    account as streaming and ``bundle.exchange`` is the adapter that gets caught up,
+    Records are what the handler enumerates: ``record.connector is not None`` marks the
+    account as streaming and ``record.adapter`` is the adapter that gets caught up,
     snapshotted and health-checked — one object, because it owns the account's session.
     ``is_streaming_healthy`` is pinned True so the compound resume gate is not what these
     tests are measuring.
@@ -584,8 +584,8 @@ def _wire_one_online_adapter(system: LiveTradingSystem) -> MagicMock:
     adapter.snapshot = MagicMock(
         name="snapshot", return_value=AccountSnapshot.empty())
     record = SimpleNamespace(
-        spec=SimpleNamespace(execution_venue="okx", account_id="acct-1"),
-        bundle=SimpleNamespace(connector=object(), exchange=adapter))
+        spec=SimpleNamespace(venue_name="okx", account_id="acct-1"),
+        connector=object(), adapter=adapter)
     system._stream_recovery._accounts = lambda: [record]
     return adapter
 

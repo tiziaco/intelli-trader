@@ -1,9 +1,11 @@
-"""Static gate — the six deleted store-derivation boot helpers never return (11.2-07).
+"""Static gate — deleted boot/venue names never return as live code.
 
-11.2-07 deleted the six ``live_trading_system.py`` helpers that derived and minted account
-identity at boot; ``VenueAccountManager`` (store-derived) replaces them. This gate fails if
-ANY of the six names reappears as a live CODE reference anywhere under ``itrader/`` or
-``tests/``.
+Two waves of deletions are pinned here. First: the six ``live_trading_system.py`` helpers
+that derived and minted account identity at boot, replaced by the store-derived
+``VenueAccountManager``. Second: the ferrying layer that stood between a durable account row
+and its runtime — ``assemble_venue``, ``VenueLifecycle`` and the standalone venue-UID guard
+module — absorbed into ``venues/accounts.py``. This gate fails if ANY of those names
+reappears as a live CODE reference anywhere under ``itrader/`` or ``tests/``.
 
 **Why a static gate, and why it scans SOURCE rather than trusting the suite.** Two of the
 53 original references live in ``tests/e2e/test_okx_sandbox_recon.py``, which is
@@ -25,7 +27,10 @@ from __future__ import annotations
 import pathlib
 import tokenize
 
-#: The six helpers deleted from ``live_trading_system.py`` in 11.2-07 (Task 1).
+#: The six helpers deleted from ``live_trading_system.py``, plus the ferrying layer the
+#: venue-account manager absorbed. ``assert_venue_uid`` is deliberately ABSENT: the
+#: function survives, collapsed into ``venues/accounts.py`` — it is its standalone module
+#: and its lifecycle wrapper that are gone.
 _DELETED_NAMES = frozenset({
     "_account_ids_for_spec",
     "_mint_account_rows",
@@ -33,6 +38,11 @@ _DELETED_NAMES = frozenset({
     "_attach_venue_accounts",
     "_venue_of",
     "_read_account_secret_ref",
+    "assemble_venue",
+    "VenueLifecycle",
+    "OnlineVenueAccount",
+    "venue_uid_guard",
+    "venue_account_manager",
 })
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
@@ -54,8 +64,8 @@ def _code_name_hits(path: pathlib.Path) -> list[tuple[int, str]]:
     return hits
 
 
-def test_the_six_deleted_boot_helpers_never_return_as_code() -> None:
-    """No live code reference to any of the six deleted boot helpers survives (11.2-07)."""
+def test_the_deleted_boot_and_venue_names_never_return_as_code() -> None:
+    """No live code reference to any deleted boot/venue name survives."""
     offenders: list[str] = []
     for root in _SCAN_ROOTS:
         for path in root.rglob("*.py"):

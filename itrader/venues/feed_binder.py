@@ -37,10 +37,29 @@ from itrader.logger import get_itrader_logger
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    #: One candidate connection: ``(venue_name, account_id, venue_spec)``. The spec
-    #: carries ``data_provider`` (the registry key) and the account identity the provider
-    #: build borrows its connector under.
+    #: One candidate connection: ``(venue_name, account_id, account_spec)``. The spec
+    #: carries the account identity the provider build borrows its connector under.
     Candidate = tuple[str, str, Any]
+
+
+class PoolBackedConnectors:
+    """The connector-memo surface the data plugins still call, over the session pool.
+
+    The data plugins ask ``get(venue, account_id, spec)``; the pool answers
+    ``session(venue, account_id, spec)``. Naming that one hop keeps the execution arm and
+    the data arm on the SAME memoized session per account — two memos would open two
+    ``ccxt.pro`` clients for one real account where the system believes there is one.
+
+    Transitional, and deleted with this module: once the data adapter owns its OWN
+    (usually public) session there is no borrowed account session to reach for at all.
+    """
+
+    def __init__(self, pool: Any) -> None:
+        self._pool = pool
+
+    def get(self, venue: str, account_id: str, spec: Any) -> Any:
+        """The account's authenticated session from the shared pool."""
+        return self._pool.session(venue, account_id, spec)
 
 
 class FeedConnectionBinder:
@@ -53,9 +72,14 @@ class FeedConnectionBinder:
         ``set_provider(None)`` unbinds. Typed ``Any`` because naming ``LiveBarFeed`` here
         would drag it onto this module's import graph.
     data_registry :
-        The ``DataProviderRegistry``. ``get(spec.data_provider).build_provider(...)`` is
-        the SAME one-provider build path the composition root used, with one fail-loud
+        The ``DataProviderRegistry``. ``get(data_provider).build_provider(...)`` is the
+        SAME one-provider build path the composition root used, with one fail-loud
         ``KeyError`` on an unregistered provider.
+    data_provider :
+        The registry key of the run's data venue. A RUN-level choice, not a per-account
+        one: which venue serves candles is a property of the deployment, and reading it
+        off whichever account's connection the feed happened to borrow would make the
+        data source change when an account retires.
     ctx :
         The shared ``EngineContext`` the provider build reads (``ctx.config.stream`` is
         the single wiring source for the OKX subscription).
@@ -71,12 +95,14 @@ class FeedConnectionBinder:
         *,
         feed: Any,
         data_registry: Any,
+        data_provider: str,
         ctx: Any,
         connectors: Any,
         global_queue: Any,
     ) -> None:
         self._feed = feed
         self._data_registry = data_registry
+        self._data_provider = data_provider
         self._ctx = ctx
         self._connectors = connectors
         self._global_queue = global_queue
@@ -132,7 +158,7 @@ class FeedConnectionBinder:
         # SAME build path as the composition root: one provider, over the account-keyed
         # connector. The concretion import lives inside build_provider (GATE-01).
         provider = self._data_registry.get(
-            spec.data_provider).build_provider(self._ctx, spec, self._connectors)
+            self._data_provider).build_provider(self._ctx, spec, self._connectors)
         self._feed.set_provider(provider)
         provider.set_bar_sink(self._feed.update)
         provider.set_global_queue(self._global_queue)

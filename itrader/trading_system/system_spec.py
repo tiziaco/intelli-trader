@@ -117,7 +117,7 @@ class SystemSpec:
 	the ``ExecutionVenueRegistry`` plugin, ``data_provider`` the
 	``DataProviderRegistry`` plugin, and ``account_id`` keys the ``ConnectorProvider``
 	memo. The single default ``"default"`` is applied at READ time in
-	``assemble_venue`` (05-06), not stored here, and ``compose_engine`` — which reads
+	the venue-account manager, not stored here, and ``compose_engine`` — which reads
 	only its six A1 fields — never touches these, so the backtest stays byte-exact
 	(D-07 single-default seam).
 	"""

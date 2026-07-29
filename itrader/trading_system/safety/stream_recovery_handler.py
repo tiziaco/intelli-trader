@@ -99,17 +99,17 @@ class StreamRecoveryHandler:
         Read off the manager's records at USE time, so an account brought online after
         this handler was built is covered and one taken offline is not.
 
-        ``bundle.connector is not None`` is the streaming-venue discriminator — a paper
-        account carries no connector, has no streams to recover and no venue to snapshot.
+        ``record.connector is not None`` is the streaming-venue discriminator — a paper
+        account carries no session, has no streams to recover and no venue to snapshot.
 
         De-duplicated by IDENTITY: the composition invariant refuses two portfolios
         sharing an account, but this must not ASSUME it — a duplicate would double-snapshot
         one venue account on every reconnect.
         """
         return _distinct([
-            record.bundle.exchange
+            record.adapter
             for record in self._accounts()
-            if record.bundle.connector is not None
+            if record.connector is not None
         ])
 
     def _data_provider(self) -> Optional[Any]:

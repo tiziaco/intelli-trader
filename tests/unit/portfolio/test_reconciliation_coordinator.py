@@ -184,15 +184,16 @@ class _FakeAdapter:
 
 def _record(*, adapter: Any, connector: Any = None,
             venue: str = _VENUE, account_id: str = "acct-1") -> Any:
-    """One ``OnlineVenueAccount``-shaped record: a spec pair plus its execution bundle.
+    """One ``OnlineAccount``-shaped record: a spec pair, its adapter and its session.
 
     ``connector=None`` is the PAPER shape — a record with no venue session behind it.
     That is the discriminator the coordinator keys off, so the paper/live distinction is
     expressed here exactly as the account manager expresses it.
     """
     return SimpleNamespace(
-        spec=SimpleNamespace(execution_venue=venue, account_id=account_id),
-        bundle=SimpleNamespace(exchange=adapter, connector=connector),
+        spec=SimpleNamespace(venue_name=venue, account_id=account_id),
+        adapter=adapter,
+        connector=connector,
     )
 
 
@@ -377,10 +378,10 @@ def test_coordinator_live_record_runs_reconcile(monkeypatch):
 
     assert len(constructed) == 1                 # exactly one VenueReconciler
     # The reconciler reads THIS record's adapter and THIS record's connector.
-    assert constructed[0]["adapter"] is record.bundle.exchange
-    assert constructed[0]["connector"] is record.bundle.connector
+    assert constructed[0]["adapter"] is record.adapter
+    assert constructed[0]["connector"] is record.connector
     # The baseline guard took the account's ONE venue read.
-    assert record.bundle.exchange.snapshot_calls == 1
+    assert record.adapter.snapshot_calls == 1
     assert halt_calls == []                      # flat/flat → no residual halt
 
 
@@ -428,9 +429,9 @@ def test_coordinator_never_compares_portfolio_a_against_account_b(monkeypatch):
 
     # Each record was reconciled exactly once, with its own adapter and its own connector.
     assert [k["adapter"] for k in constructed] == [
-        record_a.bundle.exchange, record_b.bundle.exchange]
+        record_a.adapter, record_b.adapter]
     assert [k["connector"] for k in constructed] == [
-        record_a.bundle.connector, record_b.bundle.connector]
+        record_a.connector, record_b.connector]
     # Every portfolio matches its OWN account, so nothing is unexplained. Compare
     # portfolio A against account B and BOTH would look like residuals.
     assert halt_calls == []
@@ -455,7 +456,7 @@ def test_coordinator_reconciles_with_the_records_own_adapter(monkeypatch):
 
     coordinator.run_startup_reconcile()
 
-    assert [k["adapter"] for k in constructed] == [record.bundle.exchange]
+    assert [k["adapter"] for k in constructed] == [record.adapter]
     assert registry_impostor.snapshot_calls == 0
 
 
@@ -499,7 +500,7 @@ def test_baseline_guard_scans_every_symbol_the_account_holds(monkeypatch):
     assert [r.symbol for r in residuals] == ["BTC/USDC", "ETH/USDC", "SOL/USDC"]
     # ONE snapshot for the three symbols: the venue read is a REST round trip, and two
     # symbols judged against two different pictures of the venue is not one comparison.
-    assert record.bundle.exchange.snapshot_calls == 1
+    assert record.adapter.snapshot_calls == 1
 
 
 def test_baseline_guard_reports_a_residual_in_an_unsubscribed_symbol(monkeypatch):

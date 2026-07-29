@@ -130,7 +130,7 @@ class ReconciliationCoordinator:
         #   - No separate stream start. An adapter spawns its own fill/order streams when
         #     it connects, so there is no second "now start streaming" step to forget.
         for record in self._records():
-            adapter = record.bundle.exchange
+            adapter = record.adapter
             if adapter is None:
                 continue
 
@@ -139,7 +139,7 @@ class ReconciliationCoordinator:
             # SQL/async/connector off any non-live path (inertness gate).
             if not hasattr(self._order_storage, "rehydrate"):
                 continue
-            connector = record.bundle.connector
+            connector = record.connector
             if connector is None:
                 continue  # paper — no venue behind it, nothing to reconcile against.
 
@@ -169,7 +169,7 @@ class ReconciliationCoordinator:
         ``None`` when no portfolio holds the account — a legitimate state for an account
         brought online before any portfolio was created on it.
         """
-        venue_name = record.spec.execution_venue
+        venue_name = record.spec.venue_name
         account_id = record.spec.account_id
         for portfolio in self._portfolio_handler.get_active_portfolios():
             if (getattr(portfolio, "venue_name", None) or portfolio.exchange) != venue_name:
@@ -215,8 +215,8 @@ class ReconciliationCoordinator:
         """
         residuals: List[BaselineResidual] = []
         for record in self._records():
-            adapter = record.bundle.exchange
-            if adapter is None or record.bundle.connector is None:
+            adapter = record.adapter
+            if adapter is None or record.connector is None:
                 continue
             portfolio = self._portfolio_for(record)
             if portfolio is None:

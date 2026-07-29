@@ -172,7 +172,7 @@ class VenuePlugin(Protocol):
     def fetch_venue_uid(self, connector: Any) -> str | None:
         """The venue's own account UID for the connected session, or ``None``.
 
-        Keeps the trust-on-first-use guard (``venue_uid_guard.py``) venue-agnostic:
+        Keeps the trust-on-first-use identity guard venue-agnostic:
         the guard compares and alerts, the plugin knows the venue's endpoint and
         field. ``None`` means "this venue exposes no account UID" (paper), which the
         guard treats as a clean no-op.

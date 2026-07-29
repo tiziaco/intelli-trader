@@ -18,6 +18,8 @@
 #          counted for now and the delta is expected to be positive until then).
 # Stage 3: account/venue.py DELETED — venue truth is now AccountSnapshot, read by the
 #          execution adapter, and exchanges/base.py is already inside the measured set.
+# Stage 4: venues/accounts.py appeared and ABSORBED four modules — venue_account_manager.py,
+#          assemble.py, lifecycle.py and venue_uid_guard.py are DELETED.
 
 # --- surviving / relocated baseline files ---
 itrader/trading_system/compose.py
@@ -28,19 +30,15 @@ itrader/trading_system/session_initializer.py
 itrader/portfolio_handler/portfolio_factory.py
 itrader/connectors/provider.py
 itrader/connectors/base.py
-itrader/venues/lifecycle.py
 itrader/venues/feed_binder.py
 itrader/venues/paper_plugin.py
 itrader/venues/okx_plugin.py
-itrader/venues/assemble.py
 itrader/venues/bundle.py
 itrader/venues/bundles.py
 itrader/venues/registry.py
 itrader/storage/venue_store.py
 itrader/storage/venue_account_store.py
 itrader/storage/portfolio_definition_store.py
-itrader/venues/venue_account_manager.py
-itrader/venues/venue_uid_guard.py
 itrader/connectors/okx.py
 itrader/connectors/stream_supervisor.py
 itrader/portfolio_handler/account/base.py
@@ -52,4 +50,5 @@ itrader/trading_system/backtest/__init__.py
 itrader/trading_system/live/__init__.py
 itrader/trading_system/live/bootstrap.py
 itrader/venues/catalog.py
+itrader/venues/accounts.py
 itrader/connectors/pool.py

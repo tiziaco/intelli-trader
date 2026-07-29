@@ -1,10 +1,10 @@
 """Live-only venue-selection spec + its single shared builder.
 
-Carries the fields consumed at live wiring: ``execution_venue`` and ``account_id``
-select the execution bundle via ``assemble_venue``; ``data_provider`` selects the
-data-provider plugin at the composition root's own build call, not inside
-``assemble_venue``. A frozen dataclass is preferred over a duck-typed namespace
-here: free equality lets two independently-built specs be compared directly.
+Carries the fields consumed at live wiring: ``execution_venue`` names the venue whose
+enabled accounts a boot brings online; ``data_provider`` selects the data-provider
+plugin at the composition root's own build call. A frozen dataclass is preferred over a
+duck-typed namespace here: free equality lets two independently-built specs be compared
+directly.
 
 Pure module: imports no venue substrate / ccxt / SQL, so it never touches the
 backtest import graph.
@@ -20,20 +20,14 @@ from typing import Literal, Optional
 class VenueSpec:
 	"""The live venue-selection fields read at assembly + composition.
 
-	``execution_venue`` and ``account_id`` select the execution bundle via
-	``assemble_venue`` (``execution_venue`` picks the ``ExecutionVenueRegistry``
-	plugin, ``account_id`` keys the ``ConnectorProvider`` memo). ``data_provider``
-	selects the ``DataProviderRegistry`` plugin at the composition root's own
-	build call, not inside ``assemble_venue``. Frozen so equality is free — two
-	specs built from the same inputs compare equal.
+	``execution_venue`` names the venue a boot brings its enabled accounts online
+	for; ``data_provider`` selects the ``DataProviderRegistry`` plugin at the
+	composition root's own build call. Frozen so equality is free — two specs
+	built from the same inputs compare equal.
 
-	It feeds ``assemble_venue`` ONLY — never ``compose_engine``.
-
-	Beside that trio it also carries the per-account values read off the
-	account's own ``venue_accounts`` row: ``secret_ref``, and the three
-	allowlisted ``config_json`` knobs ``sandbox`` / ``region`` / ``market_type``.
-	Those are read by the venue plugins the trio selects, not by
-	``assemble_venue`` itself.
+	The per-account fields below are vestigial: a live account's identity comes
+	from its durable ``venue_accounts`` row, typed as an ``AccountSpec``, and
+	nothing on the bring-up path reads them off this object.
 	"""
 
 	execution_venue: str
@@ -98,9 +92,8 @@ def build_venue_spec(
 		An explicit data-provider override; when ``None`` the default-provider map
 		is applied over ``execution_venue``.
 	account_id :
-		The connector-memo key; ``None`` makes ``assemble_venue`` raise
-		``ValidationError`` rather than default it — a live spec must always name
-		an account.
+		Vestigial — the account set is store-derived, so no live account's
+		identity comes from this field.
 	secret_ref :
 		The account's credential POINTER off its ``venue_accounts`` row.
 		``None`` = no per-account credentials.

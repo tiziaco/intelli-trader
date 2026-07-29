@@ -128,7 +128,7 @@ class VenueBundles:
     def plugin_for(self, venue: str) -> VenuePlugin:
         """Return the plugin registered for ``venue`` — METADATA only, never to build.
 
-        ``assemble_venue`` needs the venue's PLUGIN OBJECT for the venue-UID guard
+        The venue-assembly arm needs the venue's PLUGIN OBJECT
         (which calls ``plugin.fetch_venue_uid(connector)``), while its BUNDLE must come
         from ``get`` above so exactly one exchange exists per ``(venue, account_id)``.
         Exposing this narrow read — rather than threading a second

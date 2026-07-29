@@ -152,7 +152,7 @@ def test_paper_venue_plugin_builds_its_own_exchange_from_the_injected_config() -
     # Paper has no live connector (D-05).
     assert bundle.connector is None
     # 11-09: the dead ``VenueBundle.lifecycle`` field is gone — the lifecycle is returned
-    # beside the bundle by assemble_venue, never stored inside it.
+    # beside the bundle by the venue-assembly arm, never stored inside it.
     assert not hasattr(bundle, "lifecycle")
     # The connectors arg is untouched (the exploding provider was never called).
     assert callable(bundle.account_factory)

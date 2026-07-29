@@ -26,7 +26,7 @@ import threading
 
 from itrader.events_handler.events import ConnectorFatalEvent
 from itrader.trading_system.live_trading_system import LiveTradingSystem
-from tests.support.live_okx import the_okx_lifecycle
+from tests.support.live_okx import bring_okx_online
 
 
 class _CapturingHaltStore:
@@ -72,8 +72,9 @@ def test_connector_fatal_durable_write_runs_off_the_loop_thread(provisioned_okx)
     store = _CapturingHaltStore()
     system._safety._halt_record_store = store
     try:
-        exchange = the_okx_lifecycle(system).bundle.exchange
-        # The PRODUCTION-wired connector-fatal signal (wired at construction on the okx arm).
+        # The PRODUCTION-wired connector-fatal signal: bring-up arms it before the
+        # account is routable, so an online account always has one.
+        exchange = bring_okx_online(system).adapter
         assert exchange._halt_signal is not None
 
         # Drive the escalation on a dedicated "connector asyncio loop" thread — exactly the
@@ -111,7 +112,7 @@ def test_connector_fatal_winner_only_single_durable_write(provisioned_okx) -> No
     store = _CapturingHaltStore()
     system._safety._halt_record_store = store
     try:
-        signal = the_okx_lifecycle(system).bundle.exchange._halt_signal
+        signal = bring_okx_online(system).adapter._halt_signal
 
         def loop() -> None:
             # Two escalations from the loop (e.g. both stream arms fail) only put events.

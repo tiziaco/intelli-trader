@@ -277,7 +277,7 @@ class VenueAccountNotProvisionedError(PortfolioError):
     action differs per cause (see ``_UNPROVISIONED_ACCOUNT_CAUSE``).
     """
 
-    #: The three causes ``VenueAccountManager.account_for`` distinguishes (D-21).
+    #: The three causes the venue-account manager distinguishes.
     NOT_PROVISIONED = "not_provisioned"
     DISABLED = "disabled"
     NOT_ONLINE = "not_online"

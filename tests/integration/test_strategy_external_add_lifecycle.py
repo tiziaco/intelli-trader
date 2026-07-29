@@ -171,6 +171,9 @@ class _LifecycleSystem:
         spec = build_venue_spec("paper", data_provider="replay")
         system = build_live_system(
             spec, data_plugins={"replay": plugin}, strategy_catalog=_catalog())
+        # Bring-up + rehydrate live in start(), because bring-up connects. This is the
+        # exact call start() makes.
+        system._bootstrap_session()
         self.system = system
 
         # Fail-fast under synchronous drive: build_live_system injects the live

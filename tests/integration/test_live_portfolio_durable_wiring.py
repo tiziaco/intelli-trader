@@ -53,13 +53,14 @@ def _online_record() -> SimpleNamespace:
 
     The coordinator no longer asks an account to describe its own provenance — it walks
     the account manager's online records, so the offline way into the venue-reconcile
-    branch is to report one record whose bundle carries BOTH an adapter and a connector.
+    branch is to report one record carrying BOTH an adapter and a session.
     A record with no connector is paper and is skipped, which is exactly why the stub
     must expose one.
     """
     return SimpleNamespace(
-        spec=SimpleNamespace(execution_venue="okx", account_id="acct-stub"),
-        bundle=SimpleNamespace(exchange=_StubAdapter(), connector=object()),
+        spec=SimpleNamespace(venue_name="okx", account_id="acct-stub"),
+        adapter=_StubAdapter(),
+        connector=object(),
     )
 
 

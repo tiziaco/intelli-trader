@@ -588,6 +588,9 @@ def test_a_full_restart_returns_both_portfolios_with_stable_ids(live_db, okx_env
 
     # --- restart: a brand-new engine over the SAME database -------------------
     system2 = build_live_system(_spec([]))
+    # The rehydrate is a step of the restart sequence start() runs, so drive it here —
+    # the same call start() makes, without the drain thread.
+    system2._bootstrap_session()
     try:
         # Both ids came back FROM THE DEFINITION ROWS (rehydrate reads portfolio_id ASC;
         # UUIDv7 is monotonic, so id_a precedes id_b).
@@ -627,7 +630,11 @@ def _build_paper(**kwargs):
     """
     plugin = TestDataPlugin()
     spec = build_venue_spec("paper", data_provider="replay")
-    return build_live_system(spec, data_plugins={"replay": plugin}, **kwargs)
+    system = build_live_system(spec, data_plugins={"replay": plugin}, **kwargs)
+    # Bring-up + rehydrate live in start(), because bring-up connects. This is the exact
+    # call start() makes, so the production restart sequence runs without a drain thread.
+    system._bootstrap_session()
+    return system
 
 
 def _seed_strategy(store: StrategyRegistryStore, strategy, portfolio_ids) -> None:

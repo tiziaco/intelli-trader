@@ -88,7 +88,11 @@ def _build(**kwargs: Any) -> Any:
     """
     plugin = TestDataPlugin()
     spec = build_venue_spec("paper", data_provider="replay")
-    return build_live_system(spec, data_plugins={"replay": plugin}, **kwargs)
+    system = build_live_system(spec, data_plugins={"replay": plugin}, **kwargs)
+    # Bring-up + rehydrate live in start(), because bring-up connects. This is the exact
+    # call start() makes, so the production restart sequence runs without a drain thread.
+    system._bootstrap_session()
+    return system
 
 
 # --------------------------------------------------------------------------------------

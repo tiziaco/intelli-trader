@@ -115,17 +115,16 @@ class _RecordingAlertSink:
 def _records(*adapters: Any, connector: Optional[Any] = None) -> List[Any]:
     """Online-account records, one per adapter, each carrying a live connector.
 
-    ``bundle.connector is not None`` is the streaming discriminator — a paper account has
+    ``record.connector is not None`` is the streaming discriminator — a paper account has
     no streams to recover and no venue to snapshot — so a non-None placeholder is what
     marks a record as live. Passing the SAME adapter twice is legal here on purpose: the
     handler must de-duplicate rather than assume the composition invariant.
     """
     return [
         SimpleNamespace(
-            spec=SimpleNamespace(execution_venue="okx", account_id=f"acct-{index}"),
-            bundle=SimpleNamespace(
-                connector=connector if connector is not None else object(),
-                exchange=adapter),
+            spec=SimpleNamespace(venue_name="okx", account_id=f"acct-{index}"),
+            connector=connector if connector is not None else object(),
+            adapter=adapter,
         )
         for index, adapter in enumerate(adapters)
     ]
@@ -303,8 +302,9 @@ def test_a_paper_record_is_never_recovered_or_snapshotted() -> None:
     order_log: List[str] = []
     paper_adapter = _FakeAdapter(order_log=order_log, healthy=False)
     paper_record = SimpleNamespace(
-        spec=SimpleNamespace(execution_venue="paper", account_id="acct-paper"),
-        bundle=SimpleNamespace(connector=None, exchange=paper_adapter),
+        spec=SimpleNamespace(venue_name="paper", account_id="acct-paper"),
+        connector=None,
+        adapter=paper_adapter,
     )
     safety = _FakeSafety(paused=True)
     handler = StreamRecoveryHandler(safety=safety, accounts=lambda: [paper_record])

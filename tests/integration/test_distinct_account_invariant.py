@@ -39,6 +39,7 @@ from itrader.storage.portfolio_definition_store import PortfolioDefinitionStore
 from itrader.storage.venue_account_store import VenueAccountStore
 from itrader.trading_system.live_trading_system import build_live_system
 from itrader.trading_system.system_spec import PortfolioSpec, SystemSpec
+from tests.support.live_okx import stub_every_okx_session
 from tests.support.schema import provision_schema
 
 _AT = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
@@ -211,6 +212,18 @@ def _spec(account_ids, primary=None):
     )
 
 
+def _booted(system):
+    """Run the production restart sequence over stubbed sessions; return the system.
+
+    Bring-up CONNECTS, so it is a step of ``start()`` rather than of construction. Each
+    enabled account's session is pre-built and stubbed first, so the REAL bring-up runs
+    with no socket.
+    """
+    stub_every_okx_session(system)
+    system._bootstrap_session()
+    return system
+
+
 @pytest.fixture
 def live_db(pg_database_env):
     """A handle on the SAME database ``build_live_system`` will build its own engine on.
@@ -292,7 +305,7 @@ def test_two_persisted_portfolios_on_one_venue_both_rehydrate(live_db, okx_env) 
     first = _seed_definition(live_db, name="pf-a", account_id="acct-a")
     second = _seed_definition(live_db, name="pf-b", account_id="acct-b")
 
-    system = build_live_system(_spec([]))
+    system = _booted(build_live_system(_spec([])))
     try:
         assert set(system.portfolio_handler._portfolios) == {first, second}
         accounts = {
@@ -331,7 +344,7 @@ def test_the_same_account_id_on_two_venues_boots(live_db, okx_env) -> None:
         other, name="pf-binance", venue_name="binance", account_id="main",
         initial_cash=Decimal("10000.00"), enabled=True, config=None, at=_AT)
 
-    system = build_live_system(_spec([]))
+    system = _booted(build_live_system(_spec([])))
     try:
         # The binance portfolio rehydrated; the okx durable account assembled.
         assert other in system.portfolio_handler._portfolios
@@ -373,7 +386,7 @@ def test_a_binance_portfolio_does_not_receive_the_okx_venue_account(
         other, name="pf-binance", venue_name="binance", account_id="main",
         initial_cash=Decimal("10000.00"), enabled=True, config=None, at=_AT)
 
-    system = build_live_system(_spec([]))
+    system = _booted(build_live_system(_spec([])))
     try:
         portfolio = system.portfolio_handler.get_portfolio(other)
         # Identity is the PAIR, and the leaf is its ONE storage site (``Portfolio``'s two
@@ -400,7 +413,7 @@ def test_a_binance_portfolio_does_not_receive_the_okx_venue_account(
 # --------------------------------------------------------------------------- #
 def test_a_boot_with_zero_persisted_portfolios_succeeds_cleanly(live_db, okx_env) -> None:
     """MPORT-03 empty edge at the boot — a fresh database is a valid first start."""
-    system = build_live_system(_spec(["acct-solo"]))
+    system = _booted(build_live_system(_spec(["acct-solo"])))
     try:
         assert system.portfolio_handler._portfolios == {}
     finally:
@@ -425,7 +438,7 @@ def test_a_persisted_portfolio_rehydrates_before_start_with_its_id(
 
     # The spec names NO account: a spec portfolio on "acct-a" would collide with the
     # persisted row by design (gate (b)).
-    system = build_live_system(_spec([]))
+    system = _booted(build_live_system(_spec([])))
     try:
         # start() has NOT been called — construction alone rebuilt the portfolio.
         assert list(system.portfolio_handler._portfolios) == [persisted]
@@ -462,7 +475,7 @@ def test_a_persisted_portfolio_survives_a_full_teardown_and_rebuild(
         config={}, at=_AT)
 
     # --- first boot: create the portfolio through the live handler --------------
-    system = build_live_system(_spec([]))
+    system = _booted(build_live_system(_spec([])))
     try:
         first_id = system.portfolio_handler.add_portfolio(
             name="pf-restart", exchange=_VENUE, cash=Decimal("25000.00"),
@@ -471,7 +484,7 @@ def test_a_persisted_portfolio_survives_a_full_teardown_and_rebuild(
         system.stop(timeout=5.0)
 
     # --- restart: a brand-new engine over the SAME database ---------------------
-    system2 = build_live_system(_spec([]))
+    system2 = _booted(build_live_system(_spec([])))
     try:
         assert list(system2.portfolio_handler._portfolios) == [first_id], (
             "the portfolio did not survive the restart — either add_portfolio "
@@ -510,7 +523,7 @@ def test_a_persisted_portfolio_config_override_is_applied_on_the_rehydrated_port
         initial_cash=Decimal("10000.00"), enabled=True,
         config={"limits": {"max_positions": 7}}, at=_AT)
 
-    system = build_live_system(_spec([]))
+    system = _booted(build_live_system(_spec([])))
     try:
         portfolio = system.portfolio_handler.get_portfolio(persisted)
         assert portfolio.config.limits.max_positions == 7, (

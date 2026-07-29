@@ -21,10 +21,11 @@ rehydrate so the account manager's online set is full when rehydrate materialize
 row; otherwise a portfolio naming a not-provisioned, disabled or not-online account
 silently sits on a compute leaf instead of raising.
 
-**Failure isolation, as it stands today.** The bring-up loop has NO per-row quarantine — a
-single row's fault propagates and aborts the boot. That is the CURRENT behaviour and it is
-preserved here unchanged; per-row quarantine is a later, deliberate change, not something
-this extraction smuggles in.
+**Failure isolation.** The bring-up loop QUARANTINES a row whose bring-up fails: it is
+skipped with a CRITICAL alert and the remaining rows still come up. One unreachable venue
+account must not take an entire multi-account deployment offline — and because
+``bring_online`` registers LAST, a quarantined row is left unroutable rather than
+half-online, so the skip is total rather than partial.
 
 ``layer_persisted_overrides`` lives here as the other half of the restart contract
 (``defaults <- env <- persisted``). It is called from a LATER point in the build than
@@ -37,6 +38,7 @@ Indentation: 4-space. Strict-typed, and deliberately NOT covered by any mypy
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import pydantic
@@ -59,6 +61,10 @@ from itrader.portfolio_handler.rehydrate.portfolio_rehydrate import rehydrate_po
 _DEGRADE_CLEAN = (
     SQLAlchemyError, ConfigurationError, pydantic.ValidationError, ValueError)
 
+#: The FIXED LITERAL alert reason for a quarantined account, so an operator alert-rule can
+#: match on it and no exception text can smuggle unvetted content into the egress channel.
+_QUARANTINED_ACCOUNT_REASON = "venue-account-quarantined"
+
 
 def bootstrap_session(
     *,
@@ -66,7 +72,8 @@ def bootstrap_session(
     venue_manager: Any,
     portfolio_handler: Any,
     execution_venue: str,
-) -> dict[str, Any]:
+    alert_sink: Any,
+) -> None:
     """Turn the durable state into online accounts and rehydrated portfolios.
 
     Parameters
@@ -83,17 +90,12 @@ def bootstrap_session(
         ``add_portfolio`` write-back go through that ONE instance so they cannot diverge.
     execution_venue : str
         The venue whose enabled accounts this boot brings online.
-
-    Returns
-    -------
-    dict[str, Any]
-        One ``VenueLifecycle`` per account, keyed by the row's ``account_id`` — the same
-        key the exchange registry and the facade's per-account reads use. Empty on the
-        in-memory arm.
+    alert_sink : Any
+        The CRITICAL egress a quarantined row is escalated through. Required: a row that
+        is skipped with nowhere to report it is an account an operator believes is trading.
     """
-    venue_lifecycles: dict[str, Any] = {}
     if sql_engine is None:
-        return venue_lifecycles
+        return
 
     logger = get_itrader_logger().bind(component="SessionBootstrap")
 
@@ -113,13 +115,13 @@ def bootstrap_session(
         assert_distinct_accounts(persisted=definition_store.read_all())
 
     # (3) ``bring_online`` builds the account's spec (carrying its OWN secret_ref and
-    # config overrides), assembles the bundle through the shared memo, registers the
-    # exchange under the row's (venue, account_id) pair VERBATIM, and arms the UID guard.
+    # config overrides), opens its session, builds and connects its execution adapter,
+    # arms the identity guard, and registers the adapter under the row's
+    # (venue, account_id) pair VERBATIM — in that order, registration LAST.
     # ``read_enabled_for`` carries its own table probe, so a boot before the account table
     # exists brings up zero accounts rather than raising.
     for row in venue_manager.read_enabled_for(execution_venue):
-        record = venue_manager.bring_online(row)
-        venue_lifecycles[str(row["account_id"])] = record.lifecycle
+        _bring_row_online(venue_manager, row, logger=logger, alert_sink=alert_sink)
     # Finalize the feed's connection binding once the bring-up loop is done. A boot with
     # zero streaming accounts leaves the feed UNBOUND and logs the cause, since
     # bring_online's per-row rebind never ran.
@@ -133,7 +135,58 @@ def bootstrap_session(
             portfolio_handler=portfolio_handler,
         )
 
-    return venue_lifecycles
+
+def _bring_row_online(
+    venue_manager: Any, row: Any, *, logger: Any, alert_sink: Any
+) -> None:
+    """Bring ONE row online, QUARANTINING it on failure rather than aborting the boot.
+
+    A broad ``except`` on purpose: the failure modes are the venue's, not the engine's — an
+    unreachable host, a credential pointer resolving to nothing, a config the engine
+    declines. None of them is evidence that the OTHER accounts cannot come up, and taking a
+    whole multi-account deployment offline for one of them is the larger outage.
+
+    The skip is safe precisely because registration is the LAST step of ``bring_online``:
+    the failed pair is unroutable, so quarantining leaves nothing half-online behind it.
+
+    It is never SILENT. The alert is what tells an operator that an account they believe is
+    trading is not, and the alert failing must not abort the boot either.
+    """
+    from itrader.core.enums import ErrorSeverity
+    from itrader.events_handler.events import ErrorEvent
+
+    venue_name = str(row["venue_name"])
+    account_id = str(row["account_id"])
+    try:
+        venue_manager.bring_online(row)
+    except Exception as exc:
+        logger.error(
+            "Venue account (%s, %s) failed to come online — QUARANTINED for this boot; "
+            "it is unroutable and its portfolios will refuse rather than trade against a "
+            "session that never opened",
+            venue_name, account_id, exc_info=True)
+        try:
+            alert_sink.alert(ErrorEvent(
+                time=datetime.now(UTC),
+                source="venue",
+                error_type=_QUARANTINED_ACCOUNT_REASON,
+                error_message=(
+                    "a provisioned venue account could not be brought online at boot; "
+                    "it is quarantined and cannot receive orders"),
+                operation="bootstrap_session",
+                severity=ErrorSeverity.CRITICAL,
+                # The exception TYPE only: a venue error message can carry request
+                # context, so no exception text reaches the egress channel.
+                details={
+                    "venue_name": venue_name,
+                    "account_id": account_id,
+                    "error_type": type(exc).__name__,
+                },
+            ))
+        except Exception:
+            logger.critical(
+                "Venue account (%s, %s) was quarantined but the alert sink failed",
+                venue_name, account_id, exc_info=True)
 
 
 def layer_persisted_overrides(

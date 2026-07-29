@@ -1,7 +1,7 @@
 """SEAM-03/D-11 — the shared ``build_venue_spec`` builder + the for_exchange↔build_live_system identity.
 
 After D-04 made ``compose_engine`` spec-free, the ONLY "spec" the live path still needs is
-the venue-selection trio ``assemble_venue`` reads (``execution_venue`` / ``data_provider`` /
+the venue-selection trio the live root reads (``execution_venue`` / ``data_provider`` /
 ``account_id``). SEAM-03/D-11 centralizes that into ONE typed ``VenueSpec`` + ONE shared
 ``build_venue_spec`` builder — the SOLE home of the ``{'okx':'okx','paper':'okx'}``
 default-provider map — that BOTH ``for_exchange`` and ``build_live_system`` call.
@@ -19,7 +19,7 @@ Modelling the two entry points faithfully (without standing up a facade):
 * **build_live_system path** — it reads the incoming spec's fields and re-calls
   ``build_venue_spec(V, data_provider=spec.data_provider, account_id=spec.account_id)``. Because
   ``build_venue_spec`` is idempotent (re-resolving an already-resolved provider is stable), the
-  spec it feeds ``assemble_venue`` equals the one ``for_exchange`` built.
+  spec it feeds the live root equals the one ``for_exchange`` built.
 
 Package-less test dir (no ``__init__.py``) to avoid the full-suite package collision; the
 folder-derived ``unit`` marker is auto-applied (nothing marked by hand). Indentation: 4-SPACE.

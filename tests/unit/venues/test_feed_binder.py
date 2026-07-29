@@ -25,12 +25,15 @@ from typing import Any
 import pytest
 
 from itrader.config.sql import SqlSettings
-from itrader.connectors.provider import ConnectorProvider
+from itrader.connectors.pool import ConnectorPool
+from itrader.core.enums.execution import ExchangeConnectionStatus
+from itrader.execution_handler.result_objects import ConnectionResult
 from itrader.storage import SqlEngine
 from itrader.storage.venue_account_store import VenueAccountStore
 from itrader.trading_system.alert_sink import LogAlertSink
+from itrader.venues.accounts import VenueAccountManager
+from itrader.venues.catalog import VenueCapability, VenueDescriptor
 from itrader.venues.feed_binder import FeedConnectionBinder
-from itrader.venues.venue_account_manager import VenueAccountManager
 from tests.support.schema import provision_schema
 
 _AT = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
@@ -81,13 +84,17 @@ class _FakeFeed:
 
 
 def _candidate(account_id: str, *, venue: str = "okx") -> tuple[str, str, Any]:
-    return (venue, account_id, SimpleNamespace(account_id=account_id, data_provider="okx"))
+    return (venue, account_id, SimpleNamespace(account_id=account_id))
 
 
 def _binder(feed: _FakeFeed) -> FeedConnectionBinder:
     return FeedConnectionBinder(
         feed=feed,
         data_registry=_FakeDataRegistry(),
+        # A RUN-level choice, not a per-account one: which venue serves candles is a
+        # property of the deployment, so it is bound here rather than read off whichever
+        # account's connection the feed happened to borrow.
+        data_provider="okx",
         ctx=SimpleNamespace(),
         connectors=SimpleNamespace(),
         global_queue=_GQ,
@@ -184,39 +191,66 @@ class _RecordingBinder:
         self.calls.append(list(available))
 
 
-class _StreamingBundle:
-    """A bundle that looks like a live (connector-bearing) venue."""
+class _StreamingAdapter:
+    """An execution adapter that looks like a live (session-bearing) venue arm."""
 
-    exchange = object()
-    connector = object()
+    def connect(self) -> ConnectionResult:
+        return ConnectionResult(
+            success=True,
+            status=ExchangeConnectionStatus.CONNECTED,
+            exchange_name="okx")
 
-    def account_factory(self, **kwargs: Any) -> Any:  # pragma: no cover - unused here
-        return object()
+    def fetch_venue_uid(self) -> str | None:
+        return None
+
+    def set_halt_signal(self, halt_signal: Any) -> None:
+        return None
+
+    def set_stream_state_listener(self, on_down: Any, on_up: Any) -> None:
+        return None
 
 
-class _StreamingBundles:
-    """A ``VenueBundles`` stand-in whose ``get`` returns a streaming bundle."""
+class _FakeConnector:
+    """A session double — enough for the manager to treat the account as streaming."""
 
-    def __init__(self) -> None:
-        self._bundle = _StreamingBundle()
+    def connect(self) -> None:
+        return None
 
-    def plugin_for(self, venue: str) -> Any:
-        return object()
+    def disconnect(self) -> None:
+        return None
 
-    def get(self, venue: str, account_id: str, spec: Any) -> Any:
-        return self._bundle
+    def set_halt_signal(self, halt_signal: Any) -> None:
+        return None
+
+
+#: A venue that DECLARES credentials, so the manager opens a session for it and the
+#: account counts as a connection the feed may borrow.
+_STREAMING_VENUE = VenueDescriptor(
+    name="okx",
+    credential_model=SqlSettings,
+    capabilities=frozenset({VenueCapability.EXECUTION}),
+    data_requires_auth=False,
+    default_data_provider="okx",
+)
 
 
 def _streaming_manager() -> tuple[VenueAccountManager, VenueAccountStore, _RecordingBinder]:
     store = VenueAccountStore(SqlEngine(SqlSettings.default()))
     provision_schema(store.backend)
     binder = _RecordingBinder()
+    catalog = {"okx": _STREAMING_VENUE}
     manager = VenueAccountManager(
-        store,
-        _StreamingBundles(),
-        ConnectorProvider({}),
-        {},  # D-43: the bare (venue, account_id) -> exchange registry
+        store=store,
+        pool=ConnectorPool(
+            catalog=catalog, resolver=None,
+            recipes={"okx": lambda **kwargs: _FakeConnector()}),
+        routing={},
+        catalog=catalog,
+        exchange_recipes={"okx": lambda **kwargs: _StreamingAdapter()},
+        ctx=SimpleNamespace(),
         alert_sink=LogAlertSink(),
+        halt_signal=lambda reason: None,
+        stream_state_listener=(lambda name: None, lambda name: None),
         feed_binder=binder,
     )
     return manager, store, binder

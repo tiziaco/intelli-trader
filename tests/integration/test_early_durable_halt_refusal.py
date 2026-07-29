@@ -28,7 +28,7 @@ from unittest.mock import MagicMock
 
 from itrader.core.enums import SystemStatus
 from itrader.trading_system.live_trading_system import LiveTradingSystem
-from tests.support.live_okx import the_feed_provider, the_okx_lifecycle
+from tests.support.live_okx import stub_okx_session, the_feed_provider
 
 
 class _UnresolvedHaltStore:
@@ -70,15 +70,12 @@ def test_durably_halted_start_refuses_before_any_venue_io(provisioned_okx) -> No
     # Spy/stub EVERY call start() could make before the refusal. On the fixed (top-gate)
     # code none of these run; on the pre-fix (late-gate) code they all run before refusing.
     system._initialize_live_session = MagicMock(name="_initialize_live_session")
-    # 11.2-07 (D-36): the venue arms are reached through the single assembled OKX lifecycle
-    # and the binder's bound provider (``_primary_lifecycle`` / ``.provider`` are deleted).
-    # The venue ACCOUNT is not a facade field — accounts live on portfolios.
-    lifecycle = the_okx_lifecycle(system)
-    lifecycle.bundle.connector.connect = MagicMock(name="connector.connect")
+    # The venue arm is reached through the account's own session: bring-up is what opens
+    # it, and bring-up is a step of start(). Pre-building it here (over stubbed I/O) is
+    # what makes "zero venue I/O" observable — the connect spy belongs to the object the
+    # bring-up would have used.
+    connector = stub_okx_session(system)
     system.feed.warmup = MagicMock(name="feed.warmup")
-    the_feed_provider(system).start_stream = MagicMock(name="provider.start_stream")
-    lifecycle.bundle.exchange.connect = MagicMock(
-        name="exchange.connect", return_value=SimpleNamespace(success=True))
     # WR-01/WR-03: the venue-link + baseline-guard logic no longer lives on the facade —
     # production reconciles exclusively via _build_reconciliation_coordinator()
     # .run_startup_reconcile() (the coordinator owns the link + guard copies). Spy the
@@ -98,10 +95,11 @@ def test_durably_halted_start_refuses_before_any_venue_io(provisioned_okx) -> No
 
         # D-20: the refusal is at the TOP — ZERO session init and ZERO venue I/O ran.
         system._initialize_live_session.assert_not_called()
-        lifecycle.bundle.connector.connect.assert_not_called()
+        connector.connect.assert_not_called()
         system.feed.warmup.assert_not_called()
-        the_feed_provider(system).start_stream.assert_not_called()
-        lifecycle.bundle.exchange.connect.assert_not_called()
+        # Nothing was brought online, so nothing is routable and the feed borrowed nothing.
+        assert system._venue_manager.online_records() == []
+        assert the_feed_provider(system) is None
         # The top-gate refuses BEFORE reconcile: the coordinator is never even built, so
         # its run_startup_reconcile (venue link + baseline guard) never runs (WR-03).
         system._build_reconciliation_coordinator.assert_not_called()
@@ -120,14 +118,10 @@ def test_healthy_start_still_runs_session_init_when_no_durable_halt(provisioned_
     # No durable store -> the gate is skipped entirely.
     system._safety._halt_record_store = None
 
-    # 11.2-07 (D-36): reached through the single assembled OKX lifecycle + the binder's
-    # bound provider (the facade scalars + ``_primary_lifecycle`` are deleted).
-    lifecycle = the_okx_lifecycle(system)
-    lifecycle.bundle.connector.connect = MagicMock(name="connector.connect")
+    # The account's session is pre-built and stubbed, so start() runs the REAL bring-up
+    # over it: the real recipe, the real identity guard, the real routing write.
+    connector = stub_okx_session(system)
     system.feed.warmup = MagicMock(name="feed.warmup")
-    the_feed_provider(system).start_stream = MagicMock(name="provider.start_stream")
-    lifecycle.bundle.exchange.connect = MagicMock(
-        name="exchange.connect", return_value=SimpleNamespace(success=True))
     # The venue-account snapshot is now per PORTFOLIO. This system has no portfolios, so
     # the reconcile is a clean skip — spy the coordinator to prove it still RAN (the
     # top-gate did not short-circuit it) rather than asserting on a facade account field
@@ -140,9 +134,13 @@ def test_healthy_start_still_runs_session_init_when_no_durable_halt(provisioned_
         started = system.start()
         assert started is True
         assert system.get_status()["status"] == SystemStatus.RUNNING.value
-        # The venue handshake ran (the top-gate did not short-circuit a healthy start).
-        lifecycle.bundle.connector.connect.assert_called_once()
-        lifecycle.bundle.exchange.connect.assert_called_once()
+        # The venue handshake ran (the top-gate did not short-circuit a healthy start):
+        # the session opened, the adapter came up connected, and the pair is routable.
+        connector.connect.assert_called_once()
+        record = system._venue_manager.online_records()[0]
+        assert record.adapter.is_connected() is True
+        assert system.execution_handler.exchanges[("okx", record.spec.account_id)] \
+            is record.adapter
         reconcile_spy.assert_called_once()
     finally:
         system.stop()

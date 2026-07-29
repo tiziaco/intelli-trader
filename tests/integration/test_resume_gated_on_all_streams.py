@@ -29,17 +29,17 @@ import pytest
 from itrader.execution_handler.exchanges.base import AccountSnapshot
 from itrader.price_handler.feed.live_bar_feed import LiveBarFeed
 from itrader.trading_system.live_trading_system import LiveTradingSystem
-from tests.support.live_okx import the_feed_provider, the_okx_lifecycle
+from tests.support.live_okx import bring_okx_online, the_feed_provider, the_okx_record
 
 
 def _exchange(system: LiveTradingSystem):
-    """The (single, store-derived) OKX execution ADAPTER — read through its lifecycle.
+    """The (single, store-derived) OKX execution ADAPTER — read off its online record.
 
     This one object is all three resume arms: it runs the missed-fill catch-up, reads the
     venue snapshot and reports its own stream health, because it owns the account's
     authenticated session.
     """
-    return the_okx_lifecycle(system).bundle.exchange
+    return the_okx_record(system).adapter
 
 
 def _provider(system: LiveTradingSystem):
@@ -64,9 +64,9 @@ def paused_okx_system(provisioned_okx):
     row to bring online (offline there would be none).
     """
     system = LiveTradingSystem.for_exchange("okx")
-    lifecycle = the_okx_lifecycle(system)
-    assert lifecycle.bundle.connector is not None
-    exchange = lifecycle.bundle.exchange
+    record = bring_okx_online(system)
+    assert record.connector is not None
+    exchange = record.adapter
     # Neutralize the two blocking venue-I/O legs the resume runs before the gate
     # (missed-fill catch-up + REST snapshot) so the resume path runs socket-free.
     exchange.catch_up_missed_fills = MagicMock(  # type: ignore[method-assign]

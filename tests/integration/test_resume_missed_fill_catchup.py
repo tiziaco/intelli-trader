@@ -32,7 +32,7 @@ from itrader.trading_system.live_trading_system import LiveTradingSystem
 from itrader.trading_system.safety.stream_recovery_handler import (
     StreamRecoveryHandler,
 )
-from tests.support.live_okx import the_okx_lifecycle
+from tests.support.live_okx import bring_okx_online
 
 
 def _set_okx_env(monkeypatch) -> None:
@@ -52,9 +52,9 @@ def test_resume_drain_recovers_fill_settled_during_disconnect(provisioned_okx) -
     """
     system = LiveTradingSystem.for_exchange("okx")
 
-    # The single store-derived OKX execution adapter, read through its lifecycle. It is
-    # the SAME object the handler enumerates off the account manager's online records.
-    exchange = the_okx_lifecycle(system).bundle.exchange
+    # The single store-derived OKX execution adapter. It is the SAME object the handler
+    # enumerates off the account manager's online records.
+    exchange = bring_okx_online(system).adapter
 
     # A trade settled on the venue while the fill stream was down.
     settled_trade = {"id": "trade-during-outage"}
@@ -176,13 +176,13 @@ def test_on_reconnect_does_no_engine_thread_ring_write_cf2() -> None:
     provider = MagicMock(name="okx_data_provider")
     provider.is_streaming_healthy = MagicMock(return_value=True)
     # The accounts arrive as the account manager's ONLINE RECORDS, read through a callable:
-    # ``bundle.connector is not None`` marks a record as streaming, and ``bundle.exchange``
+    # ``record.connector is not None`` marks a record as streaming, and ``record.adapter``
     # is the adapter that gets caught up, snapshotted and health-checked.
     handler = StreamRecoveryHandler(
         safety=safety,
         accounts=lambda: [SimpleNamespace(
-            spec=SimpleNamespace(execution_venue="okx", account_id="acct-1"),
-            bundle=SimpleNamespace(connector=object(), exchange=adapter))],
+            spec=SimpleNamespace(venue_name="okx", account_id="acct-1"),
+            connector=object(), adapter=adapter)],
         feed_provider=lambda: provider,
     )
 

@@ -1,7 +1,7 @@
 """LiveDataProvider — the uniform surface every live data provider presents (VENUE-05 / D-10).
 
 This module gives every live data provider ONE structural shape so the
-``VenueLifecycle`` (05-06) can wire ANY provider unconditionally — no
+the composition root can wire ANY provider unconditionally — no
 ``if exchange=='okx' … elif =='paper'`` provider-wiring branch, no ``hasattr``
 sprinkling. It carries a single symbol:
 
@@ -19,7 +19,7 @@ sprinkling. It carries a single symbol:
 D-10 (provider uniformity rule): an OPTIONAL method on a PRESENT object → a no-op
 implementation on the provider (call unconditionally, kills ``hasattr``). An
 ENTIRELY ABSENT component (paper's connector/account) is a different granularity —
-that stays an explicit ``None``-guard in ``VenueLifecycle``, not modelled here.
+that stays an explicit ``None``-guard at the composition root, not modelled here.
 
 ``OkxDataProvider`` already exposes every method on this surface, so it satisfies
 ``LiveDataProvider`` STRUCTURALLY without inheriting anything and is NOT edited by
@@ -47,7 +47,7 @@ if TYPE_CHECKING:
 class LiveDataProvider(Protocol):
     """Structural surface every live data provider presents (VENUE-05 / D-10).
 
-    The swap-a-fake seam the ``VenueLifecycle`` types against so it can wire ANY
+    The swap-a-fake seam the data plane types against so it can wire ANY
     provider (streaming OKX or non-streaming replay) with the SAME calls. Mirrors
     the ``LiveConnector`` Protocol shape (``@runtime_checkable``, ``...`` bodies,
     no ABC). Method bodies are ``...`` — this is a contract, not a base class.

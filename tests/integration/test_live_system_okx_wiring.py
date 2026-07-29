@@ -20,15 +20,20 @@ the same session may already have imported ``ccxt.pro``); the credential-free co
 + unwired-arm assertions are the load-bearing gate.
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from itrader.core.enums import ExchangeConnectionStatus, HaltReason, SystemStatus
 from itrader.events_handler.events import ConnectorFatalEvent, StreamStateEvent
+from itrader.execution_handler.exchanges.okx import OkxExchange
 from itrader.execution_handler.result_objects import ConnectionResult
 from itrader.trading_system.live_trading_system import LiveTradingSystem
-from tests.support.live_okx import the_feed_provider, the_okx_lifecycle
+from tests.support.live_okx import (
+    bring_okx_online,
+    stub_okx_session,
+    the_feed_provider,
+)
 
 
 def _strip_okx_env(monkeypatch) -> None:
@@ -56,10 +61,9 @@ def test_construct_non_okx_venue_needs_no_okx_credentials(monkeypatch) -> None:
     # Must NOT raise pydantic.ValidationError for missing OKX_API_* — the OKX arm is gated.
     system = LiveTradingSystem.for_exchange("binance")
 
-    # 11-09: the six scalar venue aliases are gone; "unwired" is now an EMPTY
-    # per-account lifecycle map. An unregistered venue (and, since 11.2-07, any offline
-    # boot without a durable venue_accounts row) assembles nothing at all.
-    assert system._venue_lifecycles == {}
+    # "Unwired" is now an EMPTY online-account enumeration. An unregistered venue — and
+    # any boot without a durable venue_accounts row — brings nothing online at all.
+    assert system._online_account_records() == []
     # The OKX execution arm is not registered for a non-OKX venue.
     # D-27: the registry is pair-keyed, so assert over the VENUE HALF. Checking
     # only ("okx", DEFAULT_ACCOUNT_ID) would silently weaken this test — an OKX
@@ -78,65 +82,10 @@ def test_construct_does_not_connect_in_constructor(monkeypatch) -> None:
 
     system = LiveTradingSystem.for_exchange("binance")
 
-    # No connector was built, so there is nothing connected and nothing to leak.
-    assert system._venue_lifecycles == {}
+    # No session was built, so there is nothing connected and nothing to leak.
+    assert system._online_account_records() == []
     # stop() before any start() must not raise even though nothing is wired/running.
     assert system.stop() is True
-
-
-def test_okx_arm_injects_real_provider_into_live_feed(provisioned_okx) -> None:
-    """The OKX arm injects the real provider into the feed BEFORE warmup/start_stream (D-01/D-13).
-
-    The load-bearing Phase-3 wiring proof: after construction — and BEFORE any
-    ``warmup()``/``start_stream()`` runs — the LIVE feed's INTERNAL provider reference
-    (``self._provider``, the private attr ``warmup()``/gap-backfill read) IS the
-    constructed ``OkxDataProvider``. A dead-attribute mis-wire (``feed.provider = ...``)
-    would leave ``feed._provider is None`` and fail HERE.
-
-    11.2-07 (D-36): the feed is bound to a CONNECTION by the FeedConnectionBinder — the
-    provider lives on the binder / the feed, not on a "primary" lifecycle. The store spine
-    provisions one OKX account so the binder builds and binds exactly one provider.
-    """
-    system = LiveTradingSystem.for_exchange("okx")
-    try:
-        provider = the_feed_provider(system)
-        assert provider is not None
-        # The PRIVATE _provider the warmup path reads IS the binder's bound provider.
-        assert system.feed._provider is provider
-    finally:
-        system.stop()
-
-
-def test_okx_arm_wires_provider_sink_to_feed_update(provisioned_okx) -> None:
-    """The provider's closed-bar sink is wired to ``feed.update`` (the ingest seam).
-
-    Proves the D-36 binder wire ``set_bar_sink(self._feed.update)``: a confirm-gated
-    ClosedBar pushed from the provider drives the feed's monotonic-guard ingest.
-    """
-    system = LiveTradingSystem.for_exchange("okx")
-    try:
-        provider = the_feed_provider(system)
-        assert provider is not None
-        assert provider._bar_sink == system.feed.update
-    finally:
-        system.stop()
-
-
-def test_okx_arm_binds_provider_to_engine_queue(provisioned_okx) -> None:
-    """The OKX arm binds the provider's engine queue so spawn_warmup can emit (WR-02 blocker).
-
-    ``OkxDataProvider.spawn_warmup`` raises a typed ``StateError`` unless ``self._global_queue``
-    was bound via ``set_global_queue``. The D-36 binder wires the bar sink AND the queue when
-    it borrows the connection; dropping the queue wire makes this FAIL (``_global_queue is
-    None``) — so the test genuinely catches the wiring gap.
-    """
-    system = LiveTradingSystem.for_exchange("okx")
-    try:
-        provider = the_feed_provider(system)
-        assert provider is not None
-        assert provider._global_queue is system.global_queue
-    finally:
-        system.stop()
 
 
 def test_okx_live_feed_capacity_derives_to_strategy_warmup(monkeypatch) -> None:
@@ -160,35 +109,6 @@ def test_okx_live_feed_capacity_derives_to_strategy_warmup(monkeypatch) -> None:
     expected = max(
         (s.warmup for s in system.strategies_handler.strategies), default=1)
     assert system.feed.cache_capacity() == expected
-
-
-class _OfflineVenueClient:
-    """A ccxt-shaped client answering every REST read start() performs, with no socket.
-
-    The venue answers EMPTY: no balances, no positions, no resting orders. That is what
-    lets ``start()`` run the real startup reconcile + baseline guard offline and still
-    reach RUNNING — an empty venue agrees with an empty engine, so nothing is adopted and
-    nothing halts.
-
-    The methods are plain (non-async) and return finished values because the ``call``
-    stub below is a pass-through: a real coroutine handed to a pass-through would never be
-    awaited, and ``filterwarnings=["error"]`` turns that into a failure.
-    """
-
-    #: Loaded-markets map the arm's ``validate_symbol`` consults (fail-closed when absent).
-    markets: dict = {}
-
-    def fetch_balance(self) -> dict:
-        return {"total": {}}
-
-    def fetch_positions(self) -> list:
-        return []
-
-    def fetch_open_orders(self) -> list:
-        return []
-
-    def fetch_my_trades(self, symbol, since=None, limit=None) -> list:
-        return []
 
 
 def _provision_empty_order_tables(engine) -> None:
@@ -216,117 +136,94 @@ def _provision_empty_order_tables(engine) -> None:
         connection.execute(tables["orders"].delete())
 
 
-def _stub_okx_network(system: LiveTradingSystem) -> None:
-    """Stub every network-touching call in start() so it runs fully offline.
+def test_the_boot_brings_the_provisioned_okx_account_online_and_routable(
+    provisioned_okx,
+) -> None:
+    """One durable row -> a connected adapter, registered under the EXACT pair.
 
-    Leaves the venue exchange's ``connect`` untouched — that is the call under
-    test (CR-01).
-
-    The startup reconcile + baseline guard DO run: they enumerate the account manager's
-    online records, and the provisioned OKX account is one. Both read venue truth through
-    the adapter's own session, so the connector is given an offline client plus a
-    pass-through ``call``; without a client every such read dies on
-    ``'NoneType' object has no attribute 'fetch_balance'``.
-
-    11.2-07 (D-36): reached through the single assembled OKX lifecycle and the binder's
-    bound provider rather than the deleted ``_primary_lifecycle`` / ``.provider`` reads.
+    The whole bring-up in one assertion chain: the session opened, the adapter spawned its
+    streams (``connect()`` is their SOLE spawn site — without it no real FillEvent ever
+    streams back and every order mirror stays PENDING forever while looking healthy), the
+    identity guard ran, the halt seam is armed, and only THEN is the pair routable.
     """
-    lifecycle = the_okx_lifecycle(system)
-    connector = lifecycle.bundle.connector
-    connector.connect = MagicMock(name="connector.connect")
-    # ``client`` is a read-only property over ``_client``; the loop is never started, so
-    # ``call`` (which asserts a live loop) is replaced by a pass-through.
-    connector._client = _OfflineVenueClient()
-    connector.call = lambda result: result
+    _provision_empty_order_tables(provisioned_okx)
+    system = LiveTradingSystem.for_exchange("okx")
+    try:
+        record = bring_okx_online(system)
+
+        assert record.connector is not None
+        record.connector.connect.assert_called_once()
+        assert record.adapter.is_connected() is True
+        assert record.adapter._halt_signal is not None
+        assert record.connector._halt_signal is not None
+        assert system.execution_handler.exchanges[("okx", record.spec.account_id)] \
+            is record.adapter
+    finally:
+        system.stop()
+
+
+def test_the_boot_binds_the_one_feed_to_the_accounts_connection(provisioned_okx) -> None:
+    """The bound provider is the feed's own, wired to its ingest seam and the engine bus.
+
+    A dead-attribute mis-wire (``feed.provider = ...``) would leave ``feed._provider``
+    None; a dropped ``set_global_queue`` would make ``spawn_warmup`` raise a typed
+    ``StateError`` far from the cause.
+    """
+    system = LiveTradingSystem.for_exchange("okx")
+    try:
+        bring_okx_online(system)
+
+        provider = the_feed_provider(system)
+        assert provider is not None
+        assert system.feed._provider is provider
+        assert provider._bar_sink == system.feed.update
+        assert provider._global_queue is system.global_queue
+    finally:
+        system.stop()
+
+
+def test_a_failed_adapter_connect_quarantines_the_account_not_the_boot(
+    provisioned_okx, caplog,
+) -> None:
+    """A row whose bring-up fails is SKIPPED with a CRITICAL alert; the boot still runs.
+
+    ``connect()`` RETURNS a ``ConnectionResult`` and never raises, so a bring-up that
+    ignored it would register an adapter whose streams never spawned — every order mirror
+    PENDING forever behind a healthy-looking account. Instead the failure aborts THAT
+    account's bring-up, and because registration is its last step the pair is left
+    unroutable rather than half-online. One unreachable venue account must not take an
+    entire deployment offline, and the alert is what stops the skip from being silent.
+    """
+    _provision_empty_order_tables(provisioned_okx)
+    system = LiveTradingSystem.for_exchange("okx")
+    stub_okx_session(system)
     system.feed.warmup = MagicMock(name="feed.warmup")
-    the_feed_provider(system).start_stream = MagicMock(name="provider.start_stream")
 
+    failed = ConnectionResult(
+        success=False,
+        status=ExchangeConnectionStatus.ERROR,
+        exchange_name="okx",
+        error_message="stream spawn failed")
+    with patch.object(OkxExchange, "connect", return_value=failed), \
+            caplog.at_level("CRITICAL"):
+        try:
+            started = system.start()
 
-def test_start_spawns_okx_order_arm_fill_stream(provisioned_okx) -> None:
-    """start() invokes _okx_exchange.connect() — the SOLE spawn site of the fill stream (CR-01).
-
-    Removing the ``exchange.connect()`` call in start() makes ``connect_spy.assert_called_once()``
-    FAIL — so the test genuinely catches the CR-01 gap (order mirror stays PENDING forever).
-    """
-    _provision_empty_order_tables(provisioned_okx)
-    system = LiveTradingSystem.for_exchange("okx")
-    _stub_okx_network(system)
-    connect_spy = MagicMock(
-        name="okx_exchange.connect",
-        return_value=ConnectionResult(
-            success=True,
-            status=ExchangeConnectionStatus.CONNECTED,
-            exchange_name="okx"))
-    the_okx_lifecycle(system).bundle.exchange.connect = connect_spy
-
-    try:
-        started = system.start()
-        assert started is True
-        connect_spy.assert_called_once()          # fill/order streams spawned
-        assert system.get_status()["status"] == SystemStatus.RUNNING.value
-    finally:
-        system.stop()
-
-
-def test_start_arms_okx_connector_halt_signal(provisioned_okx) -> None:
-    """The composition root arms _okx_connector's halt signal to _request_connector_halt (D-26/WR-02).
-
-    WR-02 gap: ``OkxConnector.set_halt_signal`` had no caller — only ``_okx_exchange``,
-    ``_okx_data_provider`` and ``portfolio_handler`` were armed — so
-    ``OkxConnector._on_task_done``'s ``if self._halt_signal is not None:`` guard was always
-    False and a task dying OUTSIDE the stream supervisors logged-and-vanished with no halt.
-
-    This asserts the REAL connector's halt signal is armed by the composition root (not the
-    ``_on_task_done`` unit's injected halt-signal double), and that it survives ``start()``.
-    Removing the ``self._okx_connector.set_halt_signal(...)`` arm makes this FAIL (the arm
-    is the SOLE caller of ``OkxConnector.set_halt_signal``).
-    """
-    _provision_empty_order_tables(provisioned_okx)
-    system = LiveTradingSystem.for_exchange("okx")
-    _stub_okx_network(system)
-    the_okx_lifecycle(system).bundle.exchange.connect = MagicMock(
-        name="okx_exchange.connect",
-        return_value=ConnectionResult(
-            success=True,
-            status=ExchangeConnectionStatus.CONNECTED,
-            exchange_name="okx"))
-
-    try:
-        started = system.start()
-        assert started is True
-        # The connector arm is wired to the SAME flag-only callback the exchange/provider
-        # arms pass — so _on_task_done can now escalate a dead task to a fail-safe halt.
-        # (== not is: each `self._request_connector_halt` access is a fresh bound-method
-        # object; bound methods compare equal by function+instance, mirroring this file's
-        # `_bar_sink == system.feed.update` check.)
-        assert (the_okx_lifecycle(system).bundle.connector._halt_signal
-                == system._request_connector_halt)
-    finally:
-        system.stop()
-
-
-def test_start_fails_when_okx_exchange_connect_fails(provisioned_okx) -> None:
-    """A failed ConnectionResult from _okx_exchange.connect() drives ERROR and returns False.
-
-    connect() RETURNS a ConnectionResult (never raises), so start() must check ``.success``
-    and re-raise; the failure then flows through the existing except → SystemStatus.ERROR.
-    """
-    system = LiveTradingSystem.for_exchange("okx")
-    _stub_okx_network(system)
-    the_okx_lifecycle(system).bundle.exchange.connect = MagicMock(
-        name="okx_exchange.connect",
-        return_value=ConnectionResult(
-            success=False,
-            status=ExchangeConnectionStatus.ERROR,
-            exchange_name="okx",
-            error_message="stream spawn failed"))
-
-    try:
-        started = system.start()
-        assert started is False
-        assert system.get_status()["status"] == SystemStatus.ERROR.value
-    finally:
-        system.stop()
+            assert started is True
+            assert system.get_status()["status"] == SystemStatus.RUNNING.value
+            # Unroutable: the failed bring-up registered nothing under the OKX venue.
+            assert system._online_account_records() == []
+            assert not any(
+                venue == "okx"
+                for venue, _account in system.execution_handler.exchanges)
+            # Loud, not silent — an operator is told which account is not trading.
+            escalated = [
+                record.getMessage() for record in caplog.records
+                if "venue-account-quarantined" in record.getMessage()]
+            assert escalated, "the quarantine was silent — no CRITICAL alert escalated"
+            assert "'account_id': 'default'" in escalated[0]
+        finally:
+            system.stop()
 
 
 # --- MPORT-05: the single-account link is GONE; the coordinator takes no scalars ----

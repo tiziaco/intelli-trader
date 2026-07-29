@@ -101,9 +101,16 @@ def provisioned_paper(sqlite_spine):
 
 @pytest.fixture
 def live_system(provisioned_paper):
-    """The system the REAL composition root returns, built and torn down per test."""
+    """The system the REAL composition root returns, booted and torn down per test.
+
+    Construction and BOOT are two steps now: bring-up connects each account's session and
+    registers it only once that session is open, so it belongs to ``start()`` rather than
+    to building the object. ``_bootstrap_session`` is the exact call ``start()`` makes, so
+    this drives the production boot without also spawning the drain thread.
+    """
     system = LiveTradingSystem.for_exchange(_VENUE)
     try:
+        system._bootstrap_session()
         yield system
     finally:
         system.stop()
@@ -152,9 +159,10 @@ def test_a_provisioned_row_becomes_a_routable_exchange_through_the_real_boot(
     assert (_VENUE, _ACCOUNT) in exchanges
     assert exchanges[(_VENUE, _ACCOUNT)] is not exchanges[(_VENUE, DEFAULT_ACCOUNT_ID)]
 
-    assert set(live_system._venue_lifecycles) == {_ACCOUNT}
-    lifecycle = live_system._venue_lifecycles[_ACCOUNT]
-    assert lifecycle.bundle.exchange is exchanges[(_VENUE, _ACCOUNT)]
+    records = live_system._venue_manager.online_records()
+    assert [(r.spec.venue_name, r.spec.account_id) for r in records] == [
+        (_VENUE, _ACCOUNT)]
+    assert records[0].adapter is exchanges[(_VENUE, _ACCOUNT)]
 
 
 def test_a_portfolio_materializes_over_the_provisioned_account(live_system) -> None:
@@ -210,7 +218,8 @@ def test_a_zero_account_spine_still_boots_running_and_empty(sqlite_spine) -> Non
     """
     system = LiveTradingSystem.for_exchange(_VENUE)
     try:
-        assert system._venue_lifecycles == {}
+        system._bootstrap_session()
+        assert system._venue_manager.online_records() == []
         assert set(system.execution_handler.exchanges) == {(_VENUE, DEFAULT_ACCOUNT_ID)}
         assert system._system_db_backend is not None
     finally:
@@ -300,12 +309,12 @@ def test_cr02_retiring_an_execution_account_leaves_the_feed_fully_wired() -> Non
         update=lambda bar: None,
     )
     binder = FeedConnectionBinder(
-        feed=feed, data_registry=_Registry(), ctx=object(),
+        feed=feed, data_registry=_Registry(), data_provider="okx", ctx=object(),
         connectors=object(), global_queue=object(),
     )
 
     def _candidate(account_id: str) -> tuple[str, str, Any]:
-        return ("okx", account_id, SimpleNamespace(data_provider="okx"))
+        return ("okx", account_id, SimpleNamespace(account_id=account_id))
 
     # Bind to account A, then retire it so the feed must re-borrow off account B.
     binder.rebind([_candidate("acct-a"), _candidate("acct-b")])
@@ -345,49 +354,47 @@ def test_cr03_recovery_account_enumeration_is_non_empty_when_an_account_is_onlin
     records = list(live_system._stream_recovery._accounts())
     assert records, (
         "reconnect-resume would resume blind — the handler enumerates no online account")
-    assert {(record.spec.execution_venue, record.spec.account_id)
+    assert {(record.spec.venue_name, record.spec.account_id)
             for record in records} == {(_VENUE, _ACCOUNT)}
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="CR-04: bring_online writes the order-routing map before anything connects the "
-           "session, so an account is routable against an unconnected venue. Flips in "
-           "Stage 4 (registration becomes the last statement of bring_online).",
-)
 def test_cr04_a_failing_connect_during_bring_up_leaves_the_routing_map_empty() -> None:
     """A bring-up whose ``connect()`` fails must leave the account UNROUTABLE.
 
-    Probed on the manager rather than a built system so it flips with the bring-up
-    inversion itself. The routing map here is the same ``(venue, account_id) -> exchange``
-    dict object ``ExecutionHandler.on_order`` reads, so a populated map after a failed
-    bring-up means real orders route into a session that never opened.
+    CR-04 (fixed in Stage 4). Registration used to be the FIRST thing ``bring_online`` did,
+    with the connect performed later by ``start()``, so an account was order-routable
+    against a session that had not opened — and a connect that never succeeded left it
+    routable forever. Registration is now the LAST statement of the bring-up.
+
+    Probed on the manager rather than through a built system so it pins the ordering
+    itself. The routing map here is the same ``(venue, account_id) -> adapter`` dict object
+    ``ExecutionHandler.on_order`` reads, so a populated map after a failed bring-up means
+    real orders route into a session that never opened.
     """
     import queue
     import random
 
     from itrader.config import ExchangeConfig
     from itrader.config.sql import SqlSettings
-    from itrader.connectors.provider import ConnectorProvider
+    from itrader.connectors.pool import ConnectorPool
     from itrader.storage import SqlEngine
     from itrader.storage.venue_account_store import VenueAccountStore
     from itrader.trading_system.alert_sink import LogAlertSink
-    from itrader.venues.bundles import VenueBundles
-    from itrader.venues.paper_plugin import PaperVenuePlugin
-    from itrader.venues.registry import ExecutionVenueRegistry
-    from itrader.venues.venue_account_manager import VenueAccountManager
+    from itrader.venues.accounts import VenueAccountManager
+    from itrader.venues.catalog import CATALOG
+    from itrader.venues.paper_plugin import paper_exchange_recipe
 
-    class _RefusingConnectPlugin(PaperVenuePlugin):
-        """The real paper plugin, with the built exchange's ``connect()`` made to fail."""
+    build_paper = paper_exchange_recipe(ExchangeConfig.default())
 
-        def build_bundle(self, ctx: Any, spec: Any, connectors: Any) -> Any:
-            bundle = super().build_bundle(ctx, spec, connectors)
+    def _refusing_recipe(**kwargs: Any) -> Any:
+        """The REAL paper recipe, with the built adapter's ``connect()`` made to fail."""
+        adapter = build_paper(**kwargs)
 
-            def _refuse() -> None:
-                raise RuntimeError("venue session refused to open")
+        def _refuse() -> None:
+            raise RuntimeError("venue session refused to open")
 
-            bundle.exchange.connect = _refuse
-            return bundle
+        adapter.connect = _refuse
+        return adapter
 
     engine = SqlEngine(SqlSettings.default())
     store = VenueAccountStore(engine)
@@ -397,15 +404,18 @@ def test_cr04_a_failing_connect_during_bring_up_leaves_the_routing_map_empty() -
             _VENUE, _ACCOUNT, secret_ref=None, venue_uid=None,
             enabled=True, config={}, at=_AT)
 
-        registry = ExecutionVenueRegistry()
-        registry.register(_VENUE, _RefusingConnectPlugin(ExchangeConfig.default()))
-        connectors = ConnectorProvider({})
         ctx = SimpleNamespace(bus=queue.Queue(), rng=random.Random(42))
-
         routing_map: dict[tuple[str, str], Any] = {}
         manager = VenueAccountManager(
-            store, VenueBundles(registry, connectors, ctx), connectors, routing_map,
+            store=store,
+            pool=ConnectorPool(catalog=CATALOG, resolver=None, recipes={}),
+            routing=routing_map,
+            catalog=CATALOG,
+            exchange_recipes={_VENUE: _refusing_recipe},
+            ctx=ctx,
             alert_sink=LogAlertSink(),
+            halt_signal=lambda reason: None,
+            stream_state_listener=(lambda name: None, lambda name: None),
             feed_binder=SimpleNamespace(
                 feed_provider=None, rebind=lambda available: None),
         )
@@ -415,5 +425,6 @@ def test_cr04_a_failing_connect_during_bring_up_leaves_the_routing_map_empty() -
             manager.bring_online(row)
         assert routing_map == {}, (
             "the account is order-routable against a session that never connected")
+        assert manager.online_records() == []
     finally:
         store.dispose()

@@ -380,7 +380,6 @@ class OkxVenuePlugin:
                 state_storage=state_storage,
             ))
 
-        # lifecycle stays None — assemble_venue builds the VenueLifecycle.
         return VenueBundle(
             exchange=exchange,
             account_factory=account_factory,
