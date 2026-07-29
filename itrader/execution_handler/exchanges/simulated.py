@@ -4,7 +4,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Dict, Any, Optional, assert_never
 import random
 
-from .base import AbstractExchange
+from .base import AbstractExchange, AccountSnapshot
 from ..fee_model.base import FeeModel
 from ..fee_model.zero_fee_model import ZeroFeeModel
 from ..fee_model.percent_fee_model import PercentFeeModel
@@ -588,6 +588,18 @@ class SimulatedExchange(AbstractExchange):
 	def validate_symbol(self, symbol: str) -> bool:
 		"""Check if symbol is supported for trading."""
 		return symbol in self._supported_symbols
+
+	def snapshot(self) -> AccountSnapshot:
+		"""Empty: a simulated exchange has no venue to read truth from.
+
+		The adapter contract is uniform, so this exists rather than being absent. A
+		consumer forced to ask "does this exchange support snapshots?" would be
+		re-deriving account KIND from the adapter type — exactly the type-test coupling
+		the snapshot surface removes. Returning nothing is the honest answer: simulated
+		cash and positions are computed by the engine, so there is no external truth to
+		compare them against and the reconcile path has nothing to do here.
+		"""
+		return AccountSnapshot.empty()
 
 	def resolve_precision(self, symbol: str) -> "Instrument | None":
 		"""No markets map — return None so callers fall to the _DEFAULT_* ladder (VENUE-04/D-09).

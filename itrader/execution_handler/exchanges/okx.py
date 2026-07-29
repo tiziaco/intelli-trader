@@ -36,7 +36,7 @@ from itrader.events_handler.events import ErrorEvent, FillEvent, OrderAckEvent, 
 from itrader.logger import get_itrader_logger
 
 from ..result_objects import ConnectionResult, HealthStatus, OrderPreflightResult
-from .base import AbstractExchange
+from .base import AbstractExchange, AccountSnapshot
 from .venue_correlation import VenueCorrelationIndex
 
 
@@ -76,7 +76,15 @@ class OkxExchange(AbstractExchange):
 	the injected ``LiveConnector`` session Protocol — the seam, not the concretion.
 	"""
 
-	def __init__(self, global_queue: "Queue[Any]", connector: "LiveConnector") -> None:
+	def __init__(
+		self,
+		global_queue: "Queue[Any]",
+		connector: "LiveConnector",
+		*,
+		quote_currency: str = "USDT",
+		market_type: str = "derivative",
+		symbol: Optional[str] = None,
+	) -> None:
 		"""Bind the queue + injected session; no venue socket is opened here.
 
 		Parameters
@@ -90,10 +98,31 @@ class OkxExchange(AbstractExchange):
 			``cancel_order`` via ``connector.call`` and the ``watch_*`` streams via
 			``connector.spawn``, and reads the shared ``ccxt.pro`` client for the precision
 			helpers — it never imports the connector concretion.
+		quote_currency : str
+			The quote-currency key read out of the ccxt-unified balance payload by
+			``snapshot``. The default is a fallback only — the composition root threads the
+			WIRED pair's real quote (e.g. USDC for the EEA/MiCA BTC/USDC pair).
+		market_type : str
+			``"spot"`` or ``"derivative"``. Selects which channel ``snapshot`` reads
+			position truth from; see ``snapshot``.
+		symbol : str | None
+			The wired traded pair (e.g. ``"BTC/USDC"``). Required for SPOT position truth —
+			the derived holding is keyed under it and the base currency is its left leg.
+			Unused for derivative market types.
 		"""
 		self.logger = get_itrader_logger().bind(component="OkxExchange")
 		self.global_queue = global_queue
 		self._connector = connector
+
+		# The account shape ``snapshot`` needs to turn venue payloads into truth. It lives
+		# here because this adapter already owns the session and the symbol mapping for its
+		# account; a separate object holding a copy of it is a second place to keep in step.
+		self._quote = quote_currency
+		self._market_type = market_type
+		self._symbol = symbol
+		# The base-currency key read out of ``total`` for spot position truth (the left leg
+		# of the pair).
+		self._base = symbol.split("/")[0] if symbol is not None else None
 
 		self._exchange_name = "okx"
 		self._connected = False
@@ -149,6 +178,106 @@ class OkxExchange(AbstractExchange):
 				self._on_stream_up(n) if self._on_stream_up is not None else None),
 			logger=self.logger,
 			label="OKX")
+
+	# --- venue truth (REST snapshot) ------------------------------------------
+
+	def _balances_from_payload(self, payload: Any) -> Dict[str, Decimal]:
+		"""Settled totals out of a ccxt-unified balance payload.
+
+		Only the currencies this account is configured around are lifted, so a venue
+		carrying dust in fifty coins does not turn every snapshot into a fifty-entry map
+		the drift compare has to filter.
+
+		None/missing keys are guarded BEFORE the ``to_money(str(x))`` edge, so a missing
+		value never becomes ``Decimal("None")``. The venue ``free`` map is deliberately
+		NOT parsed: admission is governed by the engine's own pending reservations, so
+		available funds net against the settled total and never against a venue-side free
+		field.
+		"""
+		total_map = payload.get("total") if isinstance(payload, dict) else None
+		if not isinstance(total_map, dict):
+			return {}
+		wanted = [currency for currency in (self._quote, self._base) if currency]
+		balances: Dict[str, Decimal] = {}
+		for currency in wanted:
+			raw = total_map.get(currency)
+			if raw is not None:
+				balances[currency] = to_money(str(raw))  # Decimal edge
+		return balances
+
+	def _positions_from_payload(self, payload: Any) -> Dict[str, Decimal]:
+		"""``symbol -> signed qty`` out of a ccxt positions payload.
+
+		A ``short`` side flips the sign. Entries missing a symbol or contract size are
+		skipped; every size crosses the Decimal edge via ``to_money(str(x))``.
+		"""
+		result: Dict[str, Decimal] = {}
+		if not isinstance(payload, list):
+			return result
+		for entry in payload:
+			if not isinstance(entry, dict):
+				continue
+			symbol = entry.get("symbol")
+			contracts = entry.get("contracts")
+			if symbol is None or contracts is None:
+				continue
+			qty = to_money(str(contracts))  # Decimal edge
+			if entry.get("side") == "short":
+				qty = -qty
+			result[str(symbol)] = qty
+		return result
+
+	def _spot_position_from_balance(self, payload: Any) -> Dict[str, Decimal]:
+		"""Spot position truth, derived from the BASE-currency balance total.
+
+		On spot there is no position channel — holding the base currency IS the position —
+		so the holding is derived from the balance payload instead. ``watch_positions``
+		yields ``[]`` on spot, which is why reading it here would report FLAT for an
+		account that holds coins.
+
+		A zero or absent base total is a FLAT position, surfaced as an ABSENT key rather
+		than a zero entry. That mirrors the derivative channel, which reports no row when
+		flat, so a consumer never has to treat "no key" and "zero" as different answers.
+		An unconfigured pair yields ``{}``, so an unwired adapter is structurally inert.
+		"""
+		if self._symbol is None or self._base is None:
+			return {}
+		total_map = payload.get("total") if isinstance(payload, dict) else None
+		base_raw = total_map.get(self._base) if isinstance(total_map, dict) else None
+		if base_raw is None:
+			return {}
+		qty = to_money(str(base_raw))  # Decimal edge
+		if qty == 0:
+			return {}
+		return {self._symbol: qty}
+
+	def snapshot(self) -> AccountSnapshot:
+		"""Read this account's balances and positions from the venue over its OWN session.
+
+		Two synchronous RPCs at most, both via ``connector.call``, so the blocking venue
+		I/O runs on the ENGINE thread rather than the connector's loop — a fetch scheduled
+		onto the loop would block the very streams the caller is reconciling against.
+
+		Position truth is read per market type, and the choice is made HERE so no consumer
+		has to know it:
+
+		  - **derivative** — the venue's own position rows via ``fetch_positions``.
+		  - **spot** — derived from the base-currency balance, because a spot account has
+		    no position rows at all and ``fetch_positions`` would answer FLAT for an
+		    account holding coins. The positions RPC is skipped entirely.
+
+		The returned value is a plain snapshot with no cache behind it. Nothing is
+		retained between calls, so there is no stale-cache state to reason about and no
+		lock: a caller that wants fresh truth calls this again.
+		"""
+		bal = self._connector.call(self._connector.client.fetch_balance())
+		balances = self._balances_from_payload(bal)
+		if self._market_type == "spot":
+			positions = self._spot_position_from_balance(bal)
+		else:
+			pos = self._connector.call(self._connector.client.fetch_positions())
+			positions = self._positions_from_payload(pos)
+		return AccountSnapshot(balances=balances, positions=positions)
 
 	# --- symbol / time helpers ------------------------------------------------
 
