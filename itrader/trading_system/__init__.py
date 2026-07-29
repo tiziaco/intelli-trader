@@ -1,4 +1,4 @@
-from .backtest_trading_system import (
+from .backtest import (
     BacktestTradingSystem,
     build_backtest_system,
 )

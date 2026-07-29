@@ -305,7 +305,7 @@ def _build_and_run(spec):
     ``--collect-only`` stays clean even with zero scenarios wired.
     """
     # Deferred import: only executed when a scenario actually runs (collect-clean).
-    from itrader.trading_system.backtest_trading_system import build_backtest_system
+    from itrader.trading_system.backtest.backtest_trading_system import build_backtest_system
 
     # IN-03: fail with an explanatory message (consistent with _load_spec's
     # spec-shape failures) instead of a bare IndexError from portfolio_ids[0]

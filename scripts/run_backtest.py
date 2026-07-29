@@ -44,7 +44,7 @@ from itrader.reporting.summary import (
 from decimal import Decimal
 
 from itrader.core.sizing import FractionOfCash, TradingDirection
-from itrader.trading_system.backtest_trading_system import BacktestTradingSystem
+from itrader.trading_system.backtest.backtest_trading_system import BacktestTradingSystem
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
 from itrader.logger import get_itrader_logger
 

@@ -15,7 +15,7 @@ Indentation: 4 SPACES (``tests/`` convention).
 import pytest
 
 from itrader.config import ExchangeConfig
-from itrader.trading_system.backtest_trading_system import build_backtest_system
+from itrader.trading_system.backtest.backtest_trading_system import build_backtest_system
 from itrader.trading_system.system_spec import SystemSpec
 from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
 

@@ -50,7 +50,7 @@ from itrader.results.serializers import (
 )
 from itrader.strategy_handler.storage import SignalStore
 from itrader.strategy_handler.signal_record import SignalRecord
-from itrader.trading_system.backtest_runner import BacktestRunner
+from itrader.trading_system.backtest.backtest_runner import BacktestRunner
 from itrader.trading_system.compose import Engine, compose_engine
 from itrader.trading_system.engine_context import EngineContext
 from itrader.trading_system.system_spec import SystemSpec

@@ -2,7 +2,7 @@
 
 This is the recurring milestone-gate proof for Phase 2: the OKX order/data
 machinery must be **inert on the backtest hot path**. Importing the backtest
-composition root (``itrader.trading_system.backtest_trading_system``) must pull
+composition root (``itrader.trading_system.backtest.backtest_trading_system``) must pull
 **NO** OKX connector concretion and **NO** ``ccxt.pro`` — those are lazy-imported
 inside ``LiveTradingSystem.__init__`` only (Plan 02-05), so they never touch the
 backtest import graph.
@@ -33,7 +33,7 @@ import sys
 
 # The backtest composition root — the hot path. Importing it must NOT pull the OKX
 # stack (lazy-imported inside LiveTradingSystem.__init__, never on this path).
-import itrader.trading_system.backtest_trading_system  # noqa: F401
+import itrader.trading_system.backtest.backtest_trading_system  # noqa: F401
 
 _FORBIDDEN = (
     "itrader.connectors.okx",

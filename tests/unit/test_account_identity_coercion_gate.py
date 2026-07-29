@@ -65,7 +65,7 @@ _VENUES_DIR = _ROOT / "itrader" / "venues"
 # which exclude the ``from ... import DEFAULT_ACCOUNT_ID`` line and every docstring mention.
 _BACKTEST_IDENTITY_COUNTS = {
     "itrader/execution_handler/execution_handler.py": 6,
-    "itrader/trading_system/backtest_trading_system.py": 1,
+    "itrader/trading_system/backtest/backtest_trading_system.py": 1,
     "itrader/trading_system/universe_wiring.py": 2,
     # The (COMPUTE_VENUE, DEFAULT_ACCOUNT_ID) paper lookup in the live file (survives
     # D-35) — an account-identity coercion it is NOT, so it is a KEPT use, not a swept one.

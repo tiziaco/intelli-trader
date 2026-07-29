@@ -45,7 +45,7 @@ from itrader.reporting.frames import (
 from itrader.strategy_handler.strategies.eth_btc_pair_strategy import (
     EthBtcPairStrategy,
 )
-from itrader.trading_system.backtest_trading_system import BacktestTradingSystem
+from itrader.trading_system.backtest.backtest_trading_system import BacktestTradingSystem
 from itrader.config import PortfolioConfig, get_portfolio_preset
 from itrader.outils.dict_merge import recursive_merge
 

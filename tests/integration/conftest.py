@@ -184,7 +184,7 @@ def backtest_engine():
         cash=10_000,
     ):
         # Deferred import: only executed when a test calls the factory.
-        from itrader.trading_system.backtest_trading_system import (
+        from itrader.trading_system.backtest.backtest_trading_system import (
             BacktestTradingSystem,
         )
 

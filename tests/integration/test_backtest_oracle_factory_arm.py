@@ -41,7 +41,7 @@ from itrader.reporting.summary import (
     build_metrics_block,
     build_summary,
 )
-from itrader.trading_system.backtest_trading_system import build_backtest_system
+from itrader.trading_system.backtest.backtest_trading_system import build_backtest_system
 from itrader.trading_system.system_spec import PortfolioSpec, SystemSpec
 from tests.integration._oracle_harness import _REPO_ROOT, load_run_backtest_module
 

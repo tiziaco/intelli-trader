@@ -45,7 +45,7 @@ from itrader.reporting.frames import (
 )
 from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
-from itrader.trading_system.backtest_trading_system import BacktestTradingSystem
+from itrader.trading_system.backtest.backtest_trading_system import BacktestTradingSystem
 from tests.support.replay_harness import (
     PAPER_PARITY_END_DATE,
     PAPER_PARITY_START_DATE,

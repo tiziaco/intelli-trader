@@ -22,7 +22,7 @@ from decimal import Decimal
 
 import pytest
 
-from itrader.trading_system.backtest_trading_system import build_backtest_system
+from itrader.trading_system.backtest.backtest_trading_system import build_backtest_system
 from itrader.trading_system.system_spec import SystemSpec
 from itrader.order_handler.order import Order
 from itrader.events_handler.events import SignalEvent, OrderEvent

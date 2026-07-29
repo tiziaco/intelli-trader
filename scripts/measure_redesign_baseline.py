@@ -47,7 +47,7 @@ import tokenize
 # drift as directories gain files.
 BASELINE_MANIFEST: tuple[str, ...] = (
     "itrader/trading_system/compose.py",
-    "itrader/trading_system/backtest_trading_system.py",
+    "itrader/trading_system/backtest/backtest_trading_system.py",
     "itrader/trading_system/live_trading_system.py",
     "itrader/trading_system/venue_spec.py",
     "itrader/trading_system/session_initializer.py",
