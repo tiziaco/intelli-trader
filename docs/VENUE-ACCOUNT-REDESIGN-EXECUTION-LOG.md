@@ -6,7 +6,7 @@ settled decisions ED-1..ED-11 — nothing here overrides it. This file records a
 findings and carried-forward dependencies so a later session (or a different agent) does
 not re-derive them.
 
-**Status:** Stages 0–3 complete and committed. Next: Stage 4.
+**Status:** Stages 0–4 complete and committed. Next: Stage 5.
 
 | stage | commits | gate state at commit |
 |---|---|---|
@@ -14,9 +14,18 @@ not re-derive them.
 | 1 | `6d3596dc`, `8497434e` | 3028 pass / 6 skip / 4 xfail · successor +30 |
 | 2 | `00afc644` | 3069 pass / 6 skip / 4 xfail · successor +207 |
 | 3 | `44d40f71`, `ebf28c7f` | 3053 pass / 6 skip / **3 xfail** · successor **+4** |
+| 4 | `1badab20`, `f75df648` | 3043 pass / 6 skip / **2 xfail** · successor **+60** |
 
-CR ledger: **CR-03 fixed (Stage 3)**. CR-01, CR-02, CR-04 still `xfail(strict=True)` in
-`tests/integration/test_live_composition_offline.py`.
+CR ledger: **CR-03 fixed (Stage 3)**, **CR-04 fixed (Stage 4)**. CR-01, CR-02 still
+`xfail(strict=True)` in `tests/integration/test_live_composition_offline.py`.
+
+**The deletion gate moved the WRONG WAY in Stage 4 (+4 → +60).** The absorption itself
+shrank (four modules, 530 code lines → `accounts.py` 485 = −45), but modules that are
+themselves scheduled for deletion grew by +89: `live_trading_system.py` 751→785,
+`bootstrap.py` 121→156, `paper_plugin.py` 63→76, `feed_binder.py` 66→73. Roughly 1,310
+code lines still stand against the Stage-6 replacements, so the must-have remains
+reachable — but plan risk #3's "stop and report if the sign trends positive" now has a
+live precedent one stage early. Watch it at Stage 5, not only at Stage 6.
 
 ---
 
@@ -77,6 +86,75 @@ required constructor arguments — still Stage 6, still red.
 
 ---
 
+### 1.7 `build_okx_exchange` was a Stage-3 deliverable that landed in Stage 4
+
+Plan line 338 assigns the recipe to Stage 3, "consumed in Stage 4". Stage 3 delivered
+`build_compute_account` but left the exchange-construction knowledge in
+`OkxVenuePlugin.build_bundle`. Stage 4 created it in its ED-3 home
+(`execution_handler/exchanges/okx.py`, TAB), absorbing the stream-symbol read, the
+`quote = symbol.split("/")[1]` settlement derivation, the `_OKX_DEFAULT_MARKET_TYPE`
+constant and the uncoerced-`account_id` refusal.
+
+It does NOT carry the mismatched-`account_id` refusal (`okx_plugin.py:361-374`). That
+scenario has no representation any more: the pool session and the recipe read the SAME
+`AccountSpec`, so a bundle serving two ids cannot arise.
+
+`fetch_venue_uid()` joined the adapter contract in the same commit (moved verbatim off
+`OkxVenuePlugin`; simulated returns `None`) — the TOFU check is keyed off the adapter and
+the descriptor now, never a plugin object.
+
+### 1.8 `bring_online` connects, so the boot loop moved into `start()`
+
+Design §4.5 puts `adapter.connect()` inside `bring_online`, before registration. The boot
+loop was invoked from `build_live_system`, so leaving it there would have made
+CONSTRUCTION perform venue I/O — breaking the `test_okx_arm_*` tests that build
+`for_exchange("okx")` offline against dummy credentials. The whole restart sequence
+therefore moved into `start()`.
+
+It travels as one bound callable (`facade._restart_sequence`), not three loose steps:
+moving only `bootstrap_session` would have run `layer_persisted_overrides` and
+`rehydrate_strategies` BEFORE the portfolios existed, so portfolio config overrides would
+have iterated an empty collection — a silent ordering regression.
+
+`start()`'s per-lifecycle loop and its streaming `exchange.connect()` loop are gone (the
+bring-up does both), and `_venue_lifecycles` died with `VenueLifecycle` — every reader now
+reads `online_records()` live, per the CR-03 rule.
+
+### 1.9 An identity mismatch REFUSES the bring-up
+
+Plan line 456 asks for "identity-check mismatch ⇒ unroutable + alert", which is stronger
+than design §4.4's observe-only framing. The plan wins. The guard FUNCTION is unchanged
+and still never halts; the MANAGER raises on `REASON_MISMATCH_ALERTED`, so the boot
+quarantines that one account and every other account stays online. Registration being the
+last step is what makes the proportionate response expressible at all.
+
+The three lifecycle-level guard reasons (`GUARD_REASON_NOT_STARTED` /
+`_PAPER_NO_CONNECTOR` / `_COLLABORATORS_ABSENT`) died with the states they described: the
+guard now runs inside `bring_online` with required collaborators, and paper maps onto the
+guard's own `REASON_NO_VENUE_IDENTITY`.
+
+### 1.10 Two manager surfaces changed beyond the plan's list
+
+`account_for` was DELETED (it delegated to `VenueBundles.account_for`, the manager no
+longer holds a bundle memo, and its own docstring recorded it as unreached from the live
+path). `assert_available` survives as the portfolio gate.
+
+`bring_online` is now idempotent per pair — a second call returns the existing record
+rather than opening a second session and double-spawning that account's streams.
+
+### 1.11 The Stage-4 test cascade exceeded the Disposition Table
+
+Moving the boot into `start()` reached eight files the table does not list:
+`test_off_loop_halt_write`, `test_early_durable_halt_refusal`,
+`test_resume_gated_on_all_streams`, `test_resume_missed_fill_catchup`,
+`test_distinct_account_invariant`, `test_multi_portfolio_lifecycle`,
+`test_strategy_registry_restart`, `test_strategy_external_add_lifecycle`. All were
+mechanical (stub the session, then drive the production boot) through new helpers in
+`tests/support/live_okx.py`, and no composition-root rewrite was required — so the
+escalation rule did not fire. `test_live_system_okx_wiring.py`'s three binder tests and
+three `start()`-connect tests were replaced one stage early; their invariants are re-homed
+to `test_accounts.py` and to two new tests in the same file.
+
 ## 2. Carried-forward dependencies
 
 ### 2.1 Stage 5 — OKX public sessions need a credential-free client arm (BLOCKING)
@@ -127,6 +205,56 @@ the `orders` table must exist for any online account —
 `tests/integration/test_live_system_okx_wiring.py` provisions it explicitly for this reason.
 
 ---
+
+### 2.6 Stage 5 — the data arm still borrows an account session (transitional shims)
+
+`FeedConnectionBinder.data_provider` and `PoolBackedConnectors` were added in Stage 4 so
+the exec and data arms keep sharing one session while the binder lives; without them the
+data arm would open a SECOND `ccxt.pro` client per account. Both die with
+`venues/feed_binder.py` in Stage 5, along with `manager.rebind_feed` / `feed_provider` /
+`_streaming_available` and the `facade._feed_binder` reads in `start()` and
+`_initialize_live_session`.
+
+`venues/paper_plugin.py::paper_exchange_recipe` is the matching transitional seam on the
+execution side — ED-3 replaces its BODY with `build_paper_exchange` in
+`execution_handler/exchanges/paper.py` at Stage 6 **without touching the manager**, because
+the recipe mapping is a constructor argument.
+
+### 2.7 Stage 5 — the feed provider is halt-wired in `start()`, deliberately
+
+Wiring it inside the binder instead would make the CR-02 xfail start PASSING, and
+`strict=True` turns that into a loud suite failure. Stage 5 must move that wiring into the
+data-adapter build in the SAME commit that un-xfails CR-02.
+
+### 2.8 Stage 6 — `_restart_sequence` is where the boot ordering now lives
+
+It is a bound closure on the facade, and it is the single home of the
+bring-up → rehydrate → layer-overrides order. `build.py` should INLINE it as design §4.9
+steps 7–8 rather than re-create the closure. `_bootstrap_session()` is the seam the
+offline and OKX tests drive.
+
+### 2.9 A live PAPER system now imports ccxt
+
+`build_live_system` imports `build_okx_connector` in its body to populate the connector
+recipe mapping, so building a live paper/binance system pulls `ccxt.pro` (verified:
+`LiveTradingSystem.for_exchange('binance')` leaves `'ccxt' in sys.modules` True).
+
+Design-consequent rather than a defect — §3.2's boundary is BACKTEST-vs-live, nothing on
+the backtest path imports `trading_system/live/`, and G3 is green. It does mean ED-8's
+inertness-probe rewrite should keep asserting the backtest boundary rather than the
+absence of ccxt after a live build.
+
+### 2.10 `measure_redesign_baseline.py` cannot run without `--manifest`
+
+Its `BASELINE_MANIFEST` names five now-deleted files and errors out. Pre-existing since
+Stage 3 (`account/venue.py`). Only the `--manifest` form matters (the frozen
+`BASELINE_TOTALS` are the yardstick), but Stage 7 should either prune the default manifest
+or teach it to tolerate historical paths — the `--gate` must-have runs through it.
+
+### 2.11 Stage 7 — `_OKX_DEFAULT_MARKET_TYPE` now has two homes
+
+It moved to `execution_handler/exchanges/okx.py`, beside the recipe that applies it.
+`venues/okx_plugin.py`'s copy still exists and dies with that module in Stage 7.
 
 ## 3. Process findings (things that bit, so they do not bite again)
 
