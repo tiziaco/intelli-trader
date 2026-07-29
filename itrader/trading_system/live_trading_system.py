@@ -111,6 +111,9 @@ class LiveTradingSystem:
         # Owns the ONE feed's borrowed connection + provider; re-borrows when an account is
         # retired. None on the in-memory arm.
         self._feed_binder: Optional[Any] = None
+        # The venue-ACCOUNT domain owner, whose online records the reconcile and safety
+        # planes enumerate. None on the in-memory arm.
+        self._venue_manager: Optional[Any] = None
 
         # ATTACHED by build_live_system after construction: each references this facade's
         # own callbacks, so none can be built until the facade exists. All stay None on a
@@ -269,10 +272,10 @@ class LiveTradingSystem:
         swaps collaborators before ``start()``, so a build-time capture would reconcile
         against stale ones.
 
-        It takes NO per-account scalars: each portfolio supplies its own account, that
-        account supplies its connector, and the exchange resolves out of the pair-keyed
-        registry. "Compare portfolio A against account B" is therefore a type error
-        rather than a rule someone has to follow.
+        It takes NO per-account scalars: the account manager's online records supply each
+        account's adapter and connector, and the portfolio is resolved from the record's
+        own ``(venue_name, account_id)`` pair. "Compare portfolio A against account B" is
+        therefore unexpressible rather than a rule someone has to follow.
         """
         from itrader.portfolio_handler.reconcile.reconciliation_coordinator import (
             ReconciliationCoordinator,
@@ -281,10 +284,21 @@ class LiveTradingSystem:
             portfolio_handler=self.portfolio_handler,
             seed_applied_trades=self.order_handler.order_manager.seed_applied_trades,
             order_storage=self._order_storage,
-            execution_handler=self.execution_handler,
             global_queue=self.global_queue,
             halt=self.halt,
+            records=self._online_account_records,
         )
+
+    def _online_account_records(self) -> List[Any]:
+        """The account manager's online records, or ``[]`` without a manager.
+
+        Read at CALL time so an account brought online after a collaborator was
+        constructed is still covered.
+        """
+        if self._venue_manager is None:
+            return []
+        records: List[Any] = self._venue_manager.online_records()
+        return records
 
     def _on_venue_stream_down(self, stream_name: str) -> None:
         """Connector-loop callback: emit a STREAM_STATE(down) CONTROL event.
@@ -581,9 +595,9 @@ class LiveTradingSystem:
                         f'OKX exchange stream connect failed: {result.error_message}')
 
             # Engine thread, before RUNNING: durable ledger restore for any account kind,
-            # then — keyed on account KIND (Account.is_venue_truth, never
-            # exchange == 'okx') — the venue REST reconcile plus the baseline guard that
-            # HALTs on an unexplained base-asset residual.
+            # then — for each account the manager reports ONLINE with a real session behind
+            # it — the venue REST reconcile plus the baseline guard that HALTs on an
+            # unexplained base-asset residual.
             self._build_reconciliation_coordinator().run_startup_reconcile()
 
             # A reconcile/baseline-guard halt during session init must LATCH. The
@@ -1203,7 +1217,6 @@ def build_live_system(
         portfolio_handler=portfolio_handler,
         execution_venue=exchange,
     )
-    venue_accounts: Dict[str, Any] = {}
 
 
     # DIRECT PURE INJECTION, no collaborator bag: the compose Engine is the single source
@@ -1320,18 +1333,19 @@ def build_live_system(
         system_store=system_store,
     )
     # Engine-thread reconnect-resume I/O: catch-up + snapshot + all-streams gate -> resume.
-    # Injected with the per-account LIFECYCLE MAP so catch-up and the health gate cover
-    # EVERY account. ``venue_accounts`` is a CALLABLE over the accounts the portfolios
-    # actually hold — a build-time capture goes stale the moment an account is
-    # re-attached.
+    # ONE enumeration — the manager's online records, read at USE time — serves the
+    # catch-up, the REST snapshot and the health gate, so every job covers EVERY account
+    # and none of them can drift from the others. A build-time container is what previously
+    # left the snapshot loop iterating something nothing wrote.
     stream_recovery = StreamRecoveryHandler(
         safety=safety,
-        lifecycles=venue_lifecycles,
-        venue_accounts=lambda: list(venue_accounts.values()),
+        accounts=(
+            lambda: venue_manager.online_records() if venue_manager is not None else []),
         # Read LIVE through the binder so the all-streams health gate covers the candle arm
         # and tracks a runtime re-borrow.
         feed_provider=(
             lambda: feed_binder.feed_provider if feed_binder is not None else None),
+        alert_sink=alert_sink,
     )
     # Pre-trade risk backstop (rate + notional caps), off the WALL clock.
     throttle = PreTradeThrottle(
@@ -1343,6 +1357,7 @@ def build_live_system(
     facade._stream_recovery = stream_recovery
     facade._throttle = throttle
     facade._feed_binder = feed_binder
+    facade._venue_manager = venue_manager
 
     # Read-model sinks: the durable KV (state.last_started_at at start();
     # SafetyController/ErrorHandler own the other state.* keys) plus the append-only

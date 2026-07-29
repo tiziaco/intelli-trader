@@ -247,31 +247,29 @@ class OkxVenuePlugin:
         return str(account_id)
 
     def new_account(self, config: Any) -> Account:
-        """Mint the ``VenueAccount`` for one account, over its own connector.
+        """Mint the COMPUTE account leaf for one OKX account.
 
-        The connector comes from the shared ``ConnectorProvider`` memo keyed on
-        ``(venue, account_id)``, so this account and the bundle's exchange share one
-        authenticated session per account, and two different accounts get two
-        different sessions built from two different resolved credential sets.
+        A compute leaf, not a venue-cached one. Venue truth is read from the venue by the
+        execution adapter that owns the authenticated session, as an ``AccountSnapshot``,
+        which is a different thing from the leaf a portfolio is CONSTRUCTED with: portfolio
+        construction reads the balance, and a balance that is unreadable until a network
+        round trip completes cannot answer at that moment.
 
-        ``config.enable_margin`` is deliberately UNREAD here: venue-cached truth has
-        no margin-vs-cash leaf to choose — the venue owns the balance — so the flag
-        is the compute arm's alone, and its home is the owning ``PortfolioConfig``
-        rather than the ``venue_accounts`` row.
+        Delegates to the one compute-leaf constructor rather than restating the
+        margin-vs-cash selection, so the two venues cannot drift on the branch order the
+        byte-exact oracle path depends on.
         """
-        from itrader.portfolio_handler.account import VenueAccount
+        from itrader.portfolio_handler.account.simulated import build_compute_account
 
         account_id = self._account_id_for(config)
-        connector = config.connectors.get("okx", account_id, config.spec)
-        return VenueAccount(
-            connector,
-            config.quote_currency,
+        return build_compute_account(
+            initial_cash=config.initial_cash,
+            state_storage=config.state_storage,
+            enable_margin=config.enable_margin,
             account_id=account_id,
             # Carry the venue half of the pair onto the leaf: the one storage site
-            # `Portfolio.venue_name` reads back.
+            # ``Portfolio.venue_name`` reads back.
             venue_name=getattr(config, "venue_name", None) or "okx",
-            market_type=config.market_type,
-            symbol=config.symbol,
         )
 
     def build_bundle(self, ctx: Any, spec: Any, connectors: Any) -> VenueBundle:
@@ -303,17 +301,24 @@ class OkxVenuePlugin:
             )
         connector = connectors.get("okx", account_id, spec)
 
-        exchange = OkxExchange(ctx.bus, connector)
-
         # The market type flows from the account's own `venue_accounts.config_json`,
-        # merged onto the spec by `VenueAccountManager.bring_online`.
-        # `VenueAccount.__init__` derives `_cash_stream_nets_holds = market_type !=
-        # "spot"`, which decides whether the leaf's cash channel nets a venue-side
-        # hold into `_venue_balance` — on a spot leaf the local pending overlay is the
-        # sole tracker of a resting order's hold and must be held until terminal
-        # release, while a derivative leaf may drop it on ack. Getting this wrong
-        # over- or under-states buying power.
+        # merged onto the spec by `VenueAccountManager.bring_online`. It selects which
+        # channel the adapter reads position truth from, and getting it wrong is not a
+        # degraded read but a WRONG one: `fetch_positions` answers `[]` on a spot account,
+        # so a spot account read as a derivative reports FLAT while it holds coins — and a
+        # flat venue against a live engine position is what the drift sweep halts on.
         market_type = getattr(spec, "market_type", None) or _OKX_DEFAULT_MARKET_TYPE
+
+        # The account shape reaches the ADAPTER, which owns the session and therefore
+        # performs the venue read. Computing these and not passing them would leave the
+        # adapter snapshotting on its own constructor defaults — the quote balance dropped,
+        # the base leg unknown, and spot truth taken from a channel that is always empty.
+        exchange = OkxExchange(
+            ctx.bus, connector,
+            quote_currency=quote,
+            market_type=market_type,
+            symbol=symbol,
+        )
 
         # The per-account knobs `new_account` mints from. The bundle's own
         # `account_id` is carried so the facade's no-portfolio `account_factory()`

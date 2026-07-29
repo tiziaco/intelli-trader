@@ -21,7 +21,8 @@ malformed payload — falls straight THROUGH the try/except and propagates out o
 loop, so the ``asyncio`` task dies with NO reconnect and NO halt. The venue stream is now
 dead and the engine never notices (fills/candles stop; state silently freezes).
 
-Worse: ``VenueAccount._stream_account`` / ``_stream_positions`` (``venue.py:160``/``:175``)
+The venue balance/position streams that used to form a third arm here are gone: venue
+truth is read on demand through the execution adapter, so there is no cache-writer loop
 are BARE ``while True`` loops with NO supervisor AT ALL — a single ``NetworkError`` kills the
 balance/position cache writer outright and the cache freezes forever.
 
@@ -54,7 +55,6 @@ import pytest
 
 from itrader.core.enums import ErrorSeverity
 from itrader.execution_handler.exchanges.okx import OkxExchange
-from itrader.portfolio_handler.account.venue import VenueAccount
 from itrader.price_handler.providers.okx_provider import OkxDataProvider
 from itrader.trading_system.live_trading_system import LiveTradingSystem
 
@@ -245,60 +245,4 @@ def test_supervisor_catchall_provider_garbage_json_halts(monkeypatch: Any) -> No
         "(okx_provider.py:274, outside the per-message guard) killed the candle task "
         "silently instead of halting — the supervisor does not classify JSONDecodeError. "
         "D-11 (Phase 05.3) must guard json.loads per-message / add the fail-safe catch-all."
-    )
-
-
-# --- (2) VenueAccount streams: a NetworkError must not kill the cache writer ---
-
-
-def test_supervisor_catchall_venue_stream_survives_networkerror() -> None:
-    """``VenueAccount._stream_account`` must survive a single ``NetworkError`` (A6).
-
-    RED today: ``_stream_account`` is a BARE ``while True`` with NO supervisor — the first
-    ``NetworkError`` kills the balance-cache writer outright, so the post-blip balance is
-    never written and the cache freezes at ``None``. GREEN after D-11 wraps it in the same
-    bounded-retry supervisor: the transient drop is survived and the recovered balance lands.
-
-    NOTE (Phase 05.3 implementer — assertion premise invalidated by commit 30cfb73):
-    the ``_venue_balance == 123.45`` assertion below no longer expresses stream survival.
-    The cash-double-count fix made the balance stream (``_write_balance_stream``) write
-    POSITIONS ONLY — ``_venue_balance`` is now written SOLELY by ``snapshot()`` (single-
-    channel cash, D-01). So even AFTER D-11 adds the reconnect supervisor, this test will
-    STILL fail on the ``_venue_balance`` check, because the stream deliberately never writes
-    the cash baseline anymore. When you implement D-11, RE-EXPRESS the survival assertion
-    another way (e.g. assert a positions write after recovery, or spy the recovery
-    iteration) — do NOT resurrect a stream-side ``_venue_balance`` write to satisfy it.
-    """
-    client = MagicMock(name="ccxt_pro_client")
-    good_balance = {"total": {"USDT": 123.45}, "free": {"USDT": 100.0}}
-    # blip -> recovered balance -> stop. Today the loop dies on the blip and never reaches
-    # the recovered balance; a supervised loop survives it and writes 123.45.
-    client.watch_balance = AsyncMock(
-        name="watch_balance",
-        side_effect=[ccxt.NetworkError("socket blip"), good_balance, _StopLoop()],
-    )
-    connector = MagicMock(name="connector")
-    connector.client = client
-
-    venue = VenueAccount(connector, quote_currency="USDT", account_id="acct-test")
-    try:
-        asyncio.run(venue._stream_account())
-    except Exception:
-        # RED: the bare while-True dies on the NetworkError (task death is modelled here).
-        # GREEN: the supervisor breaks on the _StopLoop sentinel after the recovery write.
-        pass
-
-    # D-11 re-expression (per docstring / 30cfb73): the balance stream deliberately no
-    # longer writes _venue_balance (cash is snapshot()-only, single-channel), so stream
-    # SURVIVAL is asserted via the recovery iteration rather than a cache value. A bare
-    # `while True` dies on the first NetworkError -> watch_balance is called exactly ONCE
-    # and never reaches the recovered frame. The supervised loop retries the transient
-    # blip, consumes the recovered good_balance, and only stops on the unclassified
-    # _StopLoop -> watch_balance is called all THREE times (blip, recovery, stop).
-    assert client.watch_balance.call_count == 3, (
-        "A6/V17-07: VenueAccount._stream_account is a bare `while True` with no reconnect "
-        "supervisor — a single NetworkError killed the balance-cache writer silently "
-        f"(watch_balance called {client.watch_balance.call_count}x, never reaching the "
-        "post-blip recovery). D-11 (Phase 05.3) must wrap the venue streams in the "
-        "bounded-retry supervisor so a transient drop survives / an unknown error escalates."
     )

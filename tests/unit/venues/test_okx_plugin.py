@@ -5,8 +5,9 @@ FAKE ``ConnectorProvider`` (``get`` returns a trivial fake connector) + a fake
 ``ctx`` (``bus`` attr) + a fake ``spec`` naming a REAL account, asserting:
 
   - the bundle shape (exchange is an ``OkxExchange`` wrapping the fake connector,
-    ``account_factory`` is callable and mints a ``VenueAccount``, ``connector`` is
-    the SAME fake instance, ``lifecycle`` is ``None``),
+    ``account_factory`` is callable and mints a COMPUTE account leaf scoped to the
+    bundle's own account, ``connector`` is the SAME fake instance, and there is no
+    ``lifecycle`` field),
   - the data provider is an ``OkxDataProvider`` bound to the SAME memoized
     connector (both arms call ``connectors.get("okx", <spec.account_id>, spec)``),
   - a spec that names NO account is REFUSED (ACCT-04/WR-03) rather than silently
@@ -27,6 +28,7 @@ top-level test packages break full-suite collection).
 
 from __future__ import annotations
 
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
 
@@ -64,9 +66,27 @@ def _fake_ctx() -> SimpleNamespace:
     return SimpleNamespace(bus=object(), config=ITraderConfig())
 
 
-def _fake_spec(account_id: str | None = None) -> SimpleNamespace:
-    """A fake ``SystemSpec`` exposing only ``account_id`` (defaulted None)."""
-    return SimpleNamespace(account_id=account_id)
+def _fake_spec(
+    account_id: str | None = None, market_type: str | None = None
+) -> SimpleNamespace:
+    """A fake ``SystemSpec`` exposing ``account_id`` and the optional ``market_type``.
+
+    ``market_type`` is the account's own merged override; ``None`` means the account names
+    none and the venue default applies.
+    """
+    return SimpleNamespace(account_id=account_id, market_type=market_type)
+
+
+def _fake_storage() -> SimpleNamespace:
+    """A stand-in ``PortfolioStateStorage`` for the compute leaf the OKX arm mints.
+
+    The leaf REQUIRES the seam its owning portfolio's other managers hold — a leaf on a
+    private backend loses every reservation across a live restart while the backtest,
+    which reads those containers nowhere else, stays byte-exact. Opaque on purpose: the
+    assertions below are about which account the leaf is scoped to, not about the seam's
+    behaviour.
+    """
+    return SimpleNamespace()
 
 
 def test_okx_plugin_module_imports_no_ccxt() -> None:
@@ -105,7 +125,7 @@ def test_okx_plugin_module_imports_no_ccxt() -> None:
 def test_okx_venue_plugin_builds_bundle_wrapping_the_connector() -> None:
     """build_bundle returns an OkxExchange-backed VenueBundle over the fake connector."""
     from itrader.execution_handler.exchanges.okx import OkxExchange
-    from itrader.portfolio_handler.account import VenueAccount
+    from itrader.portfolio_handler.account.base import Account
     from itrader.venues.bundle import VenueBundle
     from itrader.venues.okx_plugin import OkxVenuePlugin
 
@@ -125,11 +145,14 @@ def test_okx_venue_plugin_builds_bundle_wrapping_the_connector() -> None:
     # 11-09: the dead ``VenueBundle.lifecycle`` field is gone — assemble_venue returns
     # the lifecycle beside the bundle, so there was never anything to store here.
     assert not hasattr(bundle, "lifecycle")
-    # account_factory mints a VenueAccount bound to the same connector.
+    # account_factory mints an Account leaf scoped to the pair the bundle was built for.
+    # The leaf borrows no session: venue truth is read through the ADAPTER above
+    # (``exchange.snapshot()``), which owns the authenticated session, so the account and
+    # the venue read can no longer disagree about which account they speak for.
     assert callable(bundle.account_factory)
-    account = bundle.account_factory()
-    assert isinstance(account, VenueAccount)
-    assert account._connector is connectors.get("okx", "acct-a", spec)
+    account = bundle.account_factory(state_storage=_fake_storage())
+    assert isinstance(account, Account)
+    assert (account.venue_name, account.account_id) == ("okx", "acct-a")
 
 
 def test_okx_data_plugin_shares_the_same_connector() -> None:
@@ -219,76 +242,12 @@ def test_build_provider_raises_when_the_spec_names_no_account() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 11.2-06 (D-38): the account-level knobs reach a REAL consumer
+# ``market_type`` is not asserted in this file. An account leaf reads no market type: the
+# knob selects which channel the venue READ takes position truth from
+# (``OkxExchange.snapshot()`` — spot derives the holding from the base-currency balance,
+# derivative reads the venue's position rows), so it belongs to the execution adapter and
+# is gated there, in tests/unit/execution/test_adapter_snapshot.py.
 # --------------------------------------------------------------------------- #
-def test_build_bundle_carries_the_specs_market_type_to_the_minted_account() -> None:
-    """D-38: a ``"derivative"`` spec mints a ``"derivative"`` account, not ``"spot"``.
-
-    THE test for the D-38 blocker. ``build_bundle`` used to HARDCODE
-    ``market_type="spot"``, so an account-level ``market_type`` key would have been
-    accepted by the allowlist and then changed nothing — an inert key is worse than a
-    rejected one (T-11.2-06-02). This is not cosmetic: ``VenueAccount`` derives
-    ``_cash_stream_nets_holds = market_type != "spot"``, which decides whether the
-    leaf's cash channel nets a venue-side hold — i.e. it changes CASH ACCOUNTING.
-    """
-    from itrader.venues.okx_plugin import OkxVenuePlugin
-
-    connectors = _FakeConnectorProvider()
-    spec = SimpleNamespace(account_id="acct-a", market_type="derivative")
-
-    bundle = OkxVenuePlugin().build_bundle(_fake_ctx(), spec, connectors)
-    account = bundle.account_factory()
-
-    assert account._market_type == "derivative"
-    # The cash-accounting consequence, asserted directly rather than inferred.
-    assert account._cash_stream_nets_holds is True
-
-
-def test_build_bundle_defaults_market_type_to_spot_when_the_spec_names_none() -> None:
-    """D-38: the OKX VENUE-level default stays ``"spot"`` — it is NOT bundle.py's default.
-
-    The deleted hardcode encoded a real venue default. Falling through to
-    ``VenueAccountConfig``'s own ``"derivative"`` default instead would invert
-    ``_cash_stream_nets_holds`` for EVERY OKX account that names no market type — money
-    arithmetic changing under a green suite. Pinned so the removal cannot regress into
-    that.
-    """
-    from itrader.venues.okx_plugin import OkxVenuePlugin
-
-    connectors = _FakeConnectorProvider()
-    spec = _fake_spec(account_id="acct-a")  # carries no market_type at all
-
-    bundle = OkxVenuePlugin().build_bundle(_fake_ctx(), spec, connectors)
-    account = bundle.account_factory()
-
-    assert account._market_type == "spot"
-    assert account._cash_stream_nets_holds is False
-
-
-def test_new_account_still_reads_the_configs_own_market_type() -> None:
-    """The SIBLING call site (``market_type=config.market_type``) is UNCHANGED.
-
-    ``build_bundle`` (the producer) and ``new_account`` (the consumer) are not two
-    copies of one rule — the first fills the config, the second reads it. Only the
-    hardcode in the producer was removed; the consumer's parameterized read must keep
-    honouring whatever the config carries.
-    """
-    from itrader.venues.okx_plugin import OkxVenuePlugin
-    from itrader.venues.bundle import VenueAccountConfig
-
-    connectors = _FakeConnectorProvider()
-    spec = _fake_spec(account_id="acct-a")
-
-    account = OkxVenuePlugin().new_account(VenueAccountConfig(
-        account_id="acct-a",
-        connectors=connectors,
-        spec=spec,
-        quote_currency="USDC",
-        market_type="derivative",
-        symbol="BTC/USDC",
-    ))
-
-    assert account._market_type == "derivative"
 
 
 def test_okx_connector_plugin_applies_the_accounts_sandbox_and_region(
@@ -697,22 +656,25 @@ def _account_config(connectors: Any, spec: Any, account_id: str | None = None) -
 
     return VenueAccountConfig(
         account_id=account_id,
+        venue_name="okx",
         connectors=connectors,
         spec=spec,
         quote_currency="USDC",
         market_type="spot",
         symbol="BTC/USDC",
+        initial_cash=Decimal("1000"),
+        state_storage=_fake_storage(),
     )
 
 
 def test_new_account_scopes_the_account_to_the_configs_account_id() -> None:
-    """new_account mints a VenueAccount carrying the CONFIG's account id (D-11).
+    """new_account mints a leaf carrying the CONFIG's ``(venue_name, account_id)`` (D-11).
 
-    11.1-09 (D-03): the id used to arrive on a ``portfolio_ref`` parameter. It now
-    rides on the config, put there by the caller that legitimately knows which
-    account a portfolio names — the resolution MOVED, it was not dropped.
+    The pair is the leaf's identity and its ONE storage site — ``Portfolio.venue_name`` /
+    ``.account_id`` are read-only properties over it — so a leaf minted without it gives
+    the owning portfolio no way to say which real venue account its orders reach.
     """
-    from itrader.portfolio_handler.account import VenueAccount
+    from itrader.portfolio_handler.account.base import Account
     from itrader.venues.okx_plugin import OkxVenuePlugin
 
     connectors = _FakeConnectorProvider()
@@ -721,17 +683,18 @@ def test_new_account_scopes_the_account_to_the_configs_account_id() -> None:
     account = OkxVenuePlugin().new_account(
         _account_config(connectors, spec, "acct-a"))
 
-    assert isinstance(account, VenueAccount)
-    assert account.account_id == "acct-a"
-    assert account._connector is connectors.get("okx", "acct-a", spec)
+    assert isinstance(account, Account)
+    assert (account.venue_name, account.account_id) == ("okx", "acct-a")
 
 
-def test_two_account_ids_get_two_accounts_over_two_connectors() -> None:
-    """D-12: two account ids -> two DISTINCT accounts over two DISTINCT connectors.
+def test_two_account_ids_get_two_distinct_accounts() -> None:
+    """D-12: two account ids -> two DISTINCT leaves, each scoped to its OWN id.
 
-    This is the isolation premise of the whole phase. A shared connector would mean
-    account B's venue truth (and its orders) traverse account A's authenticated
-    session, which is a real-money wrong answer that no downstream assertion catches.
+    One shared leaf would conflate two real venue balances into a single ledger the
+    venue cannot split back out. The per-account SESSION isolation this used to assert
+    here is asserted where the sessions are built —
+    ``test_okx_connector_plugin_isolates_two_accounts`` — because a leaf borrows no
+    connector: the authenticated session belongs to the execution adapter.
     """
     from itrader.venues.okx_plugin import OkxVenuePlugin
 
@@ -745,7 +708,6 @@ def test_two_account_ids_get_two_accounts_over_two_connectors() -> None:
     assert account_a is not account_b
     assert account_a.account_id == "acct-a"
     assert account_b.account_id == "acct-b"
-    assert account_a._connector is not account_b._connector
 
 
 def test_new_account_refuses_a_config_naming_no_account() -> None:
@@ -783,7 +745,8 @@ def test_account_factory_with_no_account_id_mints_the_bundles_own_account() -> N
 
     bundle = OkxVenuePlugin().build_bundle(_fake_ctx(), spec, connectors)
 
-    assert bundle.account_factory().account_id == "acct-a"
+    account = bundle.account_factory(state_storage=_fake_storage())
+    assert account.account_id == "acct-a"
 
 
 def test_account_factory_refuses_a_supplied_id_the_bundle_was_not_built_for() -> None:
@@ -840,7 +803,9 @@ def test_account_factory_accepts_a_supplied_id_matching_the_bundles_own() -> Non
 
     bundle = OkxVenuePlugin().build_bundle(_fake_ctx(), spec, connectors)
 
-    assert bundle.account_factory(account_id="acct-a").account_id == "acct-a"
+    account = bundle.account_factory(
+        account_id="acct-a", state_storage=_fake_storage())
+    assert account.account_id == "acct-a"
 
 
 def test_bundle_account_factory_delegates_to_new_account() -> None:
@@ -852,20 +817,24 @@ def test_bundle_account_factory_delegates_to_new_account() -> None:
 
     WR-03: the delegation is proven on a MATCHING id. It used to be proven by minting
     ``acct-b`` from an ``acct-a`` bundle, which the guard now refuses — the property
-    under test (one minting implementation, the connector coming from the shared
-    ``(venue, account_id)`` memo) is unchanged, only the id it is demonstrated with.
+    under test (one minting implementation) is unchanged, only the id it is demonstrated
+    with.
     """
     from itrader.venues.okx_plugin import OkxVenuePlugin
 
     connectors = _FakeConnectorProvider()
     ctx = _fake_ctx()
     spec = _fake_spec(account_id="acct-a")
+    plugin = OkxVenuePlugin()
 
-    bundle = OkxVenuePlugin().build_bundle(ctx, spec, connectors)
+    bundle = plugin.build_bundle(ctx, spec, connectors)
 
-    from_factory = bundle.account_factory(account_id="acct-a")
-    assert from_factory.account_id == "acct-a"
-    assert from_factory._connector is connectors.get("okx", "acct-a", spec)
+    from_factory = bundle.account_factory(
+        account_id="acct-a", state_storage=_fake_storage())
+    from_protocol = plugin.new_account(_account_config(connectors, spec, "acct-a"))
+    # Same LEAF KIND and same identity from both entry points: one implementation.
+    assert type(from_factory) is type(from_protocol)
+    assert (from_factory.venue_name, from_factory.account_id) == ("okx", "acct-a")
 
 
 def test_okx_account_factory_is_keyword_only_and_has_no_catch_all() -> None:
@@ -891,3 +860,34 @@ def test_okx_account_factory_is_keyword_only_and_has_no_catch_all() -> None:
     assert set(parameters) == {
         "initial_cash", "enable_margin", "account_id", "venue_name",
         "state_storage"}
+
+
+def test_build_bundle_threads_the_account_shape_into_the_adapter() -> None:
+    """The adapter must be built with the account's quote / market type / symbol.
+
+    The adapter owns the authenticated session and therefore performs the venue read, so
+    the account shape has to reach IT. Computing these values and leaving them on a
+    config object the adapter never sees is not a degraded read but a WRONG one:
+    ``fetch_positions`` answers ``[]`` on a spot account, so a spot account snapshotted as
+    a derivative reports FLAT while it holds coins — and a flat venue reading against a
+    live engine position is exactly what the drift sweep halts on.
+
+    Asserted on the constructed adapter rather than on the config object, because the
+    config object was populated correctly the whole time the adapter was being built with
+    its own defaults.
+    """
+    from itrader.venues.okx_plugin import OkxVenuePlugin
+
+    ctx = _fake_ctx()
+    stream_symbol = ctx.config.stream.okx_stream_symbol
+    spec = _fake_spec(account_id="acct-a", market_type="spot")
+    bundle = OkxVenuePlugin().build_bundle(ctx, spec, _FakeConnectorProvider())
+
+    exchange = bundle.exchange
+    assert exchange._market_type == "spot"
+    # The wired pair reaches the adapter verbatim, and its legs are split from it — so the
+    # settlement currency is the pair's RIGHT leg, never a hardcoded USDT default.
+    assert exchange._symbol == stream_symbol
+    assert exchange._quote == stream_symbol.split("/")[1]
+    # The base leg is what SPOT position truth is derived from.
+    assert exchange._base == stream_symbol.split("/")[0]

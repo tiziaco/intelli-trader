@@ -22,10 +22,12 @@ Two observable guarantees the composition-root wiring must hold:
 """
 
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any, List
 
 import pytest
 
+from itrader.execution_handler.exchanges.base import AccountSnapshot
 from itrader.portfolio_handler.reconcile import venue_reconciler as venue_reconciler_module
 from itrader.portfolio_handler.reconcile.reconciliation_coordinator import (
     ReconciliationCoordinator,
@@ -34,28 +36,31 @@ from itrader.trading_system.live_trading_system import LiveTradingSystem  # noqa
 from tests.support.replay_harness import build_paper_replay_system
 
 
-class _StubVenueAccount:
-    """Minimal venue-account stand-in so the venue-truth reconcile branch is entered offline.
+class _StubAdapter:
+    """Minimal execution-adapter stand-in — the object that owns a venue session.
 
-    P7 (§11d): the ReconciliationCoordinator keys the venue reconcile on account KIND
-    (``is_venue_truth``), so the stub declares itself venue-truth; ``positions`` is empty
-    so the post-reconcile baseline guard is a benign no-op (the reconciler halts instead).
+    ``snapshot()`` answers an EMPTY venue picture (no balances, no positions), which is
+    the honest offline answer and keeps the post-reconcile baseline guard a benign no-op;
+    the ordering under test is captured by the recording reconciler instead.
     """
 
-    is_venue_truth = True
-    positions: dict = {}
-    account_id = "acct-stub"
+    def snapshot(self) -> AccountSnapshot:
+        return AccountSnapshot.empty()
 
-    def __init__(self) -> None:
-        # 11-09 (D-19): the coordinator reads the connector OFF the account rather than
-        # from a scalar parameter, so a venue-truth double must expose one.
-        self.connector = object()
 
-    def snapshot(self) -> None:  # noqa: D401 - no-op stub
-        pass
+def _online_record() -> SimpleNamespace:
+    """One ONLINE venue-account record, the unit the reconcile loop enumerates.
 
-    def start_streaming(self) -> None:
-        pass
+    The coordinator no longer asks an account to describe its own provenance — it walks
+    the account manager's online records, so the offline way into the venue-reconcile
+    branch is to report one record whose bundle carries BOTH an adapter and a connector.
+    A record with no connector is paper and is skipped, which is exactly why the stub
+    must expose one.
+    """
+    return SimpleNamespace(
+        spec=SimpleNamespace(execution_venue="okx", account_id="acct-stub"),
+        bundle=SimpleNamespace(exchange=_StubAdapter(), connector=object()),
+    )
 
 
 class _RecordingReconciler:
@@ -145,19 +150,19 @@ def test_portfolio_rehydrate_runs_before_reconcile_on_live_start(monkeypatch) ->
         # ensure the store exposes rehydrate() so the reconcile sub-block runs. No connector /
         # data-provider / exchange -> the earlier OKX network sub-blocks all skip.
         monkeypatch.setattr(system, "_initialize_live_session", lambda: None)
-        # 11-09 (MPORT-05): the venue reconcile is PER PORTFOLIO now — it reads
-        # ``portfolio.account`` rather than a facade-level scalar, and
-        # ``_link_venue_account_to_portfolios`` is deleted (the attach happens once, at
-        # composition, in ``_attach_venue_accounts``). So the venue-truth branch is
-        # entered by giving an ACTIVE PORTFOLIO the stub account, which is exactly how
-        # production reaches it. Emptying ``_venue_lifecycles`` keeps the earlier OKX
-        # network sub-blocks skipping, as the three None scalars used to.
+        # The venue reconcile is driven by the account manager's ONLINE RECORDS, read at
+        # CALL time, so the offline way in is a manager stand-in reporting one record —
+        # exactly the enumeration production hands the coordinator. Emptying
+        # ``_venue_lifecycles`` keeps the earlier OKX network sub-blocks skipping.
         system.exchange = "okx"
         system._venue_lifecycles = {}
-        portfolio_id = system.portfolio_handler.add_portfolio(
+        system._venue_manager = SimpleNamespace(
+            online_records=lambda: [_online_record()])
+        # A real portfolio so the wrapped rehydrate below runs its per-portfolio loop
+        # rather than over an empty roster. It is not what admits the reconcile: the
+        # record is.
+        system.portfolio_handler.add_portfolio(
             name="pf-reconcile", exchange="okx", cash=Decimal("10000"))
-        system.portfolio_handler.get_portfolio(portfolio_id).account = (
-            _StubVenueAccount())
         monkeypatch.setattr(system._order_storage, "rehydrate", lambda: None, raising=False)
         # Halt in the post-reconcile baseline guard so start() refuses RUNNING and spawns no
         # thread — the rehydrate/reconcile ordering is already captured by then. Patch the

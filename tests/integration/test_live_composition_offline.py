@@ -323,25 +323,30 @@ def test_cr02_retiring_an_execution_account_leaves_the_feed_fully_wired() -> Non
         "the abandoned provider still holds a live stream pushing into the one feed ring")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="CR-03: StreamRecoveryHandler is constructed over a `venue_accounts` dict that "
-           "is declared and never written, so reconnect-resume iterates an empty list "
-           "forever and its own 'never resume blind' contract is inert. Flips in Stage 3 "
-           "(recovery enumerates the manager's online records).",
-)
 def test_cr03_recovery_account_enumeration_is_non_empty_when_an_account_is_online(
     live_system,
 ) -> None:
-    """With an account online, the reconnect-resume path must have something to snapshot.
+    """With an account online, the reconnect-resume path must have something to enumerate.
 
-    Read off the handler the real builder constructed, because the defect is entirely a
-    builder decision: the handler's own logic is correct, it is simply handed a container
-    nothing populates.
+    CR-03 (fixed in Stage 3). The handler used to be constructed over a ``venue_accounts``
+    dict that was declared and never written, so the resume snapshot loop iterated an empty
+    list forever and the handler's own "never resume blind" contract was inert. Nothing
+    reported it, because the handler's logic was correct — it was simply handed a container
+    nothing populated.
+
+    Read off the handler the REAL builder constructed, because the defect was entirely a
+    builder decision. The assertion is on the ENUMERATION SOURCE rather than the
+    streaming-filtered adapter list: this paper account legitimately carries no connector
+    and so has no streams to recover, but the handler must still be wired to something that
+    reports it as online. A container nothing writes fails this; a live read of the
+    manager's records does not.
     """
     assert live_system.execution_handler.exchanges, "precondition: an account is online"
-    assert list(live_system._stream_recovery._venue_accounts()), (
-        "reconnect-resume would resume blind — no account is enumerated to snapshot")
+    records = list(live_system._stream_recovery._accounts())
+    assert records, (
+        "reconnect-resume would resume blind — the handler enumerates no online account")
+    assert {(record.spec.execution_venue, record.spec.account_id)
+            for record in records} == {(_VENUE, _ACCOUNT)}
 
 
 @pytest.mark.xfail(

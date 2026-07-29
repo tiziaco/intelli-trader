@@ -16,7 +16,7 @@ branch inside ``materialize``:
   ``VenueAccountManager`` to validate the pair (provisioned + enabled + brought-online)
   and RAISES ``VenueAccountNotProvisionedError`` at ``materialize`` on any failure
   (ACCT-03) — a live portfolio never trades against a fabricated balance. On SUCCESS it
-  builds a COMPUTE leaf carrying the real pair: a venue-truth ``VenueAccount`` leaf
+  builds a COMPUTE leaf carrying the real pair: a leaf whose balance is venue truth
   cannot be the construction-time leaf, because its balance raises until the first
   venue snapshot while ``Portfolio.__init__`` reads balance (the venue-truth swap is
   deferred, COMP-07);
@@ -113,10 +113,11 @@ class VenueValidatedComputeAuthority:
     (ACCT-03) — never trading against a fabricated balance.
 
     On SUCCESS it builds a COMPUTE leaf carrying the portfolio's real ``(venue_name,
-    account_id)`` — NOT a venue-truth ``VenueAccount``: ``VenueAccount.balance`` raises
-    until its first venue snapshot, while ``Portfolio.__init__`` reads balance at
-    construction. That venue-truth swap is deferred (COMP-07); until then the live
-    portfolio sits on a compute leaf carrying its real pair, gated by the ACCT-03 raise.
+    account_id)``. A leaf whose balance is venue truth cannot be the construction-time
+    leaf: that balance is unreadable until a venue read completes, while
+    ``Portfolio.__init__`` reads the balance at construction. So a live portfolio sits on a
+    compute leaf carrying its real pair, gated by the ACCT-03 raise, and venue truth is
+    read separately through the execution adapter that owns the session.
 
     Holds a REAL ``VenueAccountManager`` (for the check) and a REAL ``ComputeAccountAuthority``
     (for the leaf) at construction — no ``Optional``, no late-init, no post-construction set.

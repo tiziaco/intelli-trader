@@ -4,7 +4,7 @@ Precision-epsilon drift-tolerance primitive (D-01, RECON-01/RECON-03).
 The reconciliation cluster's foundational compare: two Decimal quantities/prices
 "agree" when their absolute difference is within one least-significant-digit unit
 for the caller's instrument precision. This is the epsilon that gates whether a
-cached ``VenueAccount`` value and the engine's computed value have drifted (a
+venue-reported value and the engine's computed value have drifted (a
 strict ``==`` on venue floats-turned-Decimal would false-alarm on the last digit).
 
 PORTED IN CONCEPT (never imported) from nautilus_trader ``live/reconciliation.py:52``

@@ -83,7 +83,8 @@ _ACCOUNTS_TABLE = "venue_accounts"
 #: decide where an account's money goes: ``sandbox`` and ``region`` select the HOST an
 #: authenticated session reaches (``region`` picks the regional entity — an EEA-issued key
 #: answers 50119 on the global host — and ``sandbox`` picks demo vs PRODUCTION), while
-#: ``market_type`` reaches ``VenueAccount`` and changes how cash is netted. So a
+#: ``market_type`` reaches the execution adapter and selects which channel it reads
+#: position truth from. So a
 #: silently-dropped ``sandox`` typo does NOT degrade to a harmless default: it leaves the
 #: account on whatever the ambient process environment says, routing a live order to the
 #: production host while the operator believes the account is pinned to demo. The raise IS
@@ -231,6 +232,23 @@ class VenueAccountManager:
     def is_online(self, venue_name: str, account_id: str) -> bool:
         """Whether ``bring_online`` built a runtime for this pair IN THIS PROCESS."""
         return (venue_name, account_id) in self._online
+
+    def online_records(self) -> list["OnlineVenueAccount"]:
+        """Every runtime ``bring_online`` built, in bring-up order.
+
+        The ONE enumeration the safety and reconcile planes read. They ask this at USE
+        time rather than being handed a container at build time, which is what makes "an
+        account is online but the consumer's list is empty" unrepresentable: there is no
+        second container to forget to populate, and an account brought online after those
+        collaborators were constructed is covered automatically.
+
+        Distinct BY CONSTRUCTION — the map is keyed by ``(venue_name, account_id)``, so a
+        caller needs no identity de-duplication pass to avoid acting on one account twice.
+
+        A copy, so a caller iterating it cannot be tripped by a concurrent bring-up
+        mutating the map underneath.
+        """
+        return list(self._online.values())
 
     def venue_uid_guard_active(
         self,
@@ -554,7 +572,7 @@ class VenueAccountManager:
         SILENT are checked — a loud failure downstream is a better guard than a duplicated
         one:
 
-        * ``market_type`` — ``VenueAccount`` derives
+        * ``market_type`` — the execution adapter derives
           ``_cash_stream_nets_holds = market_type != "spot"``, so ``"spott"`` sails through
           AS a derivative and changes the account's CASH ACCOUNTING with nothing raising.
         * ``sandbox`` — a JSON column holds the STRING ``"false"`` happily, and every
@@ -574,9 +592,9 @@ class VenueAccountManager:
                 f"Venue account ({venue_name!r}, {account_id!r}) names an unknown "
                 f"market_type; the legal values are {list(_LEGAL_MARKET_TYPES)}. "
                 f"Refusing to bring it online: an unrecognised value would be treated "
-                f"as a derivative by VenueAccount's "
-                f"`_cash_stream_nets_holds = market_type != 'spot'`, silently changing "
-                f"this account's cash accounting (D-38).",
+                f"as a derivative when the execution adapter reads venue truth, so a spot "
+                f"account's position would be read from a channel that is always empty — "
+                f"reporting FLAT while the account holds coins.",
             )
 
         sandbox = account_config.get("sandbox")
@@ -633,7 +651,7 @@ class VenueAccountManager:
         """Resolve this pair into a constructed venue-truth leaf.
 
         NOT yet reached from the live portfolio-creation path: a venue-truth leaf cannot be
-        the construction-time leaf, because ``VenueAccount.balance`` raises until its first
+        the construction-time leaf, because a venue balance is unreadable until its first
         snapshot while ``Portfolio.__init__`` reads balance. The live ``PortfolioFactory``
         authority calls ``assert_available`` and builds a COMPUTE leaf instead. This stays
         as the resolution primitive to wire once the snapshot lifecycle lands.
@@ -645,10 +663,11 @@ class VenueAccountManager:
         authority lives here while the construction primitive lives one layer down, where
         both backtest arms can also reach it.
 
-        Fail-loud, never a fallback: it raises and NEVER returns a compute leaf. A compute
-        leaf carries ``is_venue_truth=False``, which silently disables the venue snapshot,
-        the fill/order streams, ``VenueReconciler`` and the unexplained-residual HALT — the
-        portfolio would trade against computed balances believing they were the venue's.
+        Fail-loud, never a fallback: it raises and NEVER returns a leaf for an account it
+        could not resolve. Handing one back would leave the portfolio attached to no venue
+        account at all — nothing registered under the pair, so no order routable, and
+        nothing brought online, so no reconcile — while it traded against computed balances
+        an operator would read as the venue's.
 
         ``account_id`` is matched by EXACT STRING: no case-folding, no trimming, no Unicode
         normalization, and no coercion of a missing id to a default. ``' okx-1'`` and

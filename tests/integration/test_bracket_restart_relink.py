@@ -162,13 +162,21 @@ def _stamp_venue_ack(seed_store, order, venue_order_id: str) -> None:
 
 
 def _build_reconciler(store, connector, halt_spy):
-    from itrader.portfolio_handler.account.venue import VenueAccount
+    """A VenueReconciler over a real store and a REAL execution adapter.
+
+    The adapter is the object owning the account's authenticated session, so it supplies
+    both the venue ``snapshot()`` and the correlation-map seam the reconcile ends with. A
+    real ``OkxExchange`` over the canned fake connector keeps the venue truth on the same
+    production read path (``fetch_balance`` + ``fetch_positions``) instead of a hand-shaped
+    positions map.
+    """
+    from itrader.execution_handler.exchanges.okx import OkxExchange
     from itrader.portfolio_handler.reconcile.venue_reconciler import VenueReconciler
 
     gq: "queue.Queue[Any]" = queue.Queue()
     reconciler = VenueReconciler(
         store=store,
-        venue_account=VenueAccount(connector, account_id="acct-test"),
+        adapter=OkxExchange(gq, connector),
         connector=connector,
         global_queue=gq,
         halt_signal=halt_spy,

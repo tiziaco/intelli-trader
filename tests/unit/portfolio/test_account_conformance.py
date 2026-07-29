@@ -44,7 +44,6 @@ from itrader.config import PortfolioConfig, get_portfolio_preset
 from itrader.outils.dict_merge import recursive_merge
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
-from itrader.portfolio_handler.account.venue import VenueAccount
 from tests.support.venue_wiring import compute_account
 
 _TICKER = "BTC/USDC"
@@ -79,39 +78,13 @@ def _txn(ttype: TransactionType, qty: str, price: str,
     )
 
 
-@pytest.fixture
-def venue_connectors():
-    """Factory yielding CONNECTED ``FakeLiveConnector``s with guaranteed teardown.
-
-    Each created connector runs its loop on a daemon thread; every one is
-    ``disconnect()``-ed in teardown (cancelling spawned tasks + closing the client)
-    so the strict suite sees no ResourceWarning/RuntimeWarning (Pitfall 4). The
-    import is deferred so early collection never depends on ``tests.support``.
-    """
-    from tests.support.fake_venue_connector import make_fake_venue_connector
-
-    created = []
-
-    def _make(payloads=None):
-        connector = make_fake_venue_connector(sandbox=True, payloads=payloads)
-        connector.connect()
-        created.append(connector)
-        return connector
-
-    try:
-        yield _make
-    finally:
-        for connector in created:
-            connector.disconnect()
-
-
-def _build_cash_leaf(_venue_connectors):
+def _build_cash_leaf():
     portfolio = Portfolio("cash_pf", "paper", Decimal("150000"), datetime.now(),
                           account=compute_account(Decimal("150000")))
     return portfolio, portfolio.account
 
 
-def _build_margin_leaf(_venue_connectors):
+def _build_margin_leaf():
     portfolio = Portfolio("margin_pf", "paper", Decimal("150000"),
                           datetime.now(), config=_margin_config(),
                           account=compute_account(Decimal("150000"),
@@ -119,29 +92,16 @@ def _build_margin_leaf(_venue_connectors):
     return portfolio, portfolio.account
 
 
-def _build_venue_leaf(venue_connectors):
-    # A real Portfolio whose account leaf is swapped for a VenueAccount snapshotted
-    # from the SPOT fixture (quote from wiring == USDC, never the USDT default).
-    portfolio = Portfolio("venue_pf", "okx", Decimal("150000"), datetime.now(),
-                          account=compute_account(Decimal("150000")))
-    connector = venue_connectors(_spot_payloads())
-    account = VenueAccount(connector, quote_currency="USDC", account_id="acct-test")
-    account.snapshot()
-    portfolio.account = account
-    return portfolio, account
-
-
 _LEAF_BUILDERS = {
     "cash": _build_cash_leaf,
     "margin": _build_margin_leaf,
-    "venue": _build_venue_leaf,
 }
 
 
-@pytest.fixture(params=["cash", "margin", "venue"])
-def leaf(request, venue_connectors):
+@pytest.fixture(params=["cash", "margin"])
+def leaf(request):
     """Parametrized ``(portfolio, account)`` across the three ``Account`` leaves."""
-    return _LEAF_BUILDERS[request.param](venue_connectors)
+    return _LEAF_BUILDERS[request.param]()
 
 
 # --- (a) admission read via available_balance --------------------------------
@@ -259,32 +219,3 @@ def test_serialization_reads_account_surface(leaf):
 
 
 # --- (f) D-02 margin op on a non-margin (venue) account fails loud, no mutation ---
-
-
-def test_margin_op_on_venue_account_raises_before_mutation(venue_connectors):
-    """D-02: a venue-linked + margin-configured portfolio fails LOUD at the guard.
-
-    Re-typing ``Portfolio.account`` to the ABC lets a ``VenueAccount`` wire onto a
-    margin-configured portfolio (the V17-14 hazard surface). Driving a margin BUY
-    through ``_process_transaction_margin`` used to hit a bare ``cast`` no-op and
-    then ``AttributeError`` mid-settlement — AFTER the position had mutated. The
-    ``_require_margin_account`` isinstance guard now raises a typed ``StateError``
-    BEFORE any mutation; the untouched position + transaction ledger assert the
-    settlement did not partially apply (closes the V17-14 cast arm).
-    """
-    portfolio = Portfolio("venue_margin_pf", "okx", Decimal("150000"),
-                          datetime.now(), config=_margin_config(),
-                          account=compute_account(Decimal("150000"),
-                                                  enable_margin=True))
-    connector = venue_connectors(_spot_payloads())
-    account = VenueAccount(connector, quote_currency="USDC", account_id="acct-test")
-    account.snapshot()
-    portfolio.account = account
-
-    prior_txns = len(portfolio.transactions)
-    with pytest.raises(StateError):
-        portfolio.transact_shares(_txn(TransactionType.BUY, qty="0.1", price="100"))
-
-    # No partial mutation: no position opened, no transaction recorded.
-    assert portfolio.get_open_position(_TICKER) is None
-    assert len(portfolio.transactions) == prior_txns

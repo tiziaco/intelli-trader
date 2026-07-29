@@ -345,18 +345,21 @@ def test_a_binance_portfolio_does_not_receive_the_okx_venue_account(
 ) -> None:
     """CR-01 at the BOOT: the foreign-venue portfolio is not handed OKX's account.
 
-    Same seeding as the test above — a persisted ``binance``/``main`` portfolio while
-    the spec boots ``okx``/``main``. The composition root derived its account set and
-    attached venue accounts by BARE ``account_id``, so the binance portfolio was handed
-    the OKX "main" ``VenueAccount``: ``ReconciliationCoordinator`` would then snapshot
-    one venue's balance against the other venue's positions, and ``VenueReconciler``
-    would emit reconciling fills into the wrong portfolio.
+    Same seeding as the test above — a persisted ``binance``/``main`` portfolio while the
+    boot brings up ``okx``/``main`` — because that is the shape a BARE-``account_id``
+    resolution gets wrong: both accounts answer to "main", so any lookup that drops the
+    venue half hands the binance portfolio OKX's account. The consequence is not local —
+    the coordinator would judge one venue's positions against the other's and
+    ``VenueReconciler`` would emit reconciling fills into the wrong portfolio.
 
-    The OKX-side assertions are deliberately UNCHANGED from the sibling test: the OKX
-    spec portfolio still legitimately names "main", so the bundle and the registry entry
-    are not what this fix touches — only who receives the resulting account is.
+    The OKX-side assertion is deliberately IDENTICAL to the sibling test: the OKX account
+    still legitimately names "main", so the bundle and the registry entry are not what is
+    under test here — only which portfolio ends up bound to which account is.
     """
-    from itrader.portfolio_handler.account import VenueAccount
+    from itrader.portfolio_handler.account import (
+        SimulatedCashAccount,
+        SimulatedMarginAccount,
+    )
 
     other = PortfolioId(uuid.uuid4())
     # The OKX 'main' account is provisioned so the store-derived boot assembles it.
@@ -373,14 +376,19 @@ def test_a_binance_portfolio_does_not_receive_the_okx_venue_account(
     system = build_live_system(_spec([]))
     try:
         portfolio = system.portfolio_handler.get_portfolio(other)
-        assert portfolio.venue_name == "binance"
-        # It keeps its construction-time compute leaf. 11.2-07: this boot attaches NO
-        # venue-truth account to any portfolio (the ``account_for`` wiring is plan 11.2-08's
-        # COMP-07 work), so EVERY live portfolio currently sits on a compute leaf — a
-        # deliberate transient window. The binance portfolio must never receive the OKX
-        # "main" account regardless (the cross-venue conflation CR-01/D-14 prevent).
-        assert not isinstance(portfolio.account, VenueAccount)
-        assert portfolio.account.is_venue_truth is False
+        # Identity is the PAIR, and the leaf is its ONE storage site (``Portfolio``'s two
+        # properties read straight off it). The pair — not the bare account id — is what
+        # discriminates here: BOTH accounts are named "main". A leaf reading
+        # ``("okx", "main")`` would mean this portfolio's orders and reconciliation route
+        # to the OKX balance, so the coordinator would judge one venue's positions against
+        # the other's and ``VenueReconciler`` would emit reconciling fills into the wrong
+        # portfolio.
+        assert (portfolio.venue_name, portfolio.account_id) == ("binance", "main")
+        # Every live portfolio sits on a COMPUTE leaf: venue truth is read from the venue
+        # by the execution adapter that owns the authenticated session, so there is no
+        # venue-cached leaf a boot could hand to the wrong portfolio in the first place.
+        assert isinstance(
+            portfolio.account, (SimulatedCashAccount, SimulatedMarginAccount))
         # The OKX durable account still assembles and registers.
         assert set(_okx_entries(system)) == {(_VENUE, "main")}
     finally:
@@ -408,6 +416,11 @@ def test_a_persisted_portfolio_rehydrates_before_start_with_its_id(
     placement: a rehydrate inside ``_initialize_live_session`` would leave this empty
     (and would be monkeypatched away entirely in the restart tests).
     """
+    from itrader.portfolio_handler.account import (
+        SimulatedCashAccount,
+        SimulatedMarginAccount,
+    )
+
     persisted = _seed_definition(live_db, name="pf-durable", account_id="acct-a")
 
     # The spec names NO account: a spec portfolio on "acct-a" would collide with the
@@ -423,13 +436,13 @@ def test_a_persisted_portfolio_rehydrates_before_start_with_its_id(
         # The stored ``initial_cash`` is asserted at the STORE (a definition, not a balance).
         assert PortfolioDefinitionStore(live_db).read_all()[0]["initial_cash"] == (
             Decimal("10000.00"))
-        # 11.2-07 (transient window): the rehydrated portfolio currently holds its
-        # construction-time COMPUTE leaf (``is_venue_truth=False``). The venue-truth
-        # ``VenueAccount`` attach (``PortfolioFactory -> VenueAccountManager.account_for``)
-        # is plan 11.2-08's COMP-07 work, and the ACCT-03 raise is plan 11.2-09's — so this
-        # assertion FLIPS back to ``is True`` once those land. Until then a live portfolio
-        # on a compute leaf is the deliberate, owner-sanctioned interim state.
-        assert portfolio.account.is_venue_truth is False
+        # The rehydrated portfolio holds a COMPUTE leaf carrying the stored account
+        # identity. That leaf is what makes the two assertions above readable at all: a
+        # portfolio is CONSTRUCTED with its account and construction reads the balance, so
+        # a leaf whose balance only arrives after a venue round trip could not answer here.
+        assert isinstance(
+            portfolio.account, (SimulatedCashAccount, SimulatedMarginAccount))
+        assert (portfolio.venue_name, portfolio.account_id) == (_VENUE, "acct-a")
     finally:
         system.stop(timeout=5.0)
 

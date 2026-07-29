@@ -153,7 +153,7 @@ class Portfolio(object):
 
 		The account is RECEIVED, never minted: ``VenuePlugin.new_account`` is the sole
 		owner of the margin-vs-cash selection rule. The field stays declared as the
-		``Account`` ABC so the live ``VenueAccount`` leaf wires cleanly; margin-only
+		``Account`` ABC so any leaf wires cleanly; margin-only
 		call sites narrow via ``_require_margin_account``.
 
 		**The state-storage seam is ADOPTED from the account when it carries one, and
@@ -207,9 +207,15 @@ class Portfolio(object):
 		``PortfolioFactory.materialize`` computes ``to_money(cash)`` once and passes it
 		to both sides; without this check a caller that supplies one value to the
 		portfolio and another to the account factory gets a portfolio whose reported
-		opening cash and whose ledger disagree, with nothing red. Venue-truth leaves are
-		exempt — their balance comes from the venue, so there is no wiring value to
-		agree with.
+		opening cash and whose ledger disagree, with nothing red.
+
+		The check is UNCONDITIONAL. It used to be skipped for accounts that declared
+		themselves venue-truth, on the grounds that their balance came from the venue
+		rather than from a wiring value — but every account a portfolio is constructed with
+		reports a readable opening balance, so there is no longer a kind of account for
+		which "the supplied cash and the account's balance need not agree" is true. An
+		account whose balance is unreadable at construction cannot be a construction-time
+		leaf at all, which is a separate and louder failure.
 
 		The expected value ASKS the account how it rounds cash
 		(``Account.quantize_cash``) rather than re-deriving the scale: both sides of
@@ -217,15 +223,15 @@ class Portfolio(object):
 		spelled the scale out for itself a one-sided change made every portfolio
 		construction raise — including the oracle path.
 		"""
-		if not getattr(account := self.account, "is_venue_truth", False):
-			expected = account.quantize_cash(cash)
-			if account.balance != expected:
-				raise ValidationError(
-					"account",
-					str(account.balance),
-					f"The supplied account opens at {account.balance} but the "
-					f"portfolio was asked to open at {expected}; the account's "
-					"initial_cash and the portfolio's cash must be the SAME value",
+		account = self.account
+		expected = account.quantize_cash(cash)
+		if account.balance != expected:
+			raise ValidationError(
+				"account",
+				str(account.balance),
+				f"The supplied account opens at {account.balance} but the "
+				f"portfolio was asked to open at {expected}; the account's "
+				"initial_cash and the portfolio's cash must be the SAME value",
 				)
 		if self.account.balance < 0:
 			# FL-01: input validation, not a transaction funds-shortfall —

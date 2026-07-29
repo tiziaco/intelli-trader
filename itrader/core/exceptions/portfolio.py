@@ -258,14 +258,14 @@ _UNPROVISIONED_ACCOUNT_FALLBACK = (
 class VenueAccountNotProvisionedError(PortfolioError):
     """A ``(venue_name, account_id)`` names no live, enabled venue account (ACCT-03, D-21).
 
-    The typed refusal ``VenueAccountManager.account_for`` raises instead of returning an
-    account. It is deliberately a REFUSAL and not a fallback: the tempting alternative —
-    handing back the compute leaf a portfolio would otherwise have — produces an account
-    with ``is_venue_truth=False``, which silently disables the venue snapshot, the fill/
-    order streams, ``VenueReconciler`` and the unexplained-residual HALT. The portfolio
-    then trades against COMPUTED balances while believing they are the venue's, and every
-    guard built to catch that divergence is inert. A loud refusal at resolution time is
-    strictly cheaper than a quiet one at settlement time.
+    The typed refusal the account manager raises instead of returning an account. It is
+    deliberately a REFUSAL and not a fallback: the tempting alternative — handing back the
+    compute leaf a portfolio would otherwise have — produces a portfolio that is not
+    connected to any venue account at all. It would trade against COMPUTED balances while
+    an operator believed those balances were the venue's, no order would ever be routable
+    (nothing is registered under the pair), and no reconcile would run against it, because
+    nothing brought the account online. A loud refusal at resolution time is strictly
+    cheaper than a quiet one at settlement time.
 
     ``account_id`` is matched by EXACT STRING at every layer — no case-folding, trimming
     or Unicode normalization — so ``' okx-1'`` and ``'okx-1'`` are different accounts and
@@ -291,9 +291,9 @@ class VenueAccountNotProvisionedError(PortfolioError):
         super().__init__(
             f"Venue account ({venue_name!r}, {account_id!r}) is not available: "
             f"{rationale}. Refusing to resolve an account for it (ACCT-03): returning a "
-            f"compute leaf instead would give the portfolio is_venue_truth=False and "
-            f"silently disable the venue snapshot, the fill/order streams, "
-            f"VenueReconciler and the unexplained-residual HALT."
+            f"compute leaf instead would leave the portfolio attached to no venue account "
+            f"at all — unroutable, unreconciled, and trading against computed balances an "
+            f"operator would read as the venue's."
         )
 
 
@@ -308,7 +308,7 @@ class UnknownVenueAccountConfigKeyError(PortfolioError):
     keys are the ones that decide where an account's money goes. ``sandbox`` and
     ``region`` select the OKX host an authenticated session reaches (an EEA-issued key
     answers 50119 on the global host; ``sandbox`` is demo-vs-PRODUCTION), and
-    ``market_type`` reaches ``VenueAccount``, where
+    ``market_type`` reaches the execution adapter, where
     ``_cash_stream_nets_holds = market_type != "spot"`` changes how cash is netted. A
     dropped ``sandox`` typo therefore does not degrade to a harmless default: it leaves
     the account on whatever the ambient process environment says, so an operator who

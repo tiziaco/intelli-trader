@@ -1,8 +1,11 @@
 """Owner of the live startup rehydrate → venue-reconcile → baseline-guard sequence.
 
-The venue reconcile is keyed on account KIND (``Account.is_venue_truth``), never on
-``exchange == 'okx'``, so a paper/simulated compute account never reaches it while a
-durable paper engine still gets its ledger restored.
+The venue reconcile is driven off the account manager's ONLINE RECORDS, so an account
+with a real venue session behind it reaches it and one without — paper, simulated — does
+not, while a durable paper engine still gets its ledger restored. The set is not derived
+from an account-kind predicate: asking an account to describe its own provenance made the
+whole reconcile silently inert the moment live portfolios stopped carrying venue-truth
+leaves, with nothing reporting it.
 
 ``halt`` is injected as ``Callable[[str], None]`` so this collaborator does not depend
 on the concrete ``SafetyController``. Connector/OKX imports stay LAZY inside method
@@ -57,12 +60,6 @@ class ReconciliationCoordinator:
         The order working-set store. Rehydrate + venue reconcile are gated on it exposing
         ``rehydrate`` (the durable CachedSql live store; the in-memory backtest backend is
         a clean skip → oracle-dark).
-    execution_handler:
-        The pair-keyed venue exchange registry (``exchanges[(venue_name, account_id)]``).
-        A single scalar ``exchange`` instead would be handed to EVERY portfolio's
-        ``VenueReconciler``, so portfolio B's reconcile would repopulate account **A's**
-        correlation map; the registry is keyed by the same pair the portfolio names, so
-        there is nothing to mis-address.
     global_queue:
         The shared event queue — reconciling ``FillEvent``s flow through it.
     halt:
@@ -90,16 +87,20 @@ class ReconciliationCoordinator:
         portfolio_handler: Any,
         seed_applied_trades: Callable[[Iterable[str]], None],
         order_storage: Any,
-        execution_handler: Any,
         global_queue: "Queue[Any]",
         halt: Callable[[str], None],
+        records: Optional[Callable[[], Iterable[Any]]] = None,
     ) -> None:
         self._portfolio_handler = portfolio_handler
         self._seed_applied_trades = seed_applied_trades
         self._order_storage = order_storage
-        self._execution_handler = execution_handler
         self._global_queue = global_queue
         self._halt = halt
+        # A CALLABLE over the account manager's online records, read at USE time. The
+        # default reports nothing, which is the correct backtest/paper answer: no venue
+        # session, nothing to reconcile against.
+        self._records: Callable[[], Iterable[Any]] = (
+            records if records is not None else list)
         self.logger = get_itrader_logger().bind(component="ReconciliationCoordinator")
 
     # ------------------------------------------------------------------ entrypoint
@@ -117,59 +118,65 @@ class ReconciliationCoordinator:
         if hasattr(self._order_storage, "rehydrate"):
             self._portfolio_handler.rehydrate(self._seed_applied_trades)
 
-        # Deduped by account IDENTITY: the distinct-account composition invariant
-        # (portfolio_handler/rehydrate/distinct_account_invariant.py) refuses two
-        # portfolios sharing an account, but this loop must not ASSUME it — a shared
-        # account would otherwise be snapshotted twice and given two position streams.
-        reconciled: List[int] = []
-        for portfolio in self._portfolio_handler.get_active_portfolios():
-            account = getattr(portfolio, "account", None)
-            if account is None or not account.is_venue_truth:
+        # Iterated over the account manager's ONLINE RECORDS rather than over portfolios
+        # filtered by account KIND. Three things fall out of that change:
+        #
+        #   - No account-kind predicate. Asking "is this account venue-truth?" was asking
+        #     the account to describe its own provenance, and the answer was False on every
+        #     live portfolio — which silently disabled this entire reconcile.
+        #   - No identity de-duplication. The records map is keyed by
+        #     (venue_name, account_id), so it is distinct BY CONSTRUCTION; the old loop had
+        #     to guard against snapshotting one shared account twice.
+        #   - No separate stream start. An adapter spawns its own fill/order streams when
+        #     it connects, so there is no second "now start streaming" step to forget.
+        for record in self._records():
+            adapter = record.bundle.exchange
+            if adapter is None:
                 continue
-            if id(account) in reconciled:
-                continue
-            reconciled.append(id(account))
 
-            account.snapshot()
-            account.start_streaming()
-
-            # Store-gated too (the reconcile needs the rehydrated working set) so an
+            # Store-gated (the reconcile needs the rehydrated working set) so an
             # unconfigured durable store degrades cleanly. The lazy import keeps
             # SQL/async/connector off any non-live path (inertness gate).
-            if hasattr(self._order_storage, "rehydrate"):
-                from itrader.portfolio_handler.reconcile.venue_reconciler import (
-                    VenueReconciler,
-                )
+            if not hasattr(self._order_storage, "rehydrate"):
+                continue
+            connector = record.bundle.connector
+            if connector is None:
+                continue  # paper — no venue behind it, nothing to reconcile against.
 
-                reconciler = VenueReconciler(
-                    store=self._order_storage,
-                    venue_account=account,
-                    connector=account.connector,
-                    global_queue=self._global_queue,
-                    halt_signal=self._halt,
-                    exchange=self._exchange_for(portfolio),
-                )
-                reconciler.reconcile()
+            from itrader.portfolio_handler.reconcile.venue_reconciler import (
+                VenueReconciler,
+            )
+
+            reconciler = VenueReconciler(
+                store=self._order_storage,
+                adapter=adapter,
+                connector=connector,
+                global_queue=self._global_queue,
+                halt_signal=self._halt,
+            )
+            reconciler.reconcile()
 
         # Sequenced AFTER reconcile and BEFORE RUNNING.
         self._run_session_baseline_guard()
 
-    def _exchange_for(self, portfolio: Any) -> Any:
-        """This portfolio's own venue exchange, or ``None`` when none is registered.
+    def _portfolio_for(self, record: Any) -> Any:
+        """The active portfolio bound to this record's ``(venue_name, account_id)`` pair.
 
-        Resolved out of the pair-keyed ``ExecutionHandler.exchanges`` registry — the
-        SAME ``(venue_name, account_id)`` key ``on_order`` routes by, so the exchange
-        whose correlation map the reconcile repopulates is the exchange that submitted
-        the orders. ``None`` is a clean skip on the paper/backtest/test paths, where the
-        correlation-map repopulation seam does not exist.
+        Resolved by PAIR rather than by walking from a portfolio to its account, which is
+        what lets the online records drive the loop. The distinct-account invariant makes
+        the pair unique across portfolios, so the first match is the only match.
 
-        Deliberately NOT falling back to any other registered exchange: a fallback here
-        writes one account's rehydrated orders into another account's correlation map,
-        which is a silent cross-account contamination rather than a missing feature.
+        ``None`` when no portfolio holds the account — a legitimate state for an account
+        brought online before any portfolio was created on it.
         """
-        venue_name = getattr(portfolio, "venue_name", None) or portfolio.exchange
-        account_id = getattr(portfolio, "account_id", None)
-        return self._execution_handler.exchanges.get((venue_name, account_id))
+        venue_name = record.spec.execution_venue
+        account_id = record.spec.account_id
+        for portfolio in self._portfolio_handler.get_active_portfolios():
+            if (getattr(portfolio, "venue_name", None) or portfolio.exchange) != venue_name:
+                continue
+            if getattr(portfolio, "account_id", None) == account_id:
+                return portfolio
+        return None
 
     # ------------------------------------------------------------------ baseline guard
     def _run_session_baseline_guard(self) -> List[BaselineResidual]:
@@ -207,12 +214,20 @@ class ReconciliationCoordinator:
             and an account holding zero positions.
         """
         residuals: List[BaselineResidual] = []
-        for portfolio in self._portfolio_handler.get_active_portfolios():
-            account = getattr(portfolio, "account", None)
-            if account is None or not account.is_venue_truth:
+        for record in self._records():
+            adapter = record.bundle.exchange
+            if adapter is None or record.bundle.connector is None:
                 continue
-            for symbol in sorted(account.positions):
-                venue_qty = account.positions[symbol]
+            portfolio = self._portfolio_for(record)
+            if portfolio is None:
+                continue
+            # ONE snapshot per account, hoisted out of the per-symbol loop: the venue read
+            # is a REST round trip now rather than a cache lookup, and re-reading it per
+            # symbol would both multiply the request count and let two symbols be judged
+            # against two different pictures of the venue.
+            snapshot = adapter.snapshot()
+            for symbol in sorted(snapshot.positions):
+                venue_qty = snapshot.positions[symbol]
                 # Instrument-specific, so it is resolved per symbol: the same band the
                 # on-fill drift compare keys off the instrument's quantity precision.
                 precision = self._portfolio_handler._drift_precision(symbol)
@@ -225,7 +240,7 @@ class ReconciliationCoordinator:
                     continue
                 residuals.append(BaselineResidual(
                     portfolio_id=getattr(portfolio, "portfolio_id", None),
-                    account_id=getattr(account, "account_id", None),
+                    account_id=record.spec.account_id,
                     symbol=symbol,
                     engine_qty=engine_qty,
                     venue_qty=venue_qty,

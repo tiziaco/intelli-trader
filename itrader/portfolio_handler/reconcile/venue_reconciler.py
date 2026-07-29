@@ -29,7 +29,7 @@ unconfident leg.
 
 Runs on the ENGINE thread at startup before RUNNING. Backtest-inert: lazy-imported at
 the live composition root only (no async / connector / SQL import on the backtest path);
-``LiveConnector`` / ``VenueAccount`` / ``CachedSqlOrderStorage`` are ``TYPE_CHECKING``-only.
+``LiveConnector`` / ``CachedSqlOrderStorage`` are ``TYPE_CHECKING``-only.
 4-space indentation (matches ``core/`` + the ``reconcile/`` siblings ``drift.py``).
 """
 
@@ -48,9 +48,9 @@ if TYPE_CHECKING:
     from queue import Queue
 
     from itrader.connectors.base import LiveConnector
+    from itrader.execution_handler.exchanges.base import AccountSnapshot
     from itrader.order_handler.order import Order
     from itrader.order_handler.storage.cached_sql_storage import CachedSqlOrderStorage
-    from itrader.portfolio_handler.account.venue import VenueAccount
 
 # D-07: the machine-readable halt reason for an unresolved reconciliation (matches the
 # 05-04 halt vocabulary consumed by LiveTradingSystem.halt / get_status).
@@ -81,9 +81,13 @@ class VenueReconciler:
     store:
         The rehydratable order working set (``CachedSqlOrderStorage``) — the INTENT
         truth. ``reconcile`` calls ``rehydrate()`` on it (store side) before comparing.
-    venue_account:
-        The cached ``VenueAccount`` (05-03) — ``snapshot()`` takes the REST venue truth;
-        ``positions`` exposes the signed per-symbol quantities.
+    adapter:
+        The account's execution adapter — the ONE object that owns its authenticated
+        session. ``snapshot()`` reads the REST venue truth (balances + signed per-symbol
+        positions) and ``adopt_venue_correlation`` repopulates the in-memory correlation
+        maps for rehydrated orders. These were previously two injected collaborators, a
+        venue-cached account leaf and a separate exchange handle, which were always the
+        same account's two halves borrowing the same session.
     connector:
         The injected ``LiveConnector`` session — the reconciler reads
         ``fetch_my_trades`` / ``fetch_open_orders`` through ``connector.call`` (D-04 seam).
@@ -96,30 +100,29 @@ class VenueReconciler:
         an unconfident bracket leg.
     quote_currency:
         The quote currency for the venue balance reads (default ``"USDT"``).
-    exchange:
-        The order-arm venue exchange (``OkxExchange``) whose in-memory correlation
-        maps must be repopulated for rehydrated orders (WR-02 / RECON-05). ``None``
-        on the paper/backtest/test paths — a clean skip (the seam is live-only).
     """
 
     def __init__(
         self,
         *,
         store: "CachedSqlOrderStorage",
-        venue_account: "VenueAccount",
+        adapter: Any,
         connector: "LiveConnector",
         global_queue: "Queue[Any]",
         halt_signal: Callable[[str], None],
         quote_currency: str = "USDT",
-        exchange: Optional[Any] = None,
     ) -> None:
         self._store = store
-        self._venue_account = venue_account
+        # ONE adapter, where there used to be a venue-cached account leaf AND a separate
+        # exchange handle. They were always the same account's two halves: the leaf read
+        # venue truth, the exchange owned the correlation maps, and both borrowed the same
+        # session. Collapsing them removes the possibility of being handed one account's
+        # truth alongside another account's correlation index.
+        self._adapter = adapter
         self._connector = connector
         self._global_queue = global_queue
         self._halt_signal = halt_signal
         self._quote = quote_currency
-        self._exchange = exchange
         self.logger = get_itrader_logger().bind(component="VenueReconciler")
 
     # ------------------------------------------------------------------ entrypoint
@@ -135,15 +138,18 @@ class VenueReconciler:
         self._store.rehydrate()
         working = self._working_set()
 
-        # 2. venue side — REST snapshot (balances/positions) + the venue fill history.
-        self._venue_account.snapshot()
+        # 2. venue side — ONE REST snapshot (balances/positions) + the venue fill history.
+        # Taken once and threaded downstream: two reads would let the orphan check halt on a
+        # position that the fill-adoption step had already explained from a different
+        # picture of the venue.
+        snapshot = self._adapter.snapshot()
         venue_trades = self._fetch_trades(working)
 
         # 3. adopt in-band fill deltas as reconciling events (never mutate state directly).
         self._adopt_fill_deltas(working, venue_trades)
 
         # 4. halt-and-alert on a venue position with no stored intent (hand-opened).
-        self._halt_on_orphan_positions(working)
+        self._halt_on_orphan_positions(working, snapshot)
 
         # 5. re-adopt brackets from the venue resting set (D-05): re-link stored
         #    parent/child legs, per-bracket halt on an unconfidently-linked leg.
@@ -168,11 +174,11 @@ class VenueReconciler:
         persisted ``venue_order_id``. A ``None`` exchange (paper/backtest/test paths)
         is a clean skip — the seam is live-only.
         """
-        if self._exchange is None:
+        if self._adapter is None:
             return
         for order in working:
             if order.venue_order_id is not None:
-                self._exchange.adopt_venue_correlation(order)
+                self._adapter.adopt_venue_correlation(order)
 
     # ------------------------------------------------------------------ working set
     def _working_set(self) -> List["Order"]:
@@ -334,15 +340,21 @@ class VenueReconciler:
         return datetime.fromtimestamp(int(ts) / 1000, tz=timezone.utc)
 
     # ------------------------------------------------------------------ orphan positions
-    def _halt_on_orphan_positions(self, working: List["Order"]) -> None:
+    def _halt_on_orphan_positions(
+        self, working: List["Order"], snapshot: "AccountSnapshot"
+    ) -> None:
         """Halt-and-alert on any venue position with no matching stored intent (D-03).
 
         A venue position whose symbol is referenced by NO stored order is a hand-opened
         position — never auto-adopted (T-05-21). Escalates to the freeze-in-place halt
         (reason='reconciliation-unresolved'); the first orphan halts.
+
+        Reads the snapshot the caller already took, rather than taking its own: a second
+        read could halt on a position that the fill-adoption step had already explained
+        from a different picture of the venue.
         """
         stored_symbols = {order.ticker for order in working}
-        for symbol, qty in self._venue_account.positions.items():
+        for symbol, qty in snapshot.positions.items():
             if qty == 0:
                 continue
             if symbol not in stored_symbols:

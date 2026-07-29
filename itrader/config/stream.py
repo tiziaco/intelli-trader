@@ -6,7 +6,7 @@ single typed home, following the ``config/order.py`` convention
 
   - ``StreamSettings`` folds the reconnect-supervisor family (debounce / backoff base /
     backoff cap / retry ceiling — triplicated verbatim across
-    ``okx_provider``/``account.venue``/``okx`` exchange) plus the single-source OKX
+    ``okx_provider``/``okx`` exchange) plus the single-source OKX
     stream symbol/timeframe hardcodes. The reconnect fields stay ``float``/``int`` —
     matching the current module-constant usage at the live read sites (NOT ``Decimal``;
     these are non-money supervisor tunables, and the naming-collision

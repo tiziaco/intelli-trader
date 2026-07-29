@@ -46,8 +46,6 @@ class Account(ABC):
       plan 01-02).
     * ``SimulatedMarginAccount(SimulatedCashAccount)`` — the margin superset
       (locks + liquidation math, plan 01-02).
-    * ``VenueAccount`` — venue-cached truth (interface-only this phase, D-11;
-      body deferred to Phase 5 / RECON-01).
 
     Money (D-12): every amount is Decimal end-to-end — no float casts, no
     mid-stream quantize (rounding happens only at money boundaries).
@@ -62,13 +60,11 @@ class Account(ABC):
     #: identity (two storage sites for one identity is the defect the single
     #: source makes structurally impossible rather than merely guarded).
     #:
-    #: Every concrete leaf sets the real values in ``__init__`` (the ``Simulated*``
-    #: compute leaves and the ``VenueAccount`` cache alike). The ``None`` class
+    #: Every concrete leaf sets the real values in ``__init__``. The ``None`` class
     #: default is deliberate: it keeps ANY ``Account`` — including a test double
     #: that never sets them — safe to READ (``account.venue_name``) rather than
-    #: raising ``AttributeError`` under the property seam. ``VenueAccount`` still
-    #: REQUIRES its ``account_id`` at construction (D-11), so the ``None`` default
-    #: only ever stands for the compute leaves' unnamed (backtest) case.
+    #: raising ``AttributeError`` under the property seam, and it stands for the
+    #: unnamed (backtest) case.
     account_id: str | None = None
     venue_name: str | None = None
 
@@ -83,9 +79,7 @@ class Account(ABC):
     #: separately, so a one-sided change to either broke the guard — including on
     #: the byte-exact oracle path.
     #:
-    #: Change it here and both sides move together. ``VenueAccount`` deliberately
-    #: does NOT override it: its balance is venue truth, and the equality guard
-    #: exempts venue-truth leaves anyway.
+    #: Change it here and both sides move together.
     precision: Decimal = Decimal('0.01')
 
     def quantize_cash(self, value: "float | Decimal") -> Decimal:
@@ -115,16 +109,23 @@ class Account(ABC):
         """
         return to_money(value).quantize(self.precision, rounding=ROUND_HALF_UP)
 
-    @property
-    def is_venue_truth(self) -> bool:
-        """Account KIND discriminator: True only for venue-cached (venue-truth) leaves.
+    def drop_pending(self, order_id: OrderId) -> None:
+        """Drop any venue-side pending overlay for ``order_id`` — a no-op by default.
 
-        The startup ``ReconciliationCoordinator`` keys the venue reconcile on this
-        discriminator (SAFE-05 / A4) rather than on ``exchange=='okx'`` — the compute
-        (``Simulated*``) leaves inherit ``False`` here and NEVER reach the venue reconcile
-        (matches D-23 RESTORE-only), while ``VenueAccount`` overrides it ``True``.
+        Declared here rather than probed for with ``getattr`` at the call site. The probe
+        was an account-type test in disguise: it read "skip this if the account is not the
+        kind that has an overlay", which is the coupling the account ABC exists to remove,
+        and it silently skipped for any leaf that simply forgot to implement it.
+
+        A compute account reserves and releases against its own ledger and holds no
+        venue-side hold, so there is nothing to drop and the ORDER-ACK seam is a documented
+        no-op. That keeps the read-model call unconditional: the caller states the event
+        that happened and each leaf decides what it means.
+
+        NON-terminal: an implementation pops only the admission overlay, never the settled
+        ledger.
         """
-        return False
+        return None
 
     @property
     @abstractmethod
@@ -150,8 +151,7 @@ class Account(ABC):
         gate (``PortfolioHandler.on_signal``) and serialization
         (``Portfolio.to_dict``). This is the D-01 settlement-surface member —
         the old ABC member ``available`` was renamed here (its verbatim
-        alias on ``SimulatedCashAccount`` is deleted; the ``VenueAccount``
-        overlay-netted read is renamed to match).
+        alias on ``SimulatedCashAccount`` is deleted).
 
         Returns
         -------
@@ -241,9 +241,8 @@ class Account(ABC):
         Decimal end-to-end (never ``Decimal(float)``).
 
         Concrete (not abstract): the simulated leaves override it with the direct
-        ``_balance`` setter. The ``VenueAccount`` cash-restore is Phase 5
-        (RECON-01) — until then the interface-only leaf inherits this loud
-        NotImplementedError, matching its deferred-body posture.
+        ``_balance`` setter, so a leaf that does not implement restore still fails loud
+        rather than silently discarding a persisted balance.
 
         Parameters
         ----------

@@ -16,6 +16,8 @@
 # Stage 2: venues/catalog.py + connectors/pool.py appeared (their predecessors —
 #          registry.py, provider.py, the plugin modules — die in Stage 7, so both sides are
 #          counted for now and the delta is expected to be positive until then).
+# Stage 3: account/venue.py DELETED — venue truth is now AccountSnapshot, read by the
+#          execution adapter, and exchanges/base.py is already inside the measured set.
 
 # --- surviving / relocated baseline files ---
 itrader/trading_system/compose.py
@@ -44,7 +46,6 @@ itrader/connectors/stream_supervisor.py
 itrader/portfolio_handler/account/base.py
 itrader/portfolio_handler/account/conformance.py
 itrader/portfolio_handler/account/simulated.py
-itrader/portfolio_handler/account/venue.py
 
 # --- new in the redesign ---
 itrader/trading_system/backtest/__init__.py

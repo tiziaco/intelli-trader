@@ -162,20 +162,82 @@ def test_okx_live_feed_capacity_derives_to_strategy_warmup(monkeypatch) -> None:
     assert system.feed.cache_capacity() == expected
 
 
+class _OfflineVenueClient:
+    """A ccxt-shaped client answering every REST read start() performs, with no socket.
+
+    The venue answers EMPTY: no balances, no positions, no resting orders. That is what
+    lets ``start()`` run the real startup reconcile + baseline guard offline and still
+    reach RUNNING — an empty venue agrees with an empty engine, so nothing is adopted and
+    nothing halts.
+
+    The methods are plain (non-async) and return finished values because the ``call``
+    stub below is a pass-through: a real coroutine handed to a pass-through would never be
+    awaited, and ``filterwarnings=["error"]`` turns that into a failure.
+    """
+
+    #: Loaded-markets map the arm's ``validate_symbol`` consults (fail-closed when absent).
+    markets: dict = {}
+
+    def fetch_balance(self) -> dict:
+        return {"total": {}}
+
+    def fetch_positions(self) -> list:
+        return []
+
+    def fetch_open_orders(self) -> list:
+        return []
+
+    def fetch_my_trades(self, symbol, since=None, limit=None) -> list:
+        return []
+
+
+def _provision_empty_order_tables(engine) -> None:
+    """Create the order working-set tables on the shared test database, and EMPTY them.
+
+    ``start()``'s venue reconcile reads the rehydrated order working set for every account
+    the manager reports ONLINE, so the ``orders`` tables must EXIST even when they hold
+    nothing. The ``provisioned_okx`` spine registers the venue/portfolio/system stores
+    only, so the order registrar is added here — the same register-then-``create_all``
+    sequence.
+
+    Purging is not hygiene, it is the premise: the Postgres container is SESSION-scoped, so
+    a restart-rehydration sibling's persisted order rows are still there, and a resting
+    bracket leg in the working set makes the reconcile halt on an unconfident re-link
+    against this test's empty venue. These tests boot with nothing outstanding.
+    """
+    from itrader.order_handler.storage.models import build_order_tables
+    from tests.support.schema import provision_schema
+
+    tables = build_order_tables(engine.metadata)
+    provision_schema(engine)
+    with engine.engine.begin() as connection:
+        # Child first: order_state_changes carries an FK onto orders.
+        connection.execute(tables["order_state_changes"].delete())
+        connection.execute(tables["orders"].delete())
+
+
 def _stub_okx_network(system: LiveTradingSystem) -> None:
     """Stub every network-touching call in start() so it runs fully offline.
 
     Leaves the venue exchange's ``connect`` untouched — that is the call under
-    test (CR-01). The VenueReconciler path is skipped because the in-memory order
-    store does not expose ``rehydrate`` (start() guards on ``hasattr``).
+    test (CR-01).
+
+    The startup reconcile + baseline guard DO run: they enumerate the account manager's
+    online records, and the provisioned OKX account is one. Both read venue truth through
+    the adapter's own session, so the connector is given an offline client plus a
+    pass-through ``call``; without a client every such read dies on
+    ``'NoneType' object has no attribute 'fetch_balance'``.
 
     11.2-07 (D-36): reached through the single assembled OKX lifecycle and the binder's
-    bound provider rather than the deleted ``_primary_lifecycle`` / ``.provider`` reads. No
-    venue account is stubbed on the facade — accounts live on portfolios, and this system
-    has none, so the venue reconcile is a clean skip.
+    bound provider rather than the deleted ``_primary_lifecycle`` / ``.provider`` reads.
     """
     lifecycle = the_okx_lifecycle(system)
-    lifecycle.bundle.connector.connect = MagicMock(name="connector.connect")
+    connector = lifecycle.bundle.connector
+    connector.connect = MagicMock(name="connector.connect")
+    # ``client`` is a read-only property over ``_client``; the loop is never started, so
+    # ``call`` (which asserts a live loop) is replaced by a pass-through.
+    connector._client = _OfflineVenueClient()
+    connector.call = lambda result: result
     system.feed.warmup = MagicMock(name="feed.warmup")
     the_feed_provider(system).start_stream = MagicMock(name="provider.start_stream")
 
@@ -186,6 +248,7 @@ def test_start_spawns_okx_order_arm_fill_stream(provisioned_okx) -> None:
     Removing the ``exchange.connect()`` call in start() makes ``connect_spy.assert_called_once()``
     FAIL — so the test genuinely catches the CR-01 gap (order mirror stays PENDING forever).
     """
+    _provision_empty_order_tables(provisioned_okx)
     system = LiveTradingSystem.for_exchange("okx")
     _stub_okx_network(system)
     connect_spy = MagicMock(
@@ -218,6 +281,7 @@ def test_start_arms_okx_connector_halt_signal(provisioned_okx) -> None:
     Removing the ``self._okx_connector.set_halt_signal(...)`` arm makes this FAIL (the arm
     is the SOLE caller of ``OkxConnector.set_halt_signal``).
     """
+    _provision_empty_order_tables(provisioned_okx)
     system = LiveTradingSystem.for_exchange("okx")
     _stub_okx_network(system)
     the_okx_lifecycle(system).bundle.exchange.connect = MagicMock(
@@ -271,16 +335,14 @@ def test_start_fails_when_okx_exchange_connect_fails(provisioned_okx) -> None:
 def test_the_coordinator_the_facade_builds_carries_no_venue_scalars(monkeypatch) -> None:
     """The facade builds a coordinator with no account / connector / exchange scalar.
 
-    This replaces the two ``_link_venue_account_to_portfolios`` tests that lived here.
-    That method assigned ONE scalar ``VenueAccount`` to every active portfolio and
-    raised ``RuntimeError`` at N>1 — the single-portfolio-live assumption in its last
-    hiding place. It is deleted, not merely bypassed, because a dead-but-callable
-    "assign one account to all portfolios" helper inside the per-portfolio coordinator
-    is a footgun waiting for its next caller.
+    A per-account scalar on this collaborator would be a single-portfolio-live assumption:
+    ONE account, ONE connector, ONE exchange handed to every active portfolio's reconcile,
+    so portfolio B would be judged against account A's venue truth and its rehydrated
+    orders would repopulate A's correlation map. The absences are asserted by NAME so a
+    re-added scalar reddens here rather than surfacing as a cross-account wrong answer.
 
-    Its N>1 refusal is not lost: 11-08's ``assert_distinct_accounts`` refuses two
-    portfolios sharing one account EARLIER (before any account is minted) and over the
-    union of persisted and spec-supplied portfolios, which is strictly wider.
+    Two portfolios sharing one account is refused earlier and more widely by
+    ``assert_distinct_accounts``, before any account is minted.
     """
     _set_okx_env(monkeypatch)
     system = LiveTradingSystem.for_exchange("okx")
@@ -291,9 +353,14 @@ def test_the_coordinator_the_facade_builds_carries_no_venue_scalars(monkeypatch)
     assert not hasattr(coordinator, "_connector")
     assert not hasattr(coordinator, "_exchange")
     assert not hasattr(coordinator, "_link_venue_account_to_portfolios")
-    # It reads the pair-keyed registry instead, so each portfolio resolves its OWN
-    # account's exchange rather than sharing the primary's.
-    assert coordinator._execution_handler is system.execution_handler
+    # What it carries instead is the facade's own online-record ENUMERATION, read at call
+    # time. A per-account enumeration is what makes "compare portfolio A against account
+    # B" unexpressible: each record supplies its own adapter and connector. Reading it
+    # LIVE also means an account brought online after this coordinator was built is still
+    # covered — a build-time snapshot of the records would silently skip it.
+    # (== not is: each bound-method access is a fresh object, and bound methods compare
+    # equal by function + instance.)
+    assert coordinator._records == system._online_account_records
 
 
 def test_a_facade_with_no_portfolios_reconciles_nothing(monkeypatch) -> None:
