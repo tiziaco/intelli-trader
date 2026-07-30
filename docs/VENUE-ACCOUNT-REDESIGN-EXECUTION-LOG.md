@@ -6,8 +6,9 @@ settled decisions ED-1..ED-11 — nothing here overrides it. This file records a
 findings and carried-forward dependencies so a later session (or a different agent) does
 not re-derive them.
 
-**Status:** Stages 0–6 complete and committed. Next: Stage 7. **All four Criticals are
-fixed and the suite carries ZERO xfails.**
+**Status: COMPLETE.** All eight stages (0–7) are committed. All four Criticals are fixed,
+the suite carries ZERO xfails, and **the must-have gate PASSES: −303 code lines**
+(`measure_redesign_baseline.py --manifest ... --gate` exits 0).
 
 | stage | commits | gate state at commit |
 |---|---|---|
@@ -18,6 +19,17 @@ fixed and the suite carries ZERO xfails.**
 | 4 | `1badab20`, `f75df648` | 3043 pass / 6 skip / **2 xfail** · successor **+60** |
 | 5 | `0a02be39` | 3039 pass / 6 skip / **1 xfail** · successor **−34** |
 | 6 | `4adeed3f`, `a6f013f4`, `b0450fc1` | 3057 pass / 6 skip / **0 xfail** · successor **+983** |
+| 7 | `2015df99`, `74f34269` | 2958 pass / 6 skip / 0 xfail · **GATE PASSED, −303** |
+
+**Final state.** 29 files / 10,875 raw / **4,920 code** against the 34-file frozen comparand
+of 5,223. mypy clean over 280 files. Both oracles byte-exact (134 /
+`46189.87730727451`), paper parity byte-exact. Prose-to-code ratio **0.92** (down from 1.01
+on the baseline set) — reported, not gated.
+
+The 99-test drop was independently verified by collecting the full suite at `11279674` in a
+throwaway worktree and diffing node IDs: 106 tests disappear, from exactly the six deleted
+orphan files (99) plus `test_compose_wiring.py` (7), and those 7 reappear one-for-one as
+`test_handler_graph_wiring.py`. **No surviving test file lost a single test.**
 
 CR ledger: **all four fixed** — CR-03 (Stage 3), CR-04 (Stage 4), CR-02 (Stage 5), CR-01
 (Stage 6). `tests/integration/test_live_composition_offline.py` carries no `xfail` at all
@@ -495,6 +507,52 @@ boot on a validly-provisioned FOREIGN-venue portfolio. Code wins, so
 `tests/unit/trading_system/test_bootstrap_ordering.py` asserts the ordering itself on the
 production `bootstrap_session` / `_restart_sequence`, and documents that the ordering has no
 runtime tripwire of its own — which is precisely why it needs a static gate.
+
+### 2.20 The yardstick grew to 34 files in Stage 7 — a strict EXTENSION, independently checked
+
+`EXTENDED_BASELINE_TOTALS` moved from `(31, 11684, 5068)` to `(34, 12071, 5223)`, recomputed
+at `3a2c7692`. Three files joined the counted set on BOTH sides:
+`execution_handler/execution_handler.py` (it became the DECLARATION site of `COMPUTE_VENUE`
+/ `DEFAULT_ACCOUNT_ID` when baseline file `venues/registry.py` died, and it also LOST
+`seed_exchange_registry` with the bundle memo — it is on both sides of the ledger), plus
+`venues/__init__.py` and `connectors/__init__.py` (rewritten to export the successor surface
+after the modules they re-exported were deleted).
+
+Changing a yardstick at the moment of measuring against it deserves suspicion, so both
+halves were reproduced independently rather than taken on trust: the 31-file sub-total still
+measures **exactly 11,684 raw / 5,068 code** at the frozen commit, and the 34-file set
+measures **12,071 / 5,223**. It is an extension, not a re-baseline. `BASELINE_TOTALS`
+untouched.
+
+**The gate passes under either comparand** — −303 on the 34-file yardstick, −283 on the old
+31-file one — so the choice is not load-bearing for the must-have.
+
+### 2.21 Residue after completion (real, out of scope, worth a follow-up)
+
+- **§2.16 stays OPEN** and is the largest one: the replay/parity harness still blocks WR-07's
+  hard refusal, and the reported FLOAT money in durable rows is still unverified. Owner has
+  taken it to a separate ticket.
+- **§2.14** `is_streaming_healthy` is still duck-typed on `AbstractExchange` — same class as
+  the `catch_up_missed_fills` gap closed in Stage 5.
+- **`source='live_trading_system'`** survives as a runtime STRING VALUE in
+  `safety_controller.py:138` and `error_policy.py:274` (asserted by `test_error_handler.py`
+  / `test_error_policy.py`). It names a deleted module but it is event DATA, not a code
+  reference — changing it is a behaviour change on the ERROR route. Left deliberately.
+- **Duplicate paper-exchange construction:** `backtest/backtest_trading_system.py` builds
+  `SimulatedExchange(...)` + `connect()` inline rather than calling `build_paper_exchange` —
+  the same three lines beside the adapter. The backtest root is oracle-locked so it was left
+  alone, but the redesign gave that recipe ONE home and this is a second one.
+- **`admission_manager.py:101` KEPT, deliberately.** `account_for(...) or DEFAULT_ACCOUNT_ID`
+  is a fee-model lookup for a PRE-TRADE ESTIMATE; nothing is submitted through it. Dropping
+  the coercion would hand the provider a `(venue, None)` key that resolves no fee model, so
+  every such order would reserve ZERO fee headroom — and the golden run pins `ZeroFeeModel`,
+  so **no test in the tree can distinguish that from the correct answer**. Removing it is a
+  money-adjacent regression the suite would go false-green on. Its docstring was corrected:
+  it claimed "every backtest portfolio leaves it unset", which stopped being true at §1.15.
+- Also deleted in Stage 7 beyond the plan's list: `seed_exchange_registry` (45 raw, took a
+  `VenueBundles` memo, both callers died with the bundle shape) and the three
+  `create_in_memory()` staticmethods (each a one-line alias for a constructor the same barrel
+  already exports).
 
 ## 3. Process findings (things that bit, so they do not bite again)
 
