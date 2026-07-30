@@ -9,10 +9,11 @@ Owner directive (2026-07-13): paper mode stays a **real live production mode** (
     golden ``CsvPriceStore`` frame as confirm-gated ``ClosedBar`` dicts through the exact
     Phase-3 ``LiveBarFeed`` seam (``set_bar_sink`` / ``replay_bar`` / ``iter_closed_bars``
     / ``fetch_ohlcv_backfill`` + the no-op streaming seams).
-  - ``TestDataPlugin`` — the verbatim ``ReplayDataPlugin`` (renamed): a
-    ``DataProviderPlugin`` that builds a ``TestLiveDataProvider`` over the parity window;
-    registered ONLY by the test build helper below (never by production
-    ``build_live_system`` — production ``paper`` re-points to the OKX live feed, D-21).
+  - ``TestDataRecipe`` — the offline data-adapter recipe: builds a
+    ``TestLiveDataProvider`` over the parity window and wires it to the feed exactly as a
+    venue's own data recipe does; injected ONLY by the test build helper below (never by
+    production ``build_live_system`` — production ``paper`` re-points to the OKX live
+    feed, D-21).
   - ``TestRunner`` — the verbatim ``run_paper_replay`` drive (renamed): the OFFLINE,
     single-thread, synchronous per-bar driver that replays the golden bars through the
     real live feed→queue seam with backtest-faithful per-tick + run-end discipline. It is
@@ -26,7 +27,7 @@ D-22 (pytest-collection guard): every ``Test*``-named NON-test class here sets
 ``PytestCollectionWarning`` would be a HARD failure under ``filterwarnings=["error"]``.
 
 Landmine 2 (RESEARCH): ``TestRunner`` obtains the ``TestLiveDataProvider`` handle as a
-CONSTRUCTOR ARG (from the fixture's ``TestDataPlugin``), NEVER off a facade attribute —
+CONSTRUCTOR ARG (from the fixture's ``TestDataRecipe``), NEVER off a facade attribute —
 production no longer carries a ``_replay_provider`` handle.
 
 Indentation: 4-SPACE (matched to the ``price_handler``/``venues`` trees the donors came
@@ -48,7 +49,7 @@ from itrader.price_handler.store.csv_store import CsvPriceStore
 
 # D-18 (structural half — SINGLE SOURCE OF TRUTH for the paper/backtest parity anchor):
 # the canonical golden window + symbol + timeframe. BOTH the replay store (constructed
-# EXPLICITLY from these in TestDataPlugin.build_provider) AND the backtest comparand
+# EXPLICITLY from these in TestDataRecipe) AND the backtest comparand
 # (test_paper_parity.py imports these) derive from THESE literals, so paper/backtest
 # parity can never silently desync. WR-01: the golden parity grid's timeframe is its OWN
 # anchor here, NOT the live-tunable StreamSettings.okx_stream_timeframe.
@@ -223,14 +224,19 @@ class TestLiveDataProvider:
         return True
 
 
-class TestDataPlugin:
-    """The replay ``DataProviderPlugin`` — builds a ``TestLiveDataProvider`` (D-18).
+class TestDataRecipe:
+    """The replay DATA-ADAPTER recipe — the offline stand-in for a venue's data recipe.
 
-    Relocated verbatim from ``itrader.venues.paper_plugin``'s ``ReplayDataPlugin``
-    (rename only). ``build_provider`` constructs the replay provider from the shared
-    ``PAPER_PARITY_*`` window (the paper-parity comparand). Registered ONLY by the test
-    build helper (``build_paper_replay_system``), NEVER by production ``build_live_system``
-    (production ``paper`` selects the OKX live feed, D-21).
+    Callable with the same keyword arguments the production recipes take
+    (``build_okx_data_provider``), so the composition root builds and wires the replay
+    provider through the SAME seam it builds a live one through: injected only by the test
+    build helper below, never by production (production ``paper`` selects the OKX live
+    feed, D-21).
+
+    It performs the same wiring a live recipe does — feed binding, bar sink, engine queue,
+    halt signal, stream-state listener — because "the provider is installed but not armed"
+    must be equally unrepresentable in the harness. The streaming seams are no-ops on a
+    replay provider, and it carries NO session: an offline source has nothing to connect.
 
     The last-built provider is stashed on ``self.provider`` so the fixture can hand the
     ``TestLiveDataProvider`` handle to ``TestRunner`` WITHOUT reading a facade attribute
@@ -245,8 +251,18 @@ class TestDataPlugin:
         # The last-built provider handle (Landmine 2 — TestRunner takes it as a ctor arg).
         self.provider: TestLiveDataProvider | None = None
 
-    def build_provider(self, ctx: Any, spec: Any, connectors: Any) -> TestLiveDataProvider:
-        """Build the ``TestLiveDataProvider`` over the golden parity window.
+    def __call__(
+        self,
+        *,
+        connector: Any = None,
+        ctx: Any = None,
+        feed: Any = None,
+        global_queue: Any = None,
+        halt_signal: Callable[[str], None] | None = None,
+        stream_state_listener: tuple[Callable[[str], None], Callable[[str], None]]
+        | None = None,
+    ) -> TestLiveDataProvider:
+        """Build the ``TestLiveDataProvider`` over the golden parity window, and wire it.
 
         Constructs the replay store EXPLICITLY from the shared parity window so the paper
         comparand and the backtest read ONE source and can never silently desync (WR-02).
@@ -258,6 +274,15 @@ class TestDataPlugin:
             symbol=PAPER_PARITY_SYMBOL,
             timeframe=PAPER_PARITY_TIMEFRAME,
         )
+        if feed is not None:
+            feed.set_provider(provider)
+            provider.set_bar_sink(feed.update)
+        if global_queue is not None:
+            provider.set_global_queue(global_queue)
+        if halt_signal is not None:
+            provider.set_halt_signal(halt_signal)
+        if stream_state_listener is not None:
+            provider.set_stream_state_listener(*stream_state_listener)
         self.provider = provider
         return provider
 
@@ -275,7 +300,7 @@ class TestRunner:
     the replay loudly and the parity gate can't false-green.
 
     Landmine 2: the ``TestLiveDataProvider`` handle is a CONSTRUCTOR ARG (from the
-    fixture's ``TestDataPlugin``), never read off ``system._replay_provider`` (production
+    fixture's ``TestDataRecipe``), never read off ``system._replay_provider`` (production
     no longer carries that handle).
 
     D-22: ``__test__ = False`` so pytest never collects this ``Test*``-named class.
@@ -376,11 +401,12 @@ def build_paper_replay_system(
     """Build an OFFLINE paper ``LiveTradingSystem`` with the replay DATA feed injected.
 
     Production ``paper`` re-points to the OKX live data feed (D-21), so the ``paper`` ↔
-    replay pairing survives ONLY here in the test fixture: this helper registers a
-    ``TestDataPlugin`` on the factory's data registry (via the ``data_plugins`` injection
-    seam) and selects it with ``data_provider="replay"``. Returns ``(system, provider)``
-    where ``provider`` is the built ``TestLiveDataProvider`` handle — handed to
-    ``TestRunner`` as a constructor arg (Landmine 2), never read off the facade.
+    replay pairing survives ONLY here in the test fixture: this helper injects a
+    ``TestDataRecipe`` as the run's data recipe and selects it with
+    ``data_provider="replay"``. The composition root then builds and wires the replay
+    adapter exactly as it would a live one. Returns ``(system, provider)`` where
+    ``provider`` is the built ``TestLiveDataProvider`` handle — handed to ``TestRunner``
+    as a constructor arg (Landmine 2), never read off the facade.
 
     ``**overrides`` threads through to ``LiveTradingSystem.for_exchange`` (e.g. a bespoke
     ``account_id``); ``status_callback`` threads through unchanged.
@@ -388,12 +414,12 @@ def build_paper_replay_system(
     from itrader.events_handler.error_policy import FailFastPolicy
     from itrader.trading_system.live_trading_system import LiveTradingSystem
 
-    plugin = TestDataPlugin()
+    recipe = TestDataRecipe()
     system = LiveTradingSystem.for_exchange(
         "paper",
         status_callback=status_callback,
         data_provider="replay",
-        data_plugins={"replay": plugin},
+        data_plugins={"replay": recipe},
         **overrides,
     )
     # D-06/D-19 (08-03): the REPLAY parity gate is fail-fast BY DEFAULT — a handler failure
@@ -404,20 +430,11 @@ def build_paper_replay_system(
     # honouring D-06's "backtest/replay inject FailFastPolicy; live injects ErrorPolicy".
     system.event_handler._error_policy = FailFastPolicy()
 
-    # 11.2-07 (D-20/D-36): the boot is now STORE-DERIVED — offline (no Postgres spine) it
-    # provisions no ``venue_accounts`` rows, so the FeedConnectionBinder never builds or
-    # binds the replay data provider (that binding only fires for a streaming account on the
-    # SQL arm). The offline replay harness therefore wires the provider BY HAND — the same
-    # three calls the old boot's provider->feed block made (``TestDataPlugin.build_provider``
-    # ignores ctx/spec/connectors, building the provider from the parity-window constants) —
-    # so ``feed.warmup`` / ``feed.update`` have a provider and the TestRunner can replay the
-    # golden bars through the real live seam. Production paper re-points to the OKX live feed
-    # (D-21); this hand-wiring is a fixture concern, never production.
-    provider = plugin.build_provider(None, None, None)
-    system.feed.set_provider(provider)
-    provider.set_bar_sink(system.feed.update)
-    provider.set_global_queue(system.global_queue)
-    assert plugin.provider is not None, (
-        "TestDataPlugin.build_provider was never called — the paper data registry did not "
-        "select the injected 'replay' plugin (check the data_plugins injection seam)")
-    return system, plugin.provider
+    assert recipe.provider is not None, (
+        "the injected 'replay' data recipe was never called — the composition root did "
+        "not select it, so the feed has no provider and TestRunner would replay into "
+        "nothing (check the data-recipe injection seam)")
+    assert system.feed._provider is recipe.provider, (
+        "the built replay provider is not the feed's — the root built an adapter and "
+        "bound a different one")
+    return system, recipe.provider

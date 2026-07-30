@@ -31,6 +31,7 @@ from itrader.execution_handler.result_objects import ConnectionResult
 from itrader.trading_system.live_trading_system import LiveTradingSystem
 from tests.support.live_okx import (
     bring_okx_online,
+    stub_data_session,
     stub_okx_session,
     the_feed_provider,
 )
@@ -162,22 +163,30 @@ def test_the_boot_brings_the_provisioned_okx_account_online_and_routable(
         system.stop()
 
 
-def test_the_boot_binds_the_one_feed_to_the_accounts_connection(provisioned_okx) -> None:
-    """The bound provider is the feed's own, wired to its ingest seam and the engine bus.
+def test_the_one_feed_is_wired_to_a_data_adapter_on_its_own_session(
+    provisioned_okx,
+) -> None:
+    """The feed's provider is the data adapter, wired to its ingest seam and the bus.
 
-    A dead-attribute mis-wire (``feed.provider = ...``) would leave ``feed._provider``
-    None; a dropped ``set_global_queue`` would make ``spawn_warmup`` raise a typed
-    ``StateError`` far from the cause.
+    It is built by the composition root over the venue's PUBLIC session, so it exists
+    before any account is brought online and is not derived from one. A dead-attribute
+    mis-wire (``feed.provider = ...``) would leave ``feed._provider`` None; a dropped
+    ``set_global_queue`` would make ``spawn_warmup`` raise a typed ``StateError`` far from
+    the cause.
     """
     system = LiveTradingSystem.for_exchange("okx")
     try:
-        bring_okx_online(system)
-
         provider = the_feed_provider(system)
         assert provider is not None
         assert system.feed._provider is provider
         assert provider._bar_sink == system.feed.update
         assert provider._global_queue is system.global_queue
+
+        # Bringing the account online changes order routing only — the data arm is
+        # untouched, and its session is not the account's.
+        record = bring_okx_online(system)
+        assert the_feed_provider(system) is provider
+        assert system._data_connector is not record.connector
     finally:
         system.stop()
 
@@ -197,6 +206,8 @@ def test_a_failed_adapter_connect_quarantines_the_account_not_the_boot(
     _provision_empty_order_tables(provisioned_okx)
     system = LiveTradingSystem.for_exchange("okx")
     stub_okx_session(system)
+    # start() opens the data adapter's own session too; stub it so the run stays offline.
+    stub_data_session(system)
     system.feed.warmup = MagicMock(name="feed.warmup")
 
     failed = ConnectionResult(

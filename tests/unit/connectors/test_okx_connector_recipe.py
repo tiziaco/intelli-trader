@@ -261,21 +261,58 @@ def test_the_secret_and_routing_kinds_partition_the_model() -> None:
     assert not (by_kind["secret"] & by_kind["routing"])
 
 
+def test_every_credential_field_stays_required() -> None:
+    """The completeness gate's premise: the credential fields are REQUIRED on the model.
+
+    ``build_okx_connector`` derives "which fields must a resolution supply" from
+    ``credential_model.model_fields[...].is_required()``. Give any credential field a
+    default and that derived set shrinks, ``missing`` is empty for every resolution, and
+    the refusal below stops firing — a per-account credential set silently completed from
+    the ambient process environment, with nothing raising. The public-session arm is a
+    SEPARATE routing-only model precisely so this stays true.
+    """
+    from itrader.config.okx_settings import OkxSettings
+
+    required = {
+        name for name, field in OkxSettings.model_fields.items() if field.is_required()}
+    assert required == {"api_key", "api_secret", "api_passphrase"}
+
+
 # --------------------------------------------------------------------------- #
 # Public sessions
 # --------------------------------------------------------------------------- #
-def test_a_public_session_is_refused_loudly_rather_than_returned_authenticated(
-    ambient_creds,
-) -> None:
-    """``spec=None`` asks for a credential-free session, which OKX cannot build yet.
+def test_a_public_session_carries_no_credential_material(ambient_creds) -> None:
+    """``spec=None`` builds a session that authenticates with NOTHING.
 
-    ``OkxConnector`` reads all three credential fields unconditionally when it builds its
-    ccxt client, so there is no credential-free construction to return. The refusal is the
-    deliberate behaviour: silently handing back an AUTHENTICATED session under a public
-    name would recreate the borrowed-credentialed-session arrangement that public sessions
-    exist to remove, and would do it invisibly. Wiring the data plane onto public sessions
-    requires a public arm in the client build.
+    The ambient ``OKX_API_*`` triple is deliberately present: a public session that picked
+    the process credentials up would be an authenticated session under a public name —
+    exactly the borrowed-credentialed-session arrangement public sessions exist to remove,
+    and invisible at every call site above it. The client config is the assertion surface
+    because that is the one place credentials cross into ccxt.
     """
-    with pytest.raises(NotImplementedError) as excinfo:
-        build_okx_connector(descriptor=_OKX, spec=None, resolver=None)
-    assert "credential-free" in str(excinfo.value)
+    connector = build_okx_connector(descriptor=_OKX, spec=None, resolver=None)
+
+    settings = connector._settings
+    assert settings.ccxt_credentials() == {}
+    assert not any(
+        name.startswith("api_") for name in type(settings).model_fields), (
+        "the public session's settings model declares credential fields")
+
+
+def test_a_public_session_still_carries_the_region_and_sandbox_routing(
+    monkeypatch,
+) -> None:
+    """Routing is not a credential: the public candle socket must reach the right host.
+
+    An EEA host answers differently from the global one, and the demo WS host differs per
+    entity, so a public session dropped onto the default host would silently stream the
+    wrong venue's data while every lookup above it still looked correct.
+    """
+    monkeypatch.setenv("OKX_REGION", "eea")
+    monkeypatch.setenv("OKX_SANDBOX", "true")
+
+    connector = build_okx_connector(descriptor=_OKX, spec=None, resolver=None)
+
+    assert connector.sandbox is True
+    assert connector.ws_hostname == "wseeapap.okx.com"
+    assert connector._settings.rest_hostname == "eea.okx.com"

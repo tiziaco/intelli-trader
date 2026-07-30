@@ -7,7 +7,7 @@ from typing import (
     Optional, Dict, List, Any, Callable, TYPE_CHECKING)
 
 from itrader.core.enums import HaltReason, SystemStatus
-from itrader.core.exceptions import StateError
+from itrader.core.exceptions import StateError, ValidationError
 from itrader.execution_handler.execution_handler import COMPUTE_VENUE, DEFAULT_ACCOUNT_ID
 from itrader.outils.time_parser import to_timedelta
 from itrader.trading_system.alert_sink import LogAlertSink
@@ -144,9 +144,12 @@ class LiveTradingSystem:
         self._system_db_backend: Optional[Any] = system_db_backend
         self._halt_record_store: Optional[Any] = halt_record_store
 
-        # Owns the ONE feed's borrowed connection + provider; re-borrows when an account is
-        # retired. None on the in-memory arm.
-        self._feed_binder: Optional[Any] = None
+        # The ONE data adapter and the session it owns. Built and fully armed by the
+        # builder; the facade only opens the session at start() and subscribes the
+        # universe's symbols. None when the run's data venue has no recipe (or no
+        # session, as for an offline replay source).
+        self._data_provider: Optional[Any] = None
+        self._data_connector: Optional[Any] = None
         # The venue-ACCOUNT domain owner — the ONE enumeration of what is online, and the
         # one path that brings an account up or takes it down. None on the in-memory arm.
         self._venue_manager: Optional[Any] = None
@@ -224,7 +227,7 @@ class LiveTradingSystem:
             Forwarded to the facade; invoked on each status transition.
         **overrides
             ``data_provider`` / ``account_id`` for a bespoke spec, or ``data_plugins``
-            for TEST-only data-provider injection.
+            for the TEST-only data-recipe override.
 
         Returns
         -------
@@ -501,10 +504,8 @@ class LiveTradingSystem:
                 engine,
                 universe_config=universe_config,
                 venue_exchange=venue_exchange,
-                # ONE feed, so ONE data provider: the connection the binder borrowed.
-                data_provider=(
-                    self._feed_binder.feed_provider
-                    if self._feed_binder is not None else None),
+                # ONE feed, so ONE data adapter — the one the builder wired to it.
+                data_provider=self._data_provider,
                 freeze_gate=(
                     lambda: self._safety.is_halted()
                     or self._safety.is_submission_paused()),
@@ -597,17 +598,14 @@ class LiveTradingSystem:
             # enumerates exactly the accounts it brought online.
             self._bootstrap_session()
 
-            # The DATA provider is deliberately single (one feed), so it is armed here
-            # rather than by the per-account bring-up. The ``is not None`` guard stays: an
-            # unregistered venue, a zero-account boot and the in-memory arm all
-            # legitimately yield no provider.
-            feed_provider = (
-                self._feed_binder.feed_provider
-                if self._feed_binder is not None else None)
-            if feed_provider is not None:
-                feed_provider.set_halt_signal(self._request_connector_halt)
-                feed_provider.set_stream_state_listener(
-                    self._on_venue_stream_down, self._on_venue_stream_up)
+            # The data adapter's OWN session. Opened here rather than at build so
+            # constructing a live system performs no venue I/O, and BEFORE the warmup
+            # below, which fetches history through it. It is independent of every account:
+            # a boot that brought zero accounts online still receives bars. An offline
+            # data source (the replay harness) carries no session and skips this.
+            feed_provider = self._data_provider
+            if self._data_connector is not None:
+                self._data_connector.connect()
 
             self._initialize_live_session()
 
@@ -1000,7 +998,8 @@ def build_live_system(
     status_callback : callable, optional
         Forwarded to the facade; invoked on each status transition.
     data_plugins : dict[str, Any], optional
-        TEST-only data-provider plugins, registered AFTER the production ones.
+        TEST-only override mapping of data-venue name to data-adapter RECIPE, merged
+        OVER the production recipes so a fixture can supply an offline data source.
     strategy_catalog : dict[str, type], optional
         The only thing that turns a stored ``strategy_type`` string into a class, so
         the app decides what is instantiable at boot. With registry rows present, a
@@ -1093,17 +1092,10 @@ def build_live_system(
     from itrader.connectors.provider import ConnectorProvider
     from itrader.execution_handler.execution_handler import default_exchange_config
     from itrader.venues.bundles import VenueBundles
-    from itrader.venues.okx_plugin import (
-        OkxConnectorPlugin,
-        OkxDataPlugin,
-        OkxVenuePlugin,
-    )
+    from itrader.venues.okx_plugin import OkxConnectorPlugin, OkxVenuePlugin
     from itrader.execution_handler.exchanges.okx import build_okx_exchange
     from itrader.venues.paper_plugin import PaperVenuePlugin, paper_exchange_recipe
-    from itrader.venues.registry import (
-        DataProviderRegistry,
-        ExecutionVenueRegistry,
-    )
+    from itrader.venues.registry import ExecutionVenueRegistry
 
     # The credentials boundary. venue_account_store is the durable (venue_name,
     # account_id) home: it supplies each account's secret_ref POINTER and records/asserts
@@ -1121,7 +1113,6 @@ def build_live_system(
     credential_resolver = EnvCredentialResolver()
 
     exec_registry = ExecutionVenueRegistry()
-    data_registry = DataProviderRegistry()
     connectors = ConnectorProvider(
         {'okx': OkxConnectorPlugin(resolver=credential_resolver)})
     # The venue-account domain's own session pool: one authenticated session per account,
@@ -1140,13 +1131,16 @@ def build_live_system(
     # The plugin builds its own SimulatedExchange from the config it is given. Seeding a
     # LIVE-derived symbol set instead of the default preset would change live admission.
     exec_registry.register('paper', PaperVenuePlugin(default_exchange_config()))
-    data_registry.register('okx', OkxDataPlugin())
 
-    # TEST-only DATA provider injection, registered AFTER production: the paper<->replay
-    # pairing lives ONLY in the fixture.
+    # The DATA recipes: venue name -> the function building that venue's data adapter.
+    # A mapping of functions, selected by a dict lookup, exactly like the execution
+    # recipes. TEST-only overrides are merged OVER production, so the paper<->replay
+    # pairing lives only in the fixture that asks for it.
+    from itrader.price_handler.providers.okx_provider import build_okx_data_provider
+
+    data_recipes: Dict[str, Any] = {'okx': build_okx_data_provider}
     if data_plugins:
-        for _name, _plugin in data_plugins.items():
-            data_registry.register(_name, _plugin)
+        data_recipes.update(data_plugins)
 
     # The ONE seeded determinism RNG, built at the wiring seam and injected on ctx rather
     # than derived inside a handler.
@@ -1186,33 +1180,64 @@ def build_live_system(
         VenueValidatedComputeAuthority,
     )
 
+    # THE DATA PLANE — ONE adapter, on its OWN session, built here and never re-pointed.
+    #
+    # Which venue serves candles is a RUN-level choice: the spec names it, falling back to
+    # the execution venue's catalogue default. It is not a per-account property, and an
+    # account retiring changes order routing only — the feed is untouched, because it
+    # borrows nothing from any account.
+    #
+    # The session is the venue's PUBLIC one whenever the descriptor says its market data
+    # needs no credentials (OKX candles are public), so the data plane does not name an
+    # account at all. A venue that declares ``data_requires_auth`` gets the run account's
+    # authenticated session instead — the only case where the feed must name an account,
+    # because its data is not public. A venue with no catalogue entry is a test-injected
+    # data source with no session to build.
+    #
+    # Building is I/O-FREE: no session is opened here. Opening it is engine I/O and
+    # belongs to the run's start, so constructing a live system stays offline.
+    data_venue = (
+        getattr(spec, 'data_provider', None)
+        or (CATALOG[exchange].default_data_provider if exchange in CATALOG else 'okx'))
+    data_descriptor = CATALOG.get(data_venue)
+    data_connector: Optional[Any] = None
+    if data_descriptor is not None and not data_descriptor.data_requires_auth:
+        data_connector = connector_pool.public_session(data_venue)
+    elif data_descriptor is not None:
+        data_account = getattr(spec, 'account_id', None)
+        if data_account is None:
+            raise ValidationError(
+                'account_id', str(data_account),
+                f"venue {data_venue!r} serves market data only over an AUTHENTICATED "
+                f"session, but this run names no account to authenticate as — the feed "
+                f"would come up with no data source")
+        data_connector = connector_pool.session(data_venue, str(data_account), spec)
+    try:
+        data_recipe = data_recipes[data_venue]
+    except KeyError:
+        # Loud, because the alternative is an engine that runs and trades on nothing.
+        raise KeyError(
+            f"no data recipe for venue {data_venue!r} — this system builds "
+            f"{sorted(data_recipes)}") from None
+    data_provider = data_recipe(
+        connector=data_connector,
+        ctx=ctx,
+        feed=feed,
+        global_queue=global_queue,
+        # The SAME bus-bound callbacks the execution adapters are armed with, so a
+        # candle-stream fatal freezes the engine and a candle-stream drop pauses
+        # submission exactly as a fill-stream one does.
+        halt_signal=partial(emit_connector_fatal, global_queue),
+        stream_state_listener=(
+            partial(emit_stream_down, global_queue),
+            partial(emit_stream_up, global_queue),
+        ),
+    )
+
     venue_manager: Optional[Any] = None
-    # The ONE feed's connection binder: the feed borrows the first available venue
-    # CONNECTION and re-borrows when that account is retired/disabled. It owns the provider
-    # build, the feed wiring and the re-borrow rule; the manager drives it from
-    # bring_online.
-    feed_binder: Optional[Any] = None
     if system_db_backend is not None:
-        from itrader.venues.feed_binder import FeedConnectionBinder, PoolBackedConnectors
         from itrader.venues.accounts import VenueAccountManager
 
-        feed_binder = FeedConnectionBinder(
-            feed=feed,
-            data_registry=data_registry,
-            # Which venue serves candles is a RUN-level choice: the execution venue's
-            # catalogue entry names its default data provider, and an explicit override on
-            # the spec wins. Reading it off whichever account's connection the feed
-            # happened to borrow would make the data source change when an account retires.
-            data_provider=(
-                getattr(spec, 'data_provider', None)
-                or (CATALOG[exchange].default_data_provider
-                    if exchange in CATALOG else 'okx')),
-            ctx=ctx,
-            # The data arm borrows from the SAME per-account session pool the execution
-            # arm builds from, so one real account never opens two ccxt.pro clients.
-            connectors=PoolBackedConnectors(connector_pool),
-            global_queue=global_queue,
-        )
         # The venue-ACCOUNT domain owner. It EXCLUSIVELY owns the durable
         # ``venue_accounts`` store and the account sessions in the pool. It receives the
         # shared ``exchange_registry`` — the SAME map compose hands the execution handler —
@@ -1239,7 +1264,6 @@ def build_live_system(
                 partial(emit_stream_down, global_queue),
                 partial(emit_stream_up, global_queue),
             ),
-            feed_binder=feed_binder,
         )
         account_authority: Any = VenueValidatedComputeAuthority(
             manager=venue_manager,
@@ -1425,10 +1449,8 @@ def build_live_system(
         safety=safety,
         accounts=(
             lambda: venue_manager.online_records() if venue_manager is not None else []),
-        # Read LIVE through the binder so the all-streams health gate covers the candle arm
-        # and tracks a runtime re-borrow.
-        feed_provider=(
-            lambda: feed_binder.feed_provider if feed_binder is not None else None),
+        # The ONE data adapter, so the all-streams health gate covers the candle arm too.
+        feed_provider=lambda: data_provider,
         alert_sink=alert_sink,
     )
     # Pre-trade risk backstop (rate + notional caps), off the WALL clock.
@@ -1440,7 +1462,8 @@ def build_live_system(
     facade._safety = safety
     facade._stream_recovery = stream_recovery
     facade._throttle = throttle
-    facade._feed_binder = feed_binder
+    facade._data_provider = data_provider
+    facade._data_connector = data_connector
     facade._venue_manager = venue_manager
     facade._connector_pool = connector_pool
 
@@ -1458,8 +1481,8 @@ def build_live_system(
     # Each account's own adapter + connector are halt- and stream-state-wired by
     # ``bring_online``, before the account becomes routable — one rule, applied at the one
     # place an account comes up, so a second account cannot end up accepting orders after a
-    # connector-fatal halt latched the first. The DATA provider is deliberately single (one
-    # feed) and is wired by ``start()``, once the boot has bound it.
+    # connector-fatal halt latched the first. The DATA adapter is armed the same way, by
+    # its own recipe at build; ``start()`` only opens its session and subscribes it.
 
     # Engine-thread drift-halt signal -> freeze-in-place halt.
     portfolio_handler.set_halt_signal(facade.halt)

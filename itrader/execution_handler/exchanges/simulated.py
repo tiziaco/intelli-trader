@@ -601,6 +601,14 @@ class SimulatedExchange(AbstractExchange):
 		"""
 		return AccountSnapshot.empty()
 
+	def catch_up_missed_fills(self) -> None:
+		"""Nothing to recover: every fill this exchange produces was produced in-process.
+
+		Present so the resume contract is uniform across adapters — a missed fill is a
+		venue concept, and there is no venue behind this one.
+		"""
+		return None
+
 	def fetch_venue_uid(self) -> "str | None":
 		"""``None`` — a simulated exchange has no venue-side account to be mistaken for.
 

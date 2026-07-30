@@ -485,19 +485,19 @@ def test_production_build_live_system_registers_no_replay_data_provider() -> Non
     The stronger post-D-21 invariant that replaces the old replay-plugin-import
     assertion: the offline replay DATA apparatus LEFT the ``itrader`` package for the test
     harness (D-18), and production ``paper`` re-points to the OKX live data feed (D-21). So
-    the ONE live composition root must register EXACTLY the ``'okx'`` data provider — never
-    a ``'replay'`` one — and select ``'okx'`` for the paper venue. Asserted by static source
+    the ONE live composition root must know EXACTLY the ``'okx'`` data recipe — never a
+    ``'replay'`` one — and select ``'okx'`` for the paper venue. Asserted by static source
     inspection (``inspect.getsource``) so it is CI-safe (no OKX creds, no build): building
-    the paper→okx system would require credentials, but the registration/selection SOURCE is
-    the load-bearing invariant. A future edit that re-registers ``'replay'`` in production (or
-    re-points the paper map back to ``'replay'``) reddens this loudly.
+    the paper→okx system would require credentials, but the recipe-map/selection SOURCE is
+    the load-bearing invariant. A future edit that adds ``'replay'`` to the production
+    recipe map (or re-points the paper map back to ``'replay'``) reddens this loudly.
 
     SEAM-03/D-11: the ``{'okx':'okx','paper':'okx'}`` default-provider map was centralized
     into the shared ``build_venue_spec`` builder (``trading_system/venue_spec.py``) — its
     SOLE home — which BOTH ``for_exchange`` and ``build_live_system`` call. The paper→okx
     selection invariant is therefore asserted against ``build_venue_spec``'s source now (the
-    inline ``SimpleNamespace`` + map in ``build_live_system`` was deleted); the registration
-    assertions still inspect ``build_live_system`` where ``data_registry.register`` lives.
+    inline ``SimpleNamespace`` + map in ``build_live_system`` was deleted); the recipe-map
+    assertions inspect ``build_live_system``, where the production data recipes live.
     """
     import inspect
 
@@ -506,13 +506,13 @@ def test_production_build_live_system_registers_no_replay_data_provider() -> Non
 
     source = inspect.getsource(_lts.build_live_system)
 
-    # Production registers the OKX data provider and NO replay/test data provider.
-    assert "data_registry.register('okx'" in source, (
-        "production build_live_system must register the 'okx' data provider (paper→okx, D-21)"
+    # Production knows the OKX data recipe and NO replay/test one.
+    assert "'okx': build_okx_data_provider" in source, (
+        "production build_live_system must build the 'okx' data adapter (paper→okx, D-21)"
     )
-    assert "register('replay'" not in source and 'register("replay"' not in source, (
-        "production build_live_system must register NO 'replay' data provider — the replay "
-        "harness left itrader for tests/ (D-18); a test fixture injects it via data_plugins"
+    assert "'replay'" not in source and '"replay"' not in source, (
+        "production build_live_system must name NO 'replay' data source — the replay "
+        "harness left itrader for tests/ (D-18); a test fixture injects its recipe"
     )
     # The paper venue selects the OKX live data feed (D-21), never the replay feed. Since
     # SEAM-03/D-11 the default-provider map lives in the shared build_venue_spec builder.

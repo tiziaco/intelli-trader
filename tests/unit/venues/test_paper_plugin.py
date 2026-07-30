@@ -214,17 +214,16 @@ def test_paper_account_factory_mints_a_compute_account() -> None:
     assert isinstance(account, SimulatedCashAccount)
 
 
-def test_relocated_test_data_plugin_builds_a_test_provider() -> None:
-    """The RELOCATED TestDataPlugin (tests/support) builds a TestLiveDataProvider (D-18).
+def test_relocated_test_data_recipe_builds_a_test_provider() -> None:
+    """The RELOCATED replay data recipe (tests/support) builds a TestLiveDataProvider.
 
-    The replay DATA plugin left ``itrader.venues.paper_plugin`` for the test harness;
-    this proves the moved plugin still builds the offline replay provider.
+    The replay DATA arm left ``itrader.venues.paper_plugin`` for the test harness; this
+    proves the moved recipe still builds the offline replay provider, with no session and
+    no feed to wire (both optional, so the recipe is usable as a bare builder too).
     """
-    from tests.support.replay_harness import TestDataPlugin, TestLiveDataProvider
+    from tests.support.replay_harness import TestDataRecipe, TestLiveDataProvider
 
-    provider = TestDataPlugin().build_provider(
-        _fake_ctx(), _fake_spec(), _ExplodingConnectorProvider()
-    )
+    provider = TestDataRecipe()(connector=None, ctx=_fake_ctx())
     assert isinstance(provider, TestLiveDataProvider)
 
 
@@ -243,15 +242,16 @@ def test_paper_venue_plugin_has_no_credential_model_and_no_venue_uid() -> None:
     assert plugin.fetch_venue_uid(object()) is None
 
 
-def test_paper_plugins_satisfy_venue_and_data_protocols() -> None:
-    """The paper execution plugin + the relocated data plugin satisfy their Protocols."""
-    from itrader.venues.bundle import DataProviderPlugin, VenuePlugin
+def test_paper_execution_plugin_satisfies_its_venue_protocol() -> None:
+    """The paper execution plugin satisfies ``VenuePlugin``.
+
+    The data half is no longer a Protocol implementer: a data recipe is a function, and
+    selecting one is a dict lookup rather than a type.
+    """
+    from itrader.venues.bundle import VenuePlugin
     from itrader.venues.paper_plugin import PaperVenuePlugin
 
-    from tests.support.replay_harness import TestDataPlugin
-
     assert isinstance(PaperVenuePlugin(_seeded_config()), VenuePlugin)
-    assert isinstance(TestDataPlugin(), DataProviderPlugin)
 
 
 # --------------------------------------------------------------------------- #

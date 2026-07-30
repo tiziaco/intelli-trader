@@ -57,7 +57,7 @@ import ccxt.pro as ccxtpro
 
 from pydantic_settings import BaseSettings
 
-from itrader.config.okx_settings import OkxSettings
+from itrader.config.okx_settings import OkxRouting, OkxSettings
 from itrader.core.exceptions.credential import CredentialResolutionError
 from itrader.logger import get_itrader_logger
 
@@ -111,7 +111,13 @@ class OkxConnector:
     lifecycle — and no venue operations. Emits no domain events.
     """
 
-    def __init__(self, settings: OkxSettings | None = None) -> None:
+    def __init__(self, settings: OkxRouting | None = None) -> None:
+        """Bind the session's settings. ``OkxRouting`` alone builds a PUBLIC session.
+
+        The annotation is the routing base so a credential-free session is expressible;
+        the default stays the AUTHENTICATED model, because a no-arg connector is the
+        single-global-credential deployment and must not silently become public.
+        """
         self.logger = get_itrader_logger().bind(component="OkxConnector")
         # SecretStr credentials live here; surfaced only at client construction (T-02-02-LEAK).
         # OkxSettings sources every field from the environment, so the no-arg construction
@@ -186,15 +192,17 @@ class OkxConnector:
         """Construct the ccxt.pro client ON the loop, route sandbox, load markets.
 
         Runs inside the loop thread so the client binds its sockets to this loop. The
-        passphrase goes in ccxt's ``password`` field; ``enableRateLimit`` stays ON (RES-01).
-        ``load_markets()`` populates the precision tables the order arm's
-        ``amount_to_precision``/``price_to_precision`` helpers need.
+        credential keys come from the settings object — the authenticated triple, or
+        NOTHING for a public session — while the ROUTING below applies either way:
+        region host, rate limiting, the sandbox REST header and the authoritative WS host
+        are properties of where the session goes, not of who it is.
+        ``enableRateLimit`` stays ON (RES-01), and ``load_markets()`` populates the
+        precision tables the order arm's ``amount_to_precision``/``price_to_precision``
+        helpers need.
         """
         self._client = ccxtpro.okx(
             {
-                "apiKey": self._settings.api_key.get_secret_value(),
-                "secret": self._settings.api_secret.get_secret_value(),
-                "password": self._settings.api_passphrase.get_secret_value(),
+                **self._settings.ccxt_credentials(),
                 # Region-derived REST host (www.okx.com global / eea.okx.com EEA). ccxt
                 # substitutes this into its ``https://{hostname}`` template.
                 "hostname": self._settings.rest_hostname,
@@ -356,18 +364,17 @@ def build_okx_connector(
     believes the accounts are separate.
     """
     if spec is None:
-        # A public OKX session carries no credentials at all. ``OkxConnector`` currently
-        # reads all three credential fields unconditionally when it builds its client, so
-        # there is no credential-free construction to return yet. Refusing LOUDLY is the
-        # only safe answer: silently handing back an authenticated session would recreate
-        # the borrowed-credentialed-session arrangement the public session exists to
-        # remove, and it would do so invisibly.
-        raise NotImplementedError(
-            "a credential-free OKX session is not constructible yet — OkxConnector builds "
-            "its ccxt client from all three OKX_API_* fields unconditionally. Wiring the "
-            "data plane onto public sessions requires a public arm in the client build; "
-            "until then, refusing beats returning an authenticated session under a public "
-            "name.")
+        # A PUBLIC session: routing only, no credential material anywhere in the client.
+        # It is built from ``OkxRouting`` rather than from an ``OkxSettings`` with blanked
+        # fields, so "carries no credentials" holds by construction rather than by a
+        # branch — and the authenticated model's fields stay REQUIRED, which is what keeps
+        # the completeness gate below alive.
+        #
+        # The routing comes from the process environment (``OKX_SANDBOX`` / ``OKX_REGION``)
+        # because a public session names no account to read overrides from. Region+sandbox
+        # still matter: an EEA host answers differently from the global one, so a public
+        # candle socket must be routed, just not authenticated.
+        return OkxConnector(OkxRouting())
 
     credential_model = getattr(descriptor, "credential_model", None) or OkxSettings
     connection = _connection_overrides(spec, credential_model)

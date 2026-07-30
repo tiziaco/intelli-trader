@@ -62,7 +62,7 @@ from itrader.universe.membership import StrategyDerivedSelectionModel
 from itrader.universe.universe import Universe
 from itrader.universe.universe_handler import UniverseHandler, UniverseHandlerConfig
 from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
-from tests.support.replay_harness import TestDataPlugin
+from tests.support.replay_harness import TestDataRecipe
 from tests.support.schema import provision_schema
 
 _SYM = "LIFEUSD"
@@ -167,10 +167,10 @@ class _LifecycleSystem:
     """
 
     def __init__(self) -> None:
-        plugin = TestDataPlugin()
+        recipe = TestDataRecipe()
         spec = build_venue_spec("paper", data_provider="replay")
         system = build_live_system(
-            spec, data_plugins={"replay": plugin}, strategy_catalog=_catalog())
+            spec, data_plugins={"replay": recipe}, strategy_catalog=_catalog())
         # Bring-up + rehydrate live in start(), because bring-up connects. This is the
         # exact call start() makes.
         system._bootstrap_session()

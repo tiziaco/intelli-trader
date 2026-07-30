@@ -18,9 +18,8 @@ socket.
 row, so a store is mandatory — the account SET can no longer be conjured from the spec
 offline. The account-DERIVATION logic itself (ordering, venue-scoping, the exact-pair key,
 per-account ``secret_ref``) is unit-tested on ``VenueAccountManager`` without a boot
-(``tests/unit/venues/test_accounts.py`` / ``test_account_provisioning_loop.py`` /
-``test_feed_binder.py``); this file's unique job is proving production actually GOES through
-that manager.
+(``tests/unit/venues/test_accounts.py`` / ``test_account_provisioning_loop.py``); this
+file's unique job is proving production actually GOES through that manager.
 
 **Why the boot is driven explicitly.** Bring-up CONNECTS, so it is a step of ``start()``
 rather than of construction. These tests stub each account's session offline and then run
@@ -193,21 +192,8 @@ def test_the_manager_holds_one_online_record_per_account(live_db, okx_env) -> No
 
 
 # --------------------------------------------------------------------------- #
-# 11.1-08 / D-08 — EXACTLY ONE build per boot (bundles), and D-36 ONE provider
+# 11.1-08 / D-08 — EXACTLY ONE build per boot (bundles), and ONE data adapter
 # --------------------------------------------------------------------------- #
-def _count_class_calls(monkeypatch, cls, method_name):
-    """Wrap ``cls.method_name`` with a call counter, delegating to the original."""
-    calls = []
-    original = getattr(cls, method_name)
-
-    def _counting(self, *args, **kwargs):
-        calls.append(args)
-        return original(self, *args, **kwargs)
-
-    monkeypatch.setattr(cls, method_name, _counting)
-    return calls
-
-
 def test_a_two_account_boot_opens_exactly_two_sessions(live_db, okx_env):
     """Two accounts -> exactly TWO sessions and TWO adapters, one memoized pair each.
 
@@ -235,24 +221,27 @@ def test_a_two_account_boot_opens_exactly_two_sessions(live_db, okx_env):
         system.stop()
 
 
-def test_a_two_account_boot_binds_exactly_one_data_provider(monkeypatch, live_db, okx_env):
-    """D-14/D-36: two accounts -> exactly ONE ``build_provider`` call, bound to the feed.
+def test_a_two_account_boot_binds_exactly_one_data_provider(live_db, okx_env):
+    """Two accounts -> exactly ONE data adapter, on a session neither account owns.
 
-    ONE feed means ONE data provider. D-36 builds it in the FeedConnectionBinder for the
-    first streaming connection (not a "primary" account) and binds it to the feed; the
-    second account's provider is never constructed (WR-07 — a discarded credential-bearing
-    provider with no owner is exactly what is avoided).
+    ONE feed means ONE data adapter, and how many EXECUTION accounts a boot brings online
+    is not part of that count: the data plane is built once, from the run's data venue,
+    over the venue's public session. A per-account data build is what previously produced
+    a second credential-bearing provider with no owner.
     """
-    from itrader.venues.okx_plugin import OkxDataPlugin
-
-    build_calls = _count_class_calls(monkeypatch, OkxDataPlugin, "build_provider")
     _provision(live_db, "acct-a", "acct-b")
 
     system = _booted(build_live_system(_spec()))
     try:
-        assert len(build_calls) == 1, (
-            f"ONE feed means ONE data provider per boot (D-14/D-36); got {len(build_calls)}")
-        # The one provider reached the one feed (read the feed's private provider slot).
-        assert system.feed._provider is not None
+        provider = system._data_provider
+        assert provider is not None
+        assert system.feed._provider is provider
+
+        account_sessions = {
+            record.connector for record in system._venue_manager.online_records()}
+        assert len(account_sessions) == 2, "precondition: two accounts, two sessions"
+        assert system._data_connector not in account_sessions, (
+            "the data adapter borrowed an account's authenticated session — retiring that "
+            "account would take the feed with it")
     finally:
         system.stop()

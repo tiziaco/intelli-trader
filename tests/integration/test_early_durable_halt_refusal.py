@@ -28,7 +28,7 @@ from unittest.mock import MagicMock
 
 from itrader.core.enums import SystemStatus
 from itrader.trading_system.live_trading_system import LiveTradingSystem
-from tests.support.live_okx import stub_okx_session, the_feed_provider
+from tests.support.live_okx import stub_data_session, stub_okx_session
 
 
 class _UnresolvedHaltStore:
@@ -75,6 +75,9 @@ def test_durably_halted_start_refuses_before_any_venue_io(provisioned_okx) -> No
     # what makes "zero venue I/O" observable — the connect spy belongs to the object the
     # bring-up would have used.
     connector = stub_okx_session(system)
+    # The DATA adapter holds a session of its own, and start() opens it — so it is stubbed
+    # too, and its connect spy is a second, independent witness that no venue I/O ran.
+    data_connector = stub_data_session(system)
     system.feed.warmup = MagicMock(name="feed.warmup")
     # WR-01/WR-03: the venue-link + baseline-guard logic no longer lives on the facade —
     # production reconciles exclusively via _build_reconciliation_coordinator()
@@ -97,9 +100,10 @@ def test_durably_halted_start_refuses_before_any_venue_io(provisioned_okx) -> No
         system._initialize_live_session.assert_not_called()
         connector.connect.assert_not_called()
         system.feed.warmup.assert_not_called()
-        # Nothing was brought online, so nothing is routable and the feed borrowed nothing.
+        # Nothing was brought online, so nothing is routable — and the feed's own
+        # (account-independent) session was never opened either.
         assert system._venue_manager.online_records() == []
-        assert the_feed_provider(system) is None
+        data_connector.connect.assert_not_called()
         # The top-gate refuses BEFORE reconcile: the coordinator is never even built, so
         # its run_startup_reconcile (venue link + baseline guard) never runs (WR-03).
         system._build_reconciliation_coordinator.assert_not_called()
@@ -119,8 +123,10 @@ def test_healthy_start_still_runs_session_init_when_no_durable_halt(provisioned_
     system._safety._halt_record_store = None
 
     # The account's session is pre-built and stubbed, so start() runs the REAL bring-up
-    # over it: the real recipe, the real identity guard, the real routing write.
+    # over it: the real recipe, the real identity guard, the real routing write. The data
+    # adapter's own session is stubbed the same way — start() opens it for the candle arm.
     connector = stub_okx_session(system)
+    stub_data_session(system)
     system.feed.warmup = MagicMock(name="feed.warmup")
     # The venue-account snapshot is now per PORTFOLIO. This system has no portfolios, so
     # the reconcile is a clean skip — spy the coordinator to prove it still RAN (the

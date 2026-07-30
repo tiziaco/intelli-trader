@@ -139,6 +139,24 @@ class AbstractExchange(Protocol):
 		"""
 		...
 
+	def catch_up_missed_fills(self) -> None:
+		"""Recover fills that settled while this adapter's fill stream was down.
+
+		Part of the RESUME contract, alongside ``snapshot()``: after a reconnect the
+		engine re-fetches what it missed before it compares itself against the venue, so
+		the comparison already reflects the recovered trade. Declared here rather than
+		duck-typed off the concrete adapter, because a resume path calling a method the
+		contract does not name is one rename away from silently taking the "venue could
+		not be read" branch on every reconnect.
+
+		Blocking venue I/O, so it runs on the ENGINE thread through the connector's
+		synchronous RPC — never on the connector's own loop, which the bridge would
+		deadlock.
+
+		An exchange with no venue behind it has nothing to recover and does nothing.
+		"""
+		...
+
 	def fetch_venue_uid(self) -> "str | None":
 		"""The venue's own account UID for this adapter's session, or ``None``.
 

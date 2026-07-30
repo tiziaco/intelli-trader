@@ -66,10 +66,11 @@ class StreamRecoveryHandler:
         streams never blocked the resume, so submission resumed while the engine was still
         blind to that account's fills.
     feed_provider
-        A CALLABLE returning the ONE feed data provider, or ``None``. Read live because
-        the data arm may be re-pointed at runtime, so a build-time capture would go stale.
-        ``None`` means no data arm is bound, which the health gate treats as "no candle
-        stream to be down".
+        A CALLABLE returning the ONE data adapter, or ``None``. A callable rather than the
+        adapter itself so this handler can be constructed before the data plane exists and
+        never holds a second reference that could disagree with the run's. ``None`` means
+        no data arm is wired, which the health gate treats as "no candle stream to be
+        down".
     alert_sink
         The CRITICAL-alert egress. A failed resume snapshot raises a CRITICAL alert and
         stays PAUSED — a reversible quiesce retried on the next stream-up — rather than
@@ -113,7 +114,7 @@ class StreamRecoveryHandler:
         ])
 
     def _data_provider(self) -> Optional[Any]:
-        """The ONE feed data provider the binder currently holds, or ``None``."""
+        """The ONE data adapter bound to the live feed, or ``None``."""
         return self._feed_provider()
 
     def on_reconnect(self) -> None:

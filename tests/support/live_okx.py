@@ -129,5 +129,18 @@ def the_okx_record(system: Any) -> Any:
 
 
 def the_feed_provider(system: Any) -> Any:
-    """The ONE data provider the ``FeedConnectionBinder`` bound to the feed."""
-    return system._feed_binder.feed_provider
+    """The ONE data adapter the builder wired to the live feed."""
+    return system._data_provider
+
+
+def stub_data_session(system: Any, *, client: Any = None) -> Any:
+    """Stub the DATA adapter's own session I/O; return it (``None`` when there is none).
+
+    The data adapter holds a session of its own — normally the venue's public one — and
+    ``start()`` opens it. A test that drives the real ``start()`` offline has to replace
+    that socket too, or the run reaches out to the venue for candles.
+    """
+    connector = system._data_connector
+    if connector is None:
+        return None
+    return stub_session_io(connector, client=client)

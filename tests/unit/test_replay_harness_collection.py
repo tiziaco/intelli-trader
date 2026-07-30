@@ -1,7 +1,7 @@
 """Collection-safety guard for the relocated replay harness (TEST-01 / D-22 / Wave 0).
 
 The replay harness (``tests/support/replay_harness.py``) defines three ``Test*``-named
-NON-test classes — ``TestLiveDataProvider`` / ``TestDataPlugin`` / ``TestRunner``. Under
+NON-test classes — ``TestLiveDataProvider`` / ``TestDataRecipe`` / ``TestRunner``. Under
 pytest's default ``python_classes = Test*`` these would be AUTO-COLLECTED as test classes;
 each has an ``__init__`` with required args, so collection would emit a
 ``PytestCollectionWarning`` — a HARD failure under the project's ``filterwarnings=["error"]``.
@@ -38,7 +38,7 @@ def test_every_test_named_harness_class_opts_out_of_collection() -> None:
         if name.startswith("Test") and obj.__module__ == harness.__name__
     ]
     # The three relocated concretions must all be present (guards a silent rename).
-    assert set(test_named) == {"TestLiveDataProvider", "TestDataPlugin", "TestRunner"}, (
+    assert set(test_named) == {"TestLiveDataProvider", "TestDataRecipe", "TestRunner"}, (
         f"unexpected Test*-named harness classes: {sorted(test_named)!r}"
     )
     for name in test_named:

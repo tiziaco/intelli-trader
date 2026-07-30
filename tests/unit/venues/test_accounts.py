@@ -86,21 +86,6 @@ _VENUE = COMPUTE_VENUE
 _SEEDED_SECRET = "seeded-key-8f21"
 
 
-class _NoopFeedBinder:
-    """A do-nothing feed binder for the account-domain tests.
-
-    Feed binding is exercised in ``test_feed_binder.py``; the paper accounts under test
-    carry no session, so ``rebind`` never has a connection to borrow. The manager still
-    DRIVES the binder on every bring-up, so this satisfies its required-collaborator
-    contract without pulling a real provider build into tests about the account domain.
-    """
-
-    feed_provider = None
-
-    def rebind(self, available: Any) -> None:
-        return None
-
-
 def _ctx() -> Any:
     """The two fields the paper recipe reads: the bus and the run's seeded rng."""
     return SimpleNamespace(bus=queue.Queue(), rng=random.Random(42))
@@ -113,7 +98,6 @@ def _make_manager(
     catalog: Any = None,
     pool: Any = None,
     alert_sink: Any = None,
-    feed_binder: Any = None,
 ) -> tuple[VenueAccountManager, VenueAccountStore, dict[tuple[str, str], Any]]:
     """A manager over a REAL in-memory store, optionally with its schema NOT provisioned.
 
@@ -142,7 +126,6 @@ def _make_manager(
         alert_sink=alert_sink if alert_sink is not None else LogAlertSink(),
         halt_signal=lambda reason: None,
         stream_state_listener=(lambda name: None, lambda name: None),
-        feed_binder=feed_binder if feed_binder is not None else _NoopFeedBinder(),
     )
     return manager, store, routing
 

@@ -20,6 +20,12 @@
 #          execution adapter, and exchanges/base.py is already inside the measured set.
 # Stage 4: venues/accounts.py appeared and ABSORBED four modules — venue_account_manager.py,
 #          assemble.py, lifecycle.py and venue_uid_guard.py are DELETED.
+# Stage 5: feed_binder.py DELETED — the data adapter owns its own session, so there is no
+#          borrowed connection to bind. CAVEAT: its successor, build_okx_data_provider,
+#          lives in price_handler/providers/okx_provider.py, which is NOT in this set (nor
+#          in the baseline) — like the other recipes-in-situ, it lands in a host file that
+#          predates the redesign, so a recipe's own lines are invisible to this yardstick.
+#          Settling how recipe hosts are counted belongs to the Stage-7 measurement.
 
 # --- surviving / relocated baseline files ---
 itrader/trading_system/compose.py
@@ -30,7 +36,6 @@ itrader/trading_system/session_initializer.py
 itrader/portfolio_handler/portfolio_factory.py
 itrader/connectors/provider.py
 itrader/connectors/base.py
-itrader/venues/feed_binder.py
 itrader/venues/paper_plugin.py
 itrader/venues/okx_plugin.py
 itrader/venues/bundle.py

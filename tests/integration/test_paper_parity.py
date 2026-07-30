@@ -118,7 +118,7 @@ def _run_paper_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
     """Drive the live-paper path over the golden dataset; return (trades, equity) frames.
 
     The paper side (TEST-01/D-18): ``build_paper_replay_system()`` builds the paper live
-    system with the relocated ``TestDataPlugin`` injected on the data registry (paper↔replay
+    system with the relocated ``TestDataRecipe`` injected as the data recipe (paper↔replay
     lives ONLY in the fixture now) and reuses the account-free 'paper'
     ``SimulatedExchange`` as-is (D-04); ``TestRunner(system, provider).run()`` replays the
     golden bars through the real feed -> queue seam with backtest-faithful per-tick +

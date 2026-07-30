@@ -470,7 +470,7 @@ from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrateg
 from itrader.trading_system.live_trading_system import build_live_system  # noqa: E402
 from itrader.trading_system.system_spec import PortfolioSpec, SystemSpec  # noqa: E402
 from itrader.trading_system.venue_spec import build_venue_spec  # noqa: E402
-from tests.support.replay_harness import TestDataPlugin  # noqa: E402
+from tests.support.replay_harness import TestDataRecipe  # noqa: E402
 from tests.support.schema import provision_schema, seed_portfolio_definitions  # noqa: E402
 from tests.support.strategy_catalog import seeded_registry_rows, test_catalog  # noqa: E402
 
@@ -628,9 +628,9 @@ def _build_paper(**kwargs):
     ``strategy_catalog`` injection seam is exercised as production would reach it — the
     same helper ``test_strategy_registry_restart.py`` uses.
     """
-    plugin = TestDataPlugin()
+    recipe = TestDataRecipe()
     spec = build_venue_spec("paper", data_provider="replay")
-    system = build_live_system(spec, data_plugins={"replay": plugin}, **kwargs)
+    system = build_live_system(spec, data_plugins={"replay": recipe}, **kwargs)
     # Bring-up + rehydrate live in start(), because bring-up connects. This is the exact
     # call start() makes, so the production restart sequence runs without a drain thread.
     system._bootstrap_session()

@@ -122,10 +122,6 @@ def bootstrap_session(
     # exists brings up zero accounts rather than raising.
     for row in venue_manager.read_enabled_for(execution_venue):
         _bring_row_online(venue_manager, row, logger=logger, alert_sink=alert_sink)
-    # Finalize the feed's connection binding once the bring-up loop is done. A boot with
-    # zero streaming accounts leaves the feed UNBOUND and logs the cause, since
-    # bring_online's per-row rebind never ran.
-    venue_manager.rebind_feed()
 
     # (4) Assembly running first changes neither WHICH portfolios rehydrate nor their
     # order — that contract is the store's.

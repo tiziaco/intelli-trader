@@ -517,11 +517,10 @@ class VenueAccountManager:
     stream_state_listener :
         The ``(on_down, on_up)`` pair wired alongside it, so a dropped stream pauses
         submission and a recovered one drives the resume path.
-    feed_binder :
-        The ``FeedConnectionBinder`` this manager DRIVES; it owns the data-provider build,
-        the feed wiring and the re-borrow rule. Required, not optional: a manager that
-        could bring an account online with no feed to connect it to would silently ship a
-        live boot that receives no bars.
+
+    The live FEED is deliberately absent from this list. The data adapter owns its own
+    session and is built once at composition, so bringing an account online or taking it
+    offline changes order routing and nothing else.
     """
 
     def __init__(
@@ -536,7 +535,6 @@ class VenueAccountManager:
         alert_sink: Any,
         halt_signal: Callable[[str], None],
         stream_state_listener: tuple[Callable[[str], None], Callable[[str], None]],
-        feed_binder: Any,
     ) -> None:
         self._store = store
         self._pool = pool
@@ -547,7 +545,6 @@ class VenueAccountManager:
         self._alert_sink = alert_sink
         self._halt_signal = halt_signal
         self._stream_state_listener = stream_state_listener
-        self._feed_binder = feed_binder
         # The DURABLE read backing the account-disable refusal, built over the SAME shared
         # ``SqlEngine`` this manager's store already owns — no new injected collaborator to
         # re-thread through the composition root. A READ-ONLY view: reading the block here
@@ -861,10 +858,6 @@ class VenueAccountManager:
         self._online[key] = record
         self.logger.info(
             "Brought venue account (%s, %s) online", venue_name, account_id)
-        # Re-evaluate the ONE feed's borrowed connection, so a runtime provision binds the
-        # feed with no restart. A boot's per-row bring_online binds on the first streaming
-        # account and no-ops on the rest.
-        self.rebind_feed()
         return record
 
     def _connect_and_verify(
@@ -954,7 +947,6 @@ class VenueAccountManager:
             self._pool.close_session(venue_name, account_id)
         self.logger.info(
             "Brought venue account (%s, %s) offline", venue_name, account_id)
-        self.rebind_feed()
 
     def _descriptor_for(self, venue_name: str) -> VenueDescriptor:
         """This venue's catalogue entry, or a ``KeyError`` naming what IS supported."""
@@ -973,46 +965,6 @@ class VenueAccountManager:
             raise KeyError(
                 f"no execution-adapter recipe for venue {venue_name!r} — this system "
                 f"builds {sorted(self._recipes)}") from None
-
-    # ------------------------------------------------------------------ feed binding
-
-    def rebind_feed(self) -> None:
-        """Re-point the ONE live feed at a valid venue connection.
-
-        Called from ``bring_online`` / ``bring_offline``, so a runtime provision or retire
-        binds without a restart, and once by the boot after its bring-up loop, so a
-        zero-account boot still logs the unbound-feed warning. Idempotent — a valid,
-        unchanged binding is a no-op.
-        """
-        self._feed_binder.rebind(self._streaming_available())
-
-    def _streaming_available(self) -> list[tuple[str, str, AccountSpec]]:
-        """The online accounts whose connection the feed may borrow, in bring-up order.
-
-        A candidate is an online pair carrying a live SESSION (paper carries none) AND whose
-        durable row is still ENABLED — a disabled account is retired, so the feed must
-        re-borrow off it. Insertion order is preserved (dict order = bring-up order = the
-        store's ``account_id`` ASC), so the borrowed connection is reproducible.
-        """
-        available: list[tuple[str, str, AccountSpec]] = []
-        for (venue_name, account_id), record in self._online.items():
-            if record.connector is None:
-                continue
-            row = self._store.get(venue_name, account_id)
-            if row is None or not row["enabled"]:
-                continue
-            available.append((venue_name, account_id, record.spec))
-        return available
-
-    @property
-    def feed_provider(self) -> Any:
-        """The provider currently bound to the ONE feed, or ``None``.
-
-        Read by the halt-signal wiring and by the live session's warmup/subscribe step, so
-        the account domain stays the single answer to "which connection is the feed on".
-        Both readers None-guard it — a zero-account boot leaves it None.
-        """
-        return self._feed_binder.feed_provider
 
     # ------------------------------------------------------------------ config merge
 

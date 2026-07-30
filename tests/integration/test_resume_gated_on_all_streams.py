@@ -43,7 +43,7 @@ def _exchange(system: LiveTradingSystem):
 
 
 def _provider(system: LiveTradingSystem):
-    """The one feed data provider — the connection the binder borrowed (11.2-07/D-36)."""
+    """The one data adapter — the candle arm, on its own session."""
     return the_feed_provider(system)
 
 

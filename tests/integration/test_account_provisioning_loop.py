@@ -114,9 +114,6 @@ def wiring():
     ctx = SimpleNamespace(bus=bus, rng=random.Random(42))
 
     exchange_registry: dict[tuple[str, str], Any] = {}
-    # The paper accounts here carry no session, so the feed binder never has a connection
-    # to borrow; a no-op binder satisfies the manager's required-collaborator contract.
-    # Feed binding is covered in test_feed_binder.py.
     manager = VenueAccountManager(
         store=store,
         pool=ConnectorPool(catalog=CATALOG, resolver=None, recipes={}),
@@ -128,7 +125,6 @@ def wiring():
         alert_sink=LogAlertSink(),
         halt_signal=lambda reason: None,
         stream_state_listener=(lambda name: None, lambda name: None),
-        feed_binder=SimpleNamespace(feed_provider=None, rebind=lambda available: None),
     )
     try:
         yield SimpleNamespace(

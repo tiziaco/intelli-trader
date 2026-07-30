@@ -134,7 +134,7 @@ def test_the_builder_selects_the_durable_arm_and_wires_every_safety_collaborator
     assert live_system._system_store is not None
     assert live_system._system_stats_store is not None
     assert live_system._config_router is not None
-    assert live_system._feed_binder is not None
+    assert live_system._data_provider is not None
 
     assert live_system._safety is not None
     assert live_system._stream_recovery is not None
@@ -252,84 +252,54 @@ def test_cr01_the_facade_exposes_the_venue_account_manager_as_an_operator_surfac
     assert callable(manager.set_enabled)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="CR-02: a feed re-borrow installs a provider that is never halt-wired, never "
-           "stream-state-wired and never subscribed, and abandons the previous one without "
-           "stopping it. Flips in Stage 5, where the probe is rewritten to the "
-           "adapter-owned-session invariant and the borrow scenario ceases to exist.",
-)
-def test_cr02_retiring_an_execution_account_leaves_the_feed_fully_wired() -> None:
-    """Re-pointing the feed's data connection must leave the data arm armed, not silent.
+def test_cr02_retiring_an_execution_account_leaves_the_feed_fully_wired(
+    live_system,
+) -> None:
+    """The data adapter owns its own session, so retiring an account cannot disturb it.
 
-    Probed on ``FeedConnectionBinder`` — the object that owns the re-borrow today — rather
-    than through a built system, because reaching a re-borrow through the builder needs two
-    streaming accounts and therefore credentials. The invariant is the same one the design
-    makes structural: after the account whose connection the feed borrowed is retired, the
-    feed's provider is halt-wired and the abandoned provider is stopped.
+    CR-02 (fixed in Stage 5) — and fixed by REMOVAL: the feed used to borrow whichever
+    account's authenticated connection was available and re-borrow another when that
+    account retired, and the re-borrowed provider was installed without its halt signal,
+    without its stream-state listener and without being subscribed. There is now nothing to
+    borrow: the data plane builds ONE adapter over the venue's PUBLIC session, armed by its
+    own recipe at build.
+
+    Driven through the REAL builder — the same system every other test in this file gets —
+    because the defect was a composition decision. The retire is the production
+    ``bring_offline``, and every assertion after it is about the object the production
+    builder installed, not a stand-in.
     """
-    from itrader.venues.feed_binder import FeedConnectionBinder
+    provider = live_system._data_provider
+    assert provider is not None, "the builder installed no data adapter"
+    assert live_system.feed._provider is provider
 
-    class _Provider:
-        def __init__(self) -> None:
-            self.halt_signal: Any = None
-            self.stream_listeners: Any = None
-            self.stopped = False
+    # The structural claim: the adapter's session is the DATA plane's own public session,
+    # not one borrowed from an account. Public sessions are memoized per venue, so asking
+    # the pool again is an identity check rather than a second build.
+    assert live_system._data_connector is not None
+    assert live_system._data_connector is live_system._connector_pool.public_session("okx")
+    assert live_system._data_connector not in {
+        record.connector
+        for record in live_system._venue_manager.online_records()
+    }
 
-        def set_bar_sink(self, sink: Any) -> None:
-            self.bar_sink = sink
+    # Retire the execution account the boot brought online — the exact scenario that used
+    # to re-borrow the feed's connection.
+    live_system._venue_manager.bring_offline(_VENUE, _ACCOUNT)
+    assert live_system._venue_manager.online_records() == []
 
-        def set_global_queue(self, queue: Any) -> None:
-            self.queue = queue
-
-        def set_halt_signal(self, halt: Any) -> None:
-            self.halt_signal = halt
-
-        def set_stream_state_listener(self, on_down: Any, on_up: Any) -> None:
-            self.stream_listeners = (on_down, on_up)
-
-        def stop(self) -> None:
-            self.stopped = True
-
-    built: list[_Provider] = []
-
-    class _DataPlugin:
-        def build_provider(self, ctx: Any, spec: Any, connectors: Any) -> _Provider:
-            provider = _Provider()
-            built.append(provider)
-            return provider
-
-    class _Registry:
-        def get(self, name: str) -> _DataPlugin:
-            return _DataPlugin()
-
-    feed = SimpleNamespace(
-        provider=None,
-        set_provider=lambda provider: None,
-        update=lambda bar: None,
-    )
-    binder = FeedConnectionBinder(
-        feed=feed, data_registry=_Registry(), data_provider="okx", ctx=object(),
-        connectors=object(), global_queue=object(),
-    )
-
-    def _candidate(account_id: str) -> tuple[str, str, Any]:
-        return ("okx", account_id, SimpleNamespace(account_id=account_id))
-
-    # Bind to account A, then retire it so the feed must re-borrow off account B.
-    binder.rebind([_candidate("acct-a"), _candidate("acct-b")])
-    binder.rebind([_candidate("acct-b")])
-
-    assert len(built) == 2, "retiring the bound account must build a replacement provider"
-    previous, current = built
-    assert current.halt_signal is not None, (
-        "the re-borrowed provider has no halt signal — a connector-fatal on the candle "
-        "stream cannot freeze the engine")
-    assert current.stream_listeners is not None, (
-        "the re-borrowed provider has no stream-state listener — submission is never "
-        "paused when the candle stream drops")
-    assert previous.stopped, (
-        "the abandoned provider still holds a live stream pushing into the one feed ring")
+    # Nothing about the data arm moved: same adapter, same session, still armed.
+    assert live_system._data_provider is provider
+    assert live_system.feed._provider is provider
+    assert provider._bar_sink == live_system.feed.update
+    assert provider._global_queue is live_system.global_queue
+    assert provider._halt_signal is not None, (
+        "the data adapter has no halt signal — a connector-fatal on the candle stream "
+        "cannot freeze the engine")
+    assert (provider._on_stream_down is not None
+            and provider._on_stream_up is not None), (
+        "the data adapter has no stream-state listener — submission is never paused when "
+        "the candle stream drops")
 
 
 def test_cr03_recovery_account_enumeration_is_non_empty_when_an_account_is_online(
@@ -416,8 +386,6 @@ def test_cr04_a_failing_connect_during_bring_up_leaves_the_routing_map_empty() -
             alert_sink=LogAlertSink(),
             halt_signal=lambda reason: None,
             stream_state_listener=(lambda name: None, lambda name: None),
-            feed_binder=SimpleNamespace(
-                feed_provider=None, rebind=lambda available: None),
         )
 
         row = store.read_enabled_for(_VENUE)[0]
