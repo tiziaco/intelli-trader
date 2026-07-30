@@ -6,7 +6,7 @@ settled decisions ED-1..ED-11 — nothing here overrides it. This file records a
 findings and carried-forward dependencies so a later session (or a different agent) does
 not re-derive them.
 
-**Status:** Stages 0–4 complete and committed. Next: Stage 5.
+**Status:** Stages 0–5 complete and committed. Next: Stage 6.
 
 | stage | commits | gate state at commit |
 |---|---|---|
@@ -15,9 +15,16 @@ not re-derive them.
 | 2 | `00afc644` | 3069 pass / 6 skip / 4 xfail · successor +207 |
 | 3 | `44d40f71`, `ebf28c7f` | 3053 pass / 6 skip / **3 xfail** · successor **+4** |
 | 4 | `1badab20`, `f75df648` | 3043 pass / 6 skip / **2 xfail** · successor **+60** |
+| 5 | `0a02be39` | 3039 pass / 6 skip / **1 xfail** · successor **−34** |
 
-CR ledger: **CR-03 fixed (Stage 3)**, **CR-04 fixed (Stage 4)**. CR-01, CR-02 still
-`xfail(strict=True)` in `tests/integration/test_live_composition_offline.py`.
+CR ledger: **CR-03 fixed (Stage 3)**, **CR-04 fixed (Stage 4)**, **CR-02 fixed (Stage 5)**.
+CR-01 alone is still `xfail(strict=True)` in
+`tests/integration/test_live_composition_offline.py`; it flips in Stage 6.
+
+Stage 5 pulled the gate back under the baseline for the first time (+60 → **−34**), so the
+Stage-4 excursion below was transitional as hoped. **But read §2.15 before trusting that
+number** — the manifest measures an inconsistent file set, and the true figure is worse
+than −34.
 
 **The deletion gate moved the WRONG WAY in Stage 4 (+4 → +60).** The absorption itself
 shrank (four modules, 530 code lines → `accounts.py` 485 = −45), but modules that are
@@ -155,6 +162,39 @@ escalation rule did not fire. `test_live_system_okx_wiring.py`'s three binder te
 three `start()`-connect tests were replaced one stage early; their invariants are re-homed
 to `test_accounts.py` and to two new tests in the same file.
 
+### 1.12 The public OKX session: a routing BASE class, not optional credentials
+
+`build_okx_connector(spec=None)`'s `NotImplementedError` (log §2.1) is closed by splitting
+`config/okx_settings.py` along the D-6 `kind` marking that was already on the fields:
+`OkxRouting(BaseSettings)` holds the two `routing` fields plus `rest_hostname` /
+`ws_hostname` and a `ccxt_credentials() -> {}`; `OkxSettings(OkxRouting)` adds the three
+`secret` fields — **still required** — and overrides `ccxt_credentials()` with the ccxt
+triple. `_build_client` splats that method and keeps every routing knob unconditional.
+
+**The rejected alternative matters more than the chosen one.** Making the three credential
+fields `Optional` would have been the obvious fix and would have silently killed a security
+control: `build_okx_connector` derives its completeness gate as
+`{name for name, f in credential_model.model_fields.items() if f.is_required()}`, so an
+empty required-set makes `missing` permanently empty and the refusal to complete a partial
+credential set from the ambient `OKX_API_*` environment becomes dead code. A public session
+is a DIFFERENT settings class instead, so the gate is untouched. Verified at HEAD:
+`OkxSettings` still requires `api_key` / `api_secret` / `api_passphrase`.
+`test_every_credential_field_stays_required` is the tripwire on that premise, and the
+connector's no-arg default stays `OkxSettings()` so a bare connector cannot drift public.
+
+### 1.13 Public-session routing comes from the process env
+
+`pool.public_session(venue)` takes no spec by design, so the public session's `sandbox` /
+`region` resolve from `OKX_SANDBOX` / `OKX_REGION`. If an account row pins routing that
+disagrees with the ambient env, orders and candles can reach different regional entities.
+Flagged deliberately and NOT changed — giving public sessions a per-caller identity is
+exactly what makes them shareable, and re-introducing one would undo §4.6.
+
+### 1.14 `data_requires_auth=True` is implemented but unreachable
+
+No catalogued venue declares it. The branch exists per the plan's text, with an explicit
+refusal when the run names no account, rather than a silent fallback.
+
 ## 2. Carried-forward dependencies
 
 ### 2.1 Stage 5 — OKX public sessions need a credential-free client arm (BLOCKING)
@@ -255,6 +295,47 @@ or teach it to tolerate historical paths — the `--gate` must-have runs through
 
 It moved to `execution_handler/exchanges/okx.py`, beside the recipe that applies it.
 `venues/okx_plugin.py`'s copy still exists and dies with that module in Stage 7.
+
+### 2.12 Stage 6 — `start()` now opens a data session, so offline tests need the stub
+
+The data adapter is built at composition (I/O-free) but its session opens in `start()`.
+That made three integration tests perform REAL network connects until
+`tests/support/live_okx.py::stub_data_session` was added. **Stage 6 must keep that helper
+applied wherever `start()` runs offline** — the failure mode is a slow, flaky, network-
+dependent test rather than a red one, so it will not announce itself.
+
+### 2.13 Stage 6 — three facade callbacks are production-dead
+
+`_request_connector_halt`, `_on_venue_stream_down`, `_on_venue_stream_up` have no
+production caller left (the manager and the data recipe both use the bus-bound `emit_*`
+partials, which put the same CONTROL events). They survive only because three tests drive
+them. `live/system.py` should NOT re-create them.
+
+### 2.14 `is_streaming_healthy` is still duck-typed on adapters
+
+Same gap class as `catch_up_missed_fills` (closed in Stage 5), called from the same
+`StreamRecoveryHandler` method over the same connector-filtered adapters, and left
+undeclared only because §2.2 named one method. Declare it on `AbstractExchange` in the next
+contract pass.
+
+### 2.15 Stage 7 — the measurement manifest counts an INCONSISTENT file set (must settle)
+
+The deletion gate is the program's must-have, and it is currently measuring asymmetrically.
+Code relocated into `portfolio_handler/account/simulated.py` COUNTS (the file is in the
+manifest, line 51), but code relocated into `price_handler/providers/okx_provider.py` and
+`execution_handler/exchanges/okx.py` does NOT — neither host is in the baseline or the
+successor set. Between them those two hosts absorbed `snapshot()` (Stage 3),
+`build_okx_exchange` (Stage 4) and `build_okx_data_provider` (Stage 5).
+
+So the reported **−34 is flattering** by whatever those three recipes weigh. This is the
+same false-green class as §3.1, one level up: §3.1 was "relocation drops lines from the
+measured set", this is "the successor set never included the destinations".
+
+`BASELINE_TOTALS` is pinned as a historical fact and must not be edited. The like-for-like
+fix is to compute the baseline totals for the EXTENDED file set at the frozen commit and
+compare that against the same extended set today. **Stage 7 must settle this before running
+`--gate`**, and the honest number may well be positive. Also: the manifest's Stage-3 note
+claims `exchanges/base.py` is "inside the measured set" — it is not.
 
 ## 3. Process findings (things that bit, so they do not bite again)
 
