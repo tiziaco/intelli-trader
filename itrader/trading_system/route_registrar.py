@@ -34,7 +34,7 @@ Load-bearing ordering (D-03b):
   base ``FILL`` consumers, so the read model already reflects the settled/flat
   position for detach-on-flat).
 
-Indentation: 4 SPACES (matches ``live_trading_system.py`` — the facade whose
+Indentation: 4 SPACES (matches ``trading_system/live/system.py`` — the facade whose
 ``EventHandler`` this installs into).
 """
 

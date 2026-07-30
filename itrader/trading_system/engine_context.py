@@ -1,11 +1,11 @@
-"""The frozen ``EngineContext`` mode-injection bundle threaded into ``compose_engine`` (BUS-04/D-05, D-01).
+"""The frozen ``EngineContext`` mode-injection bundle threaded into ``build_handler_graph`` (BUS-04/D-05, D-01).
 
 ``EngineContext`` is the small, mode-agnostic bundle the composition root hands to
-``compose_engine(ctx)`` (CTX-01/D-01). It carries the shared event-bus transport,
+``build_handler_graph(ctx, ...)`` (CTX-01/D-01). It carries the shared event-bus transport,
 the run-mode infra knobs (``config`` / ``environment``), AND the per-mode BACKENDS
 the mode-specific factory selects and injects (``feed`` / ``store`` / ``sql_engine``).
-The WHAT-to-run description stays factory-local — backtest keeps its ``SystemSpec``,
-live keeps a tiny venue spec — and never crosses this seam (D-02/D-04). ``ctx`` is the
+The WHAT-to-run description stays root-local — backtest keeps its ``SystemSpec``, live
+keeps its builder arguments — and never crosses this seam (D-02/D-04). ``ctx`` is the
 one place the mode factory differentiates and injects components per trading-system mode.
 
 Design invariants (D-05, LR-14 — **consciously amended by D-01**):
@@ -67,7 +67,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class EngineContext:
-	"""Frozen mode-injection bundle handed to ``compose_engine(ctx)`` (D-05, D-01).
+	"""Frozen mode-injection bundle handed to ``build_handler_graph(ctx, ...)`` (D-05, D-01).
 
 	Parameters
 	----------
@@ -83,7 +83,7 @@ class EngineContext:
 		own storage backends (CTX-02 handler-owned storage).
 	feed : BarFeed
 		The REQUIRED per-mode market-data read-model the factory injects
-		(``BacktestBarFeed`` in backtest, ``LiveBarFeed`` in live). D-01: ``compose_engine``
+		(``BacktestBarFeed`` in backtest, ``LiveBarFeed`` in live). D-01: the graph builder
 		reads ``ctx.feed`` uniformly rather than constructing a ``BacktestBarFeed`` itself,
 		so the seam is store/feed-agnostic. Annotated against the BASE ``BarFeed`` via a
 		TYPE_CHECKING forward-ref (D-03) — no concretion is pulled onto the import graph.

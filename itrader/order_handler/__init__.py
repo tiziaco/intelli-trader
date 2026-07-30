@@ -9,7 +9,7 @@ from .order_handler import OrderHandler
 from .order import Order
 from ..core.enums import OrderType, OrderStatus
 from .base import OrderStorage
-from .storage import InMemoryOrderStorage, OrderStorageFactory
+from .storage import InMemoryOrderStorage, build_order_storage
 
 __all__ = [
     'OrderHandler',
@@ -18,5 +18,5 @@ __all__ = [
     'OrderStatus',
     'OrderStorage',
     'InMemoryOrderStorage',
-    'OrderStorageFactory'
+    'build_order_storage',
 ]

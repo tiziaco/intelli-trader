@@ -2,10 +2,10 @@
 
 The standalone §5 collaborator that owns the dynamic-universe poll-timer worker
 lifecycle, extracted from ``LiveTradingSystem._run_poll_timer`` (the donor:
-``live_trading_system.py:1852-1873``) plus its daemon-thread creation
+the live facade) plus its daemon-thread creation
 (``:1836-1841``). ``LiveRunner`` COMPOSES this (has-a, constructor-injected) — it
 does NOT inherit a shared runner base (D-05, composition-over-inheritance, the
-live analog of ``compose_engine -> Engine -> BacktestRunner``).
+live analog of ``build_handler_graph -> Engine -> BacktestRunner``).
 
 The poll worker is the SOLE wall-clock event on the live path — control-plane
 ONLY (Pitfall 3 / determinism): it stamps ONLY the control-plane
@@ -19,7 +19,7 @@ events package + the ``EventBus`` seam (no ccxt.pro / no SQL on the backtest
 import path — ``test_okx_inertness.py`` green). Unwired here; ``build_live_system``
 (plan 06-05) composes it into ``LiveRunner``.
 
-Indentation: 4 SPACES (matches the ``live_trading_system.py`` donor).
+Indentation: 4 SPACES (matches the live-root donor).
 """
 
 import threading

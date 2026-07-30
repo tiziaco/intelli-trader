@@ -75,8 +75,8 @@ from itrader.venues.accounts import (
     assert_venue_uid,
 )
 from itrader.venues.catalog import CATALOG, VenueCapability, VenueDescriptor
-from itrader.venues.paper_plugin import paper_exchange_recipe
-from itrader.venues.registry import COMPUTE_VENUE
+from itrader.execution_handler.exchanges.paper import paper_exchange_recipe
+from itrader.execution_handler.execution_handler import COMPUTE_VENUE
 from tests.support.schema import provision_schema
 from tests.support.venue_wiring import single_account_read_model
 

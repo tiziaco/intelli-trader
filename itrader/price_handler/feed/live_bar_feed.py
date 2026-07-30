@@ -811,7 +811,7 @@ class LiveBarFeed(BarFeed):
         """DORMANT no-op — live emits BarEvents directly via ``update()``.
 
         ``generate_bar_event`` is concrete on ``BacktestBarFeed`` ONLY and is NOT
-        inherited by ``LiveBarFeed(BarFeed)``. It is defined here so ``compose_engine``
+        inherited by ``LiveBarFeed(BarFeed)``. It is defined here so ``build_handler_graph``
         can pass ``feed.generate_bar_event`` to ``EventHandler`` unconditionally
         without crashing on any venue. The live TIME route is reserved but inert.
         """

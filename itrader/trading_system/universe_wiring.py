@@ -96,8 +96,8 @@ def wire_universe(engine: Engine) -> Universe:
 	# resolution changed and the money arithmetic moved underneath a green
 	# suite, with no exception raised anywhere near the defect.
 	#
-	# The subscript below raises KeyError on a stale key, matching the fail-loud
-	# lookup idiom in `venues/registry.py`. The isinstance check is retained
+	# The subscript below raises KeyError on a stale key rather than silently
+	# resolving to None. The isinstance check is retained
 	# ONLY as a mypy narrowing and it RAISES rather than skipping: a wired
 	# engine whose paper venue is not a SimulatedExchange is a wiring bug, not
 	# an optional configuration.
@@ -116,13 +116,13 @@ def wire_universe(engine: Engine) -> Universe:
 	# Plan 02-03 (Pitfall 1, BLOCKING): mirror the exchange injection into the
 	# ORDER domain so the admission leverage cap (D-04) can read
 	# Instrument.max_leverage. Same Trap-4 ordering — the Universe was just
-	# built above, AFTER the order handler was constructed in compose_engine.
+	# built above, AFTER the order handler was constructed by the graph builder.
 	engine.order_handler.set_universe(universe)
 	# Plan 02-05 (D-13): mirror the injection into the PORTFOLIO domain so the
 	# maintenance_margin/margin_ratio read-model can resolve each open
 	# position's Instrument.maintenance_margin_rate. Same Trap-4 ordering — the
 	# Universe was just built above, AFTER the portfolio handler was
-	# constructed in compose_engine. Query-only and oracle-dark on the golden
+	# constructed by the graph builder. Query-only and oracle-dark on the golden
 	# path (the accessors are never read during the SMA_MACD run).
 	engine.portfolio_handler.set_universe(universe)
 	# D-01 (RUN-04): mirror the injection into the STRATEGY domain — the ONE

@@ -48,7 +48,9 @@ from sqlalchemy.exc import SQLAlchemyError
 from itrader.config.order import OrderConfig
 from itrader.config.system import SystemSettings
 from itrader.config.universe import UniverseConfig
+from itrader.core.enums import ErrorSeverity
 from itrader.core.exceptions.base import ConfigurationError
+from itrader.events_handler.events import ErrorEvent
 from itrader.logger import get_itrader_logger
 from itrader.portfolio_handler.rehydrate.distinct_account_invariant import (
     assert_distinct_accounts,
@@ -148,9 +150,6 @@ def _bring_row_online(
     It is never SILENT. The alert is what tells an operator that an account they believe is
     trading is not, and the alert failing must not abort the boot either.
     """
-    from itrader.core.enums import ErrorSeverity
-    from itrader.events_handler.events import ErrorEvent
-
     venue_name = str(row["venue_name"])
     account_id = str(row["account_id"])
     try:

@@ -22,8 +22,6 @@ the same session may already have imported ``ccxt.pro``); the credential-free co
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from itrader.core.enums import ExchangeConnectionStatus, HaltReason, SystemStatus
 from itrader.events_handler.events import ConnectorFatalEvent, StreamStateEvent
 from itrader.execution_handler.exchanges.okx import OkxExchange

@@ -104,7 +104,7 @@ class MetricsManager:
         # shared seam; a manager constructed standalone (e.g. with a lightweight
         # test portfolio) falls back to its own in-memory backend.
         from itrader.portfolio_handler.base import PortfolioStateStorage
-        from itrader.portfolio_handler.storage import PortfolioStateStorageFactory
+        from itrader.portfolio_handler.storage import build_portfolio_state_storage
         storage = getattr(portfolio, "state_storage", None)
         if storage is None:
             # WR-01: thread max_snapshots through so the fabricated backend's
@@ -114,7 +114,7 @@ class MetricsManager:
             # backend rather than silently falling back to in-memory. Defaults
             # ("backtest"/None) keep a lightweight test portfolio in-memory
             # (oracle-dark); portfolio.py:_init_managers is the primary lever.
-            storage = PortfolioStateStorageFactory.create(
+            storage = build_portfolio_state_storage(
                 getattr(portfolio, "_environment", "backtest"),
                 max_snapshots=self.max_snapshots,
                 sql_engine=getattr(portfolio, "_sql_engine", None),

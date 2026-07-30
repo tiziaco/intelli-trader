@@ -12,7 +12,7 @@ from .order_validator import EnhancedOrderValidator
 from .order_manager import OrderManager
 from ..events_handler.bus import EventBus
 from ..events_handler.events import SignalEvent, OrderEvent, OrderAckEvent, FillEvent
-from .storage import OrderStorageFactory
+from .storage import build_order_storage
 from ..universe import Universe
 
 from itrader.logger import get_itrader_logger
@@ -69,11 +69,11 @@ class OrderHandler:
 
 		self.logger = get_itrader_logger().bind(component="OrderHandler")
 
-		# `.storage` exists as the wiring seam `compose_engine` reads back for
+		# `.storage` exists as the wiring seam `build_handler_graph` reads back for
 		# `portfolio_handler.set_order_storage(...)`, NOT as a read path: the same
 		# instance goes to OrderManager, which owns every storage read
 		# (facade -> manager -> storage).
-		self.storage = order_storage or OrderStorageFactory.create(environment, sql_engine=sql_engine)
+		self.storage = order_storage or build_order_storage(environment, sql_engine=sql_engine)
 
 		self.order_manager = OrderManager(
 			self.storage,

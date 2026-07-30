@@ -8,11 +8,11 @@ mirroring the order-storage seam:
 
 from ..base import PortfolioStateStorage, IdLike
 from .in_memory_storage import InMemoryPortfolioStateStorage
-from .storage_factory import PortfolioStateStorageFactory
+from .storage_factory import build_portfolio_state_storage
 
 __all__ = [
     'PortfolioStateStorage',
     'IdLike',
     'InMemoryPortfolioStateStorage',
-    'PortfolioStateStorageFactory',
+    'build_portfolio_state_storage',
 ]

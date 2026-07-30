@@ -11,7 +11,7 @@ What makes this structurally smaller than what it replaces, rather than merely r
 * **No post-construction attach loop.** The facade takes every collaborator as a REQUIRED
   constructor parameter, so a built-but-unattached collaborator is a ``TypeError`` here.
 * **No mode selector.** Venue selection is data (the catalogue) plus two arguments; there is
-  no ``VenueSpec`` object travelling between two functions that each re-derive it.
+  no spec object travelling between two functions that each re-derive it.
 
 Indentation: 4-space. ``mypy --strict`` applies, and this module is deliberately NOT covered
 by any ``ignore_errors`` override.
@@ -42,6 +42,7 @@ from itrader.execution_handler.exchanges.paper import (
     build_paper_exchange,
     paper_exchange_recipe,
 )
+from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.execution_handler.execution_handler import (
     COMPUTE_VENUE,
     DEFAULT_ACCOUNT_ID,
@@ -488,8 +489,6 @@ def _venue_is_simulated(execution_handler: Any, venue_name: str) -> bool:
     The parameter stays a bare VENUE string because "is this venue simulated?" is a property
     of the venue, not of one account on it.
     """
-    from itrader.execution_handler.exchanges.simulated import SimulatedExchange
-
     return any(
         isinstance(exchange, SimulatedExchange)
         for (venue, _account_id), exchange in execution_handler.exchanges.items()

@@ -11,9 +11,9 @@ from itrader.strategy_handler.managed_strategies import ManagedStrategies
 from itrader.strategy_handler.pair_base import PairStrategy
 from itrader.strategy_handler.signal_record import SignalRecord
 from itrader.strategy_handler.storage import (
-	SignalStorageFactory,
+	build_signal_store,
 	SignalStore,
-	StrategyRegistryStorageFactory,
+	build_strategy_registry_store,
 )
 from itrader.events_handler.bus import EventBus
 from itrader.events_handler.events import (
@@ -89,7 +89,7 @@ class StrategiesHandler(object):
 			boundary that stops an external payload from naming an arbitrary class.
 		portfolio_read_model: `PortfolioReadModel | None`
 			The flat-detect read-model consulted on FILL to decide whether a pending
-			removal completed. Passed by ``compose_engine`` on BOTH paths, so it is
+			removal completed. Passed by ``build_handler_graph`` on BOTH paths, so it is
 			non-``None`` in backtest too — do NOT infer the run mode from it.
 		"""
 		self.global_queue: "EventBus" = global_queue
@@ -97,7 +97,7 @@ class StrategiesHandler(object):
 		# Bound BEFORE the collaborator block — ManagedStrategies takes it by injection.
 		self.logger = get_itrader_logger().bind(component="StrategiesHandler")
 		self.signal_store: SignalStore = (
-			signal_store or SignalStorageFactory.create(environment, sql_engine=sql_engine)
+			signal_store or build_signal_store(environment, sql_engine=sql_engine)
 		)
 		# Tested with `is not None` rather than `or`, because a store object's
 		# truthiness is not part of its contract and an `or` would silently re-derive on
@@ -105,7 +105,7 @@ class StrategiesHandler(object):
 		# deps and the properties below read through to it.
 		resolved_registry_store: "Optional[Any]" = (
 			registry_store if registry_store is not None
-			else StrategyRegistryStorageFactory.create(environment, sql_engine=sql_engine)
+			else build_strategy_registry_store(environment, sql_engine=sql_engine)
 		)
 		# The roster collaborator OWNS `strategies`, `_pending_removals` and the two
 		# shorts-enabling flags; the handler holds none of that state itself.

@@ -46,7 +46,7 @@ from itrader.core.enums import (
 from itrader.core.ids import PortfolioId, StrategyId
 from itrader.order_handler.order import Order
 from itrader.strategy_handler.signal_record import SignalRecord
-from itrader.strategy_handler.storage import SignalStorageFactory
+from itrader.strategy_handler.storage import build_signal_store
 
 # A business time (never wall clock) reused so derived timestamps are deterministic.
 _BT = datetime(2020, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -204,7 +204,7 @@ def test_order_create_terminalize_durable_survives_restart(pg_url):
 def test_signal_store_live_driven_off_engine_critical_path(pg_url):
     """The signal store is live-driven and its persist is off the connector coroutine (D-11).
 
-    ``SignalStorageFactory.create('live', sql_engine=...)`` returns the live
+    ``build_signal_store('live', sql_engine=...)`` returns the live
     ``CachedSqlSignalStorage`` wrapper. The persist runs on the calling (engine-thread analog)
     with NO running asyncio loop — proving it is off the connector's event loop (Pitfall 9),
     so a signal write can never stall the loop. The store-first write returns promptly and the
@@ -212,7 +212,7 @@ def test_signal_store_live_driven_off_engine_critical_path(pg_url):
     """
     backend = _make_backend(pg_url)
     try:
-        signal_store = SignalStorageFactory.create('live', sql_engine=backend)
+        signal_store = build_signal_store('live', sql_engine=backend)
         backend.metadata.create_all(backend.engine, checkfirst=True)
         assert type(signal_store).__name__ == "CachedSqlSignalStorage"
 

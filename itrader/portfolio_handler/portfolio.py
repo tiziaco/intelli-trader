@@ -20,7 +20,7 @@ from itrader.portfolio_handler.account import Account, SimulatedMarginAccount
 from itrader.portfolio_handler.metrics.metrics_manager import MetricsManager
 from itrader.portfolio_handler.storage import (
 	PortfolioStateStorage,
-	PortfolioStateStorageFactory,
+	build_portfolio_state_storage,
 )
 from itrader.core.ids import PortfolioId
 from itrader.core.exceptions.base import ValidationError, StateError, ConfigurationError
@@ -151,7 +151,7 @@ class Portfolio(object):
 	def _init_managers(self, account: Account) -> None:
 		"""Bind the RECEIVED account and build the three portfolio managers.
 
-		The account is RECEIVED, never minted: ``VenuePlugin.new_account`` is the sole
+		The account is RECEIVED, never minted: ``build_compute_account`` is the sole
 		owner of the margin-vs-cash selection rule. The field stays declared as the
 		``Account`` ABC so any leaf wires cleanly; margin-only
 		call sites narrow via ``_require_margin_account``.
@@ -172,7 +172,7 @@ class Portfolio(object):
 		account_seam = getattr(account, "state_storage", None)
 		self.state_storage: PortfolioStateStorage = (
 			account_seam if account_seam is not None
-			else PortfolioStateStorageFactory.create(
+			else build_portfolio_state_storage(
 				self._environment,
 				sql_engine=self._sql_engine,
 				portfolio_id=self.portfolio_id,

@@ -46,7 +46,7 @@ from itrader.portfolio_handler.portfolio_factory import (
     AccountFactory,
     PortfolioFactory,
 )
-from itrader.venues.registry import DEFAULT_ACCOUNT_ID
+from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
 from tests.support.venue_wiring import compute_account
 
 

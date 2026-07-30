@@ -6,7 +6,7 @@ establish, which the requirement probe could not classify into a data-shape cate
 * ``Portfolio`` is constructible ONLY with an account supplied — omitting it raises
   ``TypeError`` rather than silently minting one (T-11.1-41);
 * no branch inside ``Portfolio`` selects an account KIND — the margin-vs-cash rule
-  has exactly one owner, ``VenuePlugin.new_account`` (D-03);
+  has exactly one owner, ``build_compute_account`` (D-03);
 * the account a portfolio ends up holding is the EXACT object its account authority
   minted for it, proven by ``is``-identity in a TWO-account setup;
 * that account and the portfolio's three managers share ONE
@@ -114,7 +114,7 @@ def test_the_account_parameter_has_no_default() -> None:
 def test_portfolio_never_re_selects_the_account_kind() -> None:
     """D-03: the margin flag on the config does NOT make Portfolio swap the leaf.
 
-    The selection rule lives in ``VenuePlugin.new_account`` and nowhere else. This
+    The selection rule lives in ``build_compute_account`` and nowhere else. This
     hands a portfolio whose config enables margin a CASH leaf — a combination the
     composition root never produces — and asserts the portfolio keeps exactly what it
     was given. An implementation that re-derived the kind from ``self.config`` would
@@ -321,7 +321,7 @@ def test_a_cash_leaf_cannot_be_built_without_naming_its_persistence_seam() -> No
     """Omitting ``state_storage`` is a ``TypeError``, not a private in-memory backend.
 
     Pins 11.1-REVIEW **WR-04**. The deleted default was
-    ``PortfolioStateStorageFactory.create("backtest")``: a leaf that fell back to it
+    ``build_portfolio_state_storage("backtest")``: a leaf that fell back to it
     kept its reserved cash, locked margin and cash-operation audit trail on a backend
     NOBODY else held. In backtest nothing else reads those containers, so the oracle
     and the whole suite stayed green; in live the restart path
@@ -356,7 +356,7 @@ def test_neither_leaf_declares_a_default_for_its_persistence_seam() -> None:
     that shape reintroduces exactly what this phase removes: an Optional production
     collaborator whose absence is a runtime discovery rather than a call-site one.
     ``inspect`` is the durable form of the property (the same convention
-    ``test_paper_plugin.py`` uses on the ``account_factory`` closure).
+    the paper-recipe tests use).
     """
     for leaf in (SimulatedCashAccount, SimulatedMarginAccount):
         parameter = inspect.signature(leaf.__init__).parameters["state_storage"]
@@ -373,9 +373,9 @@ def test_a_named_seam_is_the_one_the_leaf_routes_through() -> None:
     Guards against "fixing" the refusal by reintroducing a default under another
     name — the leaf must still adopt exactly the object it was handed.
     """
-    from itrader.portfolio_handler.storage import PortfolioStateStorageFactory
+    from itrader.portfolio_handler.storage import build_portfolio_state_storage
 
-    seam = PortfolioStateStorageFactory.create("backtest")
+    seam = build_portfolio_state_storage("backtest")
     account = SimulatedCashAccount(Decimal("1000"), state_storage=seam)
 
     assert account.state_storage is seam

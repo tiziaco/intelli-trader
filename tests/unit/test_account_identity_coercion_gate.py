@@ -27,11 +27,11 @@ than silently re-baselining the oracle.
 HOW IT READS SOURCE — by parsing the file CONTENTS with ``ast`` IN-PROCESS (nothing is
 shelled out, so the gate works in any checkout). The AST approach is what lets the negative
 half exclude DOCSTRINGS and COMMENTS without excluding whole files: a coercion is a real
-``X or <default>`` boolean expression in code, whereas ``itrader/venues/bundles.py``'s
-key-discipline docstring MENTIONS the idiom as the governing rule and must be KEPT. A
-string literal inside a docstring is an ``ast.Constant`` expression statement, never a
-``BoolOp``, so it cannot trip the negative half — and the counts in the positive half are
-``ast.Name`` uses, which ignore imports, docstrings and comments alike.
+``X or <default>`` boolean expression in code, whereas a key-discipline docstring that
+MENTIONS the idiom as the governing rule must be KEPT. A string literal inside a docstring
+is an ``ast.Constant`` expression statement, never a ``BoolOp``, so it cannot trip the
+negative half — and the counts in the positive half are ``ast.Name`` uses, which ignore
+imports, docstrings and comments alike.
 
 This file lives at the TOP LEVEL of ``tests/unit/`` (no ``__init__.py`` collision hazard,
 per MEMORY: two same-named top-level test packages break full-suite collection). Its
@@ -45,20 +45,19 @@ import pathlib
 
 # The coercion target, built by construction rather than written as one literal token so
 # the gate describes what it forbids in prose without reproducing a grep-able idiom in a
-# source comment (the ACCT-04 comment-text discipline). Both forms are equivalent: the
-# ``registry`` module binds this name to the string on the right.
+# source comment (the ACCT-04 comment-text discipline). Both forms are equivalent:
+# ``execution_handler.py`` binds this name to the string on the right.
 _COERCION_IDENT = "DEFAULT_ACCOUNT" + "_ID"
 _COERCION_DEFAULT_STR = "default"
 
 # Repo root: this file is tests/unit/<name>.py, so the tree root is two parents up.
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 
-# The live roots scanned alongside the venues package: the superseded single-module root
-# (deleted in the redesign's final stage) and the package that replaced it. compose.py is
-# deliberately NOT scanned: it holds no code-level DEFAULT_ACCOUNT_ID at all (only
-# docstring references), so there is nothing for the negative half to protect there.
+# The live root's two modules: the builder that wires the system and the facade it
+# builds. ``graph.py`` is deliberately NOT scanned: it is mode-blind and holds no
+# code-level DEFAULT_ACCOUNT_ID at all, so there is nothing for the negative half to
+# protect there.
 _LIVE_ROOTS = (
-    _ROOT / "itrader" / "trading_system" / "live_trading_system.py",
     _ROOT / "itrader" / "trading_system" / "live" / "build.py",
     _ROOT / "itrader" / "trading_system" / "live" / "system.py",
 )
@@ -70,14 +69,14 @@ _VENUES_DIR = _ROOT / "itrader" / "venues"
 # the golden oracle, so the gate fails if any count drops. Counts are ``ast.Name`` uses,
 # which exclude the ``from ... import DEFAULT_ACCOUNT_ID`` line and every docstring mention.
 _BACKTEST_IDENTITY_COUNTS = {
-    "itrader/execution_handler/execution_handler.py": 5,
+    # Three routing/registry uses plus the DECLARATION itself: the constant is defined
+    # here (it was re-homed out of the deleted venue registry), and an assignment
+    # target is a ``Name`` node like any other.
+    "itrader/execution_handler/execution_handler.py": 4,
     # The backtest root's paper pair key: the registry entry it builds, plus the
     # post-run settings lookup.
     "itrader/trading_system/backtest/backtest_trading_system.py": 2,
     "itrader/trading_system/universe_wiring.py": 2,
-    # The (COMPUTE_VENUE, DEFAULT_ACCOUNT_ID) paper lookup in the live file (survives
-    # D-35) — an account-identity coercion it is NOT, so it is a KEPT use, not a swept one.
-    "itrader/trading_system/live_trading_system.py": 1,
     # A validator-LESS ``AccountFactory`` names the compute venue's ONE account for a
     # portfolio that names none, so a single-account system's orders resolve to the pair
     # its exchange is registered under. The naming lives INSIDE that arm's own return
@@ -137,7 +136,7 @@ def _venue_sources() -> list[pathlib.Path]:
 def test_no_account_identity_coercion_survives_under_venues() -> None:
     """ACCT-04/WR-03: zero ``X or DEFAULT_ACCOUNT_ID`` coercions anywhere in venues/.
 
-    Every deleted read-side coercion (assemble, the two okx_plugin memo keys, the venue-UID
+    Every deleted read-side coercion (assemble, the two OKX plugin memo keys, the venue-UID
     guard) is a place the write side and the read side could disagree about the same real
     account. A partial deletion RELOCATES the asymmetry rather than closing it, so the gate
     demands the whole package be clean — not merely the sites the requirement named.
@@ -188,8 +187,8 @@ def test_the_negative_half_would_catch_a_reintroduced_coercion() -> None:
     string_form = f'account_id = spec.account_id or "{_COERCION_DEFAULT_STR}"\n'
     assert _coercion_count(ast.parse(string_form)) == 1
 
-    # A docstring MENTIONING the idiom (bundles.py's kept key-discipline rule) must NOT
-    # trip the gate — it is a Constant expression, never a BoolOp.
+    # A docstring MENTIONING the idiom (a kept key-discipline rule) must NOT trip the
+    # gate — it is a Constant expression, never a BoolOp.
     docstring_form = f'"""callers apply spec.account_id or {_COERCION_IDENT} first."""\n'
     assert _coercion_count(ast.parse(docstring_form)) == 0
 

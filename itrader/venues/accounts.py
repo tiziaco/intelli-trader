@@ -59,6 +59,7 @@ from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping, Optional
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.exc import IntegrityError
 
+from itrader.core.enums import ErrorSeverity
 from itrader.core.exceptions import (
     DuplicateVenueAccountProvisionError,
     UnknownVenueAccountConfigKeyError,
@@ -66,6 +67,7 @@ from itrader.core.exceptions import (
     VenueAccountInUseError,
     VenueAccountNotProvisionedError,
 )
+from itrader.events_handler.events import ErrorEvent
 from itrader.logger import get_itrader_logger
 from itrader.outils.dict_merge import recursive_merge
 from itrader.storage.portfolio_definition_store import PortfolioDefinitionStore
@@ -421,9 +423,6 @@ def _emit_mismatch_alert(
     The payload carries the pair and BOTH UIDs so an operator can act, and NOTHING else: no
     credential material and no ``secret_ref`` value ever reach the egress channel.
     """
-    from itrader.core.enums import ErrorSeverity
-    from itrader.events_handler.events import ErrorEvent
-
     try:
         alert_sink.alert(
             ErrorEvent(

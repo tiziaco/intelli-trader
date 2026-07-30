@@ -488,7 +488,7 @@ def test_error_route_consumer_failure_does_not_recurse(monkeypatch: Any) -> None
     """
     system = _live_system(monkeypatch)
     # 08-03 (D-06): the live publish-and-continue policy is injected at EventHandler
-    # construction (build_live_system → compose_engine) — the old start() monkeypatch is
+    # construction (build_live_system → build_handler_graph) — the old start() monkeypatch is
     # gone, so no per-test policy install is needed. The alert-sink rides on the injected
     # ErrorHandler (D-03).
     sink = _RaisingSink()

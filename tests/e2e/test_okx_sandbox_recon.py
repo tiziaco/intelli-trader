@@ -293,7 +293,7 @@ def _seed_believed_position_to_venue(system, portfolio_id):
 
     The only OKX demo account available is NON-FLAT: OKX pre-seeds ~1 BTC and the EEA/MiCA
     account cannot be sold flat (sells blocked by a price-floor > best-bid). On such an
-    account ``_run_session_baseline_guard`` (live_trading_system.py:579) reads a base-asset
+    account ``_run_session_baseline_guard`` reads a base-asset
     residual and latches ``halt('baseline-residual')`` inside ``start()`` — the two online
     start()-driven tests never reach RUNNING.
 

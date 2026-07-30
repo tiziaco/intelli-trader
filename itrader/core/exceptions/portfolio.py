@@ -310,7 +310,7 @@ class UnknownVenueAccountConfigKeyError(PortfolioError):
     """A ``venue_accounts.config_json`` key is not on the mergeable allowlist (11.2-06, D-38).
 
     The typed refusal ``VenueAccountManager.bring_online`` raises BEFORE it merges an
-    account's own config onto its ``VenueSpec``, and it is the security control D-38
+    account's own config onto the run's config, and it is the security control D-38
     names — not a tidiness check.
 
     **Why an unrecognised key must RAISE rather than be dropped.** The three mergeable

@@ -30,7 +30,7 @@ from itrader.core.ids import PortfolioId
 from itrader.core.portfolio_read_model import PortfolioReadModel
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
-from itrader.venues.registry import DEFAULT_ACCOUNT_ID
+from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
 from tests.support.venue_wiring import (
     backtest_portfolio_handler,
     compute_account,

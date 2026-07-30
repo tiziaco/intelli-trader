@@ -18,7 +18,7 @@ config by the caller, never re-derived here. Import-inert: imports only stdlib
 collaborators (no ccxt.pro / no SQL on the backtest import path).
 ``build_live_system`` composes and wires it.
 
-Indentation: 4 spaces (matches ``live_trading_system.py``).
+Indentation: 4 spaces (matches the live root under ``trading_system/live/``).
 """
 
 import queue

@@ -13,7 +13,7 @@ dependency: ``itrader`` requires no change to accept it. That is why the Protoco
 ``EnvCredentialResolver`` — and imports no cloud SDK, no secret-manager client and no
 encryption library (the milestone-wide zero-new-dependency gate, P1-P12).
 
-**Why this closes the D-12 caveat.** ``ConnectorProvider._memo`` is keyed on the
+**Why this closes the D-12 caveat.** the connector pool's memo is keyed on the
 ``(venue, account_id)`` PAIR, but the ``_plugins`` map behind it is venue-only and
 ``build(spec)`` receives one spec — so without a resolver two ``account_id``s build two
 connectors reading IDENTICAL global ``OKX_API_*`` credentials. Per-account credential
@@ -70,7 +70,7 @@ _SUPPORTED_SCHEMES = (f"{_ENV_SCHEME}:",)
 class CredentialResolver(Protocol):
     """Structural seam turning a ``secret_ref`` POINTER into credential material (D-02).
 
-    ``@runtime_checkable`` (mirrors the ``LiveConnector`` / ``VenuePlugin`` /
+    ``@runtime_checkable`` (mirrors the ``LiveConnector`` /
     ``AlertSink`` seams) so a fake is swap-in for tests and a Vault/AWS/GCP-backed
     implementation — living in the web app's own repo, with its own dependency — is
     swap-in for production without any ``itrader`` change.

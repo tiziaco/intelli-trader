@@ -35,7 +35,7 @@ Behavior-preserving-interim: in 06-05 this is invoked via the existing
 touch the facade's safety/reconcile/stream method bodies — the freeze-gate + the
 WR-03/membership guards are wired, not reimplemented.
 
-Indentation: 4 SPACES (matches ``live_trading_system.py`` — the facade that
+Indentation: 4 SPACES (matches ``trading_system/live/system.py`` — the facade that
 delegates to this collaborator).
 """
 

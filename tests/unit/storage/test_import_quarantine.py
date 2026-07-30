@@ -31,16 +31,16 @@ import sys
 _PROBE = r"""
 import sys
 
-from itrader.order_handler.storage.storage_factory import OrderStorageFactory
+from itrader.order_handler.storage.storage_factory import build_order_storage
 from itrader.portfolio_handler.storage.storage_factory import (
-    PortfolioStateStorageFactory,
+    build_portfolio_state_storage,
 )
-from itrader.strategy_handler.storage.storage_factory import SignalStorageFactory
+from itrader.strategy_handler.storage.storage_factory import build_signal_store
 
 # Construct each backtest backend (the hot-path arm). None of these may pull SQL.
-OrderStorageFactory.create("backtest")
-PortfolioStateStorageFactory.create("backtest")
-SignalStorageFactory.create("backtest")
+build_order_storage("backtest")
+build_portfolio_state_storage("backtest")
+build_signal_store("backtest")
 
 # GATE-01 inertness assertions on a clean module table.
 assert "sqlalchemy" not in sys.modules, (

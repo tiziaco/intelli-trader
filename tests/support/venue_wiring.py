@@ -1,9 +1,8 @@
-"""ONE shared backtest venue-wiring recipe for the direct-construction test sites (11.1-07).
+"""ONE shared backtest venue-wiring recipe for the direct-construction test sites.
 
-``ExecutionHandler`` no longer mints its own ``SimulatedExchange``; it RESOLVES one
-through ``VenueBundles`` (D-06/D-08). Every test that builds an ``ExecutionHandler``
-directly therefore needs the same four-line recipe production uses — registry,
-plugin-with-config, empty ``ConnectorProvider``, bundle memo.
+``ExecutionHandler`` does not mint its own ``SimulatedExchange``; the composition root
+builds one and injects the ``(venue, account_id) -> exchange`` map. Every test that
+builds an ``ExecutionHandler`` directly therefore needs the same recipe production uses.
 
 This module exists so those sites share ONE recipe rather than five. Five hand-rolled
 copies drift: one gets a default-preset config while the run needs a seeded one, another
@@ -13,8 +12,8 @@ site moves together.
 
 ``exchange_config`` defaults to ``default_exchange_config()`` — the preset UNION
 ``{BTCUSD}``, which is what these sites historically got from the handler's own
-no-config fallback, so their symbol admission is unchanged. D-17 still holds: a REAL run
-passes its run-derived config; this default is the fallback for callers that have none.
+no-config fallback, so their symbol admission is unchanged. A REAL run passes its
+run-derived config; this default is the fallback for callers that have none.
 
 4-SPACE indentation (tests house style).
 """
@@ -25,40 +24,13 @@ import random
 from types import SimpleNamespace
 from typing import Any, Optional
 
-from itrader.connectors.provider import ConnectorProvider
-from itrader.execution_handler.execution_handler import default_exchange_config
-from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
-from itrader.venues.bundles import VenueBundles
-from itrader.venues.paper_plugin import PaperVenuePlugin
-from itrader.venues.registry import (
+from itrader.execution_handler.exchanges.paper import build_paper_exchange
+from itrader.execution_handler.execution_handler import (
     COMPUTE_VENUE,
     DEFAULT_ACCOUNT_ID,
-    ExecutionVenueRegistry,
+    default_exchange_config,
 )
-
-
-def backtest_venue_bundles(
-    bus: Any,
-    *,
-    exchange_config: Optional[Any] = None,
-    rng: Optional[random.Random] = None,
-) -> VenueBundles:
-    """Build the backtest-shaped ``VenueBundles`` a direct ``ExecutionHandler`` needs.
-
-    Mirrors both backtest arms in ``backtest_trading_system.py``: an
-    ``ExecutionVenueRegistry`` holding ONE ``PaperVenuePlugin`` under ``'paper'``, a
-    REAL, EMPTY ``ConnectorProvider({})`` (D-04 — absence is an empty collection, never
-    ``None``), and a minimal ctx carrying just the two fields ``build_bundle`` reads:
-    ``bus`` and ``rng``.
-
-    ``rng`` defaults to ``random.Random(42)``, the run-wide determinism seed.
-    """
-    registry = ExecutionVenueRegistry()
-    registry.register(
-        COMPUTE_VENUE, PaperVenuePlugin(exchange_config or default_exchange_config()))
-    ctx = SimpleNamespace(
-        bus=bus, rng=rng if rng is not None else random.Random(42))
-    return VenueBundles(registry, ConnectorProvider({}), ctx)
+from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 
 
 def backtest_exchange_registry(
@@ -67,23 +39,22 @@ def backtest_exchange_registry(
     exchange_config: Optional[Any] = None,
     rng: Optional[random.Random] = None,
 ) -> Any:
-    """Build the backtest-shaped ``(venue, account_id) -> exchange`` registry (D-43).
+    """Build the backtest-shaped ``(venue, account_id) -> exchange`` registry.
 
-    ``ExecutionHandler`` no longer builds/holds its own registry — the map is
-    composition-root-owned and injected (D-43). Every direct-construction test site that
-    builds an ``ExecutionHandler`` therefore needs the SAME seed production uses: build the
-    backtest bundles, then seed the paper exchange into a fresh dict through the shared
-    ``seed_exchange_registry`` helper. This is the exact recipe ``compose_engine`` runs, so a
-    directly-built handler resolves the identical paper exchange under the same pair key.
+    ``ExecutionHandler`` never builds or holds its own registry — the map is
+    composition-root-owned and injected. Every direct-construction test site that builds
+    an ``ExecutionHandler`` therefore needs the SAME seed the backtest root produces: one
+    connected paper exchange under the ``(paper, default)`` pair key, built through the
+    venue's own recipe so a directly-built handler resolves what production resolves.
+
+    ``rng`` defaults to ``random.Random(42)``, the run-wide determinism seed.
     """
-    from itrader.execution_handler.execution_handler import seed_exchange_registry
-
-    registry: dict[tuple[str, str], Any] = {}
-    seed_exchange_registry(
-        registry,
-        backtest_venue_bundles(bus, exchange_config=exchange_config, rng=rng),
+    exchange = build_paper_exchange(
+        exchange_config=exchange_config or default_exchange_config(),
+        bus=bus,
+        rng=rng if rng is not None else random.Random(42),
     )
-    return registry
+    return {(COMPUTE_VENUE, DEFAULT_ACCOUNT_ID): exchange}
 
 
 def single_account_read_model(account_id: str = DEFAULT_ACCOUNT_ID) -> Any:
@@ -110,9 +81,9 @@ def in_memory_state_storage() -> Any:
     here, where "in-memory is fine" is a test's own statement rather than a
     production constructor's assumption.
     """
-    from itrader.portfolio_handler.storage import PortfolioStateStorageFactory
+    from itrader.portfolio_handler.storage import build_portfolio_state_storage
 
-    return PortfolioStateStorageFactory.create("backtest")
+    return build_portfolio_state_storage("backtest")
 
 
 def compute_account(
@@ -130,12 +101,11 @@ def compute_account(
     supply it. This exists so those ~68 sites share ONE recipe rather than 68 ad-hoc
     ones.
 
-    It reaches the account THROUGH ``PaperVenuePlugin.new_account`` rather than
-    constructing a ``SimulatedCashAccount`` directly, and that indirection is the
-    point: D-03 makes ``new_account`` the SOLE owner of the margin-vs-cash rule, so
-    a test tree that hand-builds leaves would quietly stop agreeing with production
-    the first time that rule changed. Going through the plugin means every site
-    follows automatically.
+    It reaches the account THROUGH ``build_compute_account`` rather than constructing a
+    ``SimulatedCashAccount`` directly, and that indirection is the point: that function
+    is the SOLE owner of the margin-vs-cash rule, so a test tree that hand-builds leaves
+    would quietly stop agreeing with production the first time that rule changed. Going
+    through the one constructor means every site follows automatically.
 
     ``state_storage`` may be omitted: THIS RECIPE then mints a plain in-memory
     backend, and ``Portfolio`` ADOPTS that instance as its own seam, so the account
@@ -150,25 +120,22 @@ def compute_account(
     Tests genuinely do want a throwaway backend, so they say so; production must
     name the seam the portfolio's other managers hold.
     """
-    from itrader.venues.bundle import VenueAccountConfig
+    from itrader.portfolio_handler.account.simulated import build_compute_account
 
     seam = (
         state_storage if state_storage is not None
         else in_memory_state_storage()
     )
-    return PaperVenuePlugin(default_exchange_config()).new_account(
-        VenueAccountConfig(
-            initial_cash=initial_cash,
-            enable_margin=enable_margin,
-            state_storage=seam,
-            # D-23 (11.2-08): the compute leaf is the ONE storage site for the
-            # (venue_name, account_id) pair. A direct-construction test that wants
-            # its Portfolio to REPORT an identity must build the account with it —
-            # ``Portfolio.venue_name`` / ``.account_id`` now read the leaf, not a
-            # second copy the portfolio used to store.
-            account_id=account_id,
-            venue_name=venue_name,
-        )
+    return build_compute_account(
+        initial_cash=initial_cash,
+        enable_margin=enable_margin,
+        state_storage=seam,
+        # The compute leaf is the ONE storage site for the (venue_name, account_id)
+        # pair. A direct-construction test that wants its Portfolio to REPORT an
+        # identity must build the account with it — ``Portfolio.venue_name`` /
+        # ``.account_id`` read the leaf, not a second copy the portfolio stores.
+        account_id=account_id,
+        venue_name=venue_name,
     )
 
 
@@ -177,8 +144,6 @@ def backtest_portfolio_factory(
     *,
     environment: str = "backtest",
     sql_engine: Any = None,
-    exchange_config: Optional[Any] = None,
-    rng: Any = None,
 ) -> Any:
     """A backtest-shaped ``PortfolioFactory`` over a validator-less ``AccountFactory``.
 
@@ -189,9 +154,9 @@ def backtest_portfolio_factory(
     state-storage selectors so the factory scopes state storage exactly as the handler
     expects.
 
-    ``bus`` / ``exchange_config`` / ``rng`` are accepted and unread: the account factory
-    builds its leaf directly and touches no exchange. They stay in the signature because
-    every call site passes them and the handler recipe below forwards the bus.
+    ``bus`` is accepted and unread: the account factory builds its leaf directly and
+    touches no exchange. It stays in the signature because every call site passes it
+    positionally and the handler recipe below forwards it.
     """
     from itrader.portfolio_handler.portfolio_factory import (
         AccountFactory,

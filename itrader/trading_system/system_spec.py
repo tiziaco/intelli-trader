@@ -106,20 +106,19 @@ class SystemSpec:
 	sink the factory forwards into the engine. It is typed ``Any`` deliberately so
 	the spec NEVER imports the SQL surface (GATE-01 import inertness — the spec
 	stays SQL-free); the concrete ``ResultsStore`` annotation lives on the
-	``compose_engine`` seam. Kept LAST so existing positional/by-name e2e + oracle
+	``build_handler_graph`` seam. Kept LAST so existing positional/by-name e2e + oracle
 	call-sites stay store-free (default ``None`` → byte-exact, D-04).
 
 	``execution_venue`` / ``data_provider`` / ``account_id`` (all default ``None``,
 	VENUE-01/D-07) are the LIVE-ONLY venue/provider selectors appended LAST (after
 	``results_store``) so every existing positional/by-name oracle + e2e call-site
 	stays valid and byte-exact. They are typed ``Any`` for the same import-inertness
-	reason (the spec never imports the venue substrate). ``execution_venue`` selects
-	the ``ExecutionVenueRegistry`` plugin, ``data_provider`` the
-	``DataProviderRegistry`` plugin, and ``account_id`` keys the ``ConnectorProvider``
-	memo. The single default ``"default"`` is applied at READ time in
-	the venue-account manager, not stored here, and ``compose_engine`` — which reads
-	only its six A1 fields — never touches these, so the backtest stays byte-exact
-	(D-07 single-default seam).
+	reason (the spec never imports the venue substrate). ``execution_venue`` and
+	``data_provider`` name catalogue entries and ``account_id`` names the venue
+	account whose session an order reaches. The single default ``"default"`` is
+	applied at READ time in the venue-account manager, not stored here, and
+	``build_handler_graph`` — which reads only its six A1 fields — never touches
+	these, so the backtest stays byte-exact (D-07 single-default seam).
 	"""
 
 	start: str

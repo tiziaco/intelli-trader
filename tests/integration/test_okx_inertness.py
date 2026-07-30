@@ -80,28 +80,13 @@ _FORBIDDEN = (
     "itrader.storage.system_store",
     "itrader.storage.venue_store",
     "itrader.storage.strategy_registry_store",
-    # Phase 5 (05-05, VENUE-02 inertness gate): the concrete OKX venue/data/connector
-    # plugin module is LIVE-ONLY — it is registered at the LTS root (in
-    # build_live_system, P6) and its OKX concretion imports + OkxSettings()
-    # construction live INSIDE build*() (D-04 triple-deferral). If a future edit
-    # hoists that concretion import to module scope (or pulls okx_plugin onto the
-    # backtest path) this probe fails loudly, protecting the oracle byte-exactness +
-    # the W1/W2 perf gate.
-    #
-    # 11.1-07 (D-04) REMOVED `itrader.venues.paper_plugin` from this list — by
-    # DECISION, not by weakening. The backtest now goes through the SAME venue path
-    # live uses: `backtest_trading_system` builds an ExecutionVenueRegistry, registers
-    # `PaperVenuePlugin(exchange_config)` and hands compose a `VenueBundles`. The paper
-    # plugin module is therefore ON the backtest path on purpose, and forbidding it
-    # would forbid the wiring the phase exists to land.
-    #
-    # The protection that MATTERS is unchanged and is asserted below, not here: the
-    # register-vs-build block imports paper_plugin + registers the plugin objects
-    # INSIDE the ccxt-absent window, so a hoisted `SimulatedExchange`/ccxt import in the
-    # plugin still reddens this gate. `ccxt` / `ccxt.pro` / `itrader.connectors.okx`
-    # remain forbidden for the backtest root import above, which is the real invariant
-    # (paper_plugin must pull nothing heavy — not "paper_plugin must be unimported").
-    "itrader.venues.okx_plugin",
+    # The OKX execution and data adapters (which host their venue recipes) are named in
+    # the boundary-roots assertion below rather than here, so a leaked submodule of
+    # either trips the gate too. The paper adapter and its recipe are deliberately NOT
+    # forbidden anywhere: the backtest root builds its paper exchange through the same
+    # recipe live uses, so that module is ON the backtest path on purpose. What protects
+    # the gate there is the ccxt/SQL absence asserted for the backtest root import above
+    # — "the paper recipe must pull nothing heavy", not "must be unimported".
     # Phase 11 (11-04, D-02 credentials boundary): the CredentialResolver seam is
     # LIVE-ONLY — it is constructed inside build_live_system and reached by PATH import
     # (mirroring okx_settings), never through the config barrel. Listing it here makes
@@ -158,18 +143,14 @@ assert not _sql_leaked, (
 # The two-roots import boundary, asserted by PREFIX (supersedes the exact-name SEAM-04
 # check it grew out of).
 #
-# The original assertion named ``itrader.trading_system.live_trading_system`` exactly,
-# which was sufficient while the live root was ONE module. Now that the live side is a
-# PACKAGE, exact-name matching is insufficient in the precise way that matters: a leaked
-# ``itrader.trading_system.live.bootstrap`` would satisfy an exact check on
-# ``itrader.trading_system.live`` while dragging SQLAlchemy onto the backtest graph. The
-# boundary is therefore stated over ROOTS, and a root matches itself or anything beneath
-# it.
+# An exact-name check on ``itrader.trading_system.live`` is insufficient in the precise
+# way that matters: a leaked ``itrader.trading_system.live.bootstrap`` would satisfy it
+# while dragging SQLAlchemy onto the backtest graph. The boundary is therefore stated
+# over ROOTS, and a root matches itself or anything beneath it.
 #
 # Matching is on module-path BOUNDARIES (``name == root`` or ``name.startswith(root +
-# ".")``), never a bare string prefix — a bare prefix would make the coincidental overlap
-# between ``...live`` and ``...live_trading_system`` do the work by accident. Both are
-# listed explicitly instead, so each is forbidden on purpose.
+# ".")``), never a bare string prefix — a bare prefix would let a coincidental name
+# overlap do the work by accident. Every forbidden root is listed explicitly instead.
 #
 # This is the FULL §3.2 set. ``itrader.connectors`` and ``itrader.venues.accounts`` joined
 # once the backtest root stopped wiring a connector provider and a venue substrate: it now
@@ -181,7 +162,6 @@ assert not _sql_leaked, (
 # this guard.
 _BOUNDARY_ROOTS = (
     "itrader.trading_system.live",
-    "itrader.trading_system.live_trading_system",
     "itrader.connectors",
     "itrader.venues.accounts",
     "itrader.execution_handler.exchanges.okx",

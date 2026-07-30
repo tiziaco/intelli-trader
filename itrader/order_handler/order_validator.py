@@ -117,7 +117,7 @@ class EnhancedOrderValidator:
         # and the validator must admit it or the offline run refuses every order and
         # produces zero trades. It replaces the retired "csv"/"simulated" synonyms.
         # "okx" is the live execution venue the live composition root registers
-        # (`exec_registry.register('okx', OkxVenuePlugin())`).
+        # (an `okx` account brought online by the venue-account manager).
         #
         # This is a DEFAULT-DENY allowlist on the admission path (ASVS V5): a venue
         # that is not a member is refused with a typed UNSUPPORTED_EXCHANGE ERROR.

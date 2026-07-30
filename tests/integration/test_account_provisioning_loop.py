@@ -63,8 +63,8 @@ from itrader.storage.venue_account_store import VenueAccountStore
 from itrader.trading_system.alert_sink import LogAlertSink
 from itrader.venues.accounts import VenueAccountManager
 from itrader.venues.catalog import CATALOG
-from itrader.venues.paper_plugin import paper_exchange_recipe
-from itrader.venues.registry import COMPUTE_VENUE, DEFAULT_ACCOUNT_ID
+from itrader.execution_handler.exchanges.paper import paper_exchange_recipe
+from itrader.execution_handler.execution_handler import COMPUTE_VENUE, DEFAULT_ACCOUNT_ID
 from tests.support.schema import provision_schema
 
 _AT = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)

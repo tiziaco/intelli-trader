@@ -12,10 +12,6 @@ from itrader.config import ExchangeConfig
 from itrader.core.exceptions.base import ConfigurationError
 from itrader.core.exceptions.portfolio import PortfolioNotFoundError
 from itrader.logger import get_itrader_logger
-# Declared ONCE in ``venues/registry.py`` — which imports nothing at runtime, so
-# this re-export pulls in no concretion — and re-exported here, the historical
-# import path. Their full rationale lives at the declaration.
-from itrader.venues.registry import COMPUTE_VENUE, DEFAULT_ACCOUNT_ID
 
 if TYPE_CHECKING:
 	# TYPING-ONLY so no portfolio-domain module lands on this import graph: the
@@ -24,10 +20,36 @@ if TYPE_CHECKING:
 	from itrader.core.portfolio_read_model import PortfolioReadModel
 
 
+#: The venue whose execution adapter backs the simulated fill engine and the COMPUTE
+#: account leaves — ``'paper'``.
+#:
+#: Backtest and live-paper are the SAME behaviour (a simulated fill engine over
+#: computed accounts), so they carry ONE name rather than a synonym.
+#: ``SimulatedExchange`` remains the CLASS of that engine — never a venue name.
+#:
+#: Both handlers need this venue-domain fact: ``ExecutionHandler`` resolves its
+#: adapter under it and ``PortfolioHandler`` mints every portfolio's
+#: construction-time compute leaf under it. A second literal in either handler is
+#: how the two arms end up routing to different venues.
+COMPUTE_VENUE = 'paper'
+
+#: The logical venue account of a SINGLE-account venue.
+#:
+#: The exchange routing map is keyed on the ``(venue, account_id)`` PAIR, because an
+#: order's real target is a specific AUTHENTICATED SESSION, not a venue. Venues that
+#: have only ever had one account — the ``COMPUTE_VENUE`` above — register under this
+#: constant.
+#:
+#: It is deliberately a separate KEY HALF and never spliced into the venue name:
+#: ``Order.exchange`` is a persisted column, so a composed ``"venue:account"`` string
+#: would leak account topology into durable data and into every query over it. The
+#: key is a runtime tuple; the persisted column keeps the bare venue name.
+DEFAULT_ACCOUNT_ID = 'default'
+
 # mypy --strict disables implicit re-export, so the two venue constants above must
 # be named explicitly to stay importable from this module.
 __all__ = ['COMPUTE_VENUE', 'DEFAULT_ACCOUNT_ID', 'ExecutionHandler',
-		   'default_exchange_config', 'seed_exchange_registry']
+		   'default_exchange_config']
 
 
 def default_exchange_config() -> ExchangeConfig:
@@ -42,51 +64,6 @@ def default_exchange_config() -> ExchangeConfig:
 	config = ExchangeConfig.default()
 	config.limits.supported_symbols = set(config.limits.supported_symbols) | {'BTCUSD'}
 	return config
-
-
-def seed_exchange_registry(
-	exchange_registry: dict[tuple[str, str], Optional[AbstractExchange]],
-	venue_bundles: Any,
-) -> None:
-	"""Seed the PAPER exchange into the shared registry and connect it.
-
-	The composition root seeds the paper arm here and hands the SAME map to BOTH
-	``ExecutionHandler`` (which READS it on order) and ``VenueAccountManager``
-	(whose ``bring_online`` WRITES the OKX arm into it). One map held by reference
-	by both arms is what makes a brought-online account immediately routable
-	without the manager reaching through the handler to register an exchange.
-
-	Only the PAPER arm is seeded. The OKX arm is registered by the live root's
-	per-account ``bring_online`` loop, which knows the account set this seam has no
-	way to enumerate.
-
-	``venue_bundles`` is duck-typed ``Any`` (GATE-01): naming ``VenueBundles``
-	concretely would drag the venue substrate back onto this module's import graph.
-	"""
-	logger = get_itrader_logger().bind(component="ExecutionHandler")
-	# ASK the shared memo rather than minting one here; ``spec=None`` because
-	# ``PaperVenuePlugin.build_bundle`` reads no spec field at all.
-	bundle = venue_bundles.get(COMPUTE_VENUE, DEFAULT_ACCOUNT_ID, None)
-	exchange_registry[(COMPUTE_VENUE, DEFAULT_ACCOUNT_ID)] = bundle.exchange
-
-	# Dedup by instance identity: two keys may resolve to one object (two ACCOUNTS
-	# on one venue), and connecting it once avoids a misleading second "Successfully
-	# connected" log for the idempotent no-op call.
-	seen_connect: set[int] = set()
-	for exchange_key, exchange in exchange_registry.items():
-		if exchange is None or id(exchange) in seen_connect:
-			continue
-		seen_connect.add(id(exchange))
-		exchange_name = exchange_key[0]
-		try:
-			connection_result = exchange.connect()
-			if connection_result.success:
-				logger.info('Successfully connected to %s exchange', exchange_name)
-			else:
-				logger.warning('Failed to connect to %s exchange: %s',
-							   exchange_name, connection_result.error_message)
-		except AttributeError:
-			logger.debug('Exchange %s does not support connection management', exchange_name)
 
 
 class ExecutionHandler(AbstractExecutionHandler):

@@ -8,7 +8,7 @@ CONF-A spine plan, NOT a broken build.
 The bug (V17-11)
 ----------------
 While submission is paused-on-disconnect (or HALTED), ``LiveTradingSystem._dispatch_live``
-(``live_trading_system.py:736-741``) SUPPRESSES **every** SIGNAL/ORDER event with NO defer
+SUPPRESSES **every** SIGNAL/ORDER event with NO defer
 queue and NO replay. That is correct for a fresh ENTRY (don't open new risk while blind to
 the venue), but catastrophic for the RISK-REDUCING orders a draining FILL generates during
 the pause window:

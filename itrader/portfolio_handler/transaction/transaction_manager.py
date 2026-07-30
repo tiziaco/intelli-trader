@@ -41,7 +41,7 @@ class TransactionManager:
         # lightweight test portfolio) falls back to its own in-memory backend
         # so the seam is always present.
         from itrader.portfolio_handler.base import PortfolioStateStorage
-        from itrader.portfolio_handler.storage import PortfolioStateStorageFactory
+        from itrader.portfolio_handler.storage import build_portfolio_state_storage
         storage = getattr(portfolio, "state_storage", None)
         if storage is None:
             # D-07 (05.2-05): honor the portfolio's durable environment/backend so
@@ -49,7 +49,7 @@ class TransactionManager:
             # backend rather than silently falling back to in-memory. Defaults
             # ("backtest"/None) keep a lightweight test portfolio in-memory
             # (oracle-dark); portfolio.py:_init_managers is the primary lever.
-            storage = PortfolioStateStorageFactory.create(
+            storage = build_portfolio_state_storage(
                 getattr(portfolio, "_environment", "backtest"),
                 sql_engine=getattr(portfolio, "_sql_engine", None),
                 portfolio_id=getattr(portfolio, "portfolio_id", None),

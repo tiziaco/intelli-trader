@@ -3,7 +3,7 @@
 Phase 3 (M2b) Plan 03-07, Task 1. These assert the storage-seam behavior the wave
 delivers, generalizing the proven ``order_handler/storage/`` pattern to portfolio state:
 
-  * ``PortfolioStateStorageFactory.create("backtest"|"test")`` returns the in-memory backend.
+  * ``build_portfolio_state_storage("backtest"|"test")`` returns the in-memory backend.
   * ``create("live")`` with no portfolio_id and ``create("bogus")`` raise ``ConfigurationError``
     (WR-04 — typed exception parity with the sibling Order/Signal factories).
   * The backend round-trips all four managers' containers: open/closed positions,
@@ -24,7 +24,7 @@ from itrader.core.exceptions import ConfigurationError
 from itrader.portfolio_handler.storage import (
     PortfolioStateStorage,
     InMemoryPortfolioStateStorage,
-    PortfolioStateStorageFactory,
+    build_portfolio_state_storage,
 )
 from tests.support.venue_wiring import compute_account
 
@@ -35,27 +35,27 @@ from tests.support.venue_wiring import compute_account
 
 def test_factory_backtest_returns_in_memory():
     """M2-08: create('backtest') returns the in-memory backend (mirrors order seam)."""
-    backend = PortfolioStateStorageFactory.create("backtest")
+    backend = build_portfolio_state_storage("backtest")
     assert isinstance(backend, InMemoryPortfolioStateStorage)
     assert isinstance(backend, PortfolioStateStorage)
 
 
 def test_factory_test_environment_returns_in_memory():
     """M2-08: create('test') also returns the in-memory backend."""
-    backend = PortfolioStateStorageFactory.create("test")
+    backend = build_portfolio_state_storage("test")
     assert isinstance(backend, InMemoryPortfolioStateStorage)
 
 
 def test_factory_is_case_insensitive():
     """M2-08: the environment string is lower-cased before dispatch."""
-    backend = PortfolioStateStorageFactory.create("BACKTEST")
+    backend = build_portfolio_state_storage("BACKTEST")
     assert isinstance(backend, InMemoryPortfolioStateStorage)
 
 
 def test_factory_live_raises():
     """M2-08 / WR-04: live arm with no portfolio_id raises the typed ConfigurationError."""
     with pytest.raises(ConfigurationError):
-        PortfolioStateStorageFactory.create("live")
+        build_portfolio_state_storage("live")
 
 
 def test_factory_unknown_environment_raises_configuration_error():
@@ -65,7 +65,7 @@ def test_factory_unknown_environment_raises_configuration_error():
     than a bare ``ValueError`` — see CLAUDE.md error-handling convention.
     """
     with pytest.raises(ConfigurationError) as exc:
-        PortfolioStateStorageFactory.create("bogus")
+        build_portfolio_state_storage("bogus")
     assert "backtest" in str(exc.value)
 
 

@@ -3,7 +3,7 @@
 ``test_backtest_oracle.py`` drives the LEGACY construction arm — the loose-parameter
 ``BacktestTradingSystem.__init__``, reached through ``scripts/run_backtest.py::main``.
 Nothing asserted the golden artifacts through ``build_backtest_system``, so a change
-confined to the factory / ``compose_engine`` path could diverge from the frozen oracle
+confined to the factory / ``build_handler_graph`` path could diverge from the frozen oracle
 while every existing gate stayed green.
 
 That matters whenever composition is refactored: the byte-exact guarantee the project is

@@ -42,7 +42,7 @@ from itrader.portfolio_handler.account import SimulatedCashAccount
 from itrader import config as _live_config
 from itrader.trading_system.live.build import build_live_system
 from itrader.trading_system.live.system import LiveTradingSystem
-from itrader.venues.registry import COMPUTE_VENUE, DEFAULT_ACCOUNT_ID
+from itrader.execution_handler.execution_handler import COMPUTE_VENUE, DEFAULT_ACCOUNT_ID
 from tests.support.schema import provision_schema
 
 _AT = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
@@ -150,7 +150,7 @@ def test_a_provisioned_row_becomes_a_routable_exchange_through_the_real_boot(
 ) -> None:
     """One durable row ⇒ one exchange registered under the EXACT pair the order path reads.
 
-    The identity half carries the weight. ``compose_engine`` registers the compute venue's
+    The identity half carries the weight. The live root registers the compute venue's
     own baseline exchange under ``(paper, 'default')`` on every arm, so the presence of
     that key proves nothing either way — but the named account being ALIASED onto it would
     mean orders for ``acct-1`` execute against the default account's exchange. The two
@@ -215,7 +215,7 @@ def test_a_zero_account_spine_still_boots_running_and_empty(sqlite_spine) -> Non
     """A fresh deployment with no provisioned account comes up empty rather than broken.
 
     "Empty" means zero brought-online accounts. The compute venue's own baseline exchange
-    under ``(paper, 'default')`` is registered by ``compose_engine`` regardless, so the
+    under ``(paper, 'default')`` is registered by the live root regardless, so the
     account-derived registrations are what must be absent.
     """
     system = build_live_system(_live_config, execution_venue=_VENUE)
@@ -448,7 +448,7 @@ def test_cr04_a_failing_connect_during_bring_up_leaves_the_routing_map_empty() -
     from itrader.trading_system.alert_sink import LogAlertSink
     from itrader.venues.accounts import VenueAccountManager
     from itrader.venues.catalog import CATALOG
-    from itrader.venues.paper_plugin import paper_exchange_recipe
+    from itrader.execution_handler.exchanges.paper import paper_exchange_recipe
 
     build_paper = paper_exchange_recipe(ExchangeConfig.default())
 

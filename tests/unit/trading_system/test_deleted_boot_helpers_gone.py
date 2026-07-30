@@ -1,18 +1,20 @@
-"""Static gate — deleted boot/venue names never return as live code.
+"""Static gate — deleted boot/venue/composition names never return as live code.
 
-Two waves of deletions are pinned here. First: the six ``live_trading_system.py`` helpers
-that derived and minted account identity at boot, replaced by the store-derived
-``VenueAccountManager``. Second: the ferrying layer that stood between a durable account row
-and its runtime — ``assemble_venue``, ``VenueLifecycle`` and the standalone venue-UID guard
-module — absorbed into ``venues/accounts.py``. Third: the composition mode selector that
-chose whether orders were routed by account. This gate fails if ANY of those names
-reappears as a live CODE reference anywhere under ``itrader/`` or ``tests/``.
+Four waves of deletions are pinned here. First: the six boot helpers that derived and
+minted account identity, replaced by the store-derived ``VenueAccountManager``. Second:
+the ferrying layer that stood between a durable account row and its runtime —
+``assemble_venue``, ``VenueLifecycle`` and the standalone venue-UID guard module —
+absorbed into ``venues/accounts.py``. Third: the composition mode selector that chose
+whether orders were routed by account. Fourth: the plugin/registry/bundle composition
+shape and the single-module live root that the two-roots redesign replaced. This gate
+fails if ANY of those names reappears as a live CODE reference anywhere under
+``itrader/`` or ``tests/``.
 
 **Why a static gate, and why it scans SOURCE rather than trusting the suite.** Two of the
 53 original references live in ``tests/e2e/test_okx_sandbox_recon.py``, which is
-credential-SKIPPED in CI — a green suite proves nothing about it. And
-``live_trading_system.py`` is under a mypy ``ignore_errors`` override, so a dead reference
-there passes both mypy and the suite silently. A source scan is the only gate that sees
+credential-SKIPPED in CI — a green suite proves nothing about it. And the deleted live
+root spent the whole refactor under a mypy ``ignore_errors`` override, so a dead reference
+there passed both mypy and the suite silently. A source scan is the only gate that sees
 both.
 
 **Why it tokenizes rather than greps.** The deleted names still appear in explanatory
@@ -28,7 +30,7 @@ from __future__ import annotations
 import pathlib
 import tokenize
 
-#: The six helpers deleted from ``live_trading_system.py``, plus the ferrying layer the
+#: The six helpers deleted from the superseded live root, plus the ferrying layer the
 #: venue-account manager absorbed. ``assert_venue_uid`` is deliberately ABSENT: the
 #: function survives, collapsed into ``venues/accounts.py`` — it is its standalone module
 #: and its lifecycle wrapper that are gone.
@@ -55,6 +57,39 @@ _DELETED_NAMES = frozenset({
     # DEFAULT_ACCOUNT_ID naming is safe only while it lives in the validator-LESS arm.
     "ComputeAccountAuthority",
     "VenueValidatedComputeAuthority",
+    # The plugin/registry/bundle composition shape. "Which venue" is DATA now — a
+    # descriptor read out of the catalogue and a recipe that lives beside the adapter
+    # it builds — so a registry of plugin OBJECTS has no successor and must not grow
+    # back beside the catalogue.
+    "VenuePlugin",
+    "DataProviderPlugin",
+    "ExecutionVenueRegistry",
+    "DataProviderRegistry",
+    "PaperVenuePlugin",
+    "OkxVenuePlugin",
+    "OkxDataPlugin",
+    "OkxConnectorPlugin",
+    "ConnectorPlugin",
+    "ConnectorProvider",
+    "VenueBundle",
+    "VenueBundles",
+    "VenueAccountConfig",
+    # The two-roots split: one linear live root under ``trading_system/live/`` and one
+    # backtest root, with a pure ``build_handler_graph`` between them. The single-module
+    # live root, its bundle-shaped compose adapter, the venue spec it selected with, and
+    # the bundle-fed registry seeder are all gone with no successor beyond those.
+    "compose_engine",
+    "seed_exchange_registry",
+    "VenueSpec",
+    "build_venue_spec",
+    "for_exchange",
+    # The four storage factories are module-level functions: a class whose only members
+    # are static methods is ceremony around a call, and the class shape is what invites
+    # per-mode state onto a pure selection.
+    "OrderStorageFactory",
+    "PortfolioStateStorageFactory",
+    "SignalStorageFactory",
+    "StrategyRegistryStorageFactory",
 })
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]

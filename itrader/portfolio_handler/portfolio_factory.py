@@ -43,8 +43,8 @@ from itrader.core.ids import PortfolioId
 from itrader.core.money import to_money
 from itrader.portfolio_handler.account.simulated import build_compute_account
 from itrader.portfolio_handler.portfolio import Portfolio
-from itrader.portfolio_handler.storage import PortfolioStateStorageFactory
-from itrader.venues.registry import DEFAULT_ACCOUNT_ID
+from itrader.portfolio_handler.storage import build_portfolio_state_storage
+from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
 
 if TYPE_CHECKING:
     # Typing-only: never evaluated at runtime, so this import pulls no concretion (GATE-01).
@@ -118,9 +118,9 @@ class AccountFactory:
 class PortfolioFactory:
     """Owns the definition→runtime-graph mapping, built with its real deps.
 
-    Constructed at the composition roots with the shared ``venue_bundles`` memo and
-    the run-mode selectors; ``materialize`` builds one ``Portfolio`` — its id-scoped
-    state-storage seam, its ``Account`` leaf, and the domain object over them.
+    Constructed at the composition roots with an ``AccountFactory`` and the run-mode
+    selectors; ``materialize`` builds one ``Portfolio`` — its id-scoped state-storage
+    seam, its ``Account`` leaf, and the domain object over them.
     """
 
     def __init__(
@@ -188,7 +188,7 @@ class PortfolioFactory:
         )
         # Built HERE, before the account, so the account and the portfolio's other
         # managers adopt the SAME state_storage instance.
-        state_storage = PortfolioStateStorageFactory.create(
+        state_storage = build_portfolio_state_storage(
             self._environment,
             sql_engine=self._sql_engine,
             portfolio_id=resolved_id,

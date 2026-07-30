@@ -29,10 +29,10 @@ from ...core.portfolio_read_model import PortfolioReadModel, PositionView
 from ...core.sizing import TradingDirection, LeveredFraction
 from ...events_handler.events import SignalEvent
 from ...universe import Universe
-# Read from the same IMPORT-INERT venue substrate ``PortfolioHandler`` and
-# ``ExecutionHandler`` read: a second ``'default'`` literal here is how the arms end up
-# keying on different strings.
-from ...venues.registry import DEFAULT_ACCOUNT_ID
+# Read from the same declaration site ``PortfolioHandler`` and ``ExecutionHandler``
+# read: a second ``'default'`` literal here is how the arms end up keying on
+# different strings.
+from ...execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
 
 
 class AdmissionManager:
@@ -84,17 +84,20 @@ class AdmissionManager:
 
 		An order's economic target is the PAIR ``(venue, account_id)`` — the same key
 		``ExecutionHandler.exchanges`` is keyed on; ``order.exchange`` carries the venue
-		half. ``account_for`` is ``Optional[str]`` because ``Portfolio.account_id`` is
-		optional and every backtest portfolio leaves it unset — an unnamed account IS the
-		single-account case.
+		half. ``account_for`` stays ``Optional[str]`` because ``Portfolio.account_id`` is
+		optional on the type; in practice every portfolio built through ``AccountFactory``
+		carries a real id, so the coercion below is defence-in-depth rather than the
+		single-account path it once was.
 
 		⚠ ``account_for(...) or DEFAULT_ACCOUNT_ID`` is EXPRESSLY FORBIDDEN in
 		``ExecutionHandler._resolve_account_id`` and is correct HERE — do not "unify" the
 		two. There the pair selects an AUTHENTICATED SESSION, so coercing an unnamed
 		account submits real orders through another account's credentials. Here it selects
-		a FEE MODEL for a PRE-TRADE estimate: nothing is submitted. What must never be
-		silent is the OUTCOME — a pair resolving no fee model is logged in
-		``_estimate_commission`` before the estimate degrades.
+		a FEE MODEL for a PRE-TRADE estimate: nothing is submitted, and dropping the
+		coercion would price every such order against NO fee model — a reservation with
+		zero fee headroom, which the golden run (``ZeroFeeModel``) cannot distinguish from
+		the correct answer. What must never be silent is the OUTCOME — a pair resolving no
+		fee model is logged in ``_estimate_commission`` before the estimate degrades.
 		"""
 		if self.portfolio_handler is None:
 			return DEFAULT_ACCOUNT_ID

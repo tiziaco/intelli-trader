@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 	# must not be imported as a side effect of loading the dispatcher
 	# (keeps the module import light and stub-friendly in tests). The
 	# injected policy + consumer are also type-only here — the concretes are
-	# built in ``compose_engine`` and passed in (D-01/D-04/D-06).
+	# built in ``build_handler_graph`` and passed in (D-01/D-04/D-06).
 	from itrader.events_handler.events import Event
 	from itrader.events_handler.error_policy import HandlerErrorPolicy
 	from itrader.events_handler.error_handler import ErrorHandler
@@ -70,11 +70,11 @@ class EventHandler(object):
 		# routes a raising handler through it — ``FailFastPolicy`` (bare re-raise,
 		# byte-exact oracle) on the backtest/replay path, the live
 		# publish-and-continue ``ErrorPolicy`` on the daemon path. Selected + built
-		# in ``compose_engine`` (the single mode-agnostic site), never here.
+		# in ``build_handler_graph`` (the single mode-agnostic site), never here.
 		self._error_policy = error_policy
 		# D-01: the ERROR-route consumer. Owns severity-mapped logging + CRITICAL
 		# alert-sink escalation + ``last_error`` persistence + the FILL_TRANSLATION
-		# counting seam. Built in ``compose_engine`` with its injected collaborators
+		# counting seam. Built in ``build_handler_graph`` with its injected collaborators
 		# (``None`` on the backtest path — logs only, no egress/persist/count).
 		self.error_handler = error_handler
 

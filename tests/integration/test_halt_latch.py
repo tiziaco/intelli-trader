@@ -8,7 +8,7 @@ condition of a CONF-A spine plan, NOT a broken build.
 The bug (V17-03)
 ----------------
 On the real OKX arm, ``start()`` runs ``VenueReconciler.reconcile()`` on the engine
-thread BEFORE the processing thread spawns (live_trading_system.py:1147-1155). When the
+thread BEFORE the processing thread spawns. When the
 reconciler cannot trust venue state it calls its injected ``halt_signal`` — i.e.
 ``self.halt("reconciliation-unresolved")`` — which sets ``SystemStatus.HALTED``. But
 ``start()`` never checks ``is_halted()`` afterward, and the processing loop's FIRST
@@ -87,7 +87,7 @@ def _inject_reconcile_halt(system: LiveTradingSystem, reason: str) -> None:
     during ``start()`` — before the processing thread spawns and stamps RUNNING.
 
     This stands in for the OKX ``VenueReconciler.reconcile()`` halt_signal call
-    (live_trading_system.py:1152-1155). ``_initialize_live_session`` is the last step
+    ``_initialize_live_session`` is the last step
     ``start()`` runs before the OKX reconcile branch, so the halt lands with the exact
     ordering the real reconciler produces on the OKX arm.
     """

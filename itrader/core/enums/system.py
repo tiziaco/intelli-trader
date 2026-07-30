@@ -1,7 +1,7 @@
 """
 System lifecycle-status vocabulary for the iTrader engine.
 
-``SystemStatus`` is the live trading-system lifecycle state; ``live_trading_system.py``
+``SystemStatus`` is the live trading-system lifecycle state; the live facade
 and ``SafetyController`` import it from here.
 """
 

@@ -221,7 +221,7 @@ class BarFeed(ABC):
         """Return the ``BarEvent`` for the tick at ``time_event``, or ``None``.
 
         The TIME-route bar-event factory (D-20/D-15). Declared on the base so the
-        shared ``compose_engine`` seam can pass ``feed.generate_bar_event`` to the
+        shared ``build_handler_graph`` seam can pass ``feed.generate_bar_event`` to the
         ``EventHandler`` uniformly across modes (compose reads the base ``BarFeed``
         type off ``ctx.feed``, not a concretion). ``BacktestBarFeed`` builds the
         event from the pinned bar grid; ``LiveBarFeed`` is a DORMANT no-op — live

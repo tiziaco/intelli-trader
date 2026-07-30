@@ -93,7 +93,7 @@ def test_no_config_construction_admits_btcusd(env):
     can never silently wipe BTCUSD.
 
     11.1-07: the union now happens in ``default_exchange_config()`` and reaches the
-    exchange through ``PaperVenuePlugin``, not through a handler-side fallback.
+    exchange through the ROOT-owned registry, not through a handler-side fallback.
     """
     _queue, execution_handler, _order_event = env
     exchange = execution_handler.exchanges[('paper', DEFAULT_ACCOUNT_ID)]
@@ -182,7 +182,7 @@ def test_registry_is_pair_keyed_with_no_venue_aliases(env):
     pin that ``'simulated'`` and ``'csv'`` resolved to the SAME object; D-05
     deleted that aliasing in full (along with the dead ``'ccxt': None``
     placeholder), so the seeded backtest registry (D-43: built by
-    ``seed_exchange_registry``) is a SINGLE ``('paper', DEFAULT_ACCOUNT_ID)``
+    the backtest root) is a SINGLE ``('paper', DEFAULT_ACCOUNT_ID)``
     entry and no two keys may share an exchange object.
 
     It goes RED if a future phase reintroduces a venue synonym — which is the
