@@ -53,7 +53,7 @@ from itrader.universe.universe_handler import UniverseHandler, UniverseHandlerCo
 if TYPE_CHECKING:
     from itrader.execution_handler.exchanges.base import AbstractExchange
     from itrader.price_handler.feed.live_bar_feed import LiveBarFeed
-    from itrader.trading_system.compose import Engine
+    from itrader.trading_system.graph import Engine
 
 
 class SessionInitializer:

@@ -8,8 +8,8 @@ alias is exported from this module.
 D-04: the factory builds, the class is a thin holder. ``build_backtest_system(spec)``
 derives the COMPLETE symbol set and folds it into the spec's ``ExchangeConfig``
 (D-13/Trap 1), builds the infra ``EngineContext(bus=FifoEventBus(),
-environment='backtest', sql_engine=None)`` (02-03/D-06), calls the two-arg
-``compose_engine`` seam, constructs the ``BacktestRunner``, adds
+environment='backtest', sql_engine=None)`` (02-03/D-06), builds the run's paper
+venue, calls the ``build_handler_graph`` seam, constructs the ``BacktestRunner``, adds
 strategies/portfolios in spec order (Trap 6), wires subscriptions, and returns the
 holder. The handlers now OWN their order/signal storage backends (selected from
 ``ctx.environment``, 02-02), so the factory no longer selects those concretes.
@@ -50,19 +50,16 @@ from itrader.results.serializers import (
 )
 from itrader.strategy_handler.storage import SignalStore
 from itrader.strategy_handler.signal_record import SignalRecord
+from itrader.execution_handler.exchanges.base import AbstractExchange
+from itrader.execution_handler.exchanges.simulated import SimulatedExchange
+from itrader.portfolio_handler.portfolio_factory import (
+	ComputeAccountAuthority,
+	PortfolioFactory,
+)
 from itrader.trading_system.backtest.backtest_runner import BacktestRunner
-from itrader.trading_system.compose import Engine, compose_engine
 from itrader.trading_system.engine_context import EngineContext
+from itrader.trading_system.graph import Engine, build_handler_graph
 from itrader.trading_system.system_spec import SystemSpec
-# 11.1-07 (D-04): the backtest joins the SAME venue path live uses. All four names are
-# import-INERT — the registry runs no runtime imports, PaperVenuePlugin lazy-imports its
-# SimulatedExchange inside build_bundle, ConnectorProvider is inert as of 11.1-01, and
-# bundles.py is TYPE_CHECKING-only — so they belong at module top, not in a lazy body.
-# tests/integration/test_okx_inertness.py is the check that this stays true.
-from itrader.connectors.provider import ConnectorProvider
-from itrader.venues.bundles import VenueBundles
-from itrader.venues.paper_plugin import PaperVenuePlugin
-from itrader.venues.registry import ExecutionVenueRegistry
 
 from itrader.logger import get_itrader_logger
 
@@ -80,12 +77,41 @@ def _seed_supported_symbols(
 	The final set = default preset symbols ∪ {BTCUSD} ∪ spec tickers (upper-cased).
 	Seeded at construction so it is REPLACEMENT-SAFE — a later ``update_config``
 	that re-derives ``_supported_symbols`` from ``config.limits`` can never wipe a
-	symbol. This is the FACTORY-side derivation (Open Question 2) that keeps
-	``compose_engine`` mode-agnostic.
+	symbol. This is the ROOT-side derivation (Open Question 2) that keeps
+	``build_handler_graph`` mode-agnostic.
 	"""
 	complete = set(_DEFAULT_PRESET_SYMBOLS) | {'BTCUSD'} | {t.upper() for t in tickers}
 	exchange_config.limits.supported_symbols = complete
 	return exchange_config
+
+
+def _build_paper_venue(
+	ctx: EngineContext, exchange_config: ExchangeConfig,
+) -> "tuple[dict[tuple[str, str], Optional[AbstractExchange]], PortfolioFactory]":
+	"""Build the backtest's ONE venue: its paper exchange and its account factory.
+
+	The backtest root chooses its own concretions and hands them to the graph builder,
+	which therefore needs no venue substrate and no mode branch. Both construction arms
+	call this, so the byte-exact oracle covers the wiring whichever arm it drives.
+
+	The exchange is built with ``ctx.rng``, the one seeded ``random.Random`` of the run:
+	two ``random.Random(42)`` instances look identical until the call order diverges, so
+	a fresh one breaks reproducibility silently. ``exchange_config`` is the RUN-derived
+	one — a default preset omits the golden BTCUSD ticker and the exchange would refuse
+	it — and is never read off the process-wide config singleton.
+
+	``connect()`` is not ceremony: ``SimulatedExchange.validate_order`` refuses an order
+	on a disconnected exchange, so an unconnected paper venue fills nothing.
+	"""
+	exchange = SimulatedExchange(ctx.bus, config=exchange_config, rng=ctx.rng)
+	exchange.connect()
+	exchange_registry: dict[tuple[str, str], Optional[AbstractExchange]] = {
+		(COMPUTE_VENUE, DEFAULT_ACCOUNT_ID): exchange}
+	portfolio_factory = PortfolioFactory(
+		authority=ComputeAccountAuthority(),
+		environment=ctx.environment,
+		sql_engine=ctx.sql_engine)
+	return exchange_registry, portfolio_factory
 
 
 class BacktestTradingSystem(object):
@@ -117,7 +143,7 @@ class BacktestTradingSystem(object):
 		  ``engine`` + ``runner``; the holder is a dumb wrapper.
 		* **Legacy direct-construction mode:** the oracle/integration sites pass
 		  the loose params; the holder builds the engine+runner internally via the
-		  same ``compose_engine`` seam (byte-identical wiring) so they work by
+		  same ``build_handler_graph`` seam (byte-identical wiring) so they work by
 		  renaming the class only (Wave 4 swaps them to the factory).
 
 		``exchange`` names the run's VENUE and defaults to ``'paper'`` (D-05) —
@@ -148,7 +174,7 @@ class BacktestTradingSystem(object):
 			exchange_config = _seed_supported_symbols(
 				ExchangeConfig.default(), tickers)
 			# 02-03 (D-06/Pitfall 1): the oracle runs through THIS spec-LESS legacy
-			# arm, so it is folded to the two-arg compose seam too. Synthesize a
+			# arm, so it is folded to the same spec-free seam too. Synthesize a
 			# minimal frozen SystemSpec — ticker/starting_cash are PLACEHOLDERS
 			# compose NEVER reads (A1); strategies/portfolios stay empty (the legacy
 			# sites add them via the backward-compat handler seams). The seeded
@@ -166,7 +192,7 @@ class BacktestTradingSystem(object):
 				exchange=exchange_config,
 			)
 			# 06.1-01 (D-01/D-04): store + feed CONSTRUCTION moved out of the spec-free
-			# compose seam onto the factory/legacy arm — built with the SAME argument
+			# graph seam onto the factory/legacy arm — built with the SAME argument
 			# values compose used (data/start/end/timeframe off the synthesized spec,
 			# empties->None) so the run stays byte-identical, then injected onto ctx.
 			store = CsvPriceStore(
@@ -191,24 +217,15 @@ class BacktestTradingSystem(object):
 				store=store,
 				sql_engine=None,
 			)
-			# 11.1-07 (D-04/D-17): the LEGACY arm joins the same venue path live uses —
-			# a real ExecutionVenueRegistry holding a PaperVenuePlugin built from THIS
-			# run's seeded ExchangeConfig (never a default preset: the preset omits the
-			# golden BTCUSD ticker and the exchange would refuse it), plus a REAL, EMPTY
-			# ConnectorProvider. Empty is the representation of "this mode has no venue
-			# sessions" — never None (D-04 rejects a nullable seam here).
-			#
-			# BOTH arms are migrated deliberately: the byte-exact oracle drives THIS
-			# legacy arm, so migrating only the factory below would leave the oracle
-			# proving nothing about the change (RESEARCH F-5).
-			exec_registry = ExecutionVenueRegistry()
-			exec_registry.register('paper', PaperVenuePlugin(spec.exchange))
-			connectors = ConnectorProvider({})
-			venue_bundles = VenueBundles(exec_registry, connectors, ctx)
-			# 06.1-01 (D-04): spec-free compose — pass venue_bundles/results_store
-			# explicitly (the legacy arm has no results store).
-			self.engine = compose_engine(
-				ctx, venue_bundles=venue_bundles, results_store=None)
+			# The run's ONE venue, built from THIS run's seeded ExchangeConfig, then
+			# the spec-free graph. The legacy arm has no results store.
+			exchange_registry, portfolio_factory = _build_paper_venue(
+				ctx, spec.exchange)
+			self.engine = build_handler_graph(
+				ctx,
+				exchange_registry=exchange_registry,
+				portfolio_factory=portfolio_factory,
+				results_store=None)
 			self.runner = BacktestRunner(self.engine)
 
 		self.logger.info('Trading system initialised')
@@ -482,7 +499,7 @@ def build_backtest_system(spec: SystemSpec) -> BacktestTradingSystem:
 	data keys (∪ default preset ∪ {BTCUSD}) and folds it into the spec's
 	``ExchangeConfig`` (D-13/Trap 1), builds the infra ``EngineContext`` (a fresh
 	``FifoEventBus`` + ``environment='backtest'`` + ``sql_engine=None``, 02-03/D-06),
-	calls the shared two-arg ``compose_engine`` seam, constructs the
+	calls the shared ``build_handler_graph`` seam, constructs the
 	``BacktestRunner``, adds strategies/portfolios in SPEC ORDER (Trap 6 — preserve
 	``get_active_portfolios`` insertion order), wires the portfolio subscriptions,
 	and returns the thin holder. The handlers OWN their order/signal storage
@@ -509,7 +526,7 @@ def build_backtest_system(spec: SystemSpec) -> BacktestTradingSystem:
 	#    strict_persist=SqlSettings.results_default().strict_persist)`` with the SQL
 	#    surface imported on THAT path only — never here.
 	# 06.1-01 (D-01/D-04): build the store + feed read-models HERE (the spec-free
-	# compose seam no longer constructs them) with the SAME argument values compose
+	# graph seam no longer constructs them) with the SAME argument values the graph
 	# used off the spec (data/start/end/timeframe, empties->None) — byte-identical —
 	# and inject them onto ctx (feed required, store real in backtest).
 	store = CsvPriceStore(
@@ -531,22 +548,15 @@ def build_backtest_system(spec: SystemSpec) -> BacktestTradingSystem:
 		store=store,
 		sql_engine=None,
 	)
-	# 11.1-07 (D-04/D-17): the FACTORY arm registers the paper venue plugin with the
-	# seeded, RUN-DERIVED ExchangeConfig (spec.exchange, complete symbol set already
-	# folded in above) and passes a REAL, EMPTY ConnectorProvider — the backtest has
-	# no venue sessions, and an empty collection is that fact, never None (D-04).
-	# Identical two blocks in both arms; see the legacy arm for why both migrate.
-	exec_registry = ExecutionVenueRegistry()
-	exec_registry.register('paper', PaperVenuePlugin(spec.exchange))
-	connectors = ConnectorProvider({})
-	venue_bundles = VenueBundles(exec_registry, connectors, ctx)
-	# 06.1-01 (D-04): spec-free compose — pass venue_bundles + the OPTIONAL
-	# results_store explicitly. The e2e ScenarioSpec is the SystemSpec alias and
-	# carries results_store; getattr keeps a duck-typed spec absent-field safe
-	# (-> None -> store-free/byte-exact).
-	engine = compose_engine(
+	# The run's ONE venue, from the seeded RUN-DERIVED ExchangeConfig (spec.exchange,
+	# complete symbol set already folded in above), then the spec-free graph. The e2e
+	# ScenarioSpec is the SystemSpec alias and carries results_store; getattr keeps a
+	# duck-typed spec absent-field safe (-> None -> store-free/byte-exact).
+	exchange_registry, portfolio_factory = _build_paper_venue(ctx, spec.exchange)
+	engine = build_handler_graph(
 		ctx,
-		venue_bundles=venue_bundles,
+		exchange_registry=exchange_registry,
+		portfolio_factory=portfolio_factory,
 		results_store=getattr(spec, 'results_store', None))
 	runner = BacktestRunner(engine)
 

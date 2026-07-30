@@ -31,7 +31,7 @@ from itrader.events_handler.events import EventType, StreamStateEvent, Connector
 
 if TYPE_CHECKING:
     # Forward-ref only — importing it eagerly would pull it onto the graph.
-    from itrader.trading_system.compose import Engine
+    from itrader.trading_system.graph import Engine
 
 # Live drain-loop timing knobs, injected into the LiveRunner.
 _LIVE_QUEUE_TIMEOUT = 1.0   # queue poll
@@ -1267,12 +1267,10 @@ def build_live_system(
         )
         account_authority: Any = VenueValidatedComputeAuthority(
             manager=venue_manager,
-            compute=ComputeAccountAuthority(
-                venue_bundles=venue_bundles, compute_venue=COMPUTE_VENUE),
+            compute=ComputeAccountAuthority(),
         )
     else:
-        account_authority = ComputeAccountAuthority(
-            venue_bundles=venue_bundles, compute_venue=COMPUTE_VENUE)
+        account_authority = ComputeAccountAuthority()
 
     # The sole leaf-builder ``PortfolioHandler`` constructs every portfolio through.
     # ``environment`` / ``system_db_backend`` select the durable state-storage backend the
@@ -1288,11 +1286,7 @@ def build_live_system(
         alert_sink=alert_sink, system_store=system_store, error_policy=error_policy,
         strategy_catalog=strategy_catalog,
         exchange_registry=exchange_registry,
-        portfolio_factory=portfolio_factory,
-        # LIVE resolves each order's venue account from its portfolio through the
-        # injected read-model, so an account's orders can never be submitted through
-        # another account's authenticated session. Backtest deliberately leaves it False.
-        route_orders_by_account=True)
+        portfolio_factory=portfolio_factory)
 
     execution_handler = engine.execution_handler
     portfolio_handler = engine.portfolio_handler

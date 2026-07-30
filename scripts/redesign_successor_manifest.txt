@@ -63,7 +63,13 @@ itrader/execution_handler/exchanges/okx.py
 itrader/execution_handler/exchanges/simulated.py
 itrader/price_handler/providers/okx_provider.py
 
+# Stage 6 (commit 1): trading_system/graph.py appeared — compose_engine demoted to a
+#          pure, mode-blind handler-graph builder. compose.py survives as a thin
+#          bundle-shaped adapter until the live root is rewritten (commit 2) and it
+#          is deleted (Stage 7), so both sides are counted for now.
+
 # --- new in the redesign ---
+itrader/trading_system/graph.py
 itrader/trading_system/backtest/__init__.py
 itrader/trading_system/live/__init__.py
 itrader/trading_system/live/bootstrap.py

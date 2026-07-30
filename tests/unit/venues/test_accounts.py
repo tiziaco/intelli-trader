@@ -78,6 +78,7 @@ from itrader.venues.catalog import CATALOG, VenueCapability, VenueDescriptor
 from itrader.venues.paper_plugin import paper_exchange_recipe
 from itrader.venues.registry import COMPUTE_VENUE
 from tests.support.schema import provision_schema
+from tests.support.venue_wiring import single_account_read_model
 
 _AT =datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 _VENUE = COMPUTE_VENUE
@@ -356,7 +357,9 @@ def test_the_object_the_manager_registers_is_the_object_the_handler_resolves() -
     """
     manager, store, routing = _make_manager()
     try:
-        execution_handler = ExecutionHandler(queue.Queue(), exchange_registry=routing)
+        execution_handler = ExecutionHandler(
+            queue.Queue(), exchange_registry=routing,
+            portfolio_read_model=single_account_read_model())
         assert execution_handler.exchanges is routing
 
         record = manager.bring_online(manager.provision(_VENUE, "acct-1"))

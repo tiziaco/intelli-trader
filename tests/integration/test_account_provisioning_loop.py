@@ -67,7 +67,6 @@ from itrader.venues.catalog import CATALOG
 from itrader.venues.paper_plugin import paper_exchange_recipe
 from itrader.venues.registry import COMPUTE_VENUE, DEFAULT_ACCOUNT_ID
 from tests.support.schema import provision_schema
-from tests.support.venue_wiring import backtest_venue_bundles
 
 _AT = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 _VENUE = COMPUTE_VENUE
@@ -226,8 +225,7 @@ def test_fresh_deployment_provisioning_gate_walks_the_whole_loop(wiring):
     """
     authority = VenueValidatedComputeAuthority(
         manager=wiring.manager,
-        compute=ComputeAccountAuthority(
-            venue_bundles=backtest_venue_bundles(wiring.bus), compute_venue=_VENUE),
+        compute=ComputeAccountAuthority(),
     )
     factory = PortfolioFactory(authority=authority, environment="backtest")
 

@@ -56,6 +56,7 @@ no marker of its own, and ``tests/integration/`` has no ``__init__.py``.
 """
 
 import datetime as dt
+import random
 import uuid
 from decimal import Decimal
 
@@ -130,16 +131,19 @@ class _PaperPair:
 
     def __init__(self, system) -> None:
         self.system = system
-        # Post-D-43: build a per-account bundle+exchange for each pair through the SAME memo
-        # ``bring_online`` uses, and register it under the account's pair. The offline in-memory
-        # harness has no manager to run ``bring_online``, so the fixture wires the two
-        # per-account exchanges by hand — each a DISTINCT ``SimulatedExchange`` object.
-        bundles = system.portfolio_handler._factory._authority._venue_bundles
+        # Build a per-account exchange for each pair and register it under that account's
+        # pair, exactly as ``bring_online`` does. The offline in-memory harness has no
+        # manager to run the bring-up, so the fixture wires the two per-account exchanges
+        # by hand — each a DISTINCT ``SimulatedExchange`` object.
+        from itrader.execution_handler.exchanges.simulated import SimulatedExchange
+        from itrader.execution_handler.execution_handler import default_exchange_config
+
         self._exchanges: dict[str, object] = {}
         for account_id in (self._ACCOUNT_A, self._ACCOUNT_B):
-            exchange = bundles.get(self._VENUE, account_id, None).exchange
-            # A freshly-built bundle exchange is not yet connected (the seeded default one is
-            # connected by seed_exchange_registry); connect it before it accepts orders.
+            exchange = SimulatedExchange(
+                system.global_queue, config=default_exchange_config(),
+                rng=random.Random(42))
+            # A freshly-built exchange is not connected; connect it before it accepts orders.
             exchange.connect()
             exchange.register_symbol(_SYMBOL)
             system.execution_handler.exchanges[(self._VENUE, account_id)] = exchange

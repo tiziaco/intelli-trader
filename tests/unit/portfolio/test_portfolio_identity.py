@@ -30,6 +30,7 @@ from itrader.core.ids import PortfolioId
 from itrader.core.portfolio_read_model import PortfolioReadModel
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
+from itrader.venues.registry import DEFAULT_ACCOUNT_ID
 from tests.support.venue_wiring import (
     backtest_portfolio_handler,
     compute_account,
@@ -153,13 +154,17 @@ def test_exchange_falls_back_to_the_legacy_parameter():
 
 
 def test_legacy_add_portfolio_shape_is_unchanged(env):
-    """The backtest composition-root call shape still works and mints a fresh id."""
+    """The backtest composition-root call shape still works and mints a fresh id.
+
+    A portfolio that names no account gets the compute venue's ONE account, so it stays
+    routable; ``venue_name`` is genuinely absent and is reported as such.
+    """
     portfolio_id = env.handler.add_portfolio(name=_NAME, exchange="paper", cash=_CASH)
     portfolio = env.handler.get_portfolio(portfolio_id)
     assert isinstance(portfolio_id, uuid.UUID)
     assert portfolio_id.version == 7
     assert portfolio.exchange == "paper"
-    assert portfolio.account_id is None
+    assert portfolio.account_id == DEFAULT_ACCOUNT_ID
     assert portfolio.venue_name is None
 
 
@@ -247,10 +252,14 @@ def test_account_for_returns_the_portfolios_account_id(env):
     assert env.handler.account_for(portfolio_id) == "acct_a"
 
 
-def test_account_for_returns_none_when_no_account_named(env):
-    """`Portfolio.account_id` is `str | None`; the seam reports that honestly."""
+def test_account_for_returns_the_compute_default_when_no_account_named(env):
+    """An unnamed account resolves to the compute venue's one account, not to ``None``.
+
+    The routing seam reads this answer for every order, so ``None`` here would refuse
+    every order a single-account system placed.
+    """
     portfolio_id = env.handler.add_portfolio(name=_NAME, exchange=_EXCHANGE, cash=_CASH)
-    assert env.handler.account_for(portfolio_id) is None
+    assert env.handler.account_for(portfolio_id) == DEFAULT_ACCOUNT_ID
 
 
 def test_account_for_unknown_id_matches_exchange_for(env):

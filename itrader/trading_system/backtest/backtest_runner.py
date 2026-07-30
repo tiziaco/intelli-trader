@@ -29,7 +29,7 @@ from itrader.core.exceptions import ConfigurationError
 from itrader.logger import get_itrader_logger
 from itrader.price_handler.feed.bar_feed import BacktestBarFeed
 from itrader.price_handler.store.base import PriceStore
-from itrader.trading_system.compose import Engine
+from itrader.trading_system.graph import Engine
 from itrader.trading_system.universe_wiring import wire_universe
 
 

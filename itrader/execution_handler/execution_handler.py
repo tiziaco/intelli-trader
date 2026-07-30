@@ -96,7 +96,7 @@ class ExecutionHandler(AbstractExecutionHandler):
 
 	def __init__(self, global_queue: "EventBus", *,
 				exchange_registry: dict[tuple[str, str], Optional[AbstractExchange]],
-				portfolio_read_model: Optional["PortfolioReadModel"] = None) -> None:
+				portfolio_read_model: "PortfolioReadModel") -> None:
 		"""
 		Parameters
 		----------
@@ -111,27 +111,21 @@ class ExecutionHandler(AbstractExecutionHandler):
 			let a caller silently hold a private, empty map while the manager wrote a
 			different one, and every live order would then fail closed on a lookup
 			miss without anything turning red.
-		portfolio_read_model: `PortfolioReadModel`, optional
-			Resolves an order's VENUE ACCOUNT from its portfolio. The injection is
-			ASYMMETRIC by design, and the asymmetry is the point:
+		portfolio_read_model: `PortfolioReadModel`
+			Resolves an order's VENUE ACCOUNT from its portfolio, so every order is
+			routed to the exchange holding THAT account's session. REQUIRED on
+			every path: an omissible read-model is a routing default in disguise,
+			and a default routes one account's orders through another account's
+			authenticated session (MPORT-07).
 
-			* the BACKTEST composition root passes NOTHING, so ``on_order``
-			  resolves ``DEFAULT_ACCOUNT_ID`` unconditionally and the
-			  byte-exact oracle route is untouched;
-			* the LIVE composition root passes the portfolio handler (which
-			  satisfies the Protocol structurally), so every live order is
-			  routed to the exchange holding THAT account's authenticated
-			  session.
-
-			When it IS injected, ``account_for`` returning ``None`` is a LOUD
-			REFUSAL — the order is not submitted. It must NEVER be written as
+			``account_for`` returning ``None`` is a LOUD REFUSAL — the order is not
+			submitted. It must NEVER be written as
 			``account_for(...) or DEFAULT_ACCOUNT_ID``: that is the most
-			natural-looking repair and it routes a live portfolio that names no
-			account through whatever session is registered as the default
-			(MPORT-07). The guard against that state is upstream and
-			composition-time — ``VenueAccountManager.assert_available`` refuses to
-			bring a portfolio naming no account online — so this handler's only
-			job is to fail closed and signal.
+			natural-looking repair and it is exactly the MPORT-07 defect. The guard
+			against that state is upstream and composition-time —
+			``VenueAccountManager.assert_available`` refuses to bring a portfolio
+			naming no account online — so this handler's only job is to fail closed
+			and signal.
 		"""
 		self.logger = get_itrader_logger().bind(component="ExecutionHandler")
 
@@ -248,13 +242,9 @@ class ExecutionHandler(AbstractExecutionHandler):
 	def _resolve_account_id(self, event: OrderEvent) -> Optional[str]:
 		"""Resolve the venue account half of the routing key.
 
-		With NO read-model injected there is exactly one account — the backtest path
-		— so the default constant is correct and unconditional. With one injected,
-		the portfolio's own account is authoritative and a ``None`` answer is
-		propagated as a refusal, never coerced.
+		The portfolio's own account is authoritative on every path, and a ``None``
+		answer is propagated as a refusal, never coerced.
 		"""
-		if self._portfolio_read_model is None:
-			return DEFAULT_ACCOUNT_ID
 		return self._portfolio_read_model.account_for(event.portfolio_id)
 
 	def on_market_data(self, bar: BarEvent) -> None:

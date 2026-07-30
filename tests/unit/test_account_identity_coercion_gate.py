@@ -18,10 +18,11 @@ RELOCATES it. So the gate asserts ZERO account-identity coercions remain anywher
 ``itrader/venues/`` or in ``itrader/trading_system/live_trading_system.py``.
 
 (b) POSITIVE half — the backtest single-account identity is STILL present. The kept
-uses in ``execution_handler`` / ``backtest_trading_system`` / ``universe_wiring`` (and the
-paper lookup in ``live_trading_system``) are load-bearing for the golden oracle: deleting
-one changes backtest numbers. Recorded as expected per-file counts so a future sweep that
-removes a backtest-identity use fails HERE rather than silently re-baselining the oracle.
+uses in ``execution_handler`` / ``backtest_trading_system`` / ``universe_wiring`` /
+``portfolio_factory`` (and the paper lookup in ``live_trading_system``) are load-bearing
+for the golden oracle: deleting one changes backtest numbers. Recorded as expected
+per-file counts so a future sweep that removes a backtest-identity use fails HERE rather
+than silently re-baselining the oracle.
 
 HOW IT READS SOURCE — by parsing the file CONTENTS with ``ast`` IN-PROCESS (nothing is
 shelled out, so the gate works in any checkout). The AST approach is what lets the negative
@@ -64,12 +65,20 @@ _VENUES_DIR = _ROOT / "itrader" / "venues"
 # the golden oracle, so the gate fails if any count drops. Counts are ``ast.Name`` uses,
 # which exclude the ``from ... import DEFAULT_ACCOUNT_ID`` line and every docstring mention.
 _BACKTEST_IDENTITY_COUNTS = {
-    "itrader/execution_handler/execution_handler.py": 6,
-    "itrader/trading_system/backtest/backtest_trading_system.py": 1,
+    "itrader/execution_handler/execution_handler.py": 5,
+    # The backtest root's paper pair key: the registry entry it builds, plus the
+    # post-run settings lookup.
+    "itrader/trading_system/backtest/backtest_trading_system.py": 2,
     "itrader/trading_system/universe_wiring.py": 2,
     # The (COMPUTE_VENUE, DEFAULT_ACCOUNT_ID) paper lookup in the live file (survives
     # D-35) — an account-identity coercion it is NOT, so it is a KEPT use, not a swept one.
     "itrader/trading_system/live_trading_system.py": 1,
+    # ``ComputeAccountAuthority`` names the compute venue's ONE account for a portfolio
+    # that names none, so a single-account system's orders resolve to the pair its
+    # exchange is registered under. Scoped to the COMPUTE authority: the live authority
+    # runs ``assert_available`` first and refuses an unnamed account there, so this can
+    # never turn a live portfolio naming no account into the default one.
+    "itrader/portfolio_handler/portfolio_factory.py": 1,
 }
 
 

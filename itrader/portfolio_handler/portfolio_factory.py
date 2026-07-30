@@ -20,24 +20,22 @@ branch inside ``materialize``:
   cannot be the construction-time leaf, because its balance raises until the first
   venue snapshot while ``Portfolio.__init__`` reads balance (the venue-truth swap is
   deferred, COMP-07);
-* the BACKTEST / in-memory arm injects ``ComputeAccountAuthority`` (below) —
-  bundles-only, ``account_id`` stays ``None``, no validation, and it NEVER raises.
+* the BACKTEST / in-memory arm injects ``ComputeAccountAuthority`` (below) — no
+  validation, and it NEVER raises.
 
 **No ``Optional`` collaborator, no ``None``-then-assign, no post-construction setter.**
 The factory holds a REAL authority at construction: a dependency that genuinely cannot
 be satisfied is a construction-time refusal, not a per-call ``is None`` check.
 
-The behavioral oracle drives only the default construction arm through
-``compose_engine``, so this factory also carries its own direct assertions
-(``tests/unit/portfolio/test_portfolio_factory.py``) — a factory-only regression would
-otherwise go false-green against the oracle alone.
+Both authorities carry their own direct assertions
+(``tests/unit/portfolio/test_portfolio_factory.py``) as well as riding the oracle, so a
+factory-only regression cannot go false-green against either alone.
 
 Indentation: 4-SPACE, matching ``portfolio_handler.py`` and the ``account/`` modules,
 not the TAB-indented ``portfolio.py`` this factory constructs. ``authority`` /
-``sql_engine`` (and ``ComputeAccountAuthority``'s ``venue_bundles``) are typed ``Any``
-so naming ``VenueAccountManager`` / ``VenueBundles`` / ``SqlEngine`` concretely never
-drags the venue substrate or sqlalchemy onto this backtest-hot-path module's import
-graph (GATE-01).
+``sql_engine`` are typed ``Any`` so naming ``VenueAccountManager`` / ``SqlEngine``
+concretely never drags the venue substrate or sqlalchemy onto this backtest-hot-path
+module's import graph (GATE-01).
 """
 
 from __future__ import annotations
@@ -50,6 +48,7 @@ from itrader import idgen
 from itrader.config import PortfolioConfig, get_portfolio_preset
 from itrader.core.ids import PortfolioId
 from itrader.core.money import to_money
+from itrader.portfolio_handler.account.simulated import build_compute_account
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.storage import PortfolioStateStorageFactory
 from itrader.venues.registry import DEFAULT_ACCOUNT_ID
@@ -60,47 +59,40 @@ if TYPE_CHECKING:
 
 
 class ComputeAccountAuthority:
-    """The BACKTEST / in-memory account authority — bundles-only, never raises.
-
-    Resolves the COMPUTE-venue bundle under a fixed ``(compute_venue,
-    DEFAULT_ACCOUNT_ID)`` memo key and builds the leaf carrying the portfolio's real
-    ``(venue_name, account_id)`` pair — ``account_id`` may be ``None`` on backtest and
-    stays ``None`` on the leaf (the oracle invariant), never coerced to the default.
+    """The COMPUTE account authority — builds a compute leaf, never raises.
 
     It holds no ``VenueAccountManager`` and therefore no existence/enabled authority to
     consult: a compute leaf is always constructible, so ``account_for`` never raises.
     Which authority a ``PortfolioFactory`` holds is the only place the mode difference
     lives — there is no ``if backtest`` branch inside ``materialize``.
 
+    It builds through ``build_compute_account`` — the ONE compute-leaf constructor,
+    beside the leaves it selects between — so the margin-vs-cash rule has a single home.
+
     ``account_for`` mirrors ``VenueAccountManager.account_for``'s call shape
     (``authority.account_for(venue_name, account_id, **portfolio_args)``, no ``spec=``)
-    so the factory reaches both authorities the same way. ``venue_bundles`` is typed
-    ``Any`` (GATE-01).
+    so the factory reaches both authorities the same way.
     """
-
-    def __init__(self, *, venue_bundles: Any, compute_venue: str) -> None:
-        # The same venue_bundles memo ExecutionHandler holds. REQUIRED — no Optional arm.
-        self._venue_bundles = venue_bundles
-        # The venue whose plugin mints every portfolio's construction-time compute
-        # leaf, on every path — a venue-truth account needs a per-account spec that
-        # does not exist at portfolio-creation time.
-        self._compute_venue = compute_venue
 
     def account_for(
         self, venue_name: Optional[str], account_id: Optional[str], **portfolio_args: Any
     ) -> Account:
         """Build the compute leaf for this portfolio; never raises.
 
-        The memo key is the compute venue + the default-account half; the leaf carries
-        the portfolio's real ``(venue_name, account_id)``, so ``Portfolio.venue_name`` /
-        ``.account_id`` report the portfolio's own account. ``account_id`` is not
-        coerced into the memo key here — the compute bundle is resolved under
-        ``DEFAULT_ACCOUNT_ID`` while the leaf keeps the real (possibly ``None``) id.
+        A compute venue serves exactly ONE account, so a portfolio that names none names
+        THAT one — ``DEFAULT_ACCOUNT_ID``, the account half of the pair the compute
+        exchange is registered under. Naming it here is what lets order routing be
+        uniform: the execution handler reads every order's account off its portfolio and
+        finds a registered exchange on every path, with no mode-dependent default.
+
+        The fallback is unreachable from the live path: ``VenueValidatedComputeAuthority``
+        runs ``assert_available`` first, and a ``None`` account is refused there — so this
+        never turns an unnamed live account into the default one (MPORT-07).
         """
-        bundle = self._venue_bundles.get(
-            self._compute_venue, DEFAULT_ACCOUNT_ID, None)
-        account: Account = bundle.account_factory(
-            account_id=account_id, venue_name=venue_name, **portfolio_args)
+        account: Account = build_compute_account(
+            account_id=account_id if account_id is not None else DEFAULT_ACCOUNT_ID,
+            venue_name=venue_name,
+            **portfolio_args)
         return account
 
 

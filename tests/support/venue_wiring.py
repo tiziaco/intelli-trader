@@ -30,7 +30,11 @@ from itrader.execution_handler.execution_handler import default_exchange_config
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.venues.bundles import VenueBundles
 from itrader.venues.paper_plugin import PaperVenuePlugin
-from itrader.venues.registry import COMPUTE_VENUE, ExecutionVenueRegistry
+from itrader.venues.registry import (
+    COMPUTE_VENUE,
+    DEFAULT_ACCOUNT_ID,
+    ExecutionVenueRegistry,
+)
 
 
 def backtest_venue_bundles(
@@ -80,6 +84,18 @@ def backtest_exchange_registry(
         backtest_venue_bundles(bus, exchange_config=exchange_config, rng=rng),
     )
     return registry
+
+
+def single_account_read_model(account_id: str = DEFAULT_ACCOUNT_ID) -> Any:
+    """The one-account ``PortfolioReadModel`` stand-in a direct ``ExecutionHandler`` needs.
+
+    ``ExecutionHandler`` resolves EVERY order's venue account through an injected
+    read-model — there is no mode-dependent default, because a default is what routes one
+    account's orders through another account's session. A test that builds the handler
+    around a bare exchange registry, with no portfolio handler behind it, still has to say
+    which account its orders belong to; this says "the one the registry is keyed under".
+    """
+    return SimpleNamespace(account_for=lambda portfolio_id: account_id)
 
 
 def in_memory_state_storage() -> Any:
@@ -168,23 +184,23 @@ def backtest_portfolio_factory(
 
     ``PortfolioHandler`` now builds every portfolio's account leaf THROUGH an injected
     ``PortfolioFactory`` (D-24), whose account authority on the backtest arm is the
-    bundles-backed ``ComputeAccountAuthority`` (``account_id`` None, never raises). Every
-    direct-construction test site that creates portfolios needs the same recipe; this is
-    it. ``environment`` / ``sql_engine`` thread the durable state-storage selectors so the
-    factory scopes state storage exactly as the handler expects.
+    ``ComputeAccountAuthority`` (never raises). Every direct-construction test site that
+    creates portfolios needs the same recipe; this is it. ``environment`` / ``sql_engine``
+    thread the durable state-storage selectors so the factory scopes state storage exactly
+    as the handler expects.
+
+    ``bus`` / ``exchange_config`` / ``rng`` are accepted and unread: the compute authority
+    builds its leaf directly and touches no exchange. They stay in the signature because
+    every call site passes them and the handler recipe below forwards the bus.
     """
     from itrader.portfolio_handler.portfolio_factory import (
         ComputeAccountAuthority,
         PortfolioFactory,
     )
 
-    authority = ComputeAccountAuthority(
-        venue_bundles=backtest_venue_bundles(
-            bus, exchange_config=exchange_config, rng=rng),
-        compute_venue=COMPUTE_VENUE,
-    )
     return PortfolioFactory(
-        authority=authority, environment=environment, sql_engine=sql_engine)
+        authority=ComputeAccountAuthority(),
+        environment=environment, sql_engine=sql_engine)
 
 
 def backtest_portfolio_handler(bus: Optional[Any] = None, **kwargs: Any) -> Any:

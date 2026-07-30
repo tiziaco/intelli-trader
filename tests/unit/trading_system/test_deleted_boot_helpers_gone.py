@@ -4,7 +4,8 @@ Two waves of deletions are pinned here. First: the six ``live_trading_system.py`
 that derived and minted account identity at boot, replaced by the store-derived
 ``VenueAccountManager``. Second: the ferrying layer that stood between a durable account row
 and its runtime — ``assemble_venue``, ``VenueLifecycle`` and the standalone venue-UID guard
-module — absorbed into ``venues/accounts.py``. This gate fails if ANY of those names
+module — absorbed into ``venues/accounts.py``. Third: the composition mode selector that
+chose whether orders were routed by account. This gate fails if ANY of those names
 reappears as a live CODE reference anywhere under ``itrader/`` or ``tests/``.
 
 **Why a static gate, and why it scans SOURCE rather than trusting the suite.** Two of the
@@ -43,6 +44,11 @@ _DELETED_NAMES = frozenset({
     "OnlineVenueAccount",
     "venue_uid_guard",
     "venue_account_manager",
+    # The composition mode selector. Order routing is uniform now — every order's
+    # account is read off its own portfolio — and a per-mode routing switch is what
+    # let one account's orders reach another account's session. Pinned by name so the
+    # flag cannot come back the way it left.
+    "route_orders_by_account",
 })
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]

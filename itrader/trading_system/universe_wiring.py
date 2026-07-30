@@ -40,7 +40,7 @@ the TAB-indented donor block).
 from itrader.core.exceptions import ConfigurationError
 from itrader.execution_handler.execution_handler import COMPUTE_VENUE, DEFAULT_ACCOUNT_ID
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
-from itrader.trading_system.compose import Engine
+from itrader.trading_system.graph import Engine
 from itrader.universe import Universe, derive_instruments, derive_membership
 
 

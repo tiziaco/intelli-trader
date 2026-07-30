@@ -33,6 +33,7 @@ from itrader.core.sizing import FractionOfCash, TradingDirection
 from tests.support.venue_wiring import (
     backtest_exchange_registry,
     backtest_portfolio_handler,
+    single_account_read_model,
 )
 
 
@@ -79,7 +80,8 @@ def _order_for(portfolio_id, exchange="paper", order_id=1):
 def handler():
     queue = Queue()
     execution_handler = ExecutionHandler(
-        queue, exchange_registry=backtest_exchange_registry(queue))
+        queue, exchange_registry=backtest_exchange_registry(queue),
+        portfolio_read_model=single_account_read_model())
     yield queue, execution_handler
     while not queue.empty():
         queue.get_nowait()
@@ -222,8 +224,9 @@ def test_refused_fill_moves_order_mirror_out_of_pending():
 
     # Route the order through an ExecutionHandler whose registry has no exchange
     # for the resolved account -> a REFUSED(UNREGISTERED_VENUE_ACCOUNT) fill.
-    execution_handler = ExecutionHandler(queue, exchange_registry={})
-    execution_handler._portfolio_read_model = _StubReadModel({pf_id: "unmapped"})
+    execution_handler = ExecutionHandler(
+        queue, exchange_registry={},
+        portfolio_read_model=_StubReadModel({pf_id: "unmapped"}))
     execution_handler.on_order(order_event)
 
     fill = queue.get(False)

@@ -28,8 +28,7 @@ from itrader.portfolio_handler.portfolio_factory import (
 )
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.portfolio_handler.rehydrate.portfolio_rehydrate import rehydrate_portfolios
-from itrader.venues.registry import COMPUTE_VENUE
-from tests.support.venue_wiring import backtest_portfolio_handler, backtest_venue_bundles
+from tests.support.venue_wiring import backtest_portfolio_handler
 
 
 class _FakeDefinitionStore:
@@ -273,8 +272,7 @@ def test_rehydrating_a_disabled_account_raises_rather_than_a_compute_leaf() -> N
     bus = queue.Queue()
     authority = VenueValidatedComputeAuthority(
         manager=_DisabledAccountManager(),
-        compute=ComputeAccountAuthority(
-            venue_bundles=backtest_venue_bundles(bus), compute_venue=COMPUTE_VENUE),
+        compute=ComputeAccountAuthority(),
     )
     handler = PortfolioHandler(
         bus, portfolio_factory=PortfolioFactory(

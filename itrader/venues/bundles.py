@@ -95,13 +95,9 @@ class VenueBundles:
     ) -> Account:
         """Construct THIS ``(venue, account_id)``'s account leaf.
 
-        The mode-agnostic construction primitive: it resolves the shared bundle through
-        ``get`` above and calls that bundle's ``account_factory``. Both backtest arms
-        already build a ``VenueBundles``, so this needs no mode branch — the layer split
-        puts CONSTRUCTION here and AUTHORITY (does this account exist, and is it
-        enabled?) in ``VenueAccountManager``. A manager-only design would need a
-        ``VenueAccountManager(store=None)`` on the backtest arm, the Optional-collaborator
-        shape this codebase avoids.
+        Resolves the shared bundle through ``get`` above and calls that bundle's
+        ``account_factory``. It has no caller left — compute leaves are built by
+        ``build_compute_account`` now — and dies with this module.
 
         ``account_id`` is REQUIRED and UNCOERCED, exactly like ``get``: no fallback is
         applied here either.

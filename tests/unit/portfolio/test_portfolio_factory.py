@@ -10,10 +10,10 @@ What is pinned:
 
 * ``materialize`` attaches the account the injected AUTHORITY returned — identity, not
   just "an account was built" — and forwards the portfolio's REAL ``(venue_name,
-  account_id)`` pair UNCOERCED. There is NO compute-venue resolution and NO
-  ``or DEFAULT_ACCOUNT_ID`` coercion in the factory any more: the authority owns that
-  (the backtest ``ComputeAccountAuthority`` resolves the compute bundle; the live
-  ``VenueAccountManager`` resolves the real pair).
+  account_id)`` pair UNCOERCED. There is NO compute-venue resolution and no default
+  account named in the factory: the authority owns that (the backtest
+  ``ComputeAccountAuthority`` names the compute venue's one account when a portfolio
+  names none; the live ``VenueAccountManager`` validates the real pair).
 * it never passes ``spec=`` to the authority — ``VenueAccountManager.account_for`` has no
   such parameter, so passing one would land in ``portfolio_args`` and collide (concern 3).
 * it builds and passes a real id-scoped ``state_storage`` (never omits it — plan 01 made
@@ -21,8 +21,8 @@ What is pinned:
   reattached verbatim.
 * BOTH authority arms: a refusing (live / ACCT-03) authority PROPAGATES — the factory
   never falls back to a compute leaf of its own; the REAL backtest
-  ``ComputeAccountAuthority`` yields a compute leaf carrying ``account_id=None`` (the
-  oracle invariant) and never raises.
+  ``ComputeAccountAuthority`` yields a compute leaf naming the compute venue's one
+  account and never raises.
 * the factory has NO ``Optional`` collaborator: ``authority`` is a REQUIRED construction
   dependency, so there is no ``is None`` refusal counterpart.
 
@@ -47,7 +47,8 @@ from itrader.portfolio_handler.portfolio_factory import (
     PortfolioFactory,
     VenueValidatedComputeAuthority,
 )
-from tests.support.venue_wiring import backtest_venue_bundles, compute_account
+from itrader.venues.registry import DEFAULT_ACCOUNT_ID
+from tests.support.venue_wiring import compute_account
 
 
 _CASH = Decimal("100000")
@@ -113,8 +114,8 @@ def test_materialize_attaches_the_account_from_the_authority() -> None:
 def test_materialize_forwards_the_real_pair_uncoerced_and_no_spec() -> None:
     """The factory forwards the portfolio's REAL (venue_name, account_id), and no ``spec=``.
 
-    No compute-venue resolution and no ``or DEFAULT_ACCOUNT_ID`` coercion live in the
-    factory now — the authority owns that. And ``spec`` must NOT be forwarded (concern 3):
+    No compute-venue resolution and no default account named in the factory — the
+    authority owns that. And ``spec`` must NOT be forwarded (concern 3):
     ``VenueAccountManager.account_for`` has no such parameter, so a stray ``spec=`` would
     land in ``portfolio_args`` and collide.
     """
@@ -197,22 +198,31 @@ def test_a_refusing_authority_propagates_no_fallback_leaf() -> None:
             account_id="ghost", venue_name="okx")
 
 
-def test_the_backtest_compute_authority_yields_a_none_account_leaf() -> None:
-    """The BACKTEST arm over the REAL ComputeAccountAuthority: account_id None, no raise.
+def test_the_backtest_compute_authority_names_the_default_account() -> None:
+    """The BACKTEST arm over the REAL ComputeAccountAuthority: default account, no raise.
 
-    The oracle invariant — a backtest portfolio's leaf carries ``account_id=None`` — is
-    proven end to end against the real authority, not a double.
+    A compute venue serves exactly ONE account, so a portfolio that names none names that
+    one. It is what makes order routing uniform — the execution handler resolves every
+    order's account off its portfolio and finds the registered ``(paper, default)``
+    exchange — so a leaf reverting to ``account_id=None`` would silently refuse every
+    backtest order. Proven end to end against the real authority, not a double.
     """
-    import queue
-
-    authority = ComputeAccountAuthority(
-        venue_bundles=backtest_venue_bundles(queue.Queue()), compute_venue="paper")
     portfolio = PortfolioFactory(
-        authority=authority, environment="backtest").materialize(
+        authority=ComputeAccountAuthority(), environment="backtest").materialize(
             name="pf", exchange="paper", cash=_CASH, venue_name="paper")
 
-    assert portfolio.account.account_id is None
+    assert portfolio.account.account_id == DEFAULT_ACCOUNT_ID
     assert portfolio.account.balance == Decimal("100000.00")
+
+
+def test_a_portfolio_naming_its_own_account_keeps_that_account() -> None:
+    """The default is a fallback for an unnamed account, never an override of a named one."""
+    portfolio = PortfolioFactory(
+        authority=ComputeAccountAuthority(), environment="backtest").materialize(
+            name="pf", exchange="paper", cash=_CASH, venue_name="paper",
+            account_id="paper-acct-a")
+
+    assert portfolio.account.account_id == "paper-acct-a"
 
 
 # ---------------------------------------------------------------------------
@@ -249,12 +259,9 @@ def _live_authority(
     *, available: bool,
     cause: str = VenueAccountNotProvisionedError.NOT_PROVISIONED,
 ) -> tuple[VenueValidatedComputeAuthority, _FakeManager]:
-    import queue
-
     manager = _FakeManager(available=available, cause=cause)
-    compute = ComputeAccountAuthority(
-        venue_bundles=backtest_venue_bundles(queue.Queue()), compute_venue="paper")
-    return VenueValidatedComputeAuthority(manager=manager, compute=compute), manager
+    return VenueValidatedComputeAuthority(
+        manager=manager, compute=ComputeAccountAuthority()), manager
 
 
 def test_live_authority_raises_on_a_missing_account_and_builds_no_leaf() -> None:

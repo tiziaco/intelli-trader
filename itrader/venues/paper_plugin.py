@@ -141,13 +141,12 @@ class PaperVenuePlugin:
             # (*args, **kwargs) catch-all type-checks clean against a structural
             # Protocol while silently returning one shared unscoped account, a defect
             # the type system cannot see. account_id is accepted and carried for
-            # signature symmetry with the venue arm (both bundles are called
-            # uniformly by ComputeAccountAuthority.account_for); the paper arm's
-            # new_account deliberately never consults it — see its docstring.
+            # signature symmetry with the venue arm; the paper arm's new_account
+            # deliberately never consults it — see its docstring.
             #
             # No parameter carries a default: this closure, not the account
-            # constructors, is the seam ComputeAccountAuthority.account_for calls, so
-            # it is the layer that has to fail loud. Narrowing only the constructors
+            # constructors, is the seam a bundle's caller reaches, so it is the layer
+            # that has to fail loud. Narrowing only the constructors
             # would close the trap one layer below where portfolios are built — a
             # caller omitting state_storage here would still sail through, because
             # `= None` would supply the argument the constructor demands.
