@@ -74,11 +74,6 @@ class ITraderConfig(BaseModel):
     # trades / 46189.87730727451) breaks.
     timezone: str = "Europe/Paris"
 
-    data_dir: str = "data"
-    log_dir: str = "logs"
-    config_dir: str = "settings"
-    cache_dir: str = "cache"
-
     # --- MUTABLE SUB-MODELS: the runtime-config mutation overlay (D-07/D-12) -------
     # Each sub-model carries ``validate_assignment=True`` (D-13); the P9 router mutates
     # ``config.<scope>.<field> = value`` field-wise (never a sub-model-reference swap).

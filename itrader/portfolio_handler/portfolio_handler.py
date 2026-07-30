@@ -49,8 +49,8 @@ class PortfolioHandler:
     collection nor an individual ``Portfolio`` carries a lock.
     """
     
-    def __init__(self, global_queue: "EventBus", config_dir: str = "settings",
-                 environment: str = "backtest", sql_engine: "Optional[Any]" = None,
+    def __init__(self, global_queue: "EventBus", environment: str = "backtest",
+                 sql_engine: "Optional[Any]" = None,
                  *,
                  portfolio_factory: "Optional[Any]" = None) -> None:
         self.global_queue: "EventBus" = global_queue

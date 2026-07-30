@@ -50,7 +50,7 @@ def test_recursive_merge_replaces_non_dict_values():
 
 @pytest.fixture
 def handler():
-    return backtest_portfolio_handler(global_queue=Queue(), config_dir="settings", environment="test")
+    return backtest_portfolio_handler(global_queue=Queue(), environment="test")
 
 
 def test_handler_valid_update_swaps_config_and_rederives_cache(handler):

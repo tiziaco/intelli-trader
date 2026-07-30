@@ -65,7 +65,6 @@ def env():
     global_queue = Queue()
     handler = backtest_portfolio_handler(
         global_queue=global_queue,
-        config_dir="settings",
         environment="test",
     )
     yield SimpleNamespace(global_queue=global_queue, handler=handler)

@@ -22,7 +22,6 @@ def handler():
     """A backtest PortfolioHandler over an empty in-memory registry."""
     return backtest_portfolio_handler(
         global_queue=Queue(),
-        config_dir="settings",
         environment="test",
     )
 

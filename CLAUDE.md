@@ -89,7 +89,7 @@ Both wire up the identical component graph around one shared queue in their `__i
 
 ### Configuration system
 
-`itrader/config/` is a **Pydantic** config system rooted on `ITraderConfig` (`config/itrader_config.py`), a frozen `BaseModel` constructed directly (the old `ConfigRegistry` / `ConfigProvider` / convenience-getter layer was removed in M2-06; the former `SystemConfig` root, `Settings` env class, and the `PerformanceSettings` / `MonitoringSettings` sub-models were all removed during v1.8 Phase 9 + the config-cleanup follow-ups). `ITraderConfig` carries **frozen base params** — the determinism/identity guard — `rng_seed` (default 42), `environment`, `name`, `version`, `debug_mode`, `timezone` (default `"Europe/Paris"`, oracle-critical), and `data_dir`/`log_dir`/`config_dir`/`cache_dir`; plus **mutable overlay sub-models** (each `validate_assignment=True`) `system` (`SystemSettings`), `universe` (`UniverseConfig`), `stream`, `feed_provider`, `safety`, `order`, and `logging` (`LogConfig` — the slim `ITRADER_*` env layer carrying `log_level`/`disable_logs`). The SQL surface stays behind a lazy `sql` `@cached_property` (`SqlSettings`) so `import itrader` pulls no sqlalchemy (GATE-01 inertness). Domain models `PortfolioConfig`/`ExchangeConfig` live in their own `config/` modules; `ExchangeConfig` presets are classmethods (`ExchangeConfig.default()` / `.high_fee()`), not a string registry. The shared config-update deep-merge helper is `itrader/outils/dict_merge.py::recursive_merge` (it lives in `outils/`, not `config/`). **The `settings/*.yaml` files are inert** — no YAML loader exists anywhere in the repo (`grep -rn "import yaml" itrader/` is empty), so config is defaults plus the `ITRADER_*` env layer only.
+`itrader/config/` is a **Pydantic** config system rooted on `ITraderConfig` (`config/itrader_config.py`), a frozen `BaseModel` constructed directly (the old `ConfigRegistry` / `ConfigProvider` / convenience-getter layer was removed in M2-06; the former `SystemConfig` root, `Settings` env class, and the `PerformanceSettings` / `MonitoringSettings` sub-models were all removed during v1.8 Phase 9 + the config-cleanup follow-ups). `ITraderConfig` carries **frozen base params** — the determinism/identity guard — `rng_seed` (default 42), `environment`, `name`, `version`, `debug_mode`, and `timezone` (default `"Europe/Paris"`, oracle-critical); plus **mutable overlay sub-models** (each `validate_assignment=True`) `system` (`SystemSettings`), `universe` (`UniverseConfig`), `stream`, `feed_provider`, `safety`, `order`, and `logging` (`LogConfig` — the slim `ITRADER_*` env layer carrying `log_level`/`disable_logs`). The SQL surface stays behind a lazy `sql` `@cached_property` (`SqlSettings`) so `import itrader` pulls no sqlalchemy (GATE-01 inertness). Domain models `PortfolioConfig`/`ExchangeConfig` live in their own `config/` modules; `ExchangeConfig` presets are classmethods (`ExchangeConfig.default()` / `.high_fee()`), not a string registry. The shared config-update deep-merge helper is `itrader/outils/dict_merge.py::recursive_merge` (it lives in `outils/`, not `config/`). **There is no file-based config layer at all** — there is no `settings/` directory, the repo contains zero `.yaml`/`.yml` files, and no YAML loader exists anywhere (`grep -rn "import yaml" itrader/ scripts/ tests/` is empty). Config is `ITraderConfig` model defaults plus the `ITRADER_*` env layer, nothing else. The four path base params (`config_dir`/`data_dir`/`log_dir`/`cache_dir`) and the matching `PortfolioHandler.__init__(config_dir=...)` parameter were removed with that layer — none was ever dereferenced. `ITraderConfig` sets `extra="forbid"`, so constructing it with any of those keys now raises.
 
 **Import side effects:** `itrader/__init__.py` initializes process-wide singletons on import — `config = ITraderConfig()`, `logger` (structlog, via `init_logger`), and `idgen` (`IDGenerator`). Modules import these directly (`from itrader import config, idgen`). Get a bound logger with `get_itrader_logger().bind(component="...")`.
 
@@ -169,7 +169,6 @@ must import, run, and yield trustworthy results.
 ## Languages
 
 - Python 3.13 (CPython 3.13.1) - All application and test code under `itrader/` and `tests/`. Pinned to `>=3.13,<3.14` in `pyproject.toml`; `.python-version` pins `3.13`.
-- YAML - Configuration files under `settings/` (e.g. `settings/domains/portfolio.default.yaml`, `settings/portfolio_handler.yaml`)
 - Make - Developer task runner (`Makefile`)
 
 ## Runtime
@@ -216,7 +215,7 @@ must import, run, and yield trustworthy results.
 - tqdm ^4.67.3 - Progress bars during data download loops
 - structlog ^24.4.0 - Structured logging with context binding (`itrader/logger.py`); console (color) or JSON renderer
 - plotly ^6.8.0 - Interactive charts for performance reporting (`itrader/reporting/plots.py`)
-- pyyaml ^6.0.3 - YAML parsing for domain config (`itrader/config/`)
+- (no declared YAML dependency) - `pyyaml` was dropped from `pyproject.toml`; nothing imports it and the repo holds zero `.yaml`/`.yml` files. It is still present in `.venv` as a transitive requirement of `bokeh`, so `import yaml` will succeed — that is not a licence to reintroduce a YAML config layer.
 - alembic ^1.18.5 - Migration chain at the repo root (`migrations/`, `alembic.ini`); dev-group dependency
 - testcontainers ^4.14.2 (extras: postgresql) - Throwaway Postgres for the SQL-store tests; skips cleanly when Docker is absent
 - scalene ^2.3.0 - CPU profiler behind the `make perf-profile` / `perf-view` targets
@@ -226,7 +225,7 @@ must import, run, and yield trustworthy results.
 
 - `.env` file at repo root (present; loaded by `Makefile` via `include .env` + `.EXPORT_ALL_VARIABLES`). Contains DB URLs and exchange API credentials — see INTEGRATIONS.md for key names.
 - `pydantic-settings` `LogConfig` (`itrader/config/log.py`, `extra="ignore"`) reads logging vars with prefix `ITRADER_`; `SqlSettings` (`itrader/config/sql.py`) reads `ITRADER_DATABASE_*`
-- Domain YAML configs loaded from `settings/` (gitignored in production); defaults shipped as `settings/domains/{domain}.default.yaml`
+- No file-based config layer: there is no `settings/` directory and no YAML anywhere in the repo. Config is `ITraderConfig` model defaults overlaid by the `ITRADER_*` env vars only.
 - Process-wide singletons (`config`, `logger`, `idgen`) initialized in `itrader/__init__.py` on import
 - `pyproject.toml` - Single source of truth for dependencies, pytest config, and mypy config
 - `Makefile` - All developer commands
@@ -440,7 +439,7 @@ raises `NotImplementedError` on an unrouted type; silent drops are a tampering r
 - Purpose: Pydantic-modelled system configuration.
 - Location: `itrader/config/`
 - Contains: `ITraderConfig` (frozen root — `rng_seed`/`timezone`/identity base params + `system`/`universe`/`stream`/`feed_provider`/`safety`/`order`/`logging` sub-models + lazy `sql`), `PortfolioConfig`, `ExchangeConfig`, `SystemSettings`/`UniverseConfig`/`LogConfig`, domain models. The registry/provider getters were removed (M2-06) and the former `SystemConfig`/`Settings`/`PerformanceSettings`/`MonitoringSettings` were removed (v1.8 Phase 9 + follow-ups); `ITraderConfig()` is constructed directly.
-- Depends on: `pydantic`, `pydantic-settings`, optional YAML in `settings/`.
+- Depends on: `pydantic`, `pydantic-settings`.
 - Used by: `itrader/__init__.py`, `ExecutionHandler`, `PortfolioHandler`.
 - Location: `itrader/__init__.py`
 - Initialised on import: `config = ITraderConfig()`, `logger = init_logger(config)`, `idgen = IDGenerator()`.
