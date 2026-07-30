@@ -17,6 +17,7 @@ with the old TIME key the curve would have been empty under the BAR-only live fe
 from datetime import datetime, timezone
 
 from itrader.events_handler.events import BarEvent, TimeEvent
+from itrader.trading_system.live.system import record_bar_metrics
 
 
 _BAR_OPEN = datetime(2021, 6, 1, 0, 0, 0, tzinfo=timezone.utc)
@@ -24,11 +25,12 @@ _BAR_OPEN = datetime(2021, 6, 1, 0, 0, 0, tzinfo=timezone.utc)
 
 def _system_with_portfolio():
     """Construct an offline (in-memory) LiveTradingSystem with one active portfolio."""
-    import itrader.trading_system.live_trading_system as lts
+    from itrader import config as _live_config
+    from itrader.trading_system.live.build import build_live_system
 
     # exchange='binance' keeps construction fully offline (no OKX/replay wiring); with no
     # SYSTEM_DB_URL the store falls back to in-memory — irrelevant to the metrics path.
-    system = lts.LiveTradingSystem.for_exchange("binance")
+    system = build_live_system(_live_config, execution_venue="binance", data_venue="okx")
     system.portfolio_handler.add_portfolio(
         name="live-metrics", exchange="binance", cash=100_000.0)
     return system
@@ -41,7 +43,7 @@ def test_bar_event_records_per_bar_equity_curve():
         portfolio = system.portfolio_handler.get_active_portfolios()[0]
         assert portfolio.metrics_manager.get_snapshots() == []   # empty before any bar
 
-        system._record_bar_metrics(BarEvent(time=_BAR_OPEN, bars={}))
+        record_bar_metrics(system.portfolio_handler, BarEvent(time=_BAR_OPEN, bars={}))
 
         snapshots = portfolio.metrics_manager.get_snapshots()
         assert len(snapshots) == 1                               # equity curve populated live
@@ -63,7 +65,7 @@ def test_time_event_records_nothing():
     try:
         portfolio = system.portfolio_handler.get_active_portfolios()[0]
 
-        system._record_bar_metrics(TimeEvent(time=_BAR_OPEN))
+        record_bar_metrics(system.portfolio_handler, TimeEvent(time=_BAR_OPEN))
 
         assert portfolio.metrics_manager.get_snapshots() == []
     finally:

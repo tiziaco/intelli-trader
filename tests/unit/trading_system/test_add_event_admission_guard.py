@@ -39,7 +39,9 @@ import pytest
 from itrader.core.enums import EventType, OrderCommand, OrderType, Side
 from itrader.core.ids import OrderId, PortfolioId
 from itrader.events_handler.events import OrderEvent
-from itrader.trading_system.live_trading_system import (
+from itrader import config as _live_config
+from itrader.trading_system.live.build import build_live_system
+from itrader.trading_system.live.system import (
     LiveTradingSystem,
     _EXTERNALLY_ADMISSIBLE,
 )
@@ -49,7 +51,8 @@ def _live_system(monkeypatch: Any) -> LiveTradingSystem:
     """A credential-free LiveTradingSystem for the default (non-OKX) venue, marked running."""
     for var in ("OKX_API_KEY", "OKX_API_SECRET", "OKX_API_PASSPHRASE"):
         monkeypatch.delenv(var, raising=False)
-    system = LiveTradingSystem.for_exchange("binance")
+    system = build_live_system(
+        _live_config, execution_venue="binance", data_venue="okx")
     # Drive add_event directly — flip the running flag without launching the daemon thread.
     system._running = True
     return system

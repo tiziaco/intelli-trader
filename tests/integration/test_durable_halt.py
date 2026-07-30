@@ -34,7 +34,7 @@ from itrader.core.sizing import FractionOfCash, TradingDirection
 from itrader.storage import SqlEngine
 from itrader.storage.halt_record_store import HaltRecordStore
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
-from itrader.trading_system.live_trading_system import LiveTradingSystem
+from itrader.trading_system.live.system import LiveTradingSystem
 from tests.support.replay_harness import build_paper_replay_system
 from tests.support.schema import provision_schema
 

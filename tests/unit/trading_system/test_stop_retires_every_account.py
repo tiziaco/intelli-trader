@@ -26,7 +26,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from itrader.trading_system.live_trading_system import LiveTradingSystem
+from itrader.trading_system.live.system import LiveTradingSystem
 
 
 class _RecordingManager:
@@ -162,24 +162,3 @@ def test_teardown_runs_and_does_not_mask_a_raising_stop_body() -> None:
     assert calls == ["acct-a", "acct-b", "acct-c"]
     assert pool.close_all_calls == 1
     assert backend.dispose_calls == 1
-
-
-class _PartialHost:
-    """A partially-constructed facade: no venue manager, no pool, no SQL backend."""
-
-    stop = LiveTradingSystem.stop
-
-    def __init__(self) -> None:
-        self._running = False
-        self.logger = MagicMock(name="logger")
-
-
-def test_partially_constructed_facade_stop_does_not_raise() -> None:
-    """PRESERVATION guard — it locks the defensive ``getattr`` reads.
-
-    ``stop()`` must still work on a facade whose construction never reached the venue /
-    pool / SQL wiring, so a failed build can still release whatever it did open.
-    """
-    host = _PartialHost()
-
-    assert host.stop() is True

@@ -174,31 +174,13 @@ def paper_exchange_recipe(
 ) -> Callable[..., AbstractExchange]:
     """The paper execution adapter in RECIPE form, bound to this run's exchange config.
 
-    The venue-account manager builds every execution adapter through one uniform
-    ``recipe(spec=..., connector=..., ctx=...)`` call, so the paper venue supplies one
-    too. The build is DELEGATED rather than restated: the exchange this returns is the
-    exchange ``PaperVenuePlugin`` mints, so paper cannot acquire a second construction
-    path that drifts from the one the backtest arm still uses.
-
-    The recipe's permanent home is ``execution_handler/exchanges/paper.py``, beside what
-    it builds, as every other recipe already is; it lives here only while
-    ``PaperVenuePlugin`` is still the construction site.
-
-    ``exchange_config`` is bound at composition rather than read off the process-wide
-    singleton: only the run knows its complete symbol set, and a default preset would
-    silently narrow order admission.
+    A one-line alias of ``execution_handler/exchanges/paper.py::paper_exchange_recipe``,
+    which is the recipe's home — beside the adapter it builds, as every other recipe
+    already is. This name survives only for the callers still reaching the paper venue
+    through this module.
     """
-    plugin = PaperVenuePlugin(exchange_config)
+    from itrader.execution_handler.exchanges.paper import (
+        paper_exchange_recipe as _recipe,
+    )
 
-    def _build(
-        *,
-        spec: Any = None,
-        connector: Any = None,
-        ctx: Any = None,
-    ) -> AbstractExchange:
-        # ``connector`` is deliberately unread: paper holds no venue session, so the
-        # manager opens none for it, and the parameter exists only to keep ONE recipe
-        # shape across venues.
-        return plugin.build_bundle(ctx, spec, None).exchange
-
-    return _build
+    return _recipe(exchange_config)

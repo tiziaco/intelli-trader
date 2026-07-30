@@ -42,7 +42,9 @@ from itrader.storage import SqlEngine
 from itrader.storage.system_store import SystemStore
 from itrader.storage.venue_store import VenueStore
 from itrader.trading_system.config_router import ConfigRouter
-from itrader.trading_system.live_trading_system import LiveTradingSystem
+from itrader import config as _live_config
+from itrader.trading_system.live.build import build_live_system
+from itrader.trading_system.live.system import LiveTradingSystem
 from tests.support.schema import provision_schema
 
 _NOW = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)
@@ -52,7 +54,8 @@ def _live_system(monkeypatch: Any) -> LiveTradingSystem:
     """A credential-free, non-OKX facade marked running (no daemon thread)."""
     for var in ("OKX_API_KEY", "OKX_API_SECRET", "OKX_API_PASSPHRASE"):
         monkeypatch.delenv(var, raising=False)
-    system = LiveTradingSystem.for_exchange("binance")
+    system = build_live_system(
+        _live_config, execution_venue="binance", data_venue="okx")
     system._running = True
     return system
 

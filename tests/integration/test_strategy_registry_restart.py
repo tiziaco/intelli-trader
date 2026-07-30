@@ -35,8 +35,8 @@ from itrader.core.sizing import FractionOfCash
 from itrader.storage import SqlEngine
 from itrader.storage.strategy_registry_store import StrategyRegistryStore
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
-from itrader.trading_system.live_trading_system import build_live_system
-from itrader.trading_system.venue_spec import build_venue_spec
+from itrader import config as _live_config
+from itrader.trading_system.live.build import build_live_system
 from tests.support.replay_harness import TestDataRecipe
 from tests.support.schema import provision_schema, seed_portfolio_definitions
 from tests.support.strategy_catalog import seeded_registry_rows, test_catalog
@@ -87,8 +87,9 @@ def _build(**kwargs: Any) -> Any:
     new ``strategy_catalog`` injection seam is exercised as production would reach it.
     """
     recipe = TestDataRecipe()
-    spec = build_venue_spec("paper", data_provider="replay")
-    system = build_live_system(spec, data_plugins={"replay": recipe}, **kwargs)
+    system = build_live_system(
+        _live_config, execution_venue="paper", data_venue="replay",
+        data_recipes={"replay": recipe}, **kwargs)
     # Bring-up + rehydrate live in start(), because bring-up connects. This is the exact
     # call start() makes, so the production restart sequence runs without a drain thread.
     system._bootstrap_session()

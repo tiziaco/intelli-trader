@@ -20,12 +20,11 @@ venue-scoping, the exact-pair key, per-account ``secret_ref``) is unit-tested on
 manager without a boot. This file's unique job is proving production goes THROUGH those
 collaborators and hands the operator a reachable, fully-wired system.
 
-**The CR ledger.** Four probes carry ``xfail(strict=True)``, one per Critical from
+**The CR ledger.** Four probes, one per Critical from
 ``.planning/phases/11.2-account-provisioning-bootstrap-review-closures/11.2-REVIEW.md``.
-``strict=True`` means a probe that starts passing FAILS the suite loudly, so the stage that
-lands each fix must remove its mark in the same commit — the ledger cannot silently drift
-out of date. Each probe is written against the collaborator that owns its invariant rather
-than against the facade, so the four flip independently in their own stages.
+Each began as an ``xfail(strict=True)`` against the defect and now asserts the invariant its
+fix installed; each is written against the collaborator that owns that invariant rather than
+against the facade, so the four flipped independently in their own stages.
 
 Indentation: 4-space (matches ``tests/integration/*``); no ``__init__.py`` in this dir.
 The ``integration`` marker is folder-derived.
@@ -39,7 +38,9 @@ from typing import Any
 import pytest
 
 from itrader.portfolio_handler.account import SimulatedCashAccount
-from itrader.trading_system.live_trading_system import LiveTradingSystem
+from itrader import config as _live_config
+from itrader.trading_system.live.build import build_live_system
+from itrader.trading_system.live.system import LiveTradingSystem
 from itrader.venues.registry import COMPUTE_VENUE, DEFAULT_ACCOUNT_ID
 from tests.support.schema import provision_schema
 
@@ -108,7 +109,7 @@ def live_system(provisioned_paper):
     to building the object. ``_bootstrap_session`` is the exact call ``start()`` makes, so
     this drives the production boot without also spawning the drain thread.
     """
-    system = LiveTradingSystem.for_exchange(_VENUE)
+    system = build_live_system(_live_config, execution_venue=_VENUE)
     try:
         system._bootstrap_session()
         yield system
@@ -216,7 +217,7 @@ def test_a_zero_account_spine_still_boots_running_and_empty(sqlite_spine) -> Non
     under ``(paper, 'default')`` is registered by ``compose_engine`` regardless, so the
     account-derived registrations are what must be absent.
     """
-    system = LiveTradingSystem.for_exchange(_VENUE)
+    system = build_live_system(_live_config, execution_venue=_VENUE)
     try:
         system._bootstrap_session()
         assert system._venue_manager.online_records() == []
@@ -230,26 +231,82 @@ def test_a_zero_account_spine_still_boots_running_and_empty(sqlite_spine) -> Non
 # CR ledger — one xfail(strict=True) probe per Critical, each on the
 # collaborator that owns its invariant so the four flip independently.
 # --------------------------------------------------------------------------- #
-@pytest.mark.xfail(
-    strict=True,
-    reason="CR-01: the venue-account manager is a local variable in build_live_system and "
-           "is never attached to the facade, so runtime provisioning has no reachable "
-           "entry point — and the typed refusal tells operators to call an attribute that "
-           "does not exist. Flips in Stage 6 (required-arg facade).",
-)
 def test_cr01_the_facade_exposes_the_venue_account_manager_as_an_operator_surface(
     live_system,
 ) -> None:
     """The manager is reachable under the name the exception message already promises.
 
-    ``VenueAccountNotProvisionedError`` instructs the operator to run
-    ``system.venue_accounts.provision(venue, account_id, ...)``. Until that attribute
-    exists, the one remediation string an operator will follow raises ``AttributeError``.
+    CR-01 (fixed in Stage 6). The manager used to be a local variable in the builder that
+    was never attached, so runtime provisioning had no reachable entry point — and
+    ``VenueAccountNotProvisionedError``, which instructs the operator to run
+    ``system.venue_accounts.provision(venue, account_id, ...)``, named an attribute that
+    raised ``AttributeError``.
     """
     manager = live_system.venue_accounts
     assert callable(manager.provision)
     assert callable(manager.bring_online)
     assert callable(manager.set_enabled)
+
+
+def test_cr01_every_facade_collaborator_is_a_required_constructor_parameter(
+    live_system,
+) -> None:
+    """The STRUCTURAL half of CR-01: a collaborator the root forgets is a ``TypeError``.
+
+    Reachability alone would be a one-attribute fix. What makes the defect class
+    unrepeatable is that the facade declares no defaults at all: omitting ANY collaborator
+    refuses construction here rather than reading ``None`` at the one call site that needed
+    it, one deployment later.
+
+    Driven with the REAL collaborators the production builder produced, so this cannot pass
+    against a facade whose parameters merely happen to be spelled the same.
+    """
+    import inspect
+
+    signature = inspect.signature(LiveTradingSystem.__init__)
+    defaulted = [
+        name for name, parameter in signature.parameters.items()
+        if name != "self" and parameter.default is not inspect.Parameter.empty
+    ]
+    assert defaulted == [], (
+        f"these facade collaborators carry a default, so the composition root can omit "
+        f"one and get None instead of a TypeError: {defaulted}")
+
+    complete = {
+        name: getattr(live_system, _FACADE_FIELDS[name])
+        for name in signature.parameters if name != "self"
+    }
+    # The same arguments build a second facade — proof the mapping below is the real one.
+    LiveTradingSystem(**complete)
+    for omitted in complete:
+        with pytest.raises(TypeError):
+            LiveTradingSystem(**{k: v for k, v in complete.items() if k != omitted})
+
+
+#: Constructor parameter -> the facade attribute that holds it, so the probe above can
+#: rebuild the exact argument set the production builder passed.
+_FACADE_FIELDS = {
+    "engine": "_engine",
+    "config": "_config",
+    "exchange": "exchange",
+    "telemetry": "_telemetry",
+    "safety": "_safety",
+    "stream_recovery": "_stream_recovery",
+    "throttle": "_throttle",
+    "error_policy": "_error_policy",
+    "live_runner": "_live_runner",
+    "stop_event": "_stop_event",
+    "boot": "_boot",
+    "config_router": "_config_router",
+    "venue_accounts": "_venue_manager",
+    "connector_pool": "_connector_pool",
+    "data_provider": "_data_provider",
+    "data_connector": "_data_connector",
+    "sql_engine": "_system_db_backend",
+    "halt_record_store": "_halt_record_store",
+    "system_store": "_system_store",
+    "system_stats_store": "_system_stats_store",
+}
 
 
 def test_cr02_retiring_an_execution_account_leaves_the_feed_fully_wired(

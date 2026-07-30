@@ -28,7 +28,9 @@ from unittest.mock import MagicMock
 
 from itrader.execution_handler.exchanges.base import AccountSnapshot
 from itrader.price_handler.feed.live_bar_feed import LiveBarFeed
-from itrader.trading_system.live_trading_system import LiveTradingSystem
+from itrader import config as _live_config
+from itrader.trading_system.live.build import build_live_system
+from itrader.trading_system.live.system import LiveTradingSystem
 from itrader.trading_system.safety.stream_recovery_handler import (
     StreamRecoveryHandler,
 )
@@ -50,7 +52,8 @@ def test_resume_drain_recovers_fill_settled_during_disconnect(provisioned_okx) -
     snapshot, so the settled trade routes through ``_handle_trade`` on resume and the
     snapshot that follows sees a venue picture the engine has already caught up to.
     """
-    system = LiveTradingSystem.for_exchange("okx")
+    system = build_live_system(
+        _live_config, execution_venue="okx")
 
     # The single store-derived OKX execution adapter. It is the SAME object the handler
     # enumerates off the account manager's online records.
@@ -112,7 +115,8 @@ def test_resume_drain_does_no_venue_io_when_no_account_is_online(monkeypatch) ->
     arm would leave such a boot permanently paused.
     """
     _set_okx_env(monkeypatch)
-    system = LiveTradingSystem.for_exchange("okx")
+    system = build_live_system(
+        _live_config, execution_venue="okx")
 
     system._stream_recovery._accounts = lambda: []
 

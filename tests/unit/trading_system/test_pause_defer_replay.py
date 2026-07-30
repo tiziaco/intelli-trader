@@ -48,14 +48,17 @@ import pytest
 from itrader.core.enums import OrderCommand, OrderType, Side
 from itrader.core.ids import OrderId, PortfolioId
 from itrader.events_handler.events import OrderEvent
-from itrader.trading_system.live_trading_system import LiveTradingSystem
+from itrader import config as _live_config
+from itrader.trading_system.live.build import build_live_system
+from itrader.trading_system.live.system import LiveTradingSystem
 
 
 def _live_system(monkeypatch: Any) -> LiveTradingSystem:
     """A credential-free LiveTradingSystem for the default (non-OKX) venue."""
     for var in ("OKX_API_KEY", "OKX_API_SECRET", "OKX_API_PASSPHRASE"):
         monkeypatch.delenv(var, raising=False)
-    return LiveTradingSystem.for_exchange("binance")
+    return build_live_system(
+        _live_config, execution_venue="binance", data_venue="okx")
 
 
 def _order_event(

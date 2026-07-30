@@ -111,9 +111,10 @@ def _build_live_okx_stack():
     """
     from itrader.core.sizing import FractionOfCash, TradingDirection
     from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
-    from itrader.trading_system.live_trading_system import LiveTradingSystem
+    from itrader import config as _live_config
+    from itrader.trading_system.live.build import build_live_system
 
-    system = LiveTradingSystem.for_exchange("okx")
+    system = build_live_system(_live_config, execution_venue="okx")
     strategy = SMAMACDStrategy(
         timeframe="1d",
         tickers=[_OKX_SYMBOL],

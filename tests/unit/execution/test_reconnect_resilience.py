@@ -40,7 +40,9 @@ from itrader.events_handler.events import ErrorEvent
 from itrader.execution_handler.exchanges.base import AccountSnapshot
 from itrader.execution_handler.exchanges.okx import OkxExchange
 from itrader.price_handler.providers.okx_provider import OkxDataProvider
-from itrader.trading_system.live_trading_system import LiveTradingSystem
+from itrader import config as _live_config
+from itrader.trading_system.live.build import build_live_system, emit_stream_up
+from itrader.trading_system.live.system import LiveTradingSystem
 
 _SECRET = "OKX_API_SECRET-supersecret-0xDEADBEEF"
 
@@ -411,7 +413,8 @@ def _live_system(monkeypatch: Any) -> LiveTradingSystem:
     """A credential-free LiveTradingSystem for the default (non-OKX) venue."""
     for var in ("OKX_API_KEY", "OKX_API_SECRET", "OKX_API_PASSPHRASE"):
         monkeypatch.delenv(var, raising=False)
-    return LiveTradingSystem.for_exchange("binance")
+    return build_live_system(
+        _live_config, execution_venue="binance", data_venue="okx")
 
 
 class _RecordingSink:
@@ -598,7 +601,7 @@ def test_resume_after_reconnect_snapshots_then_clears_pause(monkeypatch: Any) ->
 
     # The connector-loop reconnect callback only EMITS a STREAM_STATE(up) CONTROL event
     # (no blocking I/O) — it does not resume on the connector thread.
-    system._on_venue_stream_up("fills")
+    emit_stream_up(system.global_queue, "fills")
     assert system.get_status()["paused"] is True   # not resumed on the connector thread
     adapter.snapshot.assert_not_called()
 

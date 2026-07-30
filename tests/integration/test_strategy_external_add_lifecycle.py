@@ -55,9 +55,9 @@ from itrader.storage.venue_account_store import VenueAccountStore
 from itrader.strategy_handler.base import Strategy
 from itrader.strategy_handler.indicators import SMA
 from itrader.strategy_handler.registry import encode_strategy_config
-from itrader.trading_system.live_trading_system import build_live_system
+from itrader import config as _live_config
+from itrader.trading_system.live.build import build_live_system
 from itrader.trading_system.route_registrar import LiveRouteRegistrar
-from itrader.trading_system.venue_spec import build_venue_spec
 from itrader.universe.membership import StrategyDerivedSelectionModel
 from itrader.universe.universe import Universe
 from itrader.universe.universe_handler import UniverseHandler, UniverseHandlerConfig
@@ -168,9 +168,9 @@ class _LifecycleSystem:
 
     def __init__(self) -> None:
         recipe = TestDataRecipe()
-        spec = build_venue_spec("paper", data_provider="replay")
         system = build_live_system(
-            spec, data_plugins={"replay": recipe}, strategy_catalog=_catalog())
+            _live_config, execution_venue="paper", data_venue="replay",
+            data_recipes={"replay": recipe}, strategy_catalog=_catalog())
         # Bring-up + rehydrate live in start(), because bring-up connects. This is the
         # exact call start() makes.
         system._bootstrap_session()

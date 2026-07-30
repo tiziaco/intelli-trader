@@ -32,7 +32,7 @@ from itrader.portfolio_handler.reconcile import venue_reconciler as venue_reconc
 from itrader.portfolio_handler.reconcile.reconciliation_coordinator import (
     ReconciliationCoordinator,
 )
-from itrader.trading_system.live_trading_system import LiveTradingSystem  # noqa: F401
+from itrader.trading_system.live.system import LiveTradingSystem  # noqa: F401
 from tests.support.replay_harness import build_paper_replay_system
 
 

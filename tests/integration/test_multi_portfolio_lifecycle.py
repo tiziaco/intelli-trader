@@ -471,9 +471,8 @@ from itrader.storage.portfolio_definition_store import PortfolioDefinitionStore 
 from itrader.storage.strategy_registry_store import StrategyRegistryStore  # noqa: E402
 from itrader.storage.venue_account_store import VenueAccountStore  # noqa: E402
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy  # noqa: E402
-from itrader.trading_system.live_trading_system import build_live_system  # noqa: E402
-from itrader.trading_system.system_spec import PortfolioSpec, SystemSpec  # noqa: E402
-from itrader.trading_system.venue_spec import build_venue_spec  # noqa: E402
+from itrader import config as _live_config  # noqa: E402
+from itrader.trading_system.live.build import build_live_system  # noqa: E402
 from tests.support.replay_harness import TestDataRecipe  # noqa: E402
 from tests.support.schema import provision_schema, seed_portfolio_definitions  # noqa: E402
 from tests.support.strategy_catalog import seeded_registry_rows, test_catalog  # noqa: E402
@@ -492,20 +491,6 @@ def okx_env(monkeypatch):
     monkeypatch.setenv("OKX_API_KEY", "test-key")
     monkeypatch.setenv("OKX_API_SECRET", "test-secret")
     monkeypatch.setenv("OKX_API_PASSPHRASE", "test-pass")
-
-
-def _spec(account_ids, primary=None):
-    """A ``SystemSpec`` whose PORTFOLIOS name the accounts (MPORT-05)."""
-    return SystemSpec(
-        start="2024-01-01", end="2024-01-02", timeframe="1d", ticker="BTCUSDT",
-        starting_cash=10_000, data={}, strategies=[],
-        portfolios=[
-            PortfolioSpec(name=f"pf-{index}", cash=10_000, account_id=account_id)
-            for index, account_id in enumerate(account_ids)
-        ],
-        execution_venue=_VENUE,
-        account_id=primary,
-    )
 
 
 @pytest.fixture
@@ -567,7 +552,7 @@ def test_a_full_restart_returns_both_portfolios_with_stable_ids(live_db, okx_env
     _seed_venue_account(live_db, "acct-b")
 
     # --- first boot: create BOTH portfolios through the live handler ----------
-    system = build_live_system(_spec([]))
+    system = build_live_system(_live_config, execution_venue=_VENUE)
     try:
         id_a = system.portfolio_handler.add_portfolio(
             name="pf-a", exchange=_VENUE, cash=Decimal("25000.00"),
@@ -591,7 +576,7 @@ def test_a_full_restart_returns_both_portfolios_with_stable_ids(live_db, okx_env
                  config={"limits": {"max_positions": 9}}, at=_AT)
 
     # --- restart: a brand-new engine over the SAME database -------------------
-    system2 = build_live_system(_spec([]))
+    system2 = build_live_system(_live_config, execution_venue=_VENUE)
     # The rehydrate is a step of the restart sequence start() runs, so drive it here —
     # the same call start() makes, without the drain thread.
     system2._bootstrap_session()
@@ -633,8 +618,9 @@ def _build_paper(**kwargs):
     same helper ``test_strategy_registry_restart.py`` uses.
     """
     recipe = TestDataRecipe()
-    spec = build_venue_spec("paper", data_provider="replay")
-    system = build_live_system(spec, data_plugins={"replay": recipe}, **kwargs)
+    system = build_live_system(
+        _live_config, execution_venue="paper", data_venue="replay",
+        data_recipes={"replay": recipe}, **kwargs)
     # Bring-up + rehydrate live in start(), because bring-up connects. This is the exact
     # call start() makes, so the production restart sequence runs without a drain thread.
     system._bootstrap_session()

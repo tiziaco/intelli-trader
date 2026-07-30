@@ -402,24 +402,26 @@ def build_paper_replay_system(
 
     Production ``paper`` re-points to the OKX live data feed (D-21), so the ``paper`` ↔
     replay pairing survives ONLY here in the test fixture: this helper injects a
-    ``TestDataRecipe`` as the run's data recipe and selects it with
-    ``data_provider="replay"``. The composition root then builds and wires the replay
-    adapter exactly as it would a live one. Returns ``(system, provider)`` where
-    ``provider`` is the built ``TestLiveDataProvider`` handle — handed to ``TestRunner``
-    as a constructor arg (Landmine 2), never read off the facade.
+    ``TestDataRecipe`` as the run's data recipe and selects it with ``data_venue="replay"``.
+    The composition root then builds and wires the replay adapter exactly as it would a live
+    one. Returns ``(system, provider)`` where ``provider`` is the built
+    ``TestLiveDataProvider`` handle — handed to ``TestRunner`` as a constructor arg
+    (Landmine 2), never read off the facade.
 
-    ``**overrides`` threads through to ``LiveTradingSystem.for_exchange`` (e.g. a bespoke
-    ``account_id``); ``status_callback`` threads through unchanged.
+    ``**overrides`` threads through to ``build_live_system``; ``status_callback`` threads
+    through unchanged.
     """
+    from itrader import config
     from itrader.events_handler.error_policy import FailFastPolicy
-    from itrader.trading_system.live_trading_system import LiveTradingSystem
+    from itrader.trading_system.live.build import build_live_system
 
     recipe = TestDataRecipe()
-    system = LiveTradingSystem.for_exchange(
-        "paper",
+    system = build_live_system(
+        config,
+        execution_venue="paper",
+        data_venue="replay",
+        data_recipes={"replay": recipe},
         status_callback=status_callback,
-        data_provider="replay",
-        data_plugins={"replay": recipe},
         **overrides,
     )
     # D-06/D-19 (08-03): the REPLAY parity gate is fail-fast BY DEFAULT — a handler failure

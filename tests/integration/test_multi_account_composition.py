@@ -38,8 +38,8 @@ from itrader.config.sql import SqlDriver, SqlSettings
 from itrader.storage import SqlEngine
 from itrader.storage.portfolio_definition_store import PortfolioDefinitionStore
 from itrader.storage.venue_account_store import VenueAccountStore
-from itrader.trading_system.live_trading_system import build_live_system
-from itrader.trading_system.system_spec import SystemSpec
+from itrader import config as _live_config
+from itrader.trading_system.live.build import build_live_system
 from tests.support.live_okx import stub_every_okx_session
 from tests.support.schema import provision_schema
 
@@ -93,14 +93,6 @@ def _provision(engine: SqlEngine, *account_ids: str, secret_ref=None) -> None:
             enabled=True, config={}, at=_AT)
 
 
-def _spec() -> SystemSpec:
-    """A minimal live spec — its portfolios no longer drive the account set (ACCT-01)."""
-    return SystemSpec(
-        start="2024-01-01", end="2024-01-02", timeframe="1d", ticker="BTCUSDT",
-        starting_cash=10_000, data={}, strategies=[],
-        portfolios=[], execution_venue=_VENUE)
-
-
 def _booted(system):
     """Run the production boot over stubbed sessions; return the system."""
     stub_every_okx_session(system)
@@ -129,7 +121,7 @@ def test_two_provisioned_rows_produce_two_exchanges_over_two_connectors(
     the accounts came from the STORE, not the spec.
     """
     _provision(live_db, "acct-a", "acct-b")
-    system = _booted(build_live_system(_spec()))
+    system = _booted(build_live_system(_live_config, execution_venue=_VENUE))
     try:
         entries = _okx_entries(system)
         assert set(entries) == {(_VENUE, "acct-a"), (_VENUE, "acct-b")}
@@ -148,7 +140,7 @@ def test_two_provisioned_rows_produce_two_exchanges_over_two_connectors(
 def test_a_single_provisioned_row_registers_exactly_one_exchange(live_db, okx_env) -> None:
     """The N=1 path — one enabled row, one exchange, under its own pair key."""
     _provision(live_db, "acct-solo")
-    system = _booted(build_live_system(_spec()))
+    system = _booted(build_live_system(_live_config, execution_venue=_VENUE))
     try:
         assert set(_okx_entries(system)) == {(_VENUE, "acct-solo")}
     finally:
@@ -157,7 +149,7 @@ def test_a_single_provisioned_row_registers_exactly_one_exchange(live_db, okx_en
 
 def test_zero_provisioned_rows_boot_up_empty(live_db, okx_env) -> None:
     """D-09 — a fresh deployment with no venue accounts comes up RUNNING and empty."""
-    system = _booted(build_live_system(_spec()))
+    system = _booted(build_live_system(_live_config, execution_venue=_VENUE))
     try:
         assert _okx_entries(system) == {}
         assert system._venue_manager.online_records() == []
@@ -173,7 +165,7 @@ def test_the_manager_holds_one_online_record_per_account(live_db, okx_env) -> No
     The deleted scalar aliases stay gone.
     """
     _provision(live_db, "acct-a", "acct-b")
-    system = _booted(build_live_system(_spec()))
+    system = _booted(build_live_system(_live_config, execution_venue=_VENUE))
     try:
         records = {r.spec.account_id: r for r in system._venue_manager.online_records()}
         assert set(records) == {"acct-a", "acct-b"}
@@ -204,7 +196,7 @@ def test_a_two_account_boot_opens_exactly_two_sessions(live_db, okx_env):
     """
     _provision(live_db, "acct-a", "acct-b")
 
-    system = _booted(build_live_system(_spec()))
+    system = _booted(build_live_system(_live_config, execution_venue=_VENUE))
     try:
         entries = _okx_entries(system)
         records = {r.spec.account_id: r for r in system._venue_manager.online_records()}
@@ -231,7 +223,7 @@ def test_a_two_account_boot_binds_exactly_one_data_provider(live_db, okx_env):
     """
     _provision(live_db, "acct-a", "acct-b")
 
-    system = _booted(build_live_system(_spec()))
+    system = _booted(build_live_system(_live_config, execution_venue=_VENUE))
     try:
         provider = system._data_provider
         assert provider is not None

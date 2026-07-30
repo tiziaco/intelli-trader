@@ -28,7 +28,13 @@ from itrader.core.enums import ExchangeConnectionStatus, HaltReason, SystemStatu
 from itrader.events_handler.events import ConnectorFatalEvent, StreamStateEvent
 from itrader.execution_handler.exchanges.okx import OkxExchange
 from itrader.execution_handler.result_objects import ConnectionResult
-from itrader.trading_system.live_trading_system import LiveTradingSystem
+from itrader import config as _live_config
+from itrader.trading_system.live.build import (
+    build_live_system,
+    emit_connector_fatal,
+    emit_stream_down,
+    emit_stream_up,
+)
 from tests.support.live_okx import (
     bring_okx_online,
     stub_data_session,
@@ -47,7 +53,7 @@ def _set_okx_env(monkeypatch) -> None:
     """Set a dummy OKX credential triple so the OKX arm's ``OkxSettings()`` constructs.
 
     The connector constructor is I/O-free (``connect()`` is deferred to ``start()``),
-    so a stubbed credential triple is enough to build ``LiveTradingSystem.for_exchange("okx")``
+    so a stubbed credential triple is enough to build ``build_live_system(execution_venue="okx")``
     fully offline — no socket, no ``load_markets`` round-trip.
     """
     monkeypatch.setenv("OKX_API_KEY", "test-key")
@@ -60,7 +66,8 @@ def test_construct_non_okx_venue_needs_no_okx_credentials(monkeypatch) -> None:
     _strip_okx_env(monkeypatch)
 
     # Must NOT raise pydantic.ValidationError for missing OKX_API_* — the OKX arm is gated.
-    system = LiveTradingSystem.for_exchange("binance")
+    system = build_live_system(
+        _live_config, execution_venue="binance", data_venue="okx")
 
     # "Unwired" is now an EMPTY online-account enumeration. An unregistered venue — and
     # any boot without a durable venue_accounts row — brings nothing online at all.
@@ -81,7 +88,8 @@ def test_construct_does_not_connect_in_constructor(monkeypatch) -> None:
     """
     _strip_okx_env(monkeypatch)
 
-    system = LiveTradingSystem.for_exchange("binance")
+    system = build_live_system(
+        _live_config, execution_venue="binance", data_venue="okx")
 
     # No session was built, so there is nothing connected and nothing to leak.
     assert system._online_account_records() == []
@@ -99,7 +107,7 @@ def test_okx_live_feed_capacity_derives_to_strategy_warmup(monkeypatch) -> None:
     """
     _set_okx_env(monkeypatch)
 
-    system = LiveTradingSystem.for_exchange("okx")
+    system = build_live_system(_live_config, execution_venue="okx")
     # Pre-registration: no raw-bar consumer yet -> the newest-bar floor.
     assert system.feed.cache_capacity() == 1
 
@@ -148,7 +156,7 @@ def test_the_boot_brings_the_provisioned_okx_account_online_and_routable(
     identity guard ran, the halt seam is armed, and only THEN is the pair routable.
     """
     _provision_empty_order_tables(provisioned_okx)
-    system = LiveTradingSystem.for_exchange("okx")
+    system = build_live_system(_live_config, execution_venue="okx")
     try:
         record = bring_okx_online(system)
 
@@ -174,7 +182,7 @@ def test_the_one_feed_is_wired_to_a_data_adapter_on_its_own_session(
     ``set_global_queue`` would make ``spawn_warmup`` raise a typed ``StateError`` far from
     the cause.
     """
-    system = LiveTradingSystem.for_exchange("okx")
+    system = build_live_system(_live_config, execution_venue="okx")
     try:
         provider = the_feed_provider(system)
         assert provider is not None
@@ -204,7 +212,7 @@ def test_a_failed_adapter_connect_quarantines_the_account_not_the_boot(
     entire deployment offline, and the alert is what stops the skip from being silent.
     """
     _provision_empty_order_tables(provisioned_okx)
-    system = LiveTradingSystem.for_exchange("okx")
+    system = build_live_system(_live_config, execution_venue="okx")
     stub_okx_session(system)
     # start() opens the data adapter's own session too; stub it so the run stays offline.
     stub_data_session(system)
@@ -253,7 +261,7 @@ def test_the_coordinator_the_facade_builds_carries_no_venue_scalars(monkeypatch)
     ``assert_distinct_accounts``, before any account is minted.
     """
     _set_okx_env(monkeypatch)
-    system = LiveTradingSystem.for_exchange("okx")
+    system = build_live_system(_live_config, execution_venue="okx")
 
     coordinator = system._build_reconciliation_coordinator()
 
@@ -278,7 +286,7 @@ def test_a_facade_with_no_portfolios_reconciles_nothing(monkeypatch) -> None:
     no accounts means nothing to snapshot, stream, reconcile or halt on.
     """
     _set_okx_env(monkeypatch)
-    system = LiveTradingSystem.for_exchange("okx")
+    system = build_live_system(_live_config, execution_venue="okx")
     assert system.portfolio_handler.get_active_portfolios() == []
 
     # Must not raise, must not touch the venue.
@@ -292,15 +300,15 @@ def test_a_facade_with_no_portfolios_reconciles_nothing(monkeypatch) -> None:
 def test_connector_control_events_route_to_safety_and_recovery(monkeypatch) -> None:
     """Connector callbacks emit CONTROL events routed on the engine thread (SAFE-03/§11c).
 
-    The three connector-loop callbacks (``_on_venue_stream_down`` / ``_on_venue_stream_up`` /
-    ``_request_connector_halt``) put ``StreamStateEvent(down/up)`` / ``ConnectorFatalEvent``
+    The three connector-loop emitters (``emit_stream_down`` / ``emit_stream_up`` /
+    ``emit_connector_fatal``) put ``StreamStateEvent(down/up)`` / ``ConnectorFatalEvent``
     on the bus instead of flipping flags; the engine-thread STREAM_STATE / CONNECTOR_FATAL
     routes actuate ``SafetyController.pause_submission`` (down), ``StreamRecoveryHandler.
     on_reconnect`` (up), and ``SafetyController.halt`` (fatal). The ``_pending_*`` flag
     side-channel is GONE — the connector handoff is CONTROL events only.
     """
     _set_okx_env(monkeypatch)
-    system = LiveTradingSystem.for_exchange("okx")
+    system = build_live_system(_live_config, execution_venue="okx")
     # Install the live routes (STREAM_STATE / CONNECTOR_FATAL onto the event handler),
     # offline — no OKX connect (that lives in start()).
     system._initialize_live_session()
@@ -319,9 +327,9 @@ def test_connector_control_events_route_to_safety_and_recovery(monkeypatch) -> N
     # CONTROL event (no flag flip, no blocking I/O).
     while not system.global_queue.empty():
         system.global_queue.get_nowait()
-    system._on_venue_stream_down("fills")
-    system._on_venue_stream_up("fills")
-    system._request_connector_halt("secret-bearing venue error")
+    emit_stream_down(system.global_queue, "fills")
+    emit_stream_up(system.global_queue, "fills")
+    emit_connector_fatal(system.global_queue, "secret-bearing venue error")
 
     # The queued events are the fixed-shape CONTROL facts — V7 scrub: the fatal reason is
     # the FIXED literal, never the connector payload passed to the callback.

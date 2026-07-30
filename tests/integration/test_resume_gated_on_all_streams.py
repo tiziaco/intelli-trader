@@ -28,7 +28,9 @@ import pytest
 
 from itrader.execution_handler.exchanges.base import AccountSnapshot
 from itrader.price_handler.feed.live_bar_feed import LiveBarFeed
-from itrader.trading_system.live_trading_system import LiveTradingSystem
+from itrader import config as _live_config
+from itrader.trading_system.live.build import build_live_system
+from itrader.trading_system.live.system import LiveTradingSystem
 from tests.support.live_okx import bring_okx_online, the_feed_provider, the_okx_record
 
 
@@ -63,7 +65,8 @@ def paused_okx_system(provisioned_okx):
     The OKX account is STORE-DERIVED, so ``provisioned_okx`` gives the boot one durable
     row to bring online (offline there would be none).
     """
-    system = LiveTradingSystem.for_exchange("okx")
+    system = build_live_system(
+        _live_config, execution_venue="okx")
     record = bring_okx_online(system)
     assert record.connector is not None
     exchange = record.adapter

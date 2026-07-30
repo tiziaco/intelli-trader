@@ -68,8 +68,17 @@ itrader/price_handler/providers/okx_provider.py
 #          bundle-shaped adapter until the live root is rewritten (commit 2) and it
 #          is deleted (Stage 7), so both sides are counted for now.
 
+# Stage 6 (commit 2): trading_system/live/{build,system}.py appeared and
+#          execution_handler/exchanges/paper.py took the paper recipe (ED-3).
+#          live_trading_system.py, compose.py, venue_spec.py and the plugin/registry/bundle
+#          modules are now UNREFERENCED and are deleted in Stage 7, so both sides are
+#          counted until then.
+
 # --- new in the redesign ---
 itrader/trading_system/graph.py
+itrader/trading_system/live/build.py
+itrader/trading_system/live/system.py
+itrader/execution_handler/exchanges/paper.py
 itrader/trading_system/backtest/__init__.py
 itrader/trading_system/live/__init__.py
 itrader/trading_system/live/bootstrap.py

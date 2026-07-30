@@ -37,7 +37,7 @@ from itrader.portfolio_handler.storage.in_memory_storage import (
     InMemoryPortfolioStateStorage,
 )
 from itrader.portfolio_handler.reconcile import venue_reconciler as venue_reconciler_module
-from itrader.trading_system.live_trading_system import LiveTradingSystem  # noqa: F401
+from itrader.trading_system.live.system import LiveTradingSystem  # noqa: F401
 from tests.support.replay_harness import build_paper_replay_system
 
 # A business time (never wall clock) so the persisted row's timestamp is deterministic.

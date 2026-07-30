@@ -27,7 +27,9 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from itrader.core.enums import SystemStatus
-from itrader.trading_system.live_trading_system import LiveTradingSystem
+from itrader import config as _live_config
+from itrader.trading_system.live.build import build_live_system
+from itrader.trading_system.live.system import LiveTradingSystem
 from tests.support.live_okx import stub_data_session, stub_okx_session
 
 
@@ -62,7 +64,8 @@ class _UnresolvedHaltStore:
 
 def test_durably_halted_start_refuses_before_any_venue_io(provisioned_okx) -> None:
     """A durably-halted ``start()`` refuses at the TOP with zero venue I/O (D-20/WR-01)."""
-    system = LiveTradingSystem.for_exchange("okx")
+    system = build_live_system(
+        _live_config, execution_venue="okx")
     # P7 (§11b): the durable halt store + check_durable_halt_on_start live on the injected
     # SafetyController now — inject the always-unresolved double there.
     system._safety._halt_record_store = _UnresolvedHaltStore("drift")
@@ -118,7 +121,8 @@ def test_healthy_start_still_runs_session_init_when_no_durable_halt(provisioned_
     start() proceeds through ``_initialize_live_session`` and the venue handshake exactly as
     before. Proves the D-20 move did not accidentally short-circuit a healthy start.
     """
-    system = LiveTradingSystem.for_exchange("okx")
+    system = build_live_system(
+        _live_config, execution_venue="okx")
     # No durable store -> the gate is skipped entirely.
     system._safety._halt_record_store = None
 
