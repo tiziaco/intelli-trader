@@ -1058,7 +1058,9 @@ class VenueAccountManager:
 
     # ------------------------------------------------------------------ resolution
 
-    def assert_available(self, venue_name: str, account_id: str) -> None:
+    def assert_available(
+        self, venue_name: Optional[str], account_id: Optional[str]
+    ) -> None:
         """Assert this pair is PROVISIONED and ENABLED — raise otherwise.
 
         The VALIDATION half of the venue-account authority, WITHOUT constructing a leaf. The
@@ -1075,7 +1077,18 @@ class VenueAccountManager:
         up.
 
         ``account_id`` is matched by EXACT STRING (no case-folding, trimming or coercion).
+
+        Both halves are ``Optional`` because a portfolio that names NO account is exactly
+        what this must refuse: no row can exist for ``(None, None)``, so it raises
+        NOT_PROVISIONED. Narrowing the signature to ``str`` would push that case back onto
+        the caller, and the caller's only other option is to invent an account id.
         """
+        # A pair with an unnamed half can have no row, so it is refused WITHOUT a query —
+        # and refused as the pair it actually is, never as a fabricated one.
+        if venue_name is None or account_id is None:
+            raise VenueAccountNotProvisionedError(
+                venue_name, account_id,
+                VenueAccountNotProvisionedError.NOT_PROVISIONED)
         row = self._store.get(venue_name, account_id)
         if row is None:
             raise VenueAccountNotProvisionedError(

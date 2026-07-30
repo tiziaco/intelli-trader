@@ -191,20 +191,17 @@ class PortfolioHandler:
                     raise PortfolioValidationError(0, "name", "Portfolio name cannot be empty")
 
                 # Resolve the id HERE so the definition row and the runtime graph carry
-                # the SAME one. ``create`` runs FIRST: a create that succeeds followed by
-                # a materialize that raises leaves a durable row with no live Portfolio,
-                # which the next boot rehydrates — so the row is never orphaned.
+                # the SAME one.
                 resolved_id = (
                     portfolio_id if portfolio_id is not None
                     else PortfolioId(idgen.generate_portfolio_id())
                 )
-                self.create(
-                    resolved_id,
-                    name=name,
-                    cash=cash,
-                    account_id=account_id,
-                    venue_name=venue_name,
-                )
+                # ``materialize`` runs FIRST (WR-03). It is what VALIDATES the named venue
+                # account, and the durable row carries a composite foreign key onto
+                # ``venue_accounts`` — so inserting first means an unprovisioned account is
+                # refused by the DATABASE with an ``IntegrityError`` before the domain ever
+                # gets to raise its own ``VenueAccountNotProvisionedError``, which is the
+                # error that names the account and tells the operator how to provision it.
                 portfolio = self.materialize(
                     name=name,
                     exchange=exchange,
@@ -214,6 +211,21 @@ class PortfolioHandler:
                     account_id=account_id,
                     venue_name=venue_name,
                 )
+                # A live Portfolio whose definition row did NOT persist is worse than no
+                # portfolio at all: it trades this session and vanishes at the next boot
+                # while its positions and cash rows orphan. So a failed insert UNREGISTERS
+                # the portfolio it belongs to, and the refusal stays total.
+                try:
+                    self.create(
+                        resolved_id,
+                        name=name,
+                        cash=cash,
+                        account_id=account_id,
+                        venue_name=venue_name,
+                    )
+                except Exception:
+                    self._portfolios.pop(portfolio.portfolio_id, None)
+                    raise
 
                 self.logger.info(
                     "Portfolio created successfully",
@@ -285,9 +297,10 @@ class PortfolioHandler:
         PortfolioValidationError
             ``portfolio_id`` is already registered.
         VenueAccountNotProvisionedError
-            Live only: the named venue account is missing, disabled or offline. The
-            ``VenueValidatedComputeAuthority`` refuses rather than let the portfolio sit
-            on a fabricated balance. Backtest's compute authority never raises.
+            Live only: the named venue account is missing or disabled. The live
+            ``AccountFactory``'s injected validator refuses rather than let the portfolio
+            sit on a fabricated balance; a backtest one holds no validator and never
+            raises.
         """
         # Refuse LOUDLY: the tempting inline ``SimulatedCashAccount(...)`` fallback would
         # reinstate a second account-kind selection, on a path nothing covers.

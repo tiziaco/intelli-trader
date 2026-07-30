@@ -55,9 +55,8 @@ from itrader.core.exceptions import (
 )
 from itrader.portfolio_handler.account import SimulatedCashAccount
 from itrader.portfolio_handler.portfolio_factory import (
-    ComputeAccountAuthority,
+    AccountFactory,
     PortfolioFactory,
-    VenueValidatedComputeAuthority,
 )
 from itrader.storage import SqlEngine
 from itrader.storage.venue_account_store import VenueAccountStore
@@ -212,7 +211,7 @@ def test_fresh_deployment_provisioning_gate_walks_the_whole_loop(wiring):
     account key WRITTEN by provisioning is the key the portfolio path READS.
 
     The "add_portfolio" seam here is the LIVE portfolio-creation path verbatim: a
-    ``PortfolioFactory`` over a ``VenueValidatedComputeAuthority`` wrapping the REAL
+    ``PortfolioFactory`` over a validator-bearing ``AccountFactory`` wrapping the REAL
     ``VenueAccountManager`` (portfolio_factory.py — the arm the live composition root
     injects). It GATES on ACCT-03 through ``manager.assert_available`` and, on success,
     builds a COMPUTE leaf carrying the real pair.
@@ -223,11 +222,9 @@ def test_fresh_deployment_provisioning_gate_walks_the_whole_loop(wiring):
     unreadable at ``Portfolio.__init__`` (T-05-07). A test asserting ``is_venue_truth``
     here would pin a defect this phase deliberately does NOT ship.
     """
-    authority = VenueValidatedComputeAuthority(
-        manager=wiring.manager,
-        compute=ComputeAccountAuthority(),
-    )
-    factory = PortfolioFactory(authority=authority, environment="backtest")
+    factory = PortfolioFactory(
+        account_factory=AccountFactory(validate=wiring.manager.assert_available),
+        environment="backtest")
 
     def _add_portfolio() -> Any:
         # The same manager instance and the same process perform steps 2–5 — the whole

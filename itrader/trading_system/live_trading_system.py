@@ -1175,9 +1175,8 @@ def build_live_system(
     # The venue-truth VenueAccount leaf CANNOT be the construction-time leaf: its balance
     # raises until the first snapshot, and Portfolio.__init__ reads balance.
     from itrader.portfolio_handler.portfolio_factory import (
-        ComputeAccountAuthority,
+        AccountFactory,
         PortfolioFactory,
-        VenueValidatedComputeAuthority,
     )
 
     # THE DATA PLANE — ONE adapter, on its OWN session, built here and never re-pointed.
@@ -1265,18 +1264,15 @@ def build_live_system(
                 partial(emit_stream_up, global_queue),
             ),
         )
-        account_authority: Any = VenueValidatedComputeAuthority(
-            manager=venue_manager,
-            compute=ComputeAccountAuthority(),
-        )
+        account_factory = AccountFactory(validate=venue_manager.assert_available)
     else:
-        account_authority = ComputeAccountAuthority()
+        account_factory = AccountFactory()
 
     # The sole leaf-builder ``PortfolioHandler`` constructs every portfolio through.
     # ``environment`` / ``system_db_backend`` select the durable state-storage backend the
     # factory scopes per portfolio_id.
     portfolio_factory = PortfolioFactory(
-        authority=account_authority,
+        account_factory=account_factory,
         environment=environment,
         sql_engine=system_db_backend,
     )

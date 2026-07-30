@@ -3,28 +3,28 @@
 **The oracle CANNOT fully cover this path.** ``test_backtest_oracle.py`` drives the
 LEGACY construction arm, so a factory-only edit could go false-green. These assert the
 factory DIRECTLY, with an identity sentinel (the exact account object the injected
-AUTHORITY returned) rather than a call counter, so a materialize that quietly substituted
-a compute leaf of its own would fail here.
+``AccountFactory`` returned) rather than a call counter, so a materialize that quietly
+substituted a compute leaf of its own would fail here.
 
 What is pinned:
 
-* ``materialize`` attaches the account the injected AUTHORITY returned — identity, not
-  just "an account was built" — and forwards the portfolio's REAL ``(venue_name,
-  account_id)`` pair UNCOERCED. There is NO compute-venue resolution and no default
-  account named in the factory: the authority owns that (the backtest
-  ``ComputeAccountAuthority`` names the compute venue's one account when a portfolio
-  names none; the live ``VenueAccountManager`` validates the real pair).
-* it never passes ``spec=`` to the authority — ``VenueAccountManager.account_for`` has no
-  such parameter, so passing one would land in ``portfolio_args`` and collide (concern 3).
+* ``materialize`` attaches the account the injected ``AccountFactory`` returned —
+  identity, not just "an account was built" — and forwards the portfolio's REAL
+  ``(venue_name, account_id)`` pair UNCOERCED. There is NO compute-venue resolution and no
+  default account named in ``PortfolioFactory``: the account factory owns that.
 * it builds and passes a real id-scoped ``state_storage`` (never omits it — plan 01 made
   that a ``TypeError``); cash enters the Decimal domain at the boundary; a supplied id is
   reattached verbatim.
-* BOTH authority arms: a refusing (live / ACCT-03) authority PROPAGATES — the factory
-  never falls back to a compute leaf of its own; the REAL backtest
-  ``ComputeAccountAuthority`` yields a compute leaf naming the compute venue's one
-  account and never raises.
-* the factory has NO ``Optional`` collaborator: ``authority`` is a REQUIRED construction
-  dependency, so there is no ``is None`` refusal counterpart.
+* BOTH account-factory arms: a refusing (live / ACCT-03) validator PROPAGATES — the
+  factory never falls back to a compute leaf of its own; a validator-LESS
+  ``AccountFactory`` yields a compute leaf naming the compute venue's one account and
+  never raises.
+* **the compute-venue default naming is gated on there being NO validator.** A
+  validator-bearing factory REFUSES an unnamed account instead of naming it — naming it
+  would silently coerce a live portfolio onto the default account while every lookup above
+  it still read correct (MPORT-07).
+* the factory has NO ``Optional`` collaborator: ``account_factory`` is a REQUIRED
+  construction dependency, so there is no ``is None`` refusal counterpart.
 
 This directory is package-less (NO ``__init__.py``). 4-SPACE indentation.
 """
@@ -43,9 +43,8 @@ from itrader.core.exceptions import (
 from itrader.portfolio_handler.account import SimulatedCashAccount
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.portfolio_factory import (
-    ComputeAccountAuthority,
+    AccountFactory,
     PortfolioFactory,
-    VenueValidatedComputeAuthority,
 )
 from itrader.venues.registry import DEFAULT_ACCOUNT_ID
 from tests.support.venue_wiring import compute_account
@@ -57,10 +56,9 @@ _CASH = Decimal("100000")
 class _RecordingAuthority:
     """An account authority double whose ``account_for`` returns a fixed SENTINEL.
 
-    Mirrors the mode-agnostic seam ``VenueAccountManager`` / ``ComputeAccountAuthority``
-    both satisfy: ``account_for(venue_name, account_id, **portfolio_args)``. Records every
-    call so the test can prove which pair the factory forwarded and which portfolio-args
-    rode onto the leaf — and, crucially, that ``spec`` is NOT among them.
+    Mirrors ``AccountFactory``'s seam: ``account_for(venue_name, account_id,
+    **portfolio_args)``. Records every call so the test can prove which pair the factory
+    forwarded and which portfolio-args rode onto the leaf.
     """
 
     def __init__(self, account: Any) -> None:
@@ -86,9 +84,9 @@ class _RefusingAuthority:
         )
 
 
-def _factory(authority: Any) -> PortfolioFactory:
+def _factory(account_factory: Any) -> PortfolioFactory:
     return PortfolioFactory(
-        authority=authority,
+        account_factory=account_factory,
         environment="backtest",
         sql_engine=None,
     )
@@ -198,8 +196,8 @@ def test_a_refusing_authority_propagates_no_fallback_leaf() -> None:
             account_id="ghost", venue_name="okx")
 
 
-def test_the_backtest_compute_authority_names_the_default_account() -> None:
-    """The BACKTEST arm over the REAL ComputeAccountAuthority: default account, no raise.
+def test_a_validatorless_account_factory_names_the_default_account() -> None:
+    """The BACKTEST arm over the REAL ``AccountFactory``: default account, no raise.
 
     A compute venue serves exactly ONE account, so a portfolio that names none names that
     one. It is what makes order routing uniform — the execution handler resolves every
@@ -208,7 +206,7 @@ def test_the_backtest_compute_authority_names_the_default_account() -> None:
     backtest order. Proven end to end against the real authority, not a double.
     """
     portfolio = PortfolioFactory(
-        authority=ComputeAccountAuthority(), environment="backtest").materialize(
+        account_factory=AccountFactory(), environment="backtest").materialize(
             name="pf", exchange="paper", cash=_CASH, venue_name="paper")
 
     assert portfolio.account.account_id == DEFAULT_ACCOUNT_ID
@@ -218,7 +216,7 @@ def test_the_backtest_compute_authority_names_the_default_account() -> None:
 def test_a_portfolio_naming_its_own_account_keeps_that_account() -> None:
     """The default is a fallback for an unnamed account, never an override of a named one."""
     portfolio = PortfolioFactory(
-        authority=ComputeAccountAuthority(), environment="backtest").materialize(
+        account_factory=AccountFactory(), environment="backtest").materialize(
             name="pf", exchange="paper", cash=_CASH, venue_name="paper",
             account_id="paper-acct-a")
 
@@ -226,7 +224,7 @@ def test_a_portfolio_naming_its_own_account_keeps_that_account() -> None:
 
 
 # ---------------------------------------------------------------------------
-# VenueValidatedComputeAuthority — the LIVE arm: ACCT-03 raise + compute leaf
+# The VALIDATOR-BEARING AccountFactory — the LIVE arm: ACCT-03 raise + compute leaf
 # (venue-truth leaf deferred to COMP-07 / Phase 12, owner decision wave 5)
 # ---------------------------------------------------------------------------
 
@@ -258,10 +256,9 @@ class _FakeManager:
 def _live_authority(
     *, available: bool,
     cause: str = VenueAccountNotProvisionedError.NOT_PROVISIONED,
-) -> tuple[VenueValidatedComputeAuthority, _FakeManager]:
+) -> tuple[AccountFactory, _FakeManager]:
     manager = _FakeManager(available=available, cause=cause)
-    return VenueValidatedComputeAuthority(
-        manager=manager, compute=ComputeAccountAuthority()), manager
+    return AccountFactory(validate=manager.assert_available), manager
 
 
 def test_live_authority_raises_on_a_missing_account_and_builds_no_leaf() -> None:
@@ -330,11 +327,60 @@ def test_live_authority_builds_a_compute_leaf_carrying_the_real_pair_on_success(
 # ---------------------------------------------------------------------------
 
 
-def test_authority_is_a_required_construction_dependency() -> None:
+def test_the_account_factory_is_a_required_construction_dependency() -> None:
     """D-24: no Optional collaborator, so there is no `is None` refusal counterpart.
 
-    The factory is built with a real authority at composition; a missing ``authority`` is
-    a construction-time ``TypeError``, not a per-call ``is None`` guard.
+    The factory is built with a real ``AccountFactory`` at composition; a missing one is a
+    construction-time ``TypeError``, not a per-call ``is None`` guard.
     """
     with pytest.raises(TypeError):
         PortfolioFactory(environment="backtest")  # type: ignore[call-arg]
+
+
+# ---------------------------------------------------------------------------
+# The compute-venue default naming is GATED on the absence of a validator
+# ---------------------------------------------------------------------------
+
+
+def test_a_validator_bearing_factory_refuses_an_unnamed_account_rather_than_naming_it(
+) -> None:
+    """MPORT-07: a LIVE portfolio naming no account must RAISE, never inherit the default.
+
+    The compute arm names ``DEFAULT_ACCOUNT_ID`` for a portfolio that names none, which is
+    what makes single-account routing uniform. Merging the two former authority classes put
+    that naming one line away from the live path, and it is a SILENT defect if it leaks: the
+    portfolio would be built, its leaf would report the default account, its orders would
+    reach the default account's exchange, and every lookup above it would still read
+    correct.
+
+    The gate is structural — the naming lives inside the validator-LESS return — so this
+    asserts the OUTCOME rather than the shape: the validator runs on the real
+    ``(None, None)`` pair and its refusal propagates, with no leaf built.
+    """
+    factory, manager = _live_authority(available=False)
+
+    with pytest.raises(VenueAccountNotProvisionedError):
+        _factory(factory).materialize(
+            name="pf", exchange="okx", cash=_CASH,
+            account_id=None, venue_name="okx")
+
+    # The pair reached the validator VERBATIM — an unnamed account is not renamed on
+    # its way to the check either.
+    assert manager.checked == [("okx", None)]
+
+
+def test_a_validator_that_accepts_an_unnamed_account_still_builds_an_unnamed_leaf(
+) -> None:
+    """The naming cannot leak even past a permissive validator.
+
+    Belt and braces for the same defect: if a future validator were ever to allow an
+    unnamed pair, the leaf must still report ``account_id=None`` — unroutable, which fails
+    loud at the execution boundary — rather than the default account, which is routable to
+    somebody ELSE'S money.
+    """
+    factory, _manager = _live_authority(available=True)
+
+    portfolio = _factory(factory).materialize(
+        name="pf", exchange="okx", cash=_CASH, account_id=None, venue_name="okx")
+
+    assert portfolio.account.account_id is None

@@ -53,7 +53,7 @@ from itrader.strategy_handler.signal_record import SignalRecord
 from itrader.execution_handler.exchanges.base import AbstractExchange
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.portfolio_handler.portfolio_factory import (
-	ComputeAccountAuthority,
+	AccountFactory,
 	PortfolioFactory,
 )
 from itrader.trading_system.backtest.backtest_runner import BacktestRunner
@@ -108,7 +108,7 @@ def _build_paper_venue(
 	exchange_registry: dict[tuple[str, str], Optional[AbstractExchange]] = {
 		(COMPUTE_VENUE, DEFAULT_ACCOUNT_ID): exchange}
 	portfolio_factory = PortfolioFactory(
-		authority=ComputeAccountAuthority(),
+		account_factory=AccountFactory(),
 		environment=ctx.environment,
 		sql_engine=ctx.sql_engine)
 	return exchange_registry, portfolio_factory

@@ -13,7 +13,7 @@ from typing import Any, Optional
 
 from itrader.execution_handler.execution_handler import seed_exchange_registry
 from itrader.portfolio_handler.portfolio_factory import (
-	ComputeAccountAuthority,
+	AccountFactory,
 	PortfolioFactory,
 )
 from itrader.results import ResultsStore
@@ -46,8 +46,8 @@ def compose_engine(
 		root passes its OWN reference so ``VenueAccountManager.bring_online`` writes the
 		SAME map ``ExecutionHandler`` reads.
 	portfolio_factory : Any | None
-		``None`` builds one over a ``ComputeAccountAuthority`` (never raises); the live
-		root injects one holding the real ``VenueAccountManager`` authority.
+		``None`` builds one over a validator-less ``AccountFactory`` (never raises); the
+		live root injects one holding the real ``assert_available`` validator.
 
 	The remaining parameters are forwarded to ``build_handler_graph`` unchanged.
 	"""
@@ -56,7 +56,7 @@ def compose_engine(
 	seed_exchange_registry(exchange_registry, venue_bundles)
 	if portfolio_factory is None:
 		portfolio_factory = PortfolioFactory(
-			authority=ComputeAccountAuthority(),
+			account_factory=AccountFactory(),
 			environment=ctx.environment,
 			sql_engine=ctx.sql_engine)
 	return build_handler_graph(

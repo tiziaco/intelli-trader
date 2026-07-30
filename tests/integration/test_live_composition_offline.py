@@ -37,6 +37,7 @@ from typing import Any
 
 import pytest
 
+from itrader.core.exceptions import VenueAccountNotProvisionedError
 from itrader.portfolio_handler.account import SimulatedCashAccount
 from itrader import config as _live_config
 from itrader.trading_system.live.build import build_live_system
@@ -185,19 +186,19 @@ def test_a_portfolio_materializes_over_the_provisioned_account(live_system) -> N
 
 
 def test_a_portfolio_naming_an_unprovisioned_account_is_refused(live_system) -> None:
-    """An account with no durable row is refused, and no portfolio survives the attempt.
+    """An account with no durable row is refused BY NAME, and no portfolio survives.
 
     The dangerous fallback is returning the compute leaf the portfolio would otherwise
     get: the pair would be silently unroutable while the portfolio looks healthy.
 
-    The exception TYPE is deliberately left open here. On a real SQL spine the durable
-    ``portfolios`` insert runs BEFORE the account authority validates, so the composite
-    foreign key onto ``venue_accounts`` rejects the write first and the caller sees an
-    ``IntegrityError`` rather than the domain's own ``VenueAccountNotProvisionedError``.
-    That ordering is the open WR-03 finding, closed when ``add_portfolio`` validates and
-    materializes ahead of the insert; this assertion tightens to the typed error then.
+    The exception TYPE is load-bearing (WR-03). ``add_portfolio`` used to run the durable
+    ``portfolios`` insert BEFORE the account was validated, so the composite foreign key
+    onto ``venue_accounts`` rejected the write first and the caller saw a raw
+    ``IntegrityError`` — an error that names a constraint instead of naming the account and
+    telling the operator to provision it. Materializing ahead of the insert is what puts the
+    domain's own refusal in front.
     """
-    with pytest.raises(Exception):
+    with pytest.raises(VenueAccountNotProvisionedError):
         live_system.portfolio_handler.add_portfolio(
             name="ghost-pf", exchange=_VENUE, cash=Decimal("10000"),
             account_id="no-such-account", venue_name=_VENUE)
@@ -225,6 +226,44 @@ def test_a_zero_account_spine_still_boots_running_and_empty(sqlite_spine) -> Non
         assert system._system_db_backend is not None
     finally:
         system.stop()
+
+
+def test_the_production_builder_produces_every_value_a_safety_path_consumes(
+    live_system,
+) -> None:
+    """The design-§7.2 checklist: one assertion per value a safety path READS.
+
+    The shared lesson of ``liquidation_fee_rate``, ``venue_accounts`` and CR-01..04 is that
+    each of these defects was a collaborator whose LOGIC was right and whose INPUT the
+    production builder never supplied. Unit tests could not see it, because they supplied
+    the input themselves. So every value a safety path consumes gets one assertion that the
+    REAL builder produced it.
+    """
+    # (1) Record enumerations — the recovery plane and the reconcile plane read the SAME
+    #     live manager enumeration, not two containers that can drift.
+    assert live_system._stream_recovery._accounts() == (
+        live_system._venue_manager.online_records())
+    coordinator = live_system._build_reconciliation_coordinator()
+    assert coordinator._records() == live_system._online_account_records()
+    assert coordinator._records.__func__ is (
+        live_system._online_account_records.__func__)
+
+    # (2) Halt wiring — the drift sweep freezes the engine through the SAME latch the
+    #     operator surface and the error tripwire drive.
+    assert live_system.portfolio_handler._halt_signal == live_system._safety.halt
+    assert live_system._error_policy._halt == live_system._safety.halt
+
+    # (3) Snapshot plumbing — the account brought online carries an adapter that answers
+    #     the reconcile/resume snapshot, and it is the SAME object the order path routes to.
+    record = live_system._venue_manager.online_records()[0]
+    assert callable(record.adapter.snapshot)
+    assert live_system.execution_handler.exchanges[
+        (_VENUE, _ACCOUNT)] is record.adapter
+
+    # (4) Subscribed symbols — the feed the data adapter was bound to at build is the ONE
+    #     feed the engine drains bars from, so start()'s per-member subscribe reaches it.
+    assert live_system.feed is live_system._engine.feed
+    assert live_system.feed._provider is live_system._data_provider
 
 
 # --------------------------------------------------------------------------- #

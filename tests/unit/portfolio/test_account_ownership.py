@@ -50,7 +50,7 @@ from tests.support.venue_wiring import (
 
 
 class _RecordingAuthority:
-    """Wraps a real ``ComputeAccountAuthority`` and records every account it builds.
+    """Wraps a real ``AccountFactory`` and records every account it builds.
 
     A DELEGATING wrapper rather than a fake: the authority and the minting body are the
     production ones, so the identity these tests assert is the identity production
@@ -77,13 +77,13 @@ def _handler() -> tuple[PortfolioHandler, _RecordingAuthority]:
     minted account, the identity these tests assert.
     """
     from itrader.portfolio_handler.portfolio_factory import (
-        ComputeAccountAuthority,
+        AccountFactory,
         PortfolioFactory,
     )
 
     bus = queue.Queue()
-    authority = _RecordingAuthority(ComputeAccountAuthority())
-    factory = PortfolioFactory(authority=authority, environment="backtest")
+    authority = _RecordingAuthority(AccountFactory())
+    factory = PortfolioFactory(account_factory=authority, environment="backtest")
     return PortfolioHandler(bus, portfolio_factory=factory), authority
 
 

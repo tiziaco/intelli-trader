@@ -282,7 +282,16 @@ class VenueAccountNotProvisionedError(PortfolioError):
     DISABLED = "disabled"
     NOT_ONLINE = "not_online"
 
-    def __init__(self, venue_name: str, account_id: str, cause: str):
+    def __init__(
+        self,
+        venue_name: Optional[str],
+        account_id: Optional[str],
+        cause: str,
+    ):
+        # Both halves are Optional because a portfolio naming NO account is one of the
+        # cases this refuses, and ``(None, None)`` is what it is refused as. Coercing an
+        # unnamed half to a placeholder here would put a fabricated identity into the very
+        # message an operator uses to find the real one.
         self.venue_name = venue_name
         self.account_id = account_id
         self.cause = cause

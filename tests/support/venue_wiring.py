@@ -180,26 +180,26 @@ def backtest_portfolio_factory(
     exchange_config: Optional[Any] = None,
     rng: Any = None,
 ) -> Any:
-    """A backtest-shaped ``PortfolioFactory`` over a ``ComputeAccountAuthority`` (D-24).
+    """A backtest-shaped ``PortfolioFactory`` over a validator-less ``AccountFactory``.
 
-    ``PortfolioHandler`` now builds every portfolio's account leaf THROUGH an injected
-    ``PortfolioFactory`` (D-24), whose account authority on the backtest arm is the
-    ``ComputeAccountAuthority`` (never raises). Every direct-construction test site that
-    creates portfolios needs the same recipe; this is it. ``environment`` / ``sql_engine``
-    thread the durable state-storage selectors so the factory scopes state storage exactly
-    as the handler expects.
+    ``PortfolioHandler`` builds every portfolio's account leaf THROUGH an injected
+    ``PortfolioFactory`` (D-24), whose ``AccountFactory`` on the backtest arm carries no
+    validator and never raises. Every direct-construction test site that creates portfolios
+    needs the same recipe; this is it. ``environment`` / ``sql_engine`` thread the durable
+    state-storage selectors so the factory scopes state storage exactly as the handler
+    expects.
 
-    ``bus`` / ``exchange_config`` / ``rng`` are accepted and unread: the compute authority
+    ``bus`` / ``exchange_config`` / ``rng`` are accepted and unread: the account factory
     builds its leaf directly and touches no exchange. They stay in the signature because
     every call site passes them and the handler recipe below forwards the bus.
     """
     from itrader.portfolio_handler.portfolio_factory import (
-        ComputeAccountAuthority,
+        AccountFactory,
         PortfolioFactory,
     )
 
     return PortfolioFactory(
-        authority=ComputeAccountAuthority(),
+        account_factory=AccountFactory(),
         environment=environment, sql_engine=sql_engine)
 
 

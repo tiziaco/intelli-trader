@@ -50,9 +50,8 @@ from itrader.execution_handler.execution_handler import (
 from itrader.logger import get_itrader_logger
 from itrader.outils.time_parser import to_timedelta
 from itrader.portfolio_handler.portfolio_factory import (
-    ComputeAccountAuthority,
+    AccountFactory,
     PortfolioFactory,
-    VenueValidatedComputeAuthority,
 )
 from itrader.price_handler.feed.live_bar_feed import LiveBarFeed
 from itrader.price_handler.providers.okx_provider import build_okx_data_provider
@@ -270,13 +269,14 @@ def build_live_system(
         )
 
     # The leaf-builder every portfolio is constructed through. The mode difference lives
-    # ONLY in which authority is injected: with a manager the pair is validated
-    # (provisioned + enabled) and a live portfolio can never sit on a fabricated balance.
+    # ONLY in the injected validator: with a manager the pair is asserted provisioned and
+    # enabled, so a live portfolio can never sit on a fabricated balance — and a live
+    # portfolio naming NO account is refused there rather than named onto the compute
+    # venue's default one.
     portfolio_factory = PortfolioFactory(
-        authority=(
-            VenueValidatedComputeAuthority(
-                manager=venue_manager, compute=ComputeAccountAuthority())
-            if venue_manager is not None else ComputeAccountAuthority()),
+        account_factory=AccountFactory(
+            validate=venue_manager.assert_available
+            if venue_manager is not None else None),
         environment=environment,
         sql_engine=sql_engine,
     )

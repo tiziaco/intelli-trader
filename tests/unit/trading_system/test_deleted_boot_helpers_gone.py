@@ -49,6 +49,12 @@ _DELETED_NAMES = frozenset({
     # let one account's orders reach another account's session. Pinned by name so the
     # flag cannot come back the way it left.
     "route_orders_by_account",
+    # The two account authorities, merged into ``AccountFactory`` with an injected
+    # optional validator. Pinned because the pair differed by ONE call, which is exactly
+    # how a second leaf-construction path grows back — and because the compute arm's
+    # DEFAULT_ACCOUNT_ID naming is safe only while it lives in the validator-LESS arm.
+    "ComputeAccountAuthority",
+    "VenueValidatedComputeAuthority",
 })
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]

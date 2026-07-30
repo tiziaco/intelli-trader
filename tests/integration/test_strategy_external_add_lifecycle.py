@@ -237,7 +237,7 @@ class _LifecycleSystem:
         ).install(system.event_handler)
 
         # ACCT-03 (11.2-09): a LIVE portfolio must name a PROVISIONED + enabled venue
-        # account, or composition RAISES (VenueValidatedComputeAuthority.assert_available).
+        # account, or composition RAISES (the AccountFactory's injected assert_available).
         # Provision the paper account this portfolio names FIRST, on the SAME Postgres DB
         # build_live_system built its own engine on, so the durable venue_accounts row is
         # visible when add_portfolio validates. The account id is the portfolio's own id

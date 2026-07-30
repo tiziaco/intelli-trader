@@ -29,28 +29,19 @@ from unittest.mock import MagicMock
 
 from itrader.core.enums import EventType
 from itrader.trading_system.live_runner import LiveRunner
-from itrader.trading_system.live_trading_system import LiveTradingSystem
+from itrader.trading_system.live.system import LiveTelemetry
 
 
-class _StatsHost:
-    """A light host carrying the REAL facade stats dict + accounting methods.
+def _stats_host() -> LiveTelemetry:
+    """The REAL counter object the production runner's hooks are bound to.
 
-    Re-binds ``LiveTradingSystem._update_stats`` / ``_on_order_throttle_rejected`` onto a
-    minimal object so the tests exercise the ACTUAL accounting logic (not a re-implementation)
-    without constructing the full live facade / venue arms.
+    Built directly rather than through the composition root: these tests are about the
+    accounting logic, and the object that owns it needs none of the live plane. Everything
+    it does need is passed as a stand-in, so the hooks under test are the production ones.
     """
-
-    _update_stats = LiveTradingSystem._update_stats
-    _on_order_throttle_rejected = LiveTradingSystem._on_order_throttle_rejected
-
-    def __init__(self) -> None:
-        self._stats = {
-            'events_processed': 0,
-            'orders_executed': 0,
-            'orders_throttle_rejected': 0,
-            'last_event_time': None,
-        }
-        self._stats_lock = threading.Lock()
+    return LiveTelemetry(
+        bus=MagicMock(name='bus'), exchange='paper', status_callback=None,
+        system_stats_store=None, throttle=MagicMock(name='throttle'))
 
 
 class _OneShotBus:
@@ -77,18 +68,18 @@ def _build_runner(*, event, pre_submit, host, dispatch_gate):
         stop_event=stop_event,
         worker_supervisor=MagicMock(name='worker_supervisor'),
         dispatch_gate=dispatch_gate,
-        update_stats=host._update_stats,
+        update_stats=host.update,
         record_bar_metrics=lambda _event: None,
         pre_submit=pre_submit,
         queue_timeout=0.01,
         max_idle_time=999.0,
-        on_order_throttle_rejected=host._on_order_throttle_rejected,
+        on_order_throttle_rejected=host.on_order_throttle_rejected,
     )
 
 
 def test_throttle_rejected_order_is_processed_not_executed() -> None:
     """A throttle-REFUSED ORDER bumps orders_throttle_rejected, never orders_executed (WR-02)."""
-    host = _StatsHost()
+    host = _stats_host()
     order = SimpleNamespace(type=EventType.ORDER)
     dispatch_gate = MagicMock(name='dispatch_gate')
     # pre_submit returns False -> the throttle REFUSED this ORDER.
@@ -100,14 +91,14 @@ def test_throttle_rejected_order_is_processed_not_executed() -> None:
     # The rejected order NEVER reached the dispatch gate...
     dispatch_gate.assert_not_called()
     # ...and NEVER counted as executed — it is processed + throttle-rejected only.
-    assert host._stats['orders_executed'] == 0
-    assert host._stats['orders_throttle_rejected'] == 1
-    assert host._stats['events_processed'] == 1
+    assert host.stats['orders_executed'] == 0
+    assert host.stats['orders_throttle_rejected'] == 1
+    assert host.stats['events_processed'] == 1
 
 
 def test_non_rejected_order_still_counts_as_executed() -> None:
     """A throttle-ALLOWED ORDER bumps orders_executed and leaves the reject counter at 0."""
-    host = _StatsHost()
+    host = _stats_host()
     order = SimpleNamespace(type=EventType.ORDER)
     dispatch_gate = MagicMock(name='dispatch_gate')
     # pre_submit returns True -> the throttle ALLOWED this ORDER.
@@ -117,6 +108,6 @@ def test_non_rejected_order_still_counts_as_executed() -> None:
     runner._run_loop()
 
     dispatch_gate.assert_called_once_with(order)
-    assert host._stats['orders_executed'] == 1
-    assert host._stats['orders_throttle_rejected'] == 0
-    assert host._stats['events_processed'] == 1
+    assert host.stats['orders_executed'] == 1
+    assert host.stats['orders_throttle_rejected'] == 0
+    assert host.stats['events_processed'] == 1

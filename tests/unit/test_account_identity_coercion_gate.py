@@ -15,11 +15,11 @@ registration wrote ``(venue, <default>)`` while both reader sides constructed
 ``(venue, None)`` raw, so an unnamed account's registered key was unreachable by every
 reader. Deleting SOME coercions while leaving others does not dissolve that — it
 RELOCATES it. So the gate asserts ZERO account-identity coercions remain anywhere under
-``itrader/venues/`` or in ``itrader/trading_system/live_trading_system.py``.
+``itrader/venues/`` or in either live composition root.
 
 (b) POSITIVE half — the backtest single-account identity is STILL present. The kept
 uses in ``execution_handler`` / ``backtest_trading_system`` / ``universe_wiring`` /
-``portfolio_factory`` (and the paper lookup in ``live_trading_system``) are load-bearing
+``portfolio_factory`` (and the paper pair keys in the live roots) are load-bearing
 for the golden oracle: deleting one changes backtest numbers. Recorded as expected
 per-file counts so a future sweep that removes a backtest-identity use fails HERE rather
 than silently re-baselining the oracle.
@@ -53,10 +53,15 @@ _COERCION_DEFAULT_STR = "default"
 # Repo root: this file is tests/unit/<name>.py, so the tree root is two parents up.
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 
-# The live root scanned alongside the venues package. compose.py is deliberately NOT
-# scanned here: after 11.2-03 it holds no code-level DEFAULT_ACCOUNT_ID at all (only two
+# The live roots scanned alongside the venues package: the superseded single-module root
+# (deleted in the redesign's final stage) and the package that replaced it. compose.py is
+# deliberately NOT scanned: it holds no code-level DEFAULT_ACCOUNT_ID at all (only
 # docstring references), so there is nothing for the negative half to protect there.
-_LIVE_ROOT = _ROOT / "itrader" / "trading_system" / "live_trading_system.py"
+_LIVE_ROOTS = (
+    _ROOT / "itrader" / "trading_system" / "live_trading_system.py",
+    _ROOT / "itrader" / "trading_system" / "live" / "build.py",
+    _ROOT / "itrader" / "trading_system" / "live" / "system.py",
+)
 _VENUES_DIR = _ROOT / "itrader" / "venues"
 
 # POSITIVE half — the backtest single-account identity uses, measured at execution time
@@ -73,12 +78,17 @@ _BACKTEST_IDENTITY_COUNTS = {
     # The (COMPUTE_VENUE, DEFAULT_ACCOUNT_ID) paper lookup in the live file (survives
     # D-35) — an account-identity coercion it is NOT, so it is a KEPT use, not a swept one.
     "itrader/trading_system/live_trading_system.py": 1,
-    # ``ComputeAccountAuthority`` names the compute venue's ONE account for a portfolio
-    # that names none, so a single-account system's orders resolve to the pair its
-    # exchange is registered under. Scoped to the COMPUTE authority: the live authority
-    # runs ``assert_available`` first and refuses an unnamed account there, so this can
-    # never turn a live portfolio naming no account into the default one.
+    # A validator-LESS ``AccountFactory`` names the compute venue's ONE account for a
+    # portfolio that names none, so a single-account system's orders resolve to the pair
+    # its exchange is registered under. The naming lives INSIDE that arm's own return
+    # statement, so it cannot reach a validator-bearing factory — the behavioural pins for
+    # that gating are in ``tests/unit/portfolio/test_portfolio_factory.py``, because a
+    # RELOCATED coercion keeps this count at 1 and would leave this gate green.
     "itrader/portfolio_handler/portfolio_factory.py": 1,
+    # The live root's paper pair key: the compute venue's baseline registration, plus the
+    # facade's venue-metadata fallback.
+    "itrader/trading_system/live/build.py": 1,
+    "itrader/trading_system/live/system.py": 1,
 }
 
 
@@ -146,18 +156,22 @@ def test_no_account_identity_coercion_survives_under_venues() -> None:
     )
 
 
-def test_no_account_identity_coercion_survives_in_the_live_root() -> None:
-    """ACCT-04: the live composition root carries no account-identity coercion either.
+def test_no_account_identity_coercion_survives_in_the_live_roots() -> None:
+    """ACCT-04: the live composition roots carry no account-identity coercion either.
 
-    The live root is scanned alongside the venues package because a "repair" coercion is
-    just as damaging there. The kept ``(COMPUTE_VENUE, DEFAULT_ACCOUNT_ID)`` paper lookup is
-    NOT a coercion (no ``or``), so it is invisible to this half and asserted present by the
-    positive half instead.
+    The live roots are scanned alongside the venues package because a "repair" coercion is
+    just as damaging there. The kept ``(COMPUTE_VENUE, DEFAULT_ACCOUNT_ID)`` paper lookups
+    are NOT coercions (no ``or``), so they are invisible to this half and asserted present
+    by the positive half instead.
     """
-    assert _coercion_count(_parse(_LIVE_ROOT)) == 0, (
-        "ACCT-04 violation: live_trading_system.py grew an `X or DEFAULT_ACCOUNT_ID` "
-        "account-identity coercion — the live root must construct the (venue, account_id) "
-        "pair from the row's own id, never a default."
+    offenders = {
+        str(path.relative_to(_ROOT)): _coercion_count(_parse(path))
+        for path in _LIVE_ROOTS
+    }
+    assert {rel: n for rel, n in offenders.items() if n} == {}, (
+        f"ACCT-04 violation: a live composition root grew an `X or DEFAULT_ACCOUNT_ID` "
+        f"account-identity coercion — {offenders}. The live root must construct the "
+        "(venue, account_id) pair from the row's own id, never a default."
     )
 
 
