@@ -43,6 +43,20 @@ against the frozen number:
 
 That form exits non-zero unless the successor code total is strictly below the frozen
 baseline, so the must-have is a command with an exit code rather than a judgement call.
+
+**Both sides must count the SAME file set, and the 27 do not.** Several recipes landed in
+host files that predate the redesign — ``snapshot()`` and ``build_okx_exchange`` in
+``execution_handler/exchanges/okx.py``, ``build_okx_data_provider`` in
+``price_handler/providers/okx_provider.py`` — while the modules they replaced
+(``account/venue.py``, ``feed_binder.py``, the plugin ``build_*`` methods) WERE among the
+27. Those lines were counted leaving and not counted arriving, which is the §3.1 false-green
+one level up: not "relocation drops lines from the measured set" but "the measured set never
+included the destinations". Measured concretely, the four hosts grew 1,182 -> 1,334 code
+lines while the 27-file total appeared to fall 3,886 -> 3,852.
+
+So the yardstick is the EXTENDED set — the 27 plus those four hosts — pinned in
+``EXTENDED_BASELINE_TOTALS`` and measured at the same frozen commit. ``BASELINE_TOTALS``
+stays untouched as the historical record of what the original Scope block measured.
 """
 
 from __future__ import annotations
@@ -89,11 +103,31 @@ BASELINE_MANIFEST: tuple[str, ...] = (
     "itrader/portfolio_handler/account/venue.py",
 )
 
-# The frozen yardstick: what BASELINE_MANIFEST measured at the pre-redesign HEAD, as
-# (files, raw, code). Pinned as data because it is a historical fact about one commit — the
-# must-have compares the successor set against THIS, never against a re-measurement of the
-# baseline manifest on a mutated tree.
+# What BASELINE_MANIFEST measured at the pre-redesign HEAD (commit 3a2c7692), as
+# (files, raw, code). Pinned as data because it is a historical fact about one commit. It is
+# the record of what the requirements' Scope block covered — NOT the gate's comparand; see
+# EXTENDED_BASELINE_TOTALS for why.
 BASELINE_TOTALS = (27, 9243, 3886)
+
+#: The four host files that ABSORBED redesign code without being in the baseline set. Each
+#: took a recipe or contract whose predecessor WAS among the 27, so counting the 27 alone
+#: credits the deletion and hides the arrival.
+RECIPE_HOSTS: tuple[str, ...] = (
+    "itrader/execution_handler/exchanges/base.py",
+    "itrader/execution_handler/exchanges/okx.py",
+    "itrader/execution_handler/exchanges/simulated.py",
+    "itrader/price_handler/providers/okx_provider.py",
+)
+
+# The GATE's comparand: BASELINE_MANIFEST + RECIPE_HOSTS, measured at the same frozen
+# commit 3a2c7692, as (files, raw, code). Reproduce it with:
+#
+#   git show 3a2c7692:<path>  for each of the 31 paths, counted by this module's own rule
+#
+# The successor manifest must therefore also list RECIPE_HOSTS — the gate below asserts it
+# does, because an extended baseline compared against a 27-file successor set would be the
+# same asymmetry with the sign flipped.
+EXTENDED_BASELINE_TOTALS = (31, 11684, 5068)
 
 _DOCSTRING_OWNERS = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
 
@@ -189,13 +223,27 @@ def main(argv: list[str] | None = None) -> int:
     label = str(args.manifest) if args.manifest else "baseline (hard-coded)"
 
     missing = [entry for entry in manifest if not (args.repo_root / entry).is_file()]
-    if missing:
+    if missing and args.manifest is not None:
+        # A supplied manifest names the CURRENT set, so an absent path is a typo or a stale
+        # entry, and silently counting it as zero would flatter the total.
         print(f"ERROR: {len(missing)} manifest path(s) do not exist:", file=sys.stderr)
         for entry in missing:
             print(f"  {entry}", file=sys.stderr)
         return 1
+    if missing:
+        # The hard-coded baseline names a HISTORICAL set, and the redesign deletes from it
+        # by design. An absent path here is the intended outcome, not a fault — it
+        # contributes zero and is reported so the historical run stays readable.
+        print(f"NOTE: {len(missing)} baseline path(s) have since been deleted:")
+        for entry in missing:
+            print(f"  (deleted) {entry}")
+        print()
 
-    rows = [(entry, *measure(args.repo_root / entry)) for entry in manifest]
+    rows = [
+        (entry, *measure(args.repo_root / entry))
+        for entry in manifest
+        if (args.repo_root / entry).is_file()
+    ]
     raw_total = sum(row[1] for row in rows)
     code_total = sum(row[2] for row in rows)
 
@@ -220,15 +268,34 @@ def main(argv: list[str] | None = None) -> int:
                 "Measure the successor manifest instead.")
         return 0
 
-    # Successor measurement, always compared against the frozen number.
-    delta = code_total - baseline_code
-    print(f"frozen baseline code: {baseline_code} | delta: {delta:+d}")
+    # An extended baseline compared against a successor set that omits the recipe hosts is
+    # the original asymmetry with its sign flipped, and it would flatter the result by the
+    # hosts' entire weight. Refuse BEFORE reporting a delta built that way — a printed
+    # number is read and remembered even when the run exits non-zero.
+    absent_hosts = [host for host in RECIPE_HOSTS if host not in manifest]
+    if absent_hosts:
+        print(
+            "ERROR: the comparand is the EXTENDED baseline (the 27 Scope files plus the "
+            f"recipe hosts), but this manifest omits {len(absent_hosts)} host(s):",
+            file=sys.stderr)
+        for host in absent_hosts:
+            print(f"  {host}", file=sys.stderr)
+        print(
+            "Both sides must count the same file set — add them, or the delta credits "
+            "each deletion without counting where the code went.", file=sys.stderr)
+        return 1
+
+    # Compared against the frozen EXTENDED number so both sides count the same file set.
+    _, _, extended_code = EXTENDED_BASELINE_TOTALS
+    delta = code_total - extended_code
+    print(f"frozen baseline code: {extended_code} | delta: {delta:+d}")
+
     if not args.gate:
         return 0
     if delta >= 0:
         print(
             "GATE FAILED: the successor set is not strictly smaller than the baseline "
-            f"({code_total} >= {baseline_code}). The refactor must delete more source "
+            f"({code_total} >= {extended_code}). The refactor must delete more source "
             "than it adds.", file=sys.stderr)
         return 1
     print(f"GATE PASSED: {-delta} fewer code lines than the frozen baseline.")

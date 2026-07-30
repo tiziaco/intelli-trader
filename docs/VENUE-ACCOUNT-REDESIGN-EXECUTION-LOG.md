@@ -21,10 +21,10 @@ CR ledger: **CR-03 fixed (Stage 3)**, **CR-04 fixed (Stage 4)**, **CR-02 fixed (
 CR-01 alone is still `xfail(strict=True)` in
 `tests/integration/test_live_composition_offline.py`; it flips in Stage 6.
 
-Stage 5 pulled the gate back under the baseline for the first time (+60 → **−34**), so the
-Stage-4 excursion below was transitional as hoped. **But read §2.15 before trusting that
-number** — the manifest measures an inconsistent file set, and the true figure is worse
-than −34.
+**The per-stage successor deltas in the table above are measured against the OLD 27-file
+manifest and are all understated — see §2.15.** On the corrected 31-file yardstick the
+gate stands at **+118** after Stage 5, and `--gate` fails today, as it should. Stage 6
+onward reports the corrected number.
 
 **The deletion gate moved the WRONG WAY in Stage 4 (+4 → +60).** The absorption itself
 shrank (four modules, 530 code lines → `accounts.py` 485 = −45), but modules that are
@@ -318,24 +318,55 @@ Same gap class as `catch_up_missed_fills` (closed in Stage 5), called from the s
 undeclared only because §2.2 named one method. Declare it on `AbstractExchange` in the next
 contract pass.
 
-### 2.15 Stage 7 — the measurement manifest counts an INCONSISTENT file set (must settle)
+### 2.15 The measurement asymmetry — SETTLED after Stage 5 (owner decision)
 
-The deletion gate is the program's must-have, and it is currently measuring asymmetrically.
-Code relocated into `portfolio_handler/account/simulated.py` COUNTS (the file is in the
-manifest, line 51), but code relocated into `price_handler/providers/okx_provider.py` and
-`execution_handler/exchanges/okx.py` does NOT — neither host is in the baseline or the
-successor set. Between them those two hosts absorbed `snapshot()` (Stage 3),
-`build_okx_exchange` (Stage 4) and `build_okx_data_provider` (Stage 5).
+**The reported −34 was wrong; the honest like-for-like number is +118.** The deletion gate
+was measuring an inconsistent file set: code relocated into
+`portfolio_handler/account/simulated.py` counted (it is in the manifest), but code
+relocated into `execution_handler/exchanges/{base,okx,simulated}.py` and
+`price_handler/providers/okx_provider.py` did not — no host was in either manifest, while
+the modules they replaced (`account/venue.py`, `feed_binder.py`, the plugin `build_*`
+methods) all WERE among the baseline 27. Lines were counted leaving and not counted
+arriving. Same false-green class as §3.1, one level up: §3.1 is "relocation drops lines
+from the measured set", this was "the measured set never included the destinations".
 
-So the reported **−34 is flattering** by whatever those three recipes weigh. This is the
-same false-green class as §3.1, one level up: §3.1 was "relocation drops lines from the
-measured set", this is "the successor set never included the destinations".
+Measured at the frozen commit `3a2c7692` versus HEAD, with the gate script's own counting
+rule:
 
-`BASELINE_TOTALS` is pinned as a historical fact and must not be edited. The like-for-like
-fix is to compute the baseline totals for the EXTENDED file set at the frozen commit and
-compare that against the same extended set today. **Stage 7 must settle this before running
-`--gate`**, and the honest number may well be positive. Also: the manifest's Stage-3 note
-claims `exchanges/base.py` is "inside the measured set" — it is not.
+| set | baseline | HEAD | delta |
+|---|---|---|---|
+| the 27-file manifest | 3,886 | 3,852 | −34 |
+| the 4 recipe hosts (uncounted) | 1,182 | 1,334 | +152 |
+| **like-for-like, 31 files** | **5,068** | **5,186** | **+118** |
+| whole `itrader/` tree, 263 files | 22,297 | 22,475 | +178 |
+
+The whole-tree row is the cross-check that involves no set-selection judgment at all; it
+agrees in sign. Every commit on this branch is a redesign stage, so all of it is redesign
+growth.
+
+**Settled (owner, option 1 of three):** extend BOTH sides to the 31-file set.
+`EXTENDED_BASELINE_TOTALS = (31, 11684, 5068)` is pinned in
+`scripts/measure_redesign_baseline.py` beside a `RECIPE_HOSTS` tuple, and the successor
+manifest lists the four hosts. `BASELINE_TOTALS` is untouched — it remains the historical
+record of what the requirements' Scope block measured, not the gate's comparand.
+
+Three behaviours now hold, each verified:
+- the successor run reports **31 files / 11,945 raw / 5,186 code / delta +118**;
+- `--gate` **exits 1** today (`GATE FAILED: 5186 >= 5068`), which is correct — the must-have
+  is genuinely unmet at Stage 5;
+- a manifest that OMITS a recipe host is **refused** rather than measured, because an
+  extended baseline against a 27-file successor set is the same asymmetry sign-flipped.
+
+The default (no-`--manifest`) historical run no longer hard-errors on the six baseline paths
+the redesign has deleted — it reports them and counts them as zero. That closes the old
+§2.10. An absent path in a SUPPLIED manifest is still a hard error, since there it means a
+typo or a stale entry.
+
+**Reachability:** 1,303 code lines are slated for deletion in Stages 6–7
+(`live_trading_system.py` alone is 791). The gate passes if the Stage-6 replacements
+(`build.py` / `system.py` / `graph.py` / `exchanges/paper.py`) come in under ~1,185 lines.
+Real target, not a comfortable margin — plan risk #3's stop-and-report now has a number
+attached to it.
 
 ## 3. Process findings (things that bit, so they do not bite again)
 

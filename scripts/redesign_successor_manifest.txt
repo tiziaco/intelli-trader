@@ -17,15 +17,22 @@
 #          registry.py, provider.py, the plugin modules — die in Stage 7, so both sides are
 #          counted for now and the delta is expected to be positive until then).
 # Stage 3: account/venue.py DELETED — venue truth is now AccountSnapshot, read by the
-#          execution adapter, and exchanges/base.py is already inside the measured set.
+#          execution adapter. (An earlier note here claimed exchanges/base.py was already
+#          inside the measured set; it was not. It is now — see the recipe-host correction.)
 # Stage 4: venues/accounts.py appeared and ABSORBED four modules — venue_account_manager.py,
 #          assemble.py, lifecycle.py and venue_uid_guard.py are DELETED.
 # Stage 5: feed_binder.py DELETED — the data adapter owns its own session, so there is no
-#          borrowed connection to bind. CAVEAT: its successor, build_okx_data_provider,
-#          lives in price_handler/providers/okx_provider.py, which is NOT in this set (nor
-#          in the baseline) — like the other recipes-in-situ, it lands in a host file that
-#          predates the redesign, so a recipe's own lines are invisible to this yardstick.
-#          Settling how recipe hosts are counted belongs to the Stage-7 measurement.
+#          borrowed connection to bind. Its successor, build_okx_data_provider, lands in
+#          price_handler/providers/okx_provider.py: a RECIPE HOST, now counted (below).
+#
+# THE RECIPE-HOST CORRECTION (settled after Stage 5). Several recipes landed in host files
+# that predate the redesign while the modules they replaced were among the baseline 27, so
+# their lines were counted leaving and not counted arriving. Measured: those hosts grew
+# 1,182 -> 1,334 code lines across Stages 3-5 while this manifest appeared to fall
+# 3,886 -> 3,852. The gate's comparand is therefore the EXTENDED baseline
+# (measure_redesign_baseline.EXTENDED_BASELINE_TOTALS = 31 / 11,684 / 5,068 at 3a2c7692),
+# and this set must list the hosts or the script refuses to report a delta.
+# Like-for-like at Stage 5: 5,186 code -> +118, NOT -34.
 
 # --- surviving / relocated baseline files ---
 itrader/trading_system/compose.py
@@ -49,6 +56,12 @@ itrader/connectors/stream_supervisor.py
 itrader/portfolio_handler/account/base.py
 itrader/portfolio_handler/account/conformance.py
 itrader/portfolio_handler/account/simulated.py
+
+# --- recipe hosts: predate the redesign, absorbed its recipes/contracts ---
+itrader/execution_handler/exchanges/base.py
+itrader/execution_handler/exchanges/okx.py
+itrader/execution_handler/exchanges/simulated.py
+itrader/price_handler/providers/okx_provider.py
 
 # --- new in the redesign ---
 itrader/trading_system/backtest/__init__.py
