@@ -6,7 +6,8 @@ settled decisions ED-1..ED-11 — nothing here overrides it. This file records a
 findings and carried-forward dependencies so a later session (or a different agent) does
 not re-derive them.
 
-**Status:** Stages 0–5 complete and committed. Next: Stage 6.
+**Status:** Stages 0–6 complete and committed. Next: Stage 7. **All four Criticals are
+fixed and the suite carries ZERO xfails.**
 
 | stage | commits | gate state at commit |
 |---|---|---|
@@ -16,10 +17,18 @@ not re-derive them.
 | 3 | `44d40f71`, `ebf28c7f` | 3053 pass / 6 skip / **3 xfail** · successor **+4** |
 | 4 | `1badab20`, `f75df648` | 3043 pass / 6 skip / **2 xfail** · successor **+60** |
 | 5 | `0a02be39` | 3039 pass / 6 skip / **1 xfail** · successor **−34** |
+| 6 | `4adeed3f`, `a6f013f4`, `b0450fc1` | 3057 pass / 6 skip / **0 xfail** · successor **+983** |
 
-CR ledger: **CR-03 fixed (Stage 3)**, **CR-04 fixed (Stage 4)**, **CR-02 fixed (Stage 5)**.
-CR-01 alone is still `xfail(strict=True)` in
-`tests/integration/test_live_composition_offline.py`; it flips in Stage 6.
+CR ledger: **all four fixed** — CR-03 (Stage 3), CR-04 (Stage 4), CR-02 (Stage 5), CR-01
+(Stage 6). `tests/integration/test_live_composition_offline.py` carries no `xfail` at all
+now, so any regression in the four invariants reddens the suite directly.
+
+**Stage 6's +983 is the two shapes coexisting, by design** — the plan defers every deletion
+to Stage 7 so this diff stays reviewable and the gates stay attributable. `build.py` (341)
++ `system.py` (469) + `exchanges/paper.py` (28) = **838 code lines** against the ~1,125
+budget, replacing `live_trading_system.py`'s 788. The Stage-7 deletion pool measures
+**1,270**, so the projected final delta is **−287**: the must-have passes with 287 lines of
+headroom. Risk #3 did not fire.
 
 **The per-stage successor deltas in the table above are measured against the OLD 27-file
 manifest and are all understated — see §2.15.** On the corrected 31-file yardstick the
@@ -195,6 +204,46 @@ exactly what makes them shareable, and re-introducing one would undo §4.6.
 No catalogued venue declares it. The branch exists per the plan's text, with an explicit
 refusal when the run names no account, rather than a silent fallback.
 
+### 1.15 `route_orders_by_account` died by NAMING the compute venue's one account
+
+The plan's premise for retiring the mode flag was factually wrong: backtest portfolios did
+NOT sit under `('paper', 'default')`. That pair was only a memo key, while the leaf carried
+`account_id=None`. Negative control at commit 1 (flag forced `True` on the old shape):
+**every order refused, 0 trades, final equity 10,000.00** — `No exchange registered for
+venue/account (paper, None)`.
+
+What made uniform routing byte-exact is the compute authority NAMING the compute venue's
+one account when a portfolio names none. `ExecutionHandler.portfolio_read_model` became
+REQUIRED and `_resolve_account_id`'s default-constant branch was deleted, so the selector is
+dead at every layer rather than relocated. Visible consequence: a backtest
+`Portfolio.account_id` is now `'default'`, not `None`. Both oracles stay byte-exact
+(134 / `46189.87730727451`).
+
+### 1.16 The MPORT-07 fence inside `AccountFactory` — and why only ONE test guards it
+
+`AccountFactory.account_for` has **two separate return statements**. The validator arm calls
+`validate(...)` then builds with `account_id` VERBATIM; the `DEFAULT_ACCOUNT_ID` naming is
+written INSIDE the validator-less return. Resolving the default once above the branch —
+the obvious tidy-up — silently coerces an unnamed LIVE portfolio onto the default account:
+a cross-account misroute with every lookup above it still reading correct.
+
+**`tests/unit/test_account_identity_coercion_gate.py` does NOT catch that.** It scans
+`portfolio_factory.py` only in its POSITIVE half (a pinned per-file count), and a relocated
+coercion keeps the count at 1. Independently reproduced: applying the tidy-up reddens
+`test_a_validator_that_accepts_an_unnamed_account_still_builds_an_unnamed_leaf` while the
+static gate stays GREEN. That behavioural test is the only tripwire — do not delete it, and
+do not "simplify" the two returns into one.
+
+### 1.17 WR-07 closed by a DIFFERENT mechanism than the plan specified — see §2.16
+
+The plan's step 1 ("`build_live_system` REFUSES to build without a SQL spine") was attempted
+and abandoned on evidence. What landed instead: durability follows the SPINE rather than an
+environment string, so the WR-07 configuration — a real spine whose portfolio durability is
+silently off — is unreachable from the new root; and the spineless arm survives with a loud
+`NOT DURABLE` warning naming exactly what is lost. This satisfies `11.2-REVIEW.md`'s own
+wording ("gate on the presence of the spine, or log loudly"). The hard refusal remains
+available as a ~5-line change once §2.16 is resolved.
+
 ## 2. Carried-forward dependencies
 
 ### 2.1 Stage 5 — OKX public sessions need a credential-free client arm (BLOCKING)
@@ -368,6 +417,85 @@ typo or a stale entry.
 Real target, not a comfortable margin — plan risk #3's stop-and-report now has a number
 attached to it.
 
+### 2.16 OPEN — the replay/parity harness blocks WR-07's hard refusal (owner decision)
+
+`build_paper_replay_system` — which drives the **DoD parity gate** — plus
+`remove_policy_harness` and ~7 `for_exchange("binance")`-style tests all build a live system
+with NO spine. Requiring one forces `environment='live'`, which switches the parity run onto
+SQL order/signal/portfolio-state storage. That experiment was run and failed three ways:
+
+1. the portfolio-state tables (`equity_snapshots`, `cash_operations`, …) register on the
+   metadata only WHEN a portfolio is created, so a `provision_schema` before boot never
+   creates them — a chicken-and-egg the flow does not currently support;
+2. with them pre-registered, the run dies on `sqlite3.OperationalError: database is locked`
+   **within a single process** (order store versus portfolio-state store);
+3. the durable rows were observed carrying FLOAT money (`amount: -9500.0`).
+
+Point 3 is **reported but NOT independently verified** — a grep of
+`portfolio_handler/storage/` and `storage/` for `float(` returns nothing, so if it is real
+the coercion is elsewhere (a JSON column round-trip is the obvious suspect). Money is
+Decimal end-to-end by locked decision, so **confirm or dismiss this before migrating the
+harness**, and treat it as a correctness question in its own right rather than a detail of
+the migration.
+
+Sequencing: migrating the replay/parity harness off the live durable arm is its own piece of
+work — it needs a schema-provisioning story for the handler-owned tables and a look at the
+SQLite write-lock contention. Plan risk #2 requires the parity gate stay byte-exact, so
+forcing it through as part of Stage 6 would have been a large unplanned behavioural change
+on the one gate that certifies the DoD.
+
+### 2.17 Stage 7 — the deletion list, and what must move first
+
+Zero production references remain to any of these; only Stage-7-disposed tests and docstring
+prose still name them. **Pool = 1,270 code lines.**
+
+`trading_system/live_trading_system.py` (788), `venues/okx_plugin.py` (177),
+`venues/paper_plugin.py` (71), `connectors/provider.py` (56), `venues/bundle.py` (41),
+`venues/bundles.py` (39), `trading_system/compose.py` (37),
+`trading_system/venue_spec.py` (32), `venues/registry.py` (29).
+
+**ED-5 must run FIRST:** `COMPUTE_VENUE` / `DEFAULT_ACCOUNT_ID` are still imported from
+`venues/registry.py` by `execution_handler.py:18`, `portfolio_factory.py:47` and
+`admission_manager.py:35`. Re-home into `execution_handler/execution_handler.py`, then
+`git rm`.
+
+Also in Stage 7:
+- Delete/re-point `tests/unit/connectors/test_provider.py`,
+  `tests/unit/venues/test_{venue_bundles,registry,okx_plugin,paper_plugin}.py`,
+  `tests/unit/trading_system/test_venue_spec.py`,
+  `tests/integration/test_compose_wiring.py`, and `tests/support/venue_wiring.py` (which
+  still builds `VenueBundles` / `ConnectorProvider` / `PaperVenuePlugin`).
+- `tests/unit/test_account_identity_coercion_gate.py` must drop its two
+  `live_trading_system.py` entries (the `_LIVE_ROOTS` tuple and the positive-half count)
+  when that file dies.
+- Remove `"itrader.trading_system.live_trading_system"` from `pyproject.toml`'s
+  `ignore_errors` list (`:104`) with the file.
+- `_LIVE_QUEUE_TIMEOUT` / `_LIVE_MAX_IDLE_TIME` now live in `live/build.py`; the old copies
+  die with the old root.
+- `order_handler/admission/admission_manager.py:101` still has
+  `account_for(...) or DEFAULT_ACCOUNT_ID`. Left deliberately in Stage 6: it is a fee-model
+  lookup with an in-source rationale explicitly forbidding unification with the routing
+  path, and removing a defensive default on a money-adjacent path is a decision, not a
+  sweep. Decide it explicitly.
+- Pre-existing: `tests/integration/test_live_system_okx_wiring.py` has an unused
+  `import pytest`.
+
+### 2.18 `trading_system/live/__init__.py` is deliberately import-LIGHT
+
+It re-exports `bootstrap` only. Adding `build` / `system` to the barrel makes importing ANY
+live submodule pull ccxt and reddens the inertness probe — hit during Stage 6 commit 2. Keep
+it that way, or rewrite the probe.
+
+### 2.19 The §7.5 rehydrate-ordering gate asserts the ORDERING, not a runtime tripwire
+
+Design §7.5 wanted the live validator to consult the manager's ONLINE RECORDS, so
+rehydrate-before-bring-up fails loudly at the first portfolio. But Stage 4 deliberately
+scoped `assert_available` to EXISTS+ENABLED — requiring "brought online" would crash an okx
+boot on a validly-provisioned FOREIGN-venue portfolio. Code wins, so
+`tests/unit/trading_system/test_bootstrap_ordering.py` asserts the ordering itself on the
+production `bootstrap_session` / `_restart_sequence`, and documents that the ordering has no
+runtime tripwire of its own — which is precisely why it needs a static gate.
+
 ## 3. Process findings (things that bit, so they do not bite again)
 
 ### 3.1 The baseline manifest under-reports mid-refactor — a false-green
@@ -431,3 +559,11 @@ poetry run pytest tests -q
 # measurement (informational until Stage 7)
 poetry run python scripts/measure_redesign_baseline.py --manifest scripts/redesign_successor_manifest.txt
 ```
+
+### 3.7 A passing STATIC gate can be blind to the very relocation it exists to prevent
+
+`test_account_identity_coercion_gate.py` pins per-file coercion COUNTS in its positive half.
+A coercion moved WITHIN a counted file keeps the count identical, so the gate stays green
+through exactly the change it was written to stop (§1.16). Static counts prove absence
+across a tree; they do not prove a surviving use is still in the safe position. Where the
+position is what matters, the guard has to be behavioural.
