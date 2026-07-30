@@ -1,53 +1,49 @@
 # Successor manifest for the venue/account redesign must-have gate.
 #
 # Every file that replaces, absorbs or renames one of the 27 baseline files, plus every
-# module the redesign introduces. Measured against the frozen baseline (3,886 code lines)
-# by:
+# module the redesign introduces. Measured against the frozen EXTENDED baseline by:
 #
 #   poetry run python scripts/measure_redesign_baseline.py \
-#       --manifest scripts/redesign_successor_manifest.txt
+#       --manifest scripts/redesign_successor_manifest.txt --gate
 #
-# Kept in sync AS THE STAGES LAND rather than authored at the end, so the sign of the
-# must-have is observable throughout: a stage that trends it positive is a stop-and-report
-# event, and that is only detectable if the manifest is current. Entries are added when a
-# module appears and removed when one is deleted.
+# Kept in sync AS THE STAGES LANDED rather than authored at the end, so the sign of the
+# must-have was observable throughout: a stage that trends it positive is a
+# stop-and-report event, and that is only detectable if the manifest is current.
 #
-# Stage 1: the backtest root moved (paths updated in place); trading_system/live/ appeared.
-# Stage 2: venues/catalog.py + connectors/pool.py appeared (their predecessors —
-#          registry.py, provider.py, the plugin modules — die in Stage 7, so both sides are
-#          counted for now and the delta is expected to be positive until then).
-# Stage 3: account/venue.py DELETED — venue truth is now AccountSnapshot, read by the
-#          execution adapter. (An earlier note here claimed exchanges/base.py was already
-#          inside the measured set; it was not. It is now — see the recipe-host correction.)
-# Stage 4: venues/accounts.py appeared and ABSORBED four modules — venue_account_manager.py,
-#          assemble.py, lifecycle.py and venue_uid_guard.py are DELETED.
-# Stage 5: feed_binder.py DELETED — the data adapter owns its own session, so there is no
-#          borrowed connection to bind. Its successor, build_okx_data_provider, lands in
-#          price_handler/providers/okx_provider.py: a RECIPE HOST, now counted (below).
+# WHAT THE COMPARAND IS. Not the 3,886 of the requirements' Scope block — that number
+# counted 27 files, and several of the redesign's destinations were never among them, so
+# lines were counted leaving and not counted arriving. The gate compares against
+# measure_redesign_baseline.EXTENDED_BASELINE_TOTALS = 34 / 12,071 / 5,223: the same 27
+# files PLUS every host that absorbed relocated code, all measured at the frozen
+# pre-redesign commit 3a2c7692. This set must list those hosts or the script refuses to
+# report a delta at all — an extended baseline against a successor set that omits them is
+# the original asymmetry with its sign flipped.
 #
-# THE RECIPE-HOST CORRECTION (settled after Stage 5). Several recipes landed in host files
-# that predate the redesign while the modules they replaced were among the baseline 27, so
-# their lines were counted leaving and not counted arriving. Measured: those hosts grew
-# 1,182 -> 1,334 code lines across Stages 3-5 while this manifest appeared to fall
-# 3,886 -> 3,852. The gate's comparand is therefore the EXTENDED baseline
-# (measure_redesign_baseline.EXTENDED_BASELINE_TOTALS = 31 / 11,684 / 5,068 at 3a2c7692),
-# and this set must list the hosts or the script refuses to report a delta.
-# Like-for-like at Stage 5: 5,186 code -> +118, NOT -34.
+# WHAT HAPPENED TO THE OLD SHAPE. Deleted, in stage order, with its successor named:
+#
+#   account/venue.py            -> AccountSnapshot, read by the execution adapter (stage 3)
+#   venue_account_manager.py    -> venues/accounts.py, which also absorbed
+#   assemble.py                    assemble / lifecycle / the TOFU guard (stage 4)
+#   lifecycle.py
+#   venue_uid_guard.py
+#   feed_binder.py              -> build_okx_data_provider over the pool's own public
+#                                  session, so there is no borrowed connection to bind
+#                                  (stage 5)
+#   live_trading_system.py      -> trading_system/live/{build,bootstrap,system}.py
+#   compose.py                  -> trading_system/graph.py::build_handler_graph
+#   venue_spec.py               -> build_live_system arguments; the selection is data
+#   registry.py                 -> venues/catalog.py, plus the two venue constants re-homed
+#                                  into execution_handler.py (counted below)
+#   bundle.py / bundles.py      -> one root-owned (venue, account_id) -> adapter map
+#   paper_plugin.py             -> execution_handler/exchanges/paper.py
+#   okx_plugin.py               -> the recipes, beside the things they build
+#   connectors/provider.py      -> connectors/pool.py                          (stage 7)
 
 # --- surviving / relocated baseline files ---
-itrader/trading_system/compose.py
 itrader/trading_system/backtest/backtest_trading_system.py
-itrader/trading_system/live_trading_system.py
-itrader/trading_system/venue_spec.py
 itrader/trading_system/session_initializer.py
 itrader/portfolio_handler/portfolio_factory.py
-itrader/connectors/provider.py
 itrader/connectors/base.py
-itrader/venues/paper_plugin.py
-itrader/venues/okx_plugin.py
-itrader/venues/bundle.py
-itrader/venues/bundles.py
-itrader/venues/registry.py
 itrader/storage/venue_store.py
 itrader/storage/venue_account_store.py
 itrader/storage/portfolio_definition_store.py
@@ -57,31 +53,25 @@ itrader/portfolio_handler/account/base.py
 itrader/portfolio_handler/account/conformance.py
 itrader/portfolio_handler/account/simulated.py
 
-# --- recipe hosts: predate the redesign, absorbed its recipes/contracts ---
+# --- hosts that predate the redesign and absorbed its recipes / contracts / constants ---
+# Counted on BOTH sides (they are inside EXTENDED_BASELINE_TOTALS), so a line that moved
+# into one of these is counted arriving as well as leaving.
 itrader/execution_handler/exchanges/base.py
 itrader/execution_handler/exchanges/okx.py
 itrader/execution_handler/exchanges/simulated.py
 itrader/price_handler/providers/okx_provider.py
-
-# Stage 6 (commit 1): trading_system/graph.py appeared — compose_engine demoted to a
-#          pure, mode-blind handler-graph builder. compose.py survives as a thin
-#          bundle-shaped adapter until the live root is rewritten (commit 2) and it
-#          is deleted (Stage 7), so both sides are counted for now.
-
-# Stage 6 (commit 2): trading_system/live/{build,system}.py appeared and
-#          execution_handler/exchanges/paper.py took the paper recipe (ED-3).
-#          live_trading_system.py, compose.py, venue_spec.py and the plugin/registry/bundle
-#          modules are now UNREFERENCED and are deleted in Stage 7, so both sides are
-#          counted until then.
+itrader/execution_handler/execution_handler.py
+itrader/venues/__init__.py
+itrader/connectors/__init__.py
 
 # --- new in the redesign ---
-itrader/trading_system/graph.py
-itrader/trading_system/live/build.py
-itrader/trading_system/live/system.py
-itrader/execution_handler/exchanges/paper.py
-itrader/trading_system/backtest/__init__.py
-itrader/trading_system/live/__init__.py
-itrader/trading_system/live/bootstrap.py
 itrader/venues/catalog.py
 itrader/venues/accounts.py
 itrader/connectors/pool.py
+itrader/execution_handler/exchanges/paper.py
+itrader/trading_system/graph.py
+itrader/trading_system/backtest/__init__.py
+itrader/trading_system/live/__init__.py
+itrader/trading_system/live/build.py
+itrader/trading_system/live/bootstrap.py
+itrader/trading_system/live/system.py

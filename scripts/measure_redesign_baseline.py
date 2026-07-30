@@ -47,14 +47,16 @@ baseline, so the must-have is a command with an exit code rather than a judgemen
 **Both sides must count the SAME file set, and the 27 do not.** Several recipes landed in
 host files that predate the redesign — ``snapshot()`` and ``build_okx_exchange`` in
 ``execution_handler/exchanges/okx.py``, ``build_okx_data_provider`` in
-``price_handler/providers/okx_provider.py`` — while the modules they replaced
-(``account/venue.py``, ``feed_binder.py``, the plugin ``build_*`` methods) WERE among the
-27. Those lines were counted leaving and not counted arriving, which is the §3.1 false-green
-one level up: not "relocation drops lines from the measured set" but "the measured set never
-included the destinations". Measured concretely, the four hosts grew 1,182 -> 1,334 code
-lines while the 27-file total appeared to fall 3,886 -> 3,852.
+``price_handler/providers/okx_provider.py``, the two venue constants in
+``execution_handler/execution_handler.py`` — while the modules they replaced
+(``account/venue.py``, ``feed_binder.py``, ``venues/registry.py``, the plugin ``build_*``
+methods) WERE among the 27. Those lines were counted leaving and not counted arriving,
+which is the §3.1 false-green one level up: not "relocation drops lines from the measured
+set" but "the measured set never included the destinations". Measured concretely, the four
+adapter/provider hosts grew 1,182 -> 1,334 code lines while the 27-file total appeared to
+fall 3,886 -> 3,852.
 
-So the yardstick is the EXTENDED set — the 27 plus those four hosts — pinned in
+So the yardstick is the EXTENDED set — the 27 plus those hosts — pinned in
 ``EXTENDED_BASELINE_TOTALS`` and measured at the same frozen commit. ``BASELINE_TOTALS``
 stays untouched as the historical record of what the original Scope block measured.
 """
@@ -109,25 +111,36 @@ BASELINE_MANIFEST: tuple[str, ...] = (
 # EXTENDED_BASELINE_TOTALS for why.
 BASELINE_TOTALS = (27, 9243, 3886)
 
-#: The four host files that ABSORBED redesign code without being in the baseline set. Each
-#: took a recipe or contract whose predecessor WAS among the 27, so counting the 27 alone
-#: credits the deletion and hides the arrival.
+#: The host files that ABSORBED redesign code without being in the baseline set. Each took
+#: a recipe, a contract or a constant whose predecessor WAS among the 27, so counting the
+#: 27 alone credits the deletion and hides the arrival.
+#:
+#: The last three joined in the final stage. ``execution_handler.py`` became the
+#: DECLARATION site of ``COMPUTE_VENUE`` / ``DEFAULT_ACCOUNT_ID`` when ``venues/registry.py``
+#: (baseline) was deleted, and it also lost ``seed_exchange_registry`` with the bundle memo
+#: — so it is on both sides of the ledger and must be counted on both. The two package
+#: barrels were rewritten to export the successor surface after the modules they re-exported
+#: (``venues/registry.py``, ``venues/bundle.py``, ``connectors/provider.py``) were deleted.
 RECIPE_HOSTS: tuple[str, ...] = (
     "itrader/execution_handler/exchanges/base.py",
     "itrader/execution_handler/exchanges/okx.py",
     "itrader/execution_handler/exchanges/simulated.py",
     "itrader/price_handler/providers/okx_provider.py",
+    "itrader/execution_handler/execution_handler.py",
+    "itrader/venues/__init__.py",
+    "itrader/connectors/__init__.py",
 )
 
 # The GATE's comparand: BASELINE_MANIFEST + RECIPE_HOSTS, measured at the same frozen
 # commit 3a2c7692, as (files, raw, code). Reproduce it with:
 #
-#   git show 3a2c7692:<path>  for each of the 31 paths, counted by this module's own rule
+#   git show 3a2c7692:<path>  for each of the 34 paths, counted by this module's own rule
+#   (``backtest/backtest_trading_system.py`` was ``backtest_trading_system.py`` there)
 #
 # The successor manifest must therefore also list RECIPE_HOSTS — the gate below asserts it
-# does, because an extended baseline compared against a 27-file successor set would be the
-# same asymmetry with the sign flipped.
-EXTENDED_BASELINE_TOTALS = (31, 11684, 5068)
+# does, because an extended baseline compared against a successor set that omits the hosts
+# would be the same asymmetry with the sign flipped.
+EXTENDED_BASELINE_TOTALS = (34, 12071, 5223)
 
 _DOCSTRING_OWNERS = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
 
