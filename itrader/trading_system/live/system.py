@@ -289,7 +289,6 @@ class LiveTradingSystem:
         self.order_handler = engine.order_handler
         self.execution_handler = engine.execution_handler
         self.event_handler = engine.event_handler
-        self._order_storage = engine.order_handler.storage
 
         self._telemetry = telemetry
         self._safety = safety
@@ -413,7 +412,7 @@ class LiveTradingSystem:
         return ReconciliationCoordinator(
             portfolio_handler=self.portfolio_handler,
             seed_applied_trades=self.order_handler.order_manager.seed_applied_trades,
-            order_storage=self._order_storage,
+            order_storage=self.order_handler.storage,
             global_queue=self.global_queue,  # type: ignore[arg-type]
             halt=self.halt,
             records=self._online_account_records,

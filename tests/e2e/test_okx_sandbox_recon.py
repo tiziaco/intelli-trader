@@ -193,7 +193,7 @@ def _submit_min_demo_order(system, portfolio_id):
         strategy_id=StrategyId(uc.uuid7()),
         portfolio_id=portfolio_id,
     )
-    system._order_storage.add_order(order)
+    system.order_handler.storage.add_order(order)
     system.global_queue.put(OrderEvent.new_order_event(order, OrderCommand.NEW))
     return order
 

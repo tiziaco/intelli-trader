@@ -164,7 +164,7 @@ def test_portfolio_rehydrate_runs_before_reconcile_on_live_start(monkeypatch) ->
         # record is.
         system.portfolio_handler.add_portfolio(
             name="pf-reconcile", exchange="okx", cash=Decimal("10000"))
-        monkeypatch.setattr(system._order_storage, "rehydrate", lambda: None, raising=False)
+        monkeypatch.setattr(system.order_handler.storage, "rehydrate", lambda: None, raising=False)
         # Halt in the post-reconcile baseline guard so start() refuses RUNNING and spawns no
         # thread — the rehydrate/reconcile ordering is already captured by then. Patch the
         # coordinator CLASS (production runs the coordinator's copy, not a facade method).
