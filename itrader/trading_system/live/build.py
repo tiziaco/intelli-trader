@@ -414,7 +414,6 @@ def build_live_system(
     facade = LiveTradingSystem(
         engine=engine,
         config=config,
-        exchange=execution_venue,
         telemetry=telemetry,
         safety=safety,
         stream_recovery=stream_recovery,

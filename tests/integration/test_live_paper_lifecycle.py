@@ -32,7 +32,7 @@ from itrader.trading_system.live.system import LiveTradingSystem
 from tests.support.replay_harness import build_paper_replay_system
 
 # The expected key set the ACCT-05 command surface must report (D-10).
-_EXPECTED_STATUS_KEYS = {"status", "is_running", "exchange", "queue_size", "statistics"}
+_EXPECTED_STATUS_KEYS = {"status", "is_running", "queue_size", "statistics"}
 
 
 def _build_paper_system() -> LiveTradingSystem:
@@ -89,7 +89,6 @@ def test_clean_startup_reports_running():
 
         status = system.get_status()
         assert _EXPECTED_STATUS_KEYS <= set(status.keys())
-        assert status["exchange"] == "paper"
         assert status["is_running"] is True
         assert isinstance(status["statistics"], dict)
     finally:

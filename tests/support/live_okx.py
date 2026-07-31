@@ -19,6 +19,10 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock
 
+#: Every helper here is OKX-specific by name, so the venue is a literal of this module
+#: rather than something read back off the system under test.
+_OKX = "okx"
+
 
 class OfflineVenueClient:
     """A ccxt-shaped client answering every REST read a boot performs, with no socket.
@@ -87,11 +91,11 @@ def stub_okx_session(system: Any, *, client: Any = None) -> Any:
     BEFORE ``start()`` runs the real bring-up over it.
     """
     manager = system._venue_manager
-    rows = manager.read_enabled_for(system.exchange)
+    rows = manager.read_enabled_for(_OKX)
     assert len(rows) == 1, f"expected exactly one provisioned OKX row, got {len(rows)}"
     spec = manager.spec_for(rows[0])
     return stub_session_io(
-        manager.pool.session(system.exchange, spec.account_id, spec), client=client)
+        manager.pool.session(_OKX, spec.account_id, spec), client=client)
 
 
 def stub_every_okx_session(system: Any, *, client: Any = None) -> dict[str, Any]:
@@ -102,10 +106,10 @@ def stub_every_okx_session(system: Any, *, client: Any = None) -> dict[str, Any]
     """
     manager = system._venue_manager
     sessions: dict[str, Any] = {}
-    for row in manager.read_enabled_for(system.exchange):
+    for row in manager.read_enabled_for(_OKX):
         spec = manager.spec_for(row)
         sessions[spec.account_id] = stub_session_io(
-            manager.pool.session(system.exchange, spec.account_id, spec), client=client)
+            manager.pool.session(_OKX, spec.account_id, spec), client=client)
     return sessions
 
 
@@ -117,7 +121,7 @@ def bring_okx_online(system: Any, *, client: Any = None) -> Any:
     """
     manager = system._venue_manager
     stub_okx_session(system, client=client)
-    return manager.bring_online(manager.read_enabled_for(system.exchange)[0])
+    return manager.bring_online(manager.read_enabled_for(_OKX)[0])
 
 
 def the_okx_record(system: Any) -> Any:

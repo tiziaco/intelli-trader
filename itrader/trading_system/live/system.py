@@ -227,7 +227,6 @@ class LiveTradingSystem:
         *,
         engine: "Engine",
         config: ITraderConfig,
-        exchange: str,
         telemetry: LiveTelemetry,
         safety: Any,
         stream_recovery: Any,
@@ -260,10 +259,10 @@ class LiveTradingSystem:
             handler/feed/storage field is sourced off it.
         config : ITraderConfig
             The run's config root, read for the universe/stream sub-models at session init.
-        exchange : str
-            The execution venue this run brings its enabled accounts online for.
         telemetry : LiveTelemetry
-            The counters behind ``get_status`` and the ``system_stats`` sink.
+            The counters behind ``get_status`` and the ``system_stats`` sink. It also owns
+            the run's execution-venue name, which the facade neither holds nor reports —
+            the venue reaches an operator through the telemetry status-change payload.
         safety, stream_recovery, throttle, error_policy, live_runner :
             The safety plane and the drain-loop runtime, all built by the root.
         stop_event : threading.Event
@@ -278,7 +277,6 @@ class LiveTradingSystem:
 
         self._engine = engine
         self._config = config
-        self.exchange = exchange
         self.global_queue = engine.global_queue
         # None on live — held for interface parity, never read as a real store.
         self.store = engine.store
@@ -685,7 +683,6 @@ class LiveTradingSystem:
             'paused': snap['paused'],
             'paused_reason': snap['paused_reason'],
             'is_running': self.is_running(),
-            'exchange': self.exchange,
             'queue_size': self.get_queue_size(),
             'throttle_breach_count': self._throttle.breach_count,
             'thread_alive': thread.is_alive() if thread is not None else False,

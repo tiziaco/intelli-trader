@@ -155,7 +155,6 @@ def test_portfolio_rehydrate_runs_before_reconcile_on_live_start(monkeypatch) ->
         # CALL time, so the offline way in is a manager stand-in reporting one record —
         # exactly the enumeration production hands the coordinator. Emptying
         # ``_venue_lifecycles`` keeps the earlier OKX network sub-blocks skipping.
-        system.exchange = "okx"
         system._venue_lifecycles = {}
         system._venue_manager = SimpleNamespace(
             online_records=lambda: [_online_record()])
