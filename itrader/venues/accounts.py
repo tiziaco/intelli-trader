@@ -54,6 +54,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping, Optional
 
 from sqlalchemy import inspect as sa_inspect
@@ -479,6 +480,82 @@ class OnlineAccount:
     uid_outcome: VenueUidGuardOutcome
 
 
+# ---------------------------------------------------------------- account status
+
+
+class AccountState(Enum):
+    """The five reachable combinations of durable INTENT and in-process RUNTIME.
+
+    Two independent facts produce these: what the durable row says (enabled / disabled /
+    no row at all) and whether ``bring_online`` built a runtime in THIS process. They are
+    named as one closed vocabulary because each combination needs a different operator
+    action, and the two anomalies below are invisible to any read that reports only the
+    online set.
+    """
+
+    #: Enabled row, runtime built. The only state that trades.
+    ONLINE = "online"
+    #: Enabled row, NO runtime — bring-up failed and quarantined the row, or the boot that
+    #: would have brought it up has not run. The row is never rewritten on a failed
+    #: bring-up (the database holds operator INTENT), so this is how a quarantined account
+    #: presents.
+    ENABLED_OFFLINE = "enabled_offline"
+    #: Disabled row, no runtime. The steady state of an account an operator turned off.
+    DISABLED = "disabled"
+    #: Disabled row, runtime STILL UP. ``set_enabled(False)`` writes the row and does NOT
+    #: tear the runtime down, so an account disabled mid-run keeps trading until
+    #: ``bring_offline`` or the next boot. An anomaly worth surfacing, not a bug here.
+    DISABLED_ONLINE = "disabled_online"
+    #: Runtime with NO durable row behind it — a row deleted underneath a live process, or
+    #: a runtime built from a fabricated row. Nothing can rehydrate this pair on restart.
+    UNTRACKED_ONLINE = "untracked_online"
+
+
+@dataclass(frozen=True)
+class AccountStatus:
+    """One ``(venue_name, account_id)`` pair's durable intent AND runtime reality.
+
+    Carries the two RAW facts rather than a label alone: ``enabled`` (``None`` when there is
+    no durable row) and ``online``. ``state`` derives the label from them so the two can
+    never disagree — the same reason ``VenueUidGuardOutcome`` carries outcome AND reason.
+
+    Frozen, and a SNAPSHOT: it is what was true when the roster was read, not a live view.
+    """
+
+    venue_name: str
+    account_id: str
+    #: ``None`` means NO durable row — distinct from ``False`` (a row that says disabled).
+    enabled: Optional[bool]
+    online: bool
+    #: The trust-on-first-use identity recorded for this pair; ``None`` until a bring-up
+    #: observes one, or when there is no row.
+    venue_uid: Optional[str] = None
+    #: The identity guard's verdict for the CURRENT runtime; ``None`` when not online.
+    uid_outcome: Optional[VenueUidGuardOutcome] = None
+
+    def __post_init__(self) -> None:
+        """Refuse the one combination that names nothing: no row AND no runtime.
+
+        A pair with neither is not an account in any state — it is a pair that does not
+        exist — so it has no member in ``AccountState`` and must not be constructible.
+        Rejecting it here is what keeps ``state`` TOTAL rather than returning a lie for an
+        input it cannot label.
+        """
+        if self.enabled is None and not self.online:
+            raise ValueError(
+                f"account ({self.venue_name}, {self.account_id}) has no durable row and "
+                "no runtime — that pair does not exist, so it has no status")
+
+    @property
+    def state(self) -> AccountState:
+        """The label the two raw facts imply."""
+        if self.enabled is None:
+            return AccountState.UNTRACKED_ONLINE
+        if self.enabled:
+            return AccountState.ONLINE if self.online else AccountState.ENABLED_OFFLINE
+        return AccountState.DISABLED_ONLINE if self.online else AccountState.DISABLED
+
+
 class VenueAccountManager:
     """Owns the venue-ACCOUNT domain: provision, bring online, retire, enumerate.
 
@@ -625,6 +702,68 @@ class VenueAccountManager:
         In-memory only; nothing is persisted.
         """
         return {pair: record.uid_outcome for pair, record in self._online.items()}
+
+    def get_accounts_status(self) -> dict[tuple[str, str], AccountStatus]:
+        """Every KNOWN pair's status — durable rows JOINED with this process's runtimes.
+
+        The operator roster, and the only read that covers accounts which are NOT online.
+        ``online_records`` enumerates runtimes, so absence from it conflates three different
+        situations an operator has to tell apart: never provisioned, disabled on purpose,
+        and enabled-but-failed-to-come-up. This joins both sides so each has its own state.
+
+        UNSCOPED BY VENUE, unlike ``read_enabled_for``: the venue scoping there exists
+        because an account is BUILT against a venue's plugin and ``account_id`` alone cannot
+        derive its venue, which is a hazard for assembly, not for reporting. Here the venue
+        is half of every key, so nothing can be attributed to the wrong plugin.
+
+        Keyed on the pair, matching ``venue_uid_guard_active`` and the routing map, so a
+        caller correlating the two reads needs no key translation. Ordering follows the
+        store's ``venue_name`` / ``account_id`` ASC contract for the durable rows;
+        runtime-only pairs (``UNTRACKED_ONLINE``) follow in bring-up order.
+
+        The degrade matches ``read_enabled_for`` exactly — a missing ``venue_accounts``
+        TABLE is the fresh-deployment state, so warn and treat the durable side as empty
+        rather than raising at an operator who is asking what exists. Every other fault
+        PROPAGATES: a status read that turns an unreachable database into "no accounts"
+        would report a healthy-looking empty roster during the outage that matters most.
+        """
+        if not sa_inspect(self._store.engine).has_table(_ACCOUNTS_TABLE):
+            self.logger.warning(
+                "The `%s` table is not provisioned — the account roster is reported from "
+                "in-process runtimes alone (first start, or the Alembic chain has not "
+                "run).", _ACCOUNTS_TABLE)
+            rows: list[Mapping[str, Any]] = []
+        else:
+            rows = self._store.read_all()
+
+        status: dict[tuple[str, str], AccountStatus] = {}
+        for row in rows:
+            key = (row["venue_name"], row["account_id"])
+            record = self._online.get(key)
+            status[key] = AccountStatus(
+                venue_name=key[0],
+                account_id=key[1],
+                enabled=row["enabled"],
+                online=record is not None,
+                venue_uid=row["venue_uid"],
+                uid_outcome=record.uid_outcome if record is not None else None,
+            )
+
+        # Runtimes with no row behind them. Reported rather than dropped: this pair trades
+        # and cannot be rehydrated on restart, which is precisely what an operator needs
+        # told — and silently omitting it would make the roster claim it does not exist.
+        for key, record in self._online.items():
+            if key in status:
+                continue
+            status[key] = AccountStatus(
+                venue_name=key[0],
+                account_id=key[1],
+                enabled=None,
+                online=True,
+                venue_uid=None,
+                uid_outcome=record.uid_outcome,
+            )
+        return status
 
     def online(self, venue_name: str, account_id: str) -> OnlineAccount:
         """The runtime ``bring_online`` built for this pair; refuses when there is none.

@@ -71,6 +71,8 @@ from itrader.trading_system.alert_sink import LogAlertSink
 from itrader.venues.accounts import (
     VENUE_UID_MISMATCH_REASON,
     AccountSpec,
+    AccountState,
+    AccountStatus,
     VenueAccountManager,
     assert_venue_uid,
 )
@@ -976,6 +978,170 @@ def test_two_pairs_report_their_guard_outcomes_independently() -> None:
         assert (_VENUE, "acct-2") in active
     finally:
         store.dispose()
+
+
+# --------------------------------------------------------------------------- #
+# The account roster — durable intent JOINED with in-process runtime
+# --------------------------------------------------------------------------- #
+
+
+def test_the_roster_tells_the_three_causes_of_not_online_apart() -> None:
+    """Never provisioned, disabled on purpose, and enabled-but-not-up are DIFFERENT.
+
+    ``online_records`` enumerates runtimes, so all three present identically there — as
+    absence. Each needs a different operator action, so the roster gives each its own state.
+    """
+    manager, store, _ = _make_manager()
+    try:
+        manager.bring_online(manager.provision(_VENUE, "up"))
+        manager.provision(_VENUE, "quarantined")
+        store.upsert(_VENUE, "retired", secret_ref=None, venue_uid=None,
+                     enabled=False, config={}, at=_AT)
+
+        roster = manager.get_accounts_status()
+
+        assert roster[(_VENUE, "up")].state is AccountState.ONLINE
+        assert roster[(_VENUE, "quarantined")].state is AccountState.ENABLED_OFFLINE
+        assert roster[(_VENUE, "retired")].state is AccountState.DISABLED
+        # The pair that was never provisioned is absent, not a fourth state.
+        assert (_VENUE, "ghost") not in roster
+    finally:
+        store.dispose()
+
+
+def test_disabling_an_online_account_is_reported_as_still_trading() -> None:
+    """``set_enabled(False)`` writes the ROW and leaves the runtime up.
+
+    The account keeps trading until ``bring_offline`` or the next boot, so a roster that
+    reported it as plain DISABLED would tell an operator it had stopped when it had not.
+    """
+    # The full schema: ``set_enabled(False)`` reads ``portfolios`` for the in-use refusal.
+    manager, store, _ = _manager_with_portfolio_schema()
+    try:
+        manager.bring_online(manager.provision(_VENUE, "acct-1"))
+        manager.set_enabled(_VENUE, "acct-1", False)
+
+        status = manager.get_accounts_status()[(_VENUE, "acct-1")]
+
+        assert status.state is AccountState.DISABLED_ONLINE
+        # Both raw facts survive, which is what makes the anomaly readable.
+        assert status.enabled is False
+        assert status.online is True
+    finally:
+        store.dispose()
+
+
+def test_a_runtime_with_no_durable_row_is_reported_not_dropped() -> None:
+    """A pair that trades but cannot be rehydrated on restart is the loudest anomaly.
+
+    Reporting only the durable rows would omit it entirely — the roster would claim an
+    account that is actively routable does not exist.
+    """
+    manager, store, routing = _make_manager()
+    try:
+        manager.bring_online({
+            "venue_name": _VENUE, "account_id": "fabricated",
+            "secret_ref": None, "config": {},
+        })
+        assert (_VENUE, "fabricated") in routing
+
+        status = manager.get_accounts_status()[(_VENUE, "fabricated")]
+
+        assert status.state is AccountState.UNTRACKED_ONLINE
+        # ``None`` is not ``False``: no row at all, rather than a row that says disabled.
+        assert status.enabled is None
+        assert status.online is True
+    finally:
+        store.dispose()
+
+
+def test_the_roster_is_unscoped_by_venue_and_keyed_on_the_pair() -> None:
+    """Every venue in ONE read, keyed exactly as the routing map and the guard map are.
+
+    Venue scoping exists on ``read_enabled_for`` because an account is BUILT against a
+    venue's plugin; reporting builds nothing, and the venue is half of every key here.
+    """
+    manager, store, _ = _make_manager()
+    try:
+        manager.bring_online(manager.provision(_VENUE, "acct-1"))
+        store.upsert("okx", "acct-1", secret_ref=None, venue_uid=None,
+                     enabled=True, config={}, at=_AT)
+
+        roster = manager.get_accounts_status()
+
+        # Same account_id on two venues: distinct entries, neither masking the other.
+        assert roster[(_VENUE, "acct-1")].state is AccountState.ONLINE
+        assert roster[("okx", "acct-1")].state is AccountState.ENABLED_OFFLINE
+        # The key is the pair the guard map already uses, so no translation is needed.
+        assert set(manager.venue_uid_guard_active()) <= set(roster)
+    finally:
+        store.dispose()
+
+
+def test_the_roster_carries_the_guard_outcome_for_online_pairs_only() -> None:
+    """An offline pair has no CURRENT runtime, so it has no guard verdict to report."""
+    manager, store, _ = _make_manager()
+    try:
+        manager.bring_online(manager.provision(_VENUE, "up"))
+        manager.provision(_VENUE, "down")
+
+        roster = manager.get_accounts_status()
+
+        assert roster[(_VENUE, "up")].uid_outcome is not None
+        assert roster[(_VENUE, "up")].uid_outcome.reason == "no-venue-identity"
+        assert roster[(_VENUE, "down")].uid_outcome is None
+    finally:
+        store.dispose()
+
+
+def test_a_missing_accounts_table_degrades_the_roster_with_a_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The fresh-deployment state answers "nothing yet" rather than raising.
+
+    An operator asking what exists is exactly the caller that must not be met with a
+    traceback — but a silent ``{}`` would look identical to a correctly-empty deployment,
+    so the un-run Alembic chain has to be named.
+    """
+    manager, store, _ = _make_manager(provision=False)
+    try:
+        with caplog.at_level("WARNING"):
+            assert manager.get_accounts_status() == {}
+        assert any(
+            "venue_accounts" in record.getMessage() for record in caplog.records)
+    finally:
+        store.dispose()
+
+
+def test_any_roster_fault_other_than_a_missing_table_propagates_loud(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unreachable database must NOT be reported as a healthy empty roster.
+
+    The degrade is narrow for the same reason it is on ``read_enabled_for``: a swallowed
+    read during an outage produces the one answer an operator would act on wrongly.
+    """
+    manager, store, _ = _make_manager()
+    try:
+        def _boom() -> list[Any]:
+            raise RuntimeError("database is unreachable")
+
+        monkeypatch.setattr(store, "read_all", _boom)
+        with pytest.raises(RuntimeError, match="unreachable"):
+            manager.get_accounts_status()
+    finally:
+        store.dispose()
+
+
+def test_a_pair_with_neither_a_row_nor_a_runtime_is_unconstructible() -> None:
+    """That combination names nothing, so it has no state and must not be representable.
+
+    Rejecting it at construction is what keeps ``state`` total — the property never has to
+    return a lie for an input it cannot label.
+    """
+    with pytest.raises(ValueError, match="does not exist"):
+        AccountStatus(
+            venue_name=_VENUE, account_id="nowhere", enabled=None, online=False)
 
 
 # --------------------------------------------------------------------------- #
