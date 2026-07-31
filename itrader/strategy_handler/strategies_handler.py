@@ -10,6 +10,7 @@ from itrader.strategy_handler.lifecycle import StrategyLifecycleManager
 from itrader.strategy_handler.managed_strategies import ManagedStrategies
 from itrader.strategy_handler.pair_base import PairStrategy
 from itrader.strategy_handler.signal_record import SignalRecord
+from itrader.strategy_handler.status import StrategyStatus
 from itrader.strategy_handler.storage import (
 	build_signal_store,
 	SignalStore,
@@ -516,6 +517,76 @@ class StrategiesHandler(object):
 			The union of the strategies' tickers.
 		"""
 		return self._managed.get_universe()
+
+	def quarantine_strategy(self, strategy_name: str, reason: str) -> None:
+		"""Record a registry row that could NOT be reconstructed into an instance (D-19).
+
+		The rehydrate seam's write path into this domain. It reports rather than mutates:
+		the row is deliberately left untouched (the database holds operator INTENT), so the
+		quarantine is non-destructive and self-recovering — fix the cause, restart, and the
+		same row loads clean.
+
+		Parameters
+		----------
+		strategy_name: `str`
+			The D-02 durable identity the registry row is keyed under.
+		reason: `str`
+			The error KIND (an exception's type name), never its message — see
+			``ManagedStrategies.quarantine``.
+		"""
+		self._managed.quarantine(strategy_name, reason)
+
+	def get_strategies_status(self) -> dict[str, StrategyStatus]:
+		"""Every known strategy's durable INTENT crossed with this process's ROSTER.
+
+		The operator read surface for "what is actually trading", owned HERE because the
+		roster is: the live facade holds none of this and reports none of it, exactly as it
+		reports no account state and defers to ``VenueAccountManager.get_accounts_status``.
+
+		Both halves are raw facts, and ``StrategyStatus.state`` derives the label so the two
+		cannot disagree. A name registered with NO row reads ``UNTRACKED`` — which is every
+		instance on the backtest path, where ``registry_store`` is ``None`` by construction
+		and the answer "nothing durable knows about this" is the truthful one.
+
+		A quarantine record whose row has since been deleted is DROPPED rather than
+		reported: with no row and no instance the name no longer denotes a strategy, and
+		``StrategyStatus`` refuses to label that pair at all.
+
+		Returns
+		-------
+		dict[str, StrategyStatus]
+			Keyed by ``strategy_name``, name-sorted so an operator diffs two reads without
+			the roster's registration order leaking in. A SNAPSHOT, not a live view.
+		"""
+		rows: dict[str, bool] = {}
+		store = self.registry_store
+		if store is not None:
+			rows = {
+				str(record["strategy_name"]): bool(record["enabled"])
+				for record in store.read_all()
+			}
+		quarantined = self._managed.quarantined
+
+		status: dict[str, StrategyStatus] = {
+			name: StrategyStatus(
+				strategy_name=name,
+				enabled=rows.get(name),
+				registered=True,
+				is_active=bool(strategy.is_active),
+			)
+			for name, strategy in self._managed.by_name().items()
+		}
+		for name, enabled in rows.items():
+			if name in status:
+				continue
+			status[name] = StrategyStatus(
+				strategy_name=name,
+				enabled=enabled,
+				registered=False,
+				is_active=False,
+				quarantine_reason=quarantined.get(name),
+			)
+		return dict(sorted(status.items()))
 
 	def add_strategy(self, strategy: Strategy) -> None:
 		"""

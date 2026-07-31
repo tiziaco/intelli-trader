@@ -234,7 +234,7 @@ class LiveTradingSystem:
         error_policy: Any,
         live_runner: Any,
         stop_event: threading.Event,
-        boot: Callable[[], List[str]],
+        boot: Callable[[], None],
         config_router: Optional[Any],
         venue_accounts: Optional[Any],
         connector_pool: Optional[Any],
@@ -268,7 +268,8 @@ class LiveTradingSystem:
         stop_event : threading.Event
             The shutdown latch shared with the ``LiveRunner`` and its ``WorkerSupervisor``.
         boot : callable
-            The restart sequence ``start()`` runs, returning the quarantined-strategy ids.
+            The restart sequence ``start()`` runs. It returns nothing — what it rehydrates
+            is read back from the handler that owns it, not relayed through here.
         venue_accounts : Any | None
             The venue-ACCOUNT domain owner — the operator surface, exposed as the property
             of the same name. ``None`` only when there is no durable spine to own.
@@ -313,12 +314,6 @@ class LiveTradingSystem:
         self._halt_record_store = halt_record_store
         self._system_store = system_store
         self._system_stats_store = system_stats_store
-
-        # Strategies that could NOT be rehydrated at boot. A DEDICATED field, not folded
-        # into ``last_error``: that is single-valued, so the next error would overwrite the
-        # list — and this list is what tells an operator which strategies silently do not
-        # trade.
-        self._quarantined_strategies: List[str] = []
 
         self._running = False
 
@@ -484,7 +479,7 @@ class LiveTradingSystem:
         account becomes routable only once its session is open, so performing it while
         building the object would make constructing a live system a network operation.
         """
-        self._quarantined_strategies = self._boot()
+        self._boot()
 
     def start(self) -> bool:
         """Initialize the session, then start the event-processing thread.
@@ -663,7 +658,13 @@ class LiveTradingSystem:
     # -- Read surfaces ------------------------------------------------------------------
 
     def get_status(self) -> Dict[str, Any]:
-        """Merge the ``SafetyController`` status latch with facade-side stats."""
+        """Merge the ``SafetyController`` status latch with facade-side stats.
+
+        ENGINE-OPERATIONAL facts only. Domain state is read from the handler that owns it —
+        strategies through ``strategies_handler.get_strategies_status()``, accounts through
+        ``venue_accounts.get_accounts_status()`` — because a facade that relays a domain's
+        state becomes a second place that state has to be kept correct.
+        """
         snap = self._safety.status_snapshot()
         status = snap['status']
         stats = self._telemetry.stats
@@ -688,9 +689,6 @@ class LiveTradingSystem:
             'thread_alive': thread.is_alive() if thread is not None else False,
             'thread_name': thread.name if thread is not None else None,
             'last_error': snap['last_error'],
-            # NOT trading, despite their registry rows still declaring them enabled: the row
-            # is never rewritten, because the DB holds operator INTENT.
-            'quarantined_strategies': list(self._quarantined_strategies),
             'breaker': self._error_policy.breaker_snapshot(),
             'statistics': {**stats, 'uptime_seconds': uptime},
             'timestamp': datetime.now(UTC).isoformat(),

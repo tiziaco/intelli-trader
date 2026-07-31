@@ -23,7 +23,7 @@ import random
 import threading
 from datetime import UTC, datetime
 from functools import partial
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Optional
 
 from itrader.config.credential_resolver import EnvCredentialResolver
 from itrader.config.itrader_config import ITraderConfig
@@ -505,7 +505,7 @@ def _restart_sequence(
     system_store: Optional[SystemStore],
     venue_store: Optional[VenueStore],
     strategy_catalog: Optional[Dict[str, type]],
-) -> List[str]:
+) -> None:
     """Turn durable state back into a running engine — steps 7-8 of design §4.9.
 
     The three steps are ordered by hard data dependencies:
@@ -523,7 +523,10 @@ def _restart_sequence(
     routable only once its session is open, so performing it while building the object would
     make constructing a live system a network operation.
 
-    Returns the ids of the strategies that could NOT be rehydrated.
+    Returns nothing: a strategy that could not be rehydrated is recorded on the strategies
+    handler as it is skipped, and read back through ``get_strategies_status()``. Threading
+    that list up to the facade would put strategy-domain state on an object that neither
+    owns nor uses it.
     """
     bootstrap_session(
         sql_engine=sql_engine,
@@ -533,7 +536,7 @@ def _restart_sequence(
         alert_sink=alert_sink,
     )
     if system_store is None:
-        return []
+        return
     # Base params are already resolved at construction (frozen).
     layer_persisted_overrides(
         config,
@@ -560,11 +563,13 @@ def _restart_sequence(
     # produce the zero-strategies-while-rows-exist outcome.
     registry_store = engine.strategies_handler.registry_store
     if registry_store is None:
-        return []
-    quarantined: List[str] = rehydrate_strategies(
+        return
+    # The returned quarantine list is DROPPED here on purpose: rehydrate already recorded
+    # each skipped name on the strategies handler, which is what
+    # ``get_strategies_status()`` reads.
+    rehydrate_strategies(
         store=registry_store,
         catalog=strategy_catalog,
         strategies_handler=engine.strategies_handler,
         alert_sink=alert_sink,
     )
-    return quarantined

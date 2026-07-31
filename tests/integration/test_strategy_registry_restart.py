@@ -34,6 +34,7 @@ from itrader.core.ids import PortfolioId
 from itrader.core.sizing import FractionOfCash
 from itrader.storage import SqlEngine
 from itrader.storage.strategy_registry_store import StrategyRegistryStore
+from itrader.strategy_handler.status import StrategyState
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
 from itrader import config as _live_config
 from itrader.trading_system.live.build import build_live_system
@@ -110,7 +111,7 @@ def test_no_sql_spine_builds_fine_and_never_rehydrates(monkeypatch) -> None:
     try:
         assert system._system_db_backend is None
         assert system.strategies_handler.strategies == []
-        assert system.get_status()["quarantined_strategies"] == []
+        assert system.strategies_handler.get_strategies_status() == {}
     finally:
         system.stop(timeout=5.0)
 
@@ -217,9 +218,10 @@ def test_unloadable_row_boots_healthy_sibling_and_surfaces_the_quarantine(
 ) -> None:
     """D-19 — one unloadable row is quarantined onto the read-model; boot still succeeds.
 
-    The healthy sibling trades. The bad name is exposed on ``state.quarantined_strategies``
-    (a dedicated field — ``last_error`` is single-valued and would be overwritten), and its
-    registry row is left declaring ``enabled=True`` because the DB holds operator INTENT.
+    The healthy sibling trades. The bad name is exposed through the strategy domain's own
+    read surface — ``strategies_handler.get_strategies_status()``, which reports it
+    QUARANTINED with the error kind that refused it — and its registry row is left declaring
+    ``enabled=True`` because the DB holds operator INTENT.
     """
     store = _seed_store()
     try:
@@ -233,7 +235,14 @@ def test_unloadable_row_boots_healthy_sibling_and_surfaces_the_quarantine(
         system = _build(strategy_catalog=test_catalog())
         try:
             assert [s.name for s in system.strategies_handler.strategies] == ["healthy"]
-            assert system.get_status()["quarantined_strategies"] == ["retired"]
+            status = system.strategies_handler.get_strategies_status()
+            assert status["healthy"].state is StrategyState.ACTIVE
+            assert status["retired"].state is StrategyState.QUARANTINED
+            # The row still declares enabled=True: intent is intact, the runtime is not.
+            assert status["retired"].enabled is True
+            assert status["retired"].quarantine_reason == "UnknownStrategyTypeError"
+            # NOT on the engine-operational surface any more — the strategy domain owns it.
+            assert "quarantined_strategies" not in system.get_status()
             # The row is untouched — fixing the class and restarting brings it back with no
             # manual re-enable.
             assert store.get("retired")["enabled"] is True
