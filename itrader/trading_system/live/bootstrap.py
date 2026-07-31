@@ -1,9 +1,7 @@
 """The live restart bootstrap — the boot contract as a module, not a region of the root.
 
-Turning a durable database back into a running engine has a load-bearing ORDER, and until
-now that order existed only as a run of statements in the middle of a 1,577-line builder,
-where nothing named it and nothing could test it in isolation. This module is that
-sequence, extracted verbatim:
+Turning a durable database back into a running engine has a load-bearing ORDER. This
+module is that sequence:
 
   1. **Probe for the ``portfolios`` table.** A not-yet-provisioned table is the first-start
      state, NOT a fault. The probe is deliberately narrow — it asks for the TABLE and
@@ -32,8 +30,6 @@ half-online, so the skip is total rather than partial.
 ``bootstrap_session`` — after the facade and the config router exist — so it stays a
 separate function rather than a step of the sequence above.
 
-Indentation: 4-space. Strict-typed, and deliberately NOT covered by any mypy
-``ignore_errors`` override.
 """
 
 from __future__ import annotations

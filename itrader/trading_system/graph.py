@@ -14,8 +14,6 @@ Types are real, including for collaborators whose concretions must stay off the 
 import graph: those are imported under ``TYPE_CHECKING`` and the annotations are strings,
 so ``mypy --strict`` sees the type while ``import itrader`` pulls no SQL, ccxt or live
 module (the §3.2 boundary, asserted by ``tests/integration/test_okx_inertness.py``).
-
-Indentation: 4 spaces.
 """
 
 from __future__ import annotations
@@ -192,12 +190,10 @@ def build_handler_graph(
     # re-surfaced on Engine — post-run accessors reach it through the owning handler,
     # matching every other persistence store.
     #
-    # The two shorts-enabling flags read trading_rules, so this must be constructed
-    # AFTER that binding. Both seams are passed at construction on BOTH roots, never
-    # assigned onto an already-built handler: portfolio_read_model satisfies
-    # PortfolioReadModel structurally, so it IS the flat-detect the `remove` verb
-    # consults on FILL — a read through an injected read-model, so the queue-only
-    # contract holds — and strategy_catalog is the allowlist `add` resolves an
+    # The two shorts-enabling flags read trading_rules, so this must be constructed AFTER
+    # that binding. Both seams are passed at construction on BOTH roots, never assigned
+    # onto an already-built handler: portfolio_read_model IS the flat-detect the `remove`
+    # verb consults on FILL, and strategy_catalog is the allowlist `add` resolves an
     # untrusted external strategy_type through.
     strategies_handler = StrategiesHandler(
         ctx.bus, feed,

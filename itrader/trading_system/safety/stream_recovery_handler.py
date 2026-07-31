@@ -4,10 +4,6 @@
 (queue-draining) thread when a venue stream reconnects — which is what keeps the pure
 ``SafetyController`` free of venue I/O. Every collaborator is injected, and each may be
 absent on a non-OKX wiring, so every call is guard-claused.
-
-**4-SPACE** indented, like its ``safety/`` siblings. ``trading_system/`` is mixed:
-``compose.py`` / ``engine_context.py`` / ``backtest_trading_system.py`` are TABS. Match
-this file.
 """
 
 from datetime import UTC, datetime
@@ -186,7 +182,7 @@ class StreamRecoveryHandler:
         return True
 
     def _raise_snapshot_alert(self, exc: BaseException) -> None:
-        """CRITICAL-alert a failed resume snapshot, without escalating to a halt (D-4).
+        """CRITICAL-alert a failed resume snapshot, without escalating to a halt.
 
         The distinction is deliberate. Being unable to read the venue is a reason not to
         submit new risk, which the still-latched pause already enforces, and the next

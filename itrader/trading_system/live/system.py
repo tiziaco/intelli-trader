@@ -3,7 +3,7 @@
 ``LiveTradingSystem`` holds NO composition knowledge. Every collaborator arrives as a
 **required** constructor parameter, so a collaborator that was built and never attached is
 a ``TypeError`` at the composition root rather than an attribute that reads ``None`` at the
-one call site that needed it (design §4.9; the CR-01 defect class). A parameter whose value
+one call site that needed it (design §4.9). A parameter whose value
 may legitimately be ``None`` — there is no durable spine, so there is no config router —
 is still REQUIRED: absence is a value the root has to state, not one it can omit.
 

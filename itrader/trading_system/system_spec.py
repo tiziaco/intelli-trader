@@ -1,33 +1,12 @@
-"""Declarative system spec value objects (COMP-01, D-01/D-02).
+"""Declarative system spec value objects.
 
-Promotes the ``tests/e2e/scenario_spec.py::ScenarioSpec`` / ``PortfolioSpec``
-shape ~verbatim into the run path so the engine is composed declaratively via a
-``build_backtest_system(spec)`` factory (Wave 2) instead of the imperative
-``_build_and_run`` unpacking in the e2e harness.
+A frozen ``SystemSpec`` (strategies, portfolios, single exchange config,
+data/dates/timeframe) describes WHAT to run — identical for backtest or live. The
+run-mode lives in the FACTORY name (``build_backtest_system`` / ``build_live_system``),
+never in the spec; hence ``SystemSpec``, not ``BacktestSpec``.
 
-Locked decisions for this spec:
-
-* **D-01 — declarative spec + factory.** A frozen ``SystemSpec`` (strategies,
-  portfolios, single exchange config, data/dates/timeframe) consumed by the
-  factory. The e2e ``_build_and_run`` collapses onto ``build_backtest_system(spec)``
-  in Wave 4 — so field names match ``ScenarioSpec`` EXACTLY (the harness reads
-  attributes BY NAME): ``start``, ``end``, ``timeframe``, ``ticker``,
-  ``starting_cash``, ``data``, ``strategies``, ``portfolios``, ``exchange``.
-* **D-02 — run-mode-agnostic.** The spec describes WHAT to run (identical for
-  backtest or live); the run-mode lives in the FACTORY name
-  (``build_backtest_system`` now, ``build_live_system`` later reuses the same
-  spec). Hence ``SystemSpec``, NOT ``BacktestSpec``.
-
-``actions`` is kept (promoted with ``Action``) so the Wave-4 e2e collapse maps
-onto a single spec type. An empty ``actions`` tuple is oracle-inert (the harness
-wires no ``on_tick`` hook), so keeping it is byte-identical for the golden run.
-
-This module is a value object only — it is NOT wired into any run path this
-plan; the factory consumes it in Wave 2.
-
-Indentation: TABS (``trading_system/`` package convention). The promoted source
-``scenario_spec.py`` is 4-space; it is re-indented to tabs here — do NOT paste
-4-space lines into this file.
+``tests/e2e/scenario_spec.py::ScenarioSpec`` is an alias of ``SystemSpec``, so the e2e
+leaves read these fields BY NAME.
 """
 
 from dataclasses import dataclass, field
@@ -37,22 +16,11 @@ from typing import Any
 
 @dataclass(frozen=True)
 class PortfolioSpec:
-	"""Minimal portfolio spec the factory reads (``name`` / ``cash``).
+	"""Minimal portfolio spec the factory reads.
 
-	Promoted from ``scenario_spec.py::PortfolioSpec`` — the wiring fields the
-	factory consumes via ``add_portfolio`` (D-01). ACCT-04: the former
-	owning-user field was dropped (an app-layer concern, not a wiring input).
-
-	``account_id`` (MPORT-05, plan 11-05) is the spec-side half of the account
-	reference: a composition-supplied portfolio names its venue account HERE, and
-	``add_portfolio`` threads it onto the ``Portfolio``. It defaults and is appended
-	LAST so every existing construction site — including the byte-exact backtest
-	composition root — is untouched.
-
-	Plan 11-08 checks the UNION of spec-supplied and rehydrated portfolios for
-	account distinctness. Checking only one source would leave a hole: rehydrated
-	rows are already covered by the database's unique constraint, so the
-	application-level check's real job is catching duplicates within a spec.
+	``account_id`` is the spec-side half of the account reference: a
+	composition-supplied portfolio names its venue account HERE, and ``add_portfolio``
+	threads it onto the ``Portfolio``.
 	"""
 
 	name: str
@@ -62,12 +30,11 @@ class PortfolioSpec:
 
 @dataclass(frozen=True)
 class Action:
-	"""A scheduled MODIFY/CANCEL the operator hook plays (D-05/D-07).
+	"""A scheduled MODIFY/CANCEL the operator hook plays.
 
-	Promoted from ``scenario_spec.py::Action`` so the ``SystemSpec.actions``
-	timeline maps onto one spec type at the Wave-4 collapse. Predicate-resolved:
-	the target is named by ``ticker`` + the sole resting (PENDING) order at
-	``bar_date``, never by a literal ``Order.id`` (UUIDv7 is non-deterministic).
+	Predicate-resolved: the target is named by ``ticker`` + the sole resting (PENDING)
+	order at ``bar_date``, never by a literal ``Order.id`` — UUIDv7 ids are not
+	reproducible across runs.
 
 	Parameters
 	----------
@@ -90,35 +57,22 @@ class Action:
 
 @dataclass(frozen=True)
 class SystemSpec:
-	"""The declarative system spec the factory reads (D-01/D-02).
+	"""The declarative system spec the factory reads.
 
-	Run-mode-agnostic (D-02): describes WHAT to run, identical for backtest or
-	live. Field names match ``ScenarioSpec`` EXACTLY so the Wave-4 e2e collapse
-	maps by name: ``start``, ``end``, ``timeframe``, ``ticker``,
-	``starting_cash``, ``data`` (ticker -> CSV path), ``strategies``,
-	``portfolios`` (each ``name`` / ``cash``), ``exchange``
-	(``None`` = zero-fee / no-slippage defaults).
+	Run-mode-agnostic: describes WHAT to run, identical for backtest or live.
+	``data`` maps ticker -> CSV path; ``exchange=None`` means zero-fee /
+	no-slippage defaults; an empty ``actions`` timeline wires no operator hook.
 
-	``actions`` (default empty tuple) is oracle-inert — an empty timeline wires
-	no operator hook, so the run stays byte-identical to today.
+	``results_store`` is the OPTIONAL results sink the factory forwards into the engine.
+	``execution_venue`` / ``data_provider`` name catalogue entries and ``account_id``
+	names the venue account whose session an order reaches; all three are LIVE-ONLY. The
+	``account_id`` default is applied at READ time in the venue-account manager, not
+	stored here.
 
-	``results_store`` (default ``None``, RESULT-01/D-04) is the OPTIONAL results
-	sink the factory forwards into the engine. It is typed ``Any`` deliberately so
-	the spec NEVER imports the SQL surface (GATE-01 import inertness — the spec
-	stays SQL-free); the concrete ``ResultsStore`` annotation lives on the
-	``build_handler_graph`` seam. Kept LAST so existing positional/by-name e2e + oracle
-	call-sites stay store-free (default ``None`` → byte-exact, D-04).
-
-	``execution_venue`` / ``data_provider`` / ``account_id`` (all default ``None``,
-	VENUE-01/D-07) are the LIVE-ONLY venue/provider selectors appended LAST (after
-	``results_store``) so every existing positional/by-name oracle + e2e call-site
-	stays valid and byte-exact. They are typed ``Any`` for the same import-inertness
-	reason (the spec never imports the venue substrate). ``execution_venue`` and
-	``data_provider`` name catalogue entries and ``account_id`` names the venue
-	account whose session an order reaches. The single default ``"default"`` is
-	applied at READ time in the venue-account manager, not stored here, and
-	``build_handler_graph`` — which reads only its six A1 fields — never touches
-	these, so the backtest stays byte-exact (D-07 single-default seam).
+	These four are typed ``Any`` deliberately so the spec NEVER imports the SQL surface
+	or the venue substrate — a concrete annotation would put both on the backtest import
+	path. The concrete ``ResultsStore`` annotation lives on the ``build_handler_graph``
+	seam instead.
 	"""
 
 	start: str

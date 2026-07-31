@@ -1,26 +1,16 @@
-"""Thin backtest holder + the ``build_backtest_system`` factory (D-03/D-04).
+"""Thin backtest holder + the ``build_backtest_system`` factory.
 
-D-03: ``TradingSystem`` is renamed ``BacktestTradingSystem`` (symmetry with
-``LiveTradingSystem``, matches the filename). Wave 4 (04-05) migrated all
-existing import sites to the new name, so no backward-compat ``TradingSystem``
-alias is exported from this module.
+The factory builds, the class is a thin holder. ``build_backtest_system(spec)`` derives
+the COMPLETE supported-symbol set and folds it into the spec's ``ExchangeConfig``, builds
+the infra ``EngineContext``, builds the run's paper venue, calls the
+``build_handler_graph`` seam, constructs the ``BacktestRunner``, adds
+strategies/portfolios in SPEC ORDER, wires subscriptions, and returns the holder. The
+handlers OWN their order/signal storage backends (selected from ``ctx.environment``), so
+the factory selects no storage concretes.
 
-D-04: the factory builds, the class is a thin holder. ``build_backtest_system(spec)``
-derives the COMPLETE symbol set and folds it into the spec's ``ExchangeConfig``
-(D-13/Trap 1), builds the infra ``EngineContext(bus=FifoEventBus(),
-environment='backtest', sql_engine=None)`` (02-03/D-06), builds the run's paper
-venue, calls the ``build_handler_graph`` seam, constructs the ``BacktestRunner``, adds
-strategies/portfolios in spec order (Trap 6), wires subscriptions, and returns the
-holder. The handlers now OWN their order/signal storage backends (selected from
-``ctx.environment``, 02-02), so the factory no longer selects those concretes.
-
-The holder keeps a direct-construction ``__init__`` (legacy loose params) that
-builds the same engine+runner internally, so the oracle/integration sites work
-by renaming the class only (Wave 4 swaps them to the factory). Its ``run()``
-delegates to the runner then lifts the metrics printout into ``reporting``
-(W4-07).
-
-Indentation: TABS (``trading_system/`` package convention).
+``BacktestTradingSystem`` also keeps a direct-construction ``__init__`` taking loose
+params, which builds the same engine+runner internally through the same seam. Its
+``run()`` delegates to the runner, then prints the metrics summary via ``reporting``.
 """
 
 import dataclasses
@@ -65,20 +55,19 @@ from itrader.logger import get_itrader_logger
 
 
 #: The default preset exchange symbols (the *USDT set) the complete supported-set
-#: union starts from (D-13/Trap 1). BTCUSD (the golden ticker) is always unioned.
+#: union starts from. BTCUSD (the golden ticker) is always unioned.
 _DEFAULT_PRESET_SYMBOLS: frozenset[str] = frozenset(
 	ExchangeConfig.default().limits.supported_symbols)
 
 
 def _seed_supported_symbols(
 	exchange_config: ExchangeConfig, tickers: "set[str]") -> ExchangeConfig:
-	"""Fold the COMPLETE supported-symbol set into the exchange config (D-13/Trap 1).
+	"""Fold the COMPLETE supported-symbol set into the exchange config.
 
 	The final set = default preset symbols ∪ {BTCUSD} ∪ spec tickers (upper-cased).
-	Seeded at construction so it is REPLACEMENT-SAFE — a later ``update_config``
-	that re-derives ``_supported_symbols`` from ``config.limits`` can never wipe a
-	symbol. This is the ROOT-side derivation (Open Question 2) that keeps
-	``build_handler_graph`` mode-agnostic.
+	Seeded at CONSTRUCTION so it is replacement-safe: a later ``update_config`` that
+	re-derives ``_supported_symbols`` from ``config.limits`` can never wipe a symbol.
+	Deriving it root-side is what keeps ``build_handler_graph`` mode-agnostic.
 	"""
 	complete = set(_DEFAULT_PRESET_SYMBOLS) | {'BTCUSD'} | {t.upper() for t in tickers}
 	exchange_config.limits.supported_symbols = complete
@@ -115,13 +104,11 @@ def _build_paper_venue(
 
 
 class BacktestTradingSystem(object):
-	"""Thin holder of a pre-built ``Engine`` + ``BacktestRunner`` (D-03/D-04).
+	"""Thin holder of a pre-built ``Engine`` + ``BacktestRunner``.
 
-	The class ``__init__`` is a dumb holder: it stores the engine and runner and
-	exposes ``run()``. The legacy direct-construction signature is retained for
-	the oracle/integration sites (it builds the engine+runner internally via the
-	same seam the factory uses) until Wave 4 migrates them to
-	``build_backtest_system(spec)``.
+	``__init__`` is a dumb holder: it stores the engine and runner and exposes ``run()``.
+	The direct-construction signature is retained for the oracle/integration sites, and
+	builds the engine+runner internally via the same seam the factory uses.
 	"""
 
 	def __init__(
@@ -139,18 +126,16 @@ class BacktestTradingSystem(object):
 
 		Two construction modes:
 
-		* **Factory mode (D-04):** ``build_backtest_system`` passes a pre-built
-		  ``engine`` + ``runner``; the holder is a dumb wrapper.
-		* **Legacy direct-construction mode:** the oracle/integration sites pass
-		  the loose params; the holder builds the engine+runner internally via the
-		  same ``build_handler_graph`` seam (byte-identical wiring) so they work by
-		  renaming the class only (Wave 4 swaps them to the factory).
+		* **Factory mode:** ``build_backtest_system`` passes a pre-built ``engine`` +
+		  ``runner``; the holder is a dumb wrapper.
+		* **Direct-construction mode:** the oracle/integration sites pass the loose params
+		  and the holder builds the engine+runner internally via the same
+		  ``build_handler_graph`` seam, with byte-identical wiring.
 
-		``exchange`` names the run's VENUE and defaults to ``'paper'`` (D-05) —
-		the ONE name for the simulated fill engine across backtest and
-		live-paper. It is a HOLDER attribute only: routing reads each
-		portfolio's own ``exchange``/``venue_name``, never this field, so the
-		default is documentation of intent rather than a routing input.
+		``exchange`` names the run's VENUE and defaults to ``'paper'`` — the ONE name for the
+		simulated fill engine across backtest and live-paper. It is a HOLDER attribute only:
+		routing reads each portfolio's own ``exchange``/``venue_name``, never this field, so
+		the default documents intent rather than feeding routing.
 		"""
 		self.logger = get_itrader_logger().bind(component="Engine")
 		self.exchange = exchange
@@ -163,23 +148,18 @@ class BacktestTradingSystem(object):
 			self.engine = engine
 			self.runner = runner
 		else:
-			# Legacy direct-construction mode: build the engine+runner here using
-			# the shared seam. The COMPLETE supported-symbol set is seeded into a
-			# construction-time ExchangeConfig (default preset ∪ {BTCUSD} ∪ the
-			# csv_paths tickers, upper-cased) via the same _seed_supported_symbols
-			# path the factory uses — replacement-safe (D-13/Trap 1). csv_paths=None
-			# is the single-golden-ticker default, so the seeded set is the preset ∪
-			# {BTCUSD}, byte-identical to the old ExecutionHandler no-config fallback.
+			# Build the engine+runner here using the shared seam. The COMPLETE
+			# supported-symbol set is seeded into a construction-time ExchangeConfig via
+			# the same _seed_supported_symbols path the factory uses. csv_paths=None is
+			# the single-golden-ticker default, so the seeded set is the preset ∪ {BTCUSD}.
 			tickers = {str(t).upper() for t in (csv_paths or {}).keys()}
 			exchange_config = _seed_supported_symbols(
 				ExchangeConfig.default(), tickers)
-			# 02-03 (D-06/Pitfall 1): the oracle runs through THIS spec-LESS legacy
-			# arm, so it is folded to the same spec-free seam too. Synthesize a
-			# minimal frozen SystemSpec — ticker/starting_cash are PLACEHOLDERS
-			# compose NEVER reads (A1); strategies/portfolios stay empty (the legacy
-			# sites add them via the backward-compat handler seams). The seeded
-			# ExchangeConfig rides on spec.exchange. Empties map back to None inside
-			# compose, byte-identical to the old csv_paths=None / start/end kwargs.
+			# The oracle runs through THIS spec-less arm, so it is folded onto the same
+			# seam as the factory. Synthesize a minimal frozen SystemSpec — ticker and
+			# starting_cash are PLACEHOLDERS nothing downstream reads, and
+			# strategies/portfolios stay empty because the direct-construction sites add
+			# them through the handler seams instead. Empty spec fields map back to None.
 			spec = SystemSpec(
 				start=start_date or '',
 				end=end_date or '',
@@ -191,23 +171,21 @@ class BacktestTradingSystem(object):
 				portfolios=[],
 				exchange=exchange_config,
 			)
-			# 06.1-01 (D-01/D-04): store + feed CONSTRUCTION moved out of the spec-free
-			# graph seam onto the factory/legacy arm — built with the SAME argument
-			# values compose used (data/start/end/timeframe off the synthesized spec,
-			# empties->None) so the run stays byte-identical, then injected onto ctx.
+			# The store + feed read-models are built HERE, not in the graph seam, then
+			# injected onto ctx.
 			store = CsvPriceStore(
 				csv_paths=spec.data or None,
 				start_date=spec.start or None,
 				end_date=spec.end or None)
 			feed = BacktestBarFeed(store, to_timedelta(spec.timeframe))
-			# The ONE seeded determinism RNG is built HERE, at the wiring seam, and injected
-			# on ctx — ExecutionHandler carries no determinism seam. int off the process-wide
-			# config.rng_seed, default 42. Exactly ONE per run: the exchange and its slippage
-			# model (and the venue plugin that builds them) all draw from this object.
+			# The ONE seeded determinism RNG, built at the wiring seam and injected on ctx
+			# — ExecutionHandler carries no determinism seam. Exactly ONE per run: the
+			# exchange, its slippage model, and the venue recipe that builds them all draw
+			# from this object.
 			rng = random.Random(int(config.rng_seed))
-			# The handler now OWNS its bus (FifoEventBus — byte-exact FIFO, D-07) and
-			# its storage (from environment='backtest'); config is carried, sql_engine
-			# is None (SQL-import-inert, GATE-01). feed rides required on ctx, store real.
+			# The handler OWNS its bus (FifoEventBus — byte-exact FIFO) and its storage
+			# (from environment='backtest'). sql_engine is None, which keeps the backtest
+			# path SQL-import-inert.
 			ctx = EngineContext(
 				bus=FifoEventBus(),
 				config=config,
@@ -217,8 +195,8 @@ class BacktestTradingSystem(object):
 				store=store,
 				sql_engine=None,
 			)
-			# The run's ONE venue, built from THIS run's seeded ExchangeConfig, then
-			# the spec-free graph. The legacy arm has no results store.
+			# The run's ONE venue, built from THIS run's seeded ExchangeConfig, then the
+			# graph. This arm has no results store.
 			exchange_registry, portfolio_factory = _build_paper_venue(
 				ctx, spec.exchange)
 			self.engine = build_handler_graph(
@@ -230,12 +208,11 @@ class BacktestTradingSystem(object):
 
 		self.logger.info('Trading system initialised')
 
-	# -- Backward-compat attribute seams (the engine holds the real components) --
+	# -- Attribute seams (the engine holds the real components) --
 	# The oracle/integration/e2e/scripts sites read these off the system directly
 	# (system.strategies_handler.add_strategy, system.portfolio_handler.add_portfolio,
-	# system.store.read_bars, system.order_handler.cancel_order, ...). Expose them
-	# as read-only properties delegating to the engine so those sites work by
-	# renaming the class only (Wave 4 may collapse some onto the spec).
+	# system.store.read_bars, system.order_handler.cancel_order, ...). Read-only
+	# properties delegating to the engine, so no caller can rebind a component.
 
 	@property
 	def global_queue(self) -> Any:
@@ -286,24 +263,24 @@ class BacktestTradingSystem(object):
 			persist: bool = False) -> None:
 		"""Run the backtest, then optionally print the summary and persist results.
 
-		Delegates the session setup + for-loop to the ``BacktestRunner`` (the
-		byte-exact ordering lives there, Trap 4). When ``print_summary`` is True
-		(the default) it calls ``reporting.print_metrics_summary`` after the run
-		(W4-07 — display only, no artifact bytes change; oracle-inert).
+		Delegates the session setup + for-loop to the ``BacktestRunner``, where the
+		byte-exact ordering lives.
 
-		``on_tick`` (Phase 6, D-06) is an OPTIONAL per-bar operator hook. It is
-		wrapped so the callback receives THIS holder (``system``) as its first
-		argument — preserving the e2e ``on_tick(system, time_event)`` contract
-		(the harness reaches ``system.order_handler`` from it). Default ``None`` is
-		byte-exact (oracle-dark).
-
-		``persist`` (RESULT-01, D-01/D-04) is the POST-LOOP results dump switch.
-		It defaults to ``False`` — the run loop touches NO SQL and the dump code is
-		never reached, so the SMA_MACD oracle stays byte-exact and the path stays
-		SQL-import-inert (GATE-01). When True (and a results store was injected at
-		composition, D-03), a complete ``RunRecord`` + artifact frames are assembled
-		from post-run portfolio state and written through the injected store AFTER
-		the loop — structurally off the hot path.
+		Parameters
+		----------
+		print_summary : bool
+		    Print ``reporting.print_metrics_summary`` after the run. Display only — it
+		    changes no artifact bytes.
+		on_tick : Optional[Callable]
+		    An OPTIONAL per-bar operator hook, wrapped so the callback receives THIS
+		    holder (``system``) as its first argument — the e2e harness reaches
+		    ``system.order_handler`` through it.
+		persist : bool
+		    The POST-LOOP results dump switch. Defaults to ``False``, so the run loop
+		    touches no SQL and the dump code is never reached. When True (and a results
+		    store was injected at composition), a complete ``RunRecord`` + artifact
+		    frames are assembled from post-run portfolio state and written through the
+		    injected store AFTER the loop — structurally off the hot path.
 		"""
 		wrapped: Optional[Callable[[Any, Any], None]] = None
 		if on_tick is not None:
@@ -312,15 +289,14 @@ class BacktestTradingSystem(object):
 
 		self.runner.run(on_tick=wrapped)
 
-		# POST-LOOP results dump (D-01): structurally after the run loop, guarded by
-		# ``persist`` so the default path executes no dump code at all (byte-exact,
-		# GATE-01). The D-03 store guard lives first inside ``_persist_results``.
+		# Structurally after the run loop and guarded by ``persist``, so the default path
+		# executes no dump code at all. The store guard lives inside ``_persist_results``.
 		if persist:
 			self._persist_results()
 
 		if print_summary:
-			# 260623-ajs: assemble the three run-level header inputs from
-			# reachable handles, then pass them to the enriched printer.
+			# Assemble the three run-level header inputs from reachable handles, then pass
+			# them to the printer.
 			duration = self.runner.duration_seconds
 			# Period span from the pinned bar-date grid; an empty/None index
 			# omits the Period line rather than raising.
@@ -347,33 +323,33 @@ class BacktestTradingSystem(object):
 	def _persist_results(self) -> None:
 		"""Assemble + write the post-loop ``RunRecord`` through the injected store.
 
-		The POST-LOOP dump (D-01/D-05/D-06/D-13). Guard first (D-03): persistence
-		requires a results store injected at composition. Then, for each active
-		portfolio, build its run-artifact frames (the SAME pure ``reporting.frames``
-		builders the print block uses), compute its per-portfolio ``RunMetrics`` and
-		curate its strategy ``params``; assemble the AGGREGATE ``RunMetrics`` from the
-		multi-portfolio aggregate equity curve (D-14, mixed-timeframe-safe) and the
-		concatenated trades; curate the run-level ``settings`` (credential-free, the
-		02-02 serializer); and write ``runs`` + ``run_portfolios`` atomically plus the
-		equity_curve/trade_log artifacts. ``run_id`` is a single-UUIDv7 idgen value
-		(the stable ORDER BY tiebreak).
+		For each active portfolio: build its run-artifact frames (the SAME pure
+		``reporting.frames`` builders the print block uses), compute its per-portfolio
+		``RunMetrics`` and curate its strategy ``params``. Then assemble the AGGREGATE
+		``RunMetrics`` from the multi-portfolio aggregate equity curve (mixed-timeframe-safe)
+		and the concatenated trades, curate the credential-free run-level ``settings``, and
+		write ``runs`` + ``run_portfolios`` atomically plus the equity_curve/trade_log
+		artifacts. ``run_id`` is a UUIDv7 idgen value — the stable ORDER BY tiebreak.
 
-		Dump-failure policy (D-17): a write failure re-raises when the store's
-		``strict_persist`` is True; otherwise it is logged-and-swallowed so a sweep
-		never loses good in-memory runs to one bad write.
+		Dump-failure policy: a failure re-raises when the store's ``strict_persist`` is True;
+		otherwise it is logged-and-swallowed so a sweep never loses good in-memory runs to
+		one bad write.
+
+		Raises
+		------
+		ConfigurationError
+		    When no results store was injected at composition.
 		"""
-		# D-03 — persistence requires a store injected at composition (clear error).
 		store = self.engine.results_store
 		if store is None:
 			raise ConfigurationError(
 				"results_store",
 				reason="run(persist=True) requires a results store injected at composition")
 
-		# WR-02 — short-circuit when there are NO active portfolios. The aggregate
-		# builder runs build_aggregate_equity_curve([]) -> pd.concat([], axis=1) ->
-		# ValueError, which would propagate out of run() even with strict_persist=False,
-		# contradicting the D-17 swallow policy. There is nothing to dump anyway, so
-		# warn-and-return before any assembly.
+		# Short-circuit when there are NO active portfolios: the aggregate builder runs
+		# build_aggregate_equity_curve([]) -> pd.concat([], axis=1) -> ValueError, which
+		# would propagate out of run() even with strict_persist=False, contradicting the
+		# swallow policy. There is nothing to dump anyway.
 		active = list(self.portfolio_handler.get_active_portfolios())
 		if not active:
 			self.logger.warning(
@@ -382,15 +358,12 @@ class BacktestTradingSystem(object):
 
 		run_id = idgen.generate_run_id()
 
-		# WR-02 — the ENTIRE assembly+write body lives inside the strict_persist-gated
-		# try/except, NOT just the store writes. D-17 promises a persist failure is
-		# re-raised only when strict_persist is True; otherwise it is logged-and-swallowed
-		# so a sweep never loses good in-memory runs to one bad dump. A builder failure
-		# (metrics/serializer) is just as much a "persist failure" as a write failure and
-		# must honour the same contract — so the whole body is guarded.
+		# The ENTIRE assembly+write body lives inside the strict_persist-gated try/except,
+		# not just the store writes: a builder failure (metrics/serializer) is just as much
+		# a "persist failure" as a write failure and must honour the same contract.
 		try:
-			# Map each active portfolio -> the strategies subscribed to it (mirror the
-			# strategy/subscribed_portfolios walk the print block already performs).
+			# Map each active portfolio -> the strategies subscribed to it (the same
+			# strategy/subscribed_portfolios walk the print block performs).
 			strategies_by_pid: dict[Any, list[Any]] = {}
 			for strategy in self.strategies_handler.strategies:
 				for pid in strategy.subscribed_portfolios:
@@ -429,9 +402,9 @@ class BacktestTradingSystem(object):
 				starting_cash_total += (
 					float(equity_series.iloc[0]) if not equity_series.empty else 0.0)
 
-			# Aggregate metrics across portfolios (D-14): the aggregate equity curve is a
-			# total_equity Series indexed by timestamp; to_frame() yields the total_equity
-			# column build_run_metrics reads, reset_index() yields the persistable frame.
+			# The aggregate equity curve is a total_equity Series indexed by timestamp;
+			# to_frame() yields the total_equity column build_run_metrics reads, and
+			# reset_index() yields the persistable frame.
 			aggregate_series = build_aggregate_equity_curve(equity_frames)
 			aggregate_equity_frame = aggregate_series.reset_index()
 			aggregate_trades = (
@@ -441,10 +414,10 @@ class BacktestTradingSystem(object):
 			aggregate_metrics = build_run_metrics(
 				aggregate_series.to_frame(), aggregate_trades, periods=periods)
 
-			# Curated run settings (D-11, credential-free): the fee/slippage models are
-			# read off the LIVE paper exchange; market_execution off the order handler.
+			# Curated run settings, credential-free: the fee/slippage models are read off the
+			# live paper exchange, market_execution off the order handler.
 			exchange = self.execution_handler.exchanges.get(
-				(COMPUTE_VENUE, DEFAULT_ACCOUNT_ID))  # D-27/D-05 pair key
+				(COMPUTE_VENUE, DEFAULT_ACCOUNT_ID))
 			order_config = OrderConfig(market_execution=self.order_handler.market_execution)
 			settings = curate_run_settings(
 				exchange,
@@ -462,7 +435,7 @@ class BacktestTradingSystem(object):
 				settings=settings,
 				per_portfolio=portfolio_records)
 
-			# Write (D-13/D-17): runs + run_portfolios atomically, then the artifacts.
+			# runs + run_portfolios atomically, then the artifacts.
 			store.save_run(record)
 			for portfolio_id, equity, trades in artifacts:
 				store.save_artifact(run_id, portfolio_id, "equity_curve", equity)
@@ -474,70 +447,57 @@ class BacktestTradingSystem(object):
 			self.logger.error("results persist failed", exc_info=True)
 
 	def get_signal_records(self) -> list[SignalRecord]:
-		"""Return the signals captured during the run (Plan 05-03, SIG-02).
+		"""Return the signals captured during the run.
 
-		Post-run read-model accessor (D-12): reads the handler-owned signal-store
-		sink AFTER the run completes (D-03 — reached through its owning handler,
-		``engine.strategies_handler.signal_store``, not a re-surfaced holder copy).
-		A sink read, NOT a cross-domain handler call — the queue-only contract is
-		preserved.
+		Reads the handler-owned signal-store sink AFTER the run completes, reached through
+		its owning handler rather than a re-surfaced holder copy. A sink read, NOT a
+		cross-domain handler call — the queue-only contract is preserved.
 		"""
 		return self.engine.strategies_handler.signal_store.get_all()
 
 	def get_signal_store(self) -> SignalStore:
-		"""Return the signal-store itself for post-run filtered queries (SIG-02).
+		"""Return the signal-store itself for post-run filtered queries.
 
-		Reaches the store through its owning handler (D-03).
+		Reaches the store through its owning handler.
 		"""
 		return self.engine.strategies_handler.signal_store
 
 
 def build_backtest_system(spec: SystemSpec) -> BacktestTradingSystem:
-	"""Build a backtest system from a declarative ``SystemSpec`` (D-04).
+	"""Build a backtest system from a declarative ``SystemSpec``.
 
-	The FACTORY (D-14a): derives the COMPLETE supported-symbol set from the spec
-	data keys (∪ default preset ∪ {BTCUSD}) and folds it into the spec's
-	``ExchangeConfig`` (D-13/Trap 1), builds the infra ``EngineContext`` (a fresh
-	``FifoEventBus`` + ``environment='backtest'`` + ``sql_engine=None``, 02-03/D-06),
-	calls the shared ``build_handler_graph`` seam, constructs the
-	``BacktestRunner``, adds strategies/portfolios in SPEC ORDER (Trap 6 — preserve
-	``get_active_portfolios`` insertion order), wires the portfolio subscriptions,
-	and returns the thin holder. The handlers OWN their order/signal storage
-	backends now (selected from ``ctx.environment``, 02-02).
+	Derives the COMPLETE supported-symbol set from the spec data keys (∪ default preset ∪
+	{BTCUSD}) and folds it into the spec's ``ExchangeConfig``, builds the infra
+	``EngineContext``, calls the shared ``build_handler_graph`` seam, constructs the
+	``BacktestRunner``, adds strategies/portfolios in SPEC ORDER, wires the portfolio
+	subscriptions, and returns the thin holder. The handlers OWN their order/signal
+	storage backends (selected from ``ctx.environment``).
 	"""
-	# 1. Complete symbol-set seeding (D-13/Trap 1): default preset ∪ {BTCUSD} ∪
-	#    spec data tickers, folded into the spec's ExchangeConfig BEFORE the
-	#    exchange reads it (replacement-safe construction-time seeding). SystemSpec
-	#    is frozen, so the seeded exchange rides back onto the spec via
-	#    ``dataclasses.replace`` — compose reads ``spec.exchange`` (02-03 A1). The
-	#    handlers now OWN their storage backends (from environment='backtest'), so
-	#    the factory no longer selects order/signal storage concretes here (02-02).
+	# Seed the complete symbol set into the spec's ExchangeConfig BEFORE the exchange
+	# reads it. SystemSpec is frozen, so the seeded exchange rides back onto the spec via
+	# ``dataclasses.replace``.
 	exchange_config = spec.exchange if spec.exchange is not None else ExchangeConfig.default()
 	tickers = {str(t) for t in spec.data.keys()}
 	exchange_config = _seed_supported_symbols(exchange_config, tickers)
 	spec = dataclasses.replace(spec, exchange=exchange_config)
 
-	# 2. Wire the graph mode-agnostically through the shared two-arg seam. compose
-	#    reads the OPTIONAL results store off the spec via getattr (D-04/D-19,
-	#    GATE-01): commonly None, so the oracle path stays store-free AND
-	#    SQL-import-inert — this module imports NO SQL surface at top level. A
-	#    persistence caller builds the store DIRECTLY (NO factory, D-19) and injects
-	#    it on the spec, e.g. ``SqlResultsStore(SqlEngine(SqlSettings.results_default()),
-	#    strict_persist=SqlSettings.results_default().strict_persist)`` with the SQL
-	#    surface imported on THAT path only — never here.
-	# 06.1-01 (D-01/D-04): build the store + feed read-models HERE (the spec-free
-	# graph seam no longer constructs them) with the SAME argument values the graph
-	# used off the spec (data/start/end/timeframe, empties->None) — byte-identical —
-	# and inject them onto ctx (feed required, store real in backtest).
+	# The results store is read off the spec via getattr, and is commonly None — so the
+	# oracle path stays store-free and this module imports NO SQL surface at top level. A
+	# persistence caller builds the store DIRECTLY and injects it on the spec, e.g.
+	# ``SqlResultsStore(SqlEngine(SqlSettings.results_default()),
+	# strict_persist=SqlSettings.results_default().strict_persist)``, with the SQL surface
+	# imported on THAT path only — never here.
+	# The store + feed read-models are built HERE, not in the graph seam, then injected
+	# onto ctx (feed required, store real in backtest).
 	store = CsvPriceStore(
 		csv_paths=spec.data or None,
 		start_date=spec.start or None,
 		end_date=spec.end or None)
 	feed = BacktestBarFeed(store, to_timedelta(spec.timeframe))
 	# The ONE seeded determinism RNG, built here at the wiring seam and injected on ctx.
-	# Identical to the legacy arm above, deliberately: the oracle drives THAT arm, so a
-	# divergence here would leave the gate passing while proving nothing about this path.
-	# int(config.rng_seed), default 42.
+	# Deliberately identical to the direct-construction arm above: the oracle drives THAT
+	# arm, so a divergence here would leave the gate passing while proving nothing about
+	# this path.
 	rng = random.Random(int(config.rng_seed))
 	ctx = EngineContext(
 		bus=FifoEventBus(),
@@ -548,10 +508,9 @@ def build_backtest_system(spec: SystemSpec) -> BacktestTradingSystem:
 		store=store,
 		sql_engine=None,
 	)
-	# The run's ONE venue, from the seeded RUN-DERIVED ExchangeConfig (spec.exchange,
-	# complete symbol set already folded in above), then the spec-free graph. The e2e
-	# ScenarioSpec is the SystemSpec alias and carries results_store; getattr keeps a
-	# duck-typed spec absent-field safe (-> None -> store-free/byte-exact).
+	# The run's ONE venue, from the seeded run-derived ExchangeConfig (spec.exchange,
+	# complete symbol set already folded in above), then the graph. getattr keeps a
+	# duck-typed spec safe when the field is absent -> None -> store-free.
 	exchange_registry, portfolio_factory = _build_paper_venue(ctx, spec.exchange)
 	engine = build_handler_graph(
 		ctx,
@@ -560,27 +519,24 @@ def build_backtest_system(spec: SystemSpec) -> BacktestTradingSystem:
 		results_store=getattr(spec, 'results_store', None))
 	runner = BacktestRunner(engine)
 
-	# 4. Add strategies/portfolios in SPEC ORDER (Trap 6 — get_active_portfolios
-	#    is dict-insertion order; preserve it). Then wire subscriptions: each
-	#    strategy subscribes to every spec portfolio (the e2e harness convention).
+	# Add strategies/portfolios in SPEC ORDER — get_active_portfolios is
+	# dict-insertion order and callers depend on it. Then wire subscriptions: each
+	# strategy subscribes to every spec portfolio (the e2e harness convention).
 	for strategy in spec.strategies:
 		engine.strategies_handler.add_strategy(strategy)
 
 	portfolio_ids = []
 	for portfolio_spec in spec.portfolios:
-		# D-05/D-19: backtest portfolios name the ``'paper'`` venue — the ONE
-		# name for the simulated fill engine across backtest and live-paper —
-		# and pass ``venue_name`` EXPLICITLY as well as ``exchange``, so a
-		# backtest portfolio and a live portfolio are structurally identical at
-		# creation. ``portfolio.py`` derives ``self.exchange`` from
-		# ``venue_name`` when supplied, so the routing key is
-		# ``('paper', DEFAULT_ACCOUNT_ID)`` either way; the explicit field is
-		# about honesty of identity, not routing.
-		# The portfolio's exchange string is carried onto its orders. Using
-		# spec.ticker here would route to an unregistered venue → no fills
-		# (byte-exact break); every construction site (oracle/integration/
-		# scripts + the e2e scenarios) names the paper venue, so the factory
-		# must too.
+		# Backtest portfolios name the ``'paper'`` venue — the ONE name for the
+		# simulated fill engine across backtest and live-paper — and pass ``venue_name``
+		# EXPLICITLY as well as ``exchange``, so a backtest portfolio and a live
+		# portfolio are structurally identical at creation. ``portfolio.py`` derives
+		# ``self.exchange`` from ``venue_name`` when supplied, so the routing key is
+		# ``('paper', DEFAULT_ACCOUNT_ID)`` either way; the explicit field is about
+		# honesty of identity, not routing.
+		#
+		# The portfolio's exchange string is carried onto its orders, so using
+		# spec.ticker here would route to an unregistered venue and produce no fills.
 		pid = engine.portfolio_handler.add_portfolio(
 			name=portfolio_spec.name,
 			exchange='paper',

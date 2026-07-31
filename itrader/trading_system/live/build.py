@@ -187,7 +187,7 @@ def build_live_system(
     #
     #    Durability follows the SPINE, never an environment string: with a spine the
     #    portfolio handler holds a real definition store, and without one there is no
-    #    database to be durable against. The WR-07 configuration — a real spine whose
+    #    database to be durable against. The dangerous middle state — a real spine whose
     #    portfolios silently persist nothing — is unreachable from here.
     probe = SqlSettings()
     sql_engine: Optional[SqlEngine] = None
