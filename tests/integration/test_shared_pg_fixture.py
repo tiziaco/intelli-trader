@@ -52,7 +52,7 @@ def test_shared_pg_fixture_wires_live_system(pg_database_env):
 
     system = build_live_system(_live_config, execution_venue="binance", data_venue="okx")
     try:
-        assert type(system._signal_store).__name__ == "CachedSqlSignalStorage"
+        assert type(system.strategies_handler.signal_store).__name__ == "CachedSqlSignalStorage"
         assert type(system.portfolio_handler._order_storage).__name__ == "CachedSqlOrderStorage"
     finally:
         system.stop()

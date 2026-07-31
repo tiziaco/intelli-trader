@@ -289,7 +289,6 @@ class LiveTradingSystem:
         self.order_handler = engine.order_handler
         self.execution_handler = engine.execution_handler
         self.event_handler = engine.event_handler
-        self._signal_store = engine.strategies_handler.signal_store
         self._order_storage = engine.order_handler.storage
 
         self._telemetry = telemetry
@@ -705,19 +704,6 @@ class LiveTradingSystem:
         """The current depth of the global event queue."""
         size: int = self.global_queue.qsize()
         return size
-
-    def get_signal_records(self) -> List[Any]:
-        """The signals captured during the live run, in capture order.
-
-        A read-model sink read, NOT a cross-domain handler call, so the queue-only contract
-        holds.
-        """
-        records: List[Any] = self._signal_store.get_all()
-        return records
-
-    def get_signal_store(self) -> Any:
-        """The signal store itself, for its ``by_strategy`` / ``by_ticker`` query surface."""
-        return self._signal_store
 
     # -- External ingress ---------------------------------------------------------------
 

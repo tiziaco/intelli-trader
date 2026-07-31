@@ -247,7 +247,7 @@ def test_live_system_wires_cached_sql_from_database_url(pg_url, monkeypatch):
     monkeypatch.setenv("ITRADER_DATABASE_URL", pg_url)
     system = build_live_system(_live_config, execution_venue="binance", data_venue="okx")
     try:
-        assert type(system._signal_store).__name__ == "CachedSqlSignalStorage"
+        assert type(system.strategies_handler.signal_store).__name__ == "CachedSqlSignalStorage"
         assert type(system.portfolio_handler._order_storage).__name__ == "CachedSqlOrderStorage"
     finally:
         system.stop()
@@ -279,7 +279,7 @@ def test_live_system_wires_cached_sql_from_component_vars(pg_url, monkeypatch):
 
     system = build_live_system(_live_config, execution_venue="binance", data_venue="okx")
     try:
-        assert type(system._signal_store).__name__ == "CachedSqlSignalStorage"
+        assert type(system.strategies_handler.signal_store).__name__ == "CachedSqlSignalStorage"
         assert type(system.portfolio_handler._order_storage).__name__ == "CachedSqlOrderStorage"
         # Proves component assembly (not a verbatim SYSTEM_DB_URL/URL read).
         assert system._system_db_backend.engine.url.database == u.database
@@ -307,7 +307,7 @@ def test_unconfigured_db_env_falls_back_to_in_memory(monkeypatch, caplog):
     with caplog.at_level(logging.WARNING):
         system = build_live_system(_live_config, execution_venue="binance", data_venue="okx")
     try:
-        assert type(system._signal_store).__name__ == "InMemorySignalStore"
+        assert type(system.strategies_handler.signal_store).__name__ == "InMemorySignalStore"
         assert type(system.portfolio_handler._order_storage).__name__ == "InMemoryOrderStorage"
         # WR-10: the fallback fires a loud warning naming the unified credential env vars.
         assert "ITRADER_DATABASE_PASSWORD" in caplog.text
