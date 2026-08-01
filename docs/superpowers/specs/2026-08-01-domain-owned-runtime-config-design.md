@@ -239,11 +239,19 @@ The boot ordering contract in `bootstrap_session` is unchanged.
 - `itrader/storage/venue_store.py`, its table and a drop migration. Its `_assert_no_secret_keys`
   guard is imported by `venue_account_store.py:55` and must be **relocated, not deleted**.
 - `ExecutionHandler.update_config` / `validate_config` (`:116`, `:136`) and
-  `SimulatedExchange.validate_config` (`:820`). `SimulatedExchange.update_config` **stays** —
-  `configure()` delegates to it for `AbstractExchange` Protocol conformance (`:769`).
-- `PortfolioHandler.update_config` / `validate_config` / `rollback_config` /
-  `update_portfolio_config` / `get_portfolio_config` (`:1308-1369`) — a handler-level config
-  API with no caller, including two stubs that log a warning and return `False`.
+  `SimulatedExchange.validate_config` (`:820`). Their only callers are `config_router.py:307`
+  / `:285` and `bootstrap.py:260`, all deleted here. **These three are contingent on dropping
+  the venue scope, not independent judgements** — if paper fee/slippage ever becomes runtime-
+  editable, `ExecutionHandler.update_config` is precisely the push target and comes back.
+  `SimulatedExchange.update_config` **stays** regardless — `configure()` delegates to it for
+  `AbstractExchange` Protocol conformance (`:769`).
+- `PortfolioHandler.update_config` / `validate_config` / `rollback_config` / `get_config` /
+  `update_portfolio_config` / `get_portfolio_config` (`:1308-1369`) — a handler-level config API
+  with no caller, including two stubs that log a warning and return `False`/`None`.
+  `self.config_data` and `self.max_portfolios` **stay**: they are read at `:324` (the
+  portfolio-count limit) and `:1285`. Only the mutators and readers go, making `max_portfolios`
+  construction-time by decision. A handler-level defaults event was considered and rejected —
+  the setting is not worth an event, and `PortfolioHandler` owns no store to persist it to.
 - `StrategiesHandler.update_config` (`:612`) — no caller, and duplicated by the more rigorous
   `STRATEGY_COMMAND` reconfigure path.
 - The `system` config scope: `SystemSettings`, the `config.system` field on `ITraderConfig`, and
@@ -283,6 +291,10 @@ that fails loudly, and it is on the backtest path.
   (`ExchangeConfig.default()` / `.high_fee()`), and mid-run changes make a run's PnL incoherent.
 - No widening of the editable surface. `stream`, `feed_provider` and `safety` remain
   construction-time; adding one later is a new event plus a consumer, in obvious places.
+- No config **read** surface. The engine needs none, and the deleted `PortfolioHandler.get_config`
+  / `get_portfolio_config` had no caller. A FastAPI layer wanting "show me this portfolio's
+  config" is a separate piece of work, and its natural source is each store's `load_config`
+  rather than a handler method.
 - No change to the backtest path.
 
 ## Open items for implementation planning
