@@ -147,13 +147,9 @@ def on_config_update(self, event: UniverseConfigEvent) -> None:
     self._apply(merged)
 ```
 
-`UniverseHandler` today holds `UniverseHandlerConfig` — a plain dataclass snapshot,
-deliberately decoupled from the config root (`universe_handler.py:64-75`) — and unpacks it into
-`self._timeframe` / `self._remove_policy` at construction (`:217-218`). To own its config it
-must hold the `UniverseConfig` Pydantic model itself, so `model_validate` has something to
-merge against. `UniverseHandlerConfig` is therefore absorbed into `UniverseConfig`, which is
-also where `poll_timeframe` lands (below). The other two handlers already hold their Pydantic
-model (`OrderManager.order_config`, `Portfolio.config`).
+`OrderManager` and `Portfolio` already hold their Pydantic model (`order_config`, `config`) and
+can validate a merge directly. `UniverseHandler` does not — it holds a dataclass snapshot — so
+it needs the change described under "Making `universe` genuinely live" below.
 
 Unknown keys are rejected by `extra="forbid"` on each Pydantic model. There is no
 hand-maintained allowlist anywhere in the design — the model *is* the allowlist, and it cannot
@@ -170,19 +166,82 @@ logged, not rolled back.
 
 ### Making `universe` genuinely live
 
-The only scope with real work behind it rather than plumbing.
+The only scope with real work behind it rather than plumbing. It is also the only config with
+**two** collaborators reading it — `UniverseHandler` and `WorkerSupervisor` — which is what
+makes it different from `order` and `portfolio`.
 
-- **`poll_cadence_s`** — `WorkerSupervisor.__init__` takes `cadence: float`
-  (`worker_supervisor.py:41`) and its loop calls `self._stop_event.wait(self._cadence)` every
-  iteration (`:62`). Change the parameter to `cadence: Callable[[], float]` bound at
-  `build.py:400` to `lambda: config.universe.poll_cadence_s`, so the timer re-reads on each
-  tick. This needs no back-reference and no construction-order change: the supervisor is built
-  in `build_live_system` while `UniverseHandler` is only built later, in `SessionInitializer`
-  during `start()`.
-- **`remove_policy`** — the handler updates its own cached `self._remove_policy`.
-- **`poll_timeframe`** — currently sourced from `config.stream.okx_stream_timeframe`
-  (`live/system.py:443`), i.e. universe config living in the stream sub-model. It moves to
-  `UniverseConfig` as part of this work, so the universe domain's config is in one model.
+Today each reader takes its own snapshot at construction and nothing refreshes them:
+
+```
+config.universe.poll_cadence_s      ─(build.py:400, a float)─▶ WorkerSupervisor._cadence   → :62
+config.universe.remove_policy       ─(system.py:444)─▶ UniverseHandlerConfig ─▶ _remove_policy → :565
+config.stream.okx_stream_timeframe  ─(system.py:443)─▶ UniverseHandlerConfig ─▶ _timeframe     → :347,449,452
+```
+
+After: **one object, read live by both readers, written by one owner.**
+
+```
+config.universe : UniverseConfig ──┬──▶ WorkerSupervisor._config.poll_cadence_s  (read each tick, :62)
+      ▲                            └──▶ UniverseHandler._config.remove_policy / .poll_timeframe
+      │ setattr, field-wise
+  UniverseHandler.on_config_update  (sole writer)
+```
+
+This works because `config.universe` is a MUTABLE Pydantic sub-model with
+`validate_assignment=True`, mounted on the frozen root and mutated field-wise, never reassigned
+(`itrader_config.py:78-86`).
+
+1. **`poll_timeframe` does NOT move and does NOT become editable.** It is sourced from
+   `config.stream.okx_stream_timeframe` (`live/system.py:443`), which has two other readers:
+   `okx_provider.py:721` — the timeframe the venue stream actually subscribes to — and
+   `live/system.py:552`. Making the universe copy independently editable would let the warmup
+   timeframe drift from the subscribed timeframe (warm 1d bars, stream 1h), with nothing
+   detecting it; `tests/support/replay_harness.py:344` already carries a comment about that
+   hazard. It stays a construction-time snapshot, and `UniverseConfig`'s editable surface stays
+   `poll_cadence_s` + `remove_policy`.
+2. **`UniverseHandlerConfig` is deleted** (`universe_handler.py:64-79`), replaced by two ctor
+   params with honestly different lifecycles: `config: UniverseConfig` (owned, live, editable)
+   and `poll_timeframe: str` (a construction snapshot that must match the stream). The handler
+   keeps the REFERENCE (`self._config = config`) instead of unpacking (`:217-218`), so
+   `self._remove_policy` (`:565`) becomes `self._config.remove_policy`. `self._timeframe`
+   (`:347`, `:449`, `:452`) stays exactly as it is. This is still constructor injection of a
+   domain model, so the handler stays off the config root — the decoupling
+   `UniverseHandlerConfig` existed for is preserved.
+3. **`WorkerSupervisor` takes the model, not a float.** `cadence: float`
+   (`worker_supervisor.py:41`) becomes `universe_config: UniverseConfig`, and `:62` becomes
+   `self._stop_event.wait(self._config.poll_cadence_s)`. `build.py:400` passes `config.universe`
+   instead of `config.universe.poll_cadence_s`. A `Callable[[], float]` was considered and
+   rejected: it closes over the same object for the same effect, with a lambda in between.
+4. **The consumer mutates field-wise**, not by swapping:
+
+```python
+def on_config_update(self, event: UniverseConfigEvent) -> None:
+    try:
+        merged = UniverseConfig.model_validate(
+            recursive_merge(self._config.model_dump(), event.updates))
+    except pydantic.ValidationError as exc:
+        self.logger.warning('Universe config refused: %s', exc)
+        return
+    self._store.save_config(merged.model_dump(mode='json'), event.time)
+    for field in event.updates:
+        setattr(self._config, field, getattr(merged, field))
+```
+
+Field-wise mutation is REQUIRED here, not stylistic: `ITraderConfig` is frozen so
+`config.universe` cannot be reassigned, and both collaborators hold a reference to the
+INSTANCE — an atomic swap would leave them pointing at the old object. This is the mutation
+model `validate_assignment=True` exists for.
+
+It differs deliberately from `order` and `portfolio`, which DO atomic-swap
+(`self.order_config = new_config`, `self.config = new_config`). That is correct for them: each
+is the sole reader of its own model. Do not "unify" the two — the difference tracks a real
+difference in ownership.
+
+**Thread-safety.** The poll thread reads `poll_cadence_s` while the engine thread writes it. A
+single attribute read/write is atomic under the GIL, so no torn read is possible; worst case the
+timer sleeps one more interval at the old cadence before picking up the new one. This is the one
+place in the design where a config field is read off the engine thread, and it is why the
+supervisor reads a plain field rather than calling into the handler.
 
 ### `UniverseStore`
 
@@ -299,14 +358,16 @@ that fails loudly, and it is on the backtest path.
 
 ## Open items for implementation planning
 
-1. **Field-level scope of `UniverseConfig`.** Moving `poll_timeframe` in means
-   `config.stream.okx_stream_timeframe` loses a reader; confirm no other consumer before
-   removing it.
+1. **`UniverseHandlerConfig` has wide test reach.** Eight test modules construct it directly
+   (`tests/unit/universe/*`, four `tests/integration/test_strategy_*`, `test_reconfigure_positions.py`,
+   `tests/integration/conftest.py:487`). Deleting it is a mechanical two-param change at each
+   site, but it is the largest single edit surface in this design and should be its own plan step.
 2. **`PortfolioConfigEvent` and an unknown `portfolio_id`.** `get_portfolio` raises
    `PortfolioNotFoundError`; the consumer must catch it and log a loud no-op rather than let it
    reach the error policy.
 3. **`VenueStore` drop migration** and the relocation of `_assert_no_secret_keys` into a shared
    home that `venue_account_store.py` can import.
-4. **Absorbing `UniverseHandlerConfig` into `UniverseConfig`.** `UniverseHandlerConfig` exists to
-   keep the handler off the config root; folding it in trades that decoupling for the handler
-   owning a validatable model. Confirm no other consumer of the dataclass before removing it.
+4. **Adjacent, out of scope unless wanted:** `universe_handler.py:447` does
+   `from itrader import config` inside a method body to read `config.feed_provider.warmup_margin`
+   — a lazy import in a constructor-injection codebase. The ctor is being touched anyway, so
+   injecting that value is cheap, but it is a different sub-model and not part of this design.
