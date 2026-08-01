@@ -19,7 +19,7 @@ path are RESTORE (the ``SimulatedAccount`` ledger is sole truth), never venue re
 Both tests drive the REAL ``LiveTradingSystem.start()`` fully OFFLINE (no OKX network, no
 credentials, no Postgres) on ``exchange="paper"``: ``_initialize_live_session`` is coerced
 to a no-op, the durable-store gate is opened by exposing a ``rehydrate`` attr on
-``_order_storage``, and a rehydrate spy halts the engine right after the restore so
+the order storage, and a rehydrate spy halts the engine right after the restore so
 ``start()`` refuses RUNNING and never spawns the processing thread.
 
 4-space indentation (matches ``tests/integration/*``); NO ``__init__.py`` in this dir
@@ -37,7 +37,7 @@ from itrader.portfolio_handler.storage.in_memory_storage import (
     InMemoryPortfolioStateStorage,
 )
 from itrader.portfolio_handler.reconcile import venue_reconciler as venue_reconciler_module
-from itrader.trading_system.live_trading_system import LiveTradingSystem  # noqa: F401
+from itrader.trading_system.live.system import LiveTradingSystem  # noqa: F401
 from tests.support.replay_harness import build_paper_replay_system
 
 # A business time (never wall clock) so the persisted row's timestamp is deterministic.
@@ -95,7 +95,7 @@ def _rebind_storage(portfolio: Portfolio, store: Any) -> None:
 
 @pytest.fixture(autouse=True)
 def _no_pg_env(monkeypatch):
-    """Guarantee the in-memory fallback (no durable ``_order_storage`` rehydrate leaks in)."""
+    """Guarantee the in-memory fallback (no durable order-storage rehydrate leaks in)."""
     for var in ("ITRADER_DATABASE_PASSWORD", "ITRADER_DATABASE_URL"):
         monkeypatch.delenv(var, raising=False)
 
@@ -134,11 +134,11 @@ def test_paper_restart_rehydrate_ungate_runs_without_venue_reconcile(monkeypatch
         )
 
         # Drive start() OFFLINE: skip session wiring, open the durable-store gate by
-        # exposing a rehydrate attr on _order_storage. exchange stays "paper" so the
+        # exposing a rehydrate attr on the order storage. exchange stays "paper" so the
         # okx venue block (snapshot/link/reconcile) is skipped entirely.
         monkeypatch.setattr(system, "_initialize_live_session", lambda: None)
         monkeypatch.setattr(
-            system._order_storage, "rehydrate", lambda *a, **k: None, raising=False
+            system.order_handler.storage, "rehydrate", lambda *a, **k: None, raising=False
         )
 
         started = system.start()
@@ -195,7 +195,7 @@ def test_simulated_restore_cash_and_realised_pnl_on_paper_start(monkeypatch) -> 
         monkeypatch.setattr(system.portfolio_handler, "rehydrate", _spy_rehydrate)
         monkeypatch.setattr(system, "_initialize_live_session", lambda: None)
         monkeypatch.setattr(
-            system._order_storage, "rehydrate", lambda *a, **k: None, raising=False
+            system.order_handler.storage, "rehydrate", lambda *a, **k: None, raising=False
         )
 
         started = system.start()

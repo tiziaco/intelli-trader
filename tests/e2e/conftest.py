@@ -54,7 +54,7 @@ commit it WITH a VERIFY note. A regression-lock proves *stability*, not
 The ``spec.exchange`` fee/slippage threading (CONSTRUCTION-TIME — Wave 4, D-01/D-14)
 -----------------------------------------------------------------------------------
 A spec carrying a non-None ``exchange`` (an ``ExchangeConfig``) is threaded into the
-engine AT CONSTRUCTION by ``build_backtest_system`` → ``compose_engine`` →
+engine AT CONSTRUCTION by ``build_backtest_system`` → ``build_handler_graph`` →
 ``ExecutionHandler`` → ``SimulatedExchange``. Wave 4 (04-05) COLLAPSED the former
 post-construction fee/slippage re-init seam (and the additive symbol-registration
 loop) onto this factory path: the fee/slippage/limits state is now byte-identical to
@@ -305,7 +305,7 @@ def _build_and_run(spec):
     ``--collect-only`` stays clean even with zero scenarios wired.
     """
     # Deferred import: only executed when a scenario actually runs (collect-clean).
-    from itrader.trading_system.backtest_trading_system import build_backtest_system
+    from itrader.trading_system.backtest.backtest_trading_system import build_backtest_system
 
     # IN-03: fail with an explanatory message (consistent with _load_spec's
     # spec-shape failures) instead of a bare IndexError from portfolio_ids[0]
@@ -314,7 +314,7 @@ def _build_and_run(spec):
 
     # D-01/D-04: the factory builds the entire engine from the declarative spec —
     # strategies, portfolios, subscriptions, the construction-time ExchangeConfig
-    # (fee/slippage/limits threaded at compose_engine time, NOT re-init'd
+    # (fee/slippage/limits threaded at graph-build time, NOT re-init'd
     # post-construction), and the complete symbol seeding. The spec IS the wiring.
     system = build_backtest_system(spec)
 

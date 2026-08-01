@@ -60,6 +60,7 @@ from itrader.strategy_handler.registry.rehydrate import (
     build_strategy,
     rehydrate_strategies,
 )
+from itrader.strategy_handler.status import StrategyState
 from itrader.strategy_handler.storage import InMemorySignalStore
 from itrader.strategy_handler.strategies.empty_strategy import EmptyStrategy
 from itrader.strategy_handler.strategies.eth_btc_pair_strategy import EthBtcPairStrategy
@@ -551,6 +552,43 @@ def test_quarantine_skips_bad_rows_keeps_healthy_and_never_mutates_the_row() -> 
                 "operator's declared INTENT (D-19)"
             )
         assert store.get("drifted")["config"]["removed_knob"] == 7
+    finally:
+        store.dispose()
+
+
+def test_quarantine_is_recorded_on_the_handler_not_merely_returned() -> None:
+    """D-19 — the strategy domain owns "which of my names have no instance".
+
+    The returned list is a convenience for the immediate caller; the surface an operator
+    reads is ``StrategiesHandler.get_strategies_status()``, which is why rehydrate records
+    each skipped name on the handler as it goes. The handler is built over the SAME store,
+    as production wires it — that is what lets the status cross the row against the roster.
+    """
+    store = _make_store()
+    try:
+        _seed(store, [_sma()])
+        retired = _empty(name="retired")
+        rows, _ = seeded_registry_rows([retired])
+        blob = dict(rows[0]["config_json"])
+        blob["strategy_type"] = "RetiredStrategy"
+        store.upsert("retired", "RetiredStrategy", blob, True, _AT)
+
+        handler = StrategiesHandler(
+            Queue(), _StubFeed(), InMemorySignalStore(), registry_store=store)
+
+        rehydrate_strategies(
+            store=store,
+            catalog=test_catalog(),
+            strategies_handler=handler,
+            alert_sink=_RecordingAlertSink(),
+        )
+
+        status = handler.get_strategies_status()
+        assert status["sma_macd"].state is StrategyState.ACTIVE
+        assert status["retired"].state is StrategyState.QUARANTINED
+        # The KIND, never the message — the message quotes the stored config value.
+        assert status["retired"].quarantine_reason == "UnknownStrategyTypeError"
+        assert status["retired"].enabled is True
     finally:
         store.dispose()
 

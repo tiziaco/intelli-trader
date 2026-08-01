@@ -22,14 +22,12 @@ from itrader.core.enums import PortfolioState
 from itrader.core.exceptions import VenueAccountNotProvisionedError
 from itrader.core.ids import PortfolioId
 from itrader.portfolio_handler.portfolio_factory import (
-    ComputeAccountAuthority,
+    AccountFactory,
     PortfolioFactory,
-    VenueValidatedComputeAuthority,
 )
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.portfolio_handler.rehydrate.portfolio_rehydrate import rehydrate_portfolios
-from itrader.venues.registry import COMPUTE_VENUE
-from tests.support.venue_wiring import backtest_portfolio_handler, backtest_venue_bundles
+from tests.support.venue_wiring import backtest_portfolio_handler
 
 
 class _FakeDefinitionStore:
@@ -264,21 +262,18 @@ def test_rehydrating_a_disabled_account_raises_rather_than_a_compute_leaf() -> N
     """ACCT-03 at rehydrate: a definition whose venue account is DISABLED RAISES.
 
     Rehydrate materializes through the handler's injected factory; on the LIVE arm that
-    factory's authority is the ``VenueValidatedComputeAuthority``, which asks the
+    factory's account factory carries the live validator, which asks the
     ``VenueAccountManager`` to validate the pair. A disabled account must RAISE
     ``VenueAccountNotProvisionedError`` (cause DISABLED) — never silently produce a compute
     leaf a live portfolio would then trade on believing it was the venue's. (The factory-level
     ACCT-03 pins live in ``tests/unit/portfolio/test_portfolio_factory.py``.)
     """
     bus = queue.Queue()
-    authority = VenueValidatedComputeAuthority(
-        manager=_DisabledAccountManager(),
-        compute=ComputeAccountAuthority(
-            venue_bundles=backtest_venue_bundles(bus), compute_venue=COMPUTE_VENUE),
-    )
+    account_factory = AccountFactory(
+        validate=_DisabledAccountManager().assert_available)
     handler = PortfolioHandler(
         bus, portfolio_factory=PortfolioFactory(
-            authority=authority, environment="backtest"))
+            account_factory=account_factory, environment="backtest"))
     store = _FakeDefinitionStore([_row(portfolio_id=uuid.uuid4())])
 
     with pytest.raises(VenueAccountNotProvisionedError) as excinfo:

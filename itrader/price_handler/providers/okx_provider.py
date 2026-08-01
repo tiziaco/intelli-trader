@@ -672,3 +672,57 @@ class OkxDataProvider:
         connector's ``disconnect``, which cancels the spawned handle; the candle loop's
         ``async with`` then closes the aiohttp session."""
         self._stream_handle = None
+
+
+def build_okx_data_provider(
+    *,
+    connector: LiveConnector,
+    ctx: Any,
+    feed: Any,
+    global_queue: Any,
+    halt_signal: Callable[[str], None],
+    stream_state_listener: tuple[Callable[[str], None], Callable[[str], None]],
+) -> OkxDataProvider:
+    """Build the OKX data adapter over ``connector``, fully wired to the ONE live feed.
+
+    The data-side twin of the execution recipe: a module-level function beside the adapter
+    it builds, so the construction knowledge lives with the thing constructed.
+
+    Every wiring step happens HERE rather than at some later point in the boot. The
+    adapter's halt signal, its stream-state callbacks, its bar sink and its queue are all
+    required for it to behave correctly the first time a bar arrives, so binding them at
+    build makes "a provider that is installed but not armed" unrepresentable rather than
+    an ordering rule a caller has to follow.
+
+    Parameters
+    ----------
+    connector : LiveConnector
+        The session this adapter owns — normally the venue's PUBLIC session, since OKX
+        candles need no credentials. It is not connected here: opening it is engine I/O
+        and belongs to the run's start, not to building the object.
+    ctx : EngineContext
+        The shared context. ``ctx.config.stream`` is the single wiring source for the
+        subscription's symbol and timeframe, so there is no inline default anywhere.
+    feed : LiveBarFeed
+        The ONE live feed. It receives the provider (``set_provider``) and gives back its
+        ``update`` as the closed-bar sink.
+    global_queue : queue.Queue
+        The engine bus the async warmup emits ``BarsLoaded`` / ``BarsLoadFailed`` on.
+    halt_signal : Callable[[str], None]
+        The freeze-in-place entrypoint a fatal candle-stream error escalates to.
+    stream_state_listener : tuple[Callable, Callable]
+        The ``(on_down, on_up)`` pair: a dropped candle stream pauses submission and a
+        recovered one drives the resume path.
+    """
+    stream = ctx.config.stream
+    provider = OkxDataProvider(
+        connector,
+        symbol=stream.okx_stream_symbol,
+        timeframe=stream.okx_stream_timeframe,
+    )
+    feed.set_provider(provider)
+    provider.set_bar_sink(feed.update)
+    provider.set_global_queue(global_queue)
+    provider.set_halt_signal(halt_signal)
+    provider.set_stream_state_listener(*stream_state_listener)
+    return provider

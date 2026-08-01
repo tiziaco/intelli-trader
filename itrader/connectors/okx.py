@@ -55,7 +55,10 @@ from typing import Any, Awaitable, Callable, TypeVar
 
 import ccxt.pro as ccxtpro
 
-from itrader.config.okx_settings import OkxSettings
+from pydantic_settings import BaseSettings
+
+from itrader.config.okx_settings import OkxRouting, OkxSettings
+from itrader.core.exceptions.credential import CredentialResolutionError
 from itrader.logger import get_itrader_logger
 
 _T = TypeVar("_T")
@@ -63,6 +66,41 @@ _T = TypeVar("_T")
 # Bridge/lifecycle timeout (seconds). Order submit/cancel and client build must complete
 # well within this; a hang here surfaces loud rather than blocking the engine forever.
 _CALL_TIMEOUT = 30.0
+
+
+def _routing_fields(credential_model: type[BaseSettings]) -> tuple[str, ...]:
+    """The model's non-secret connection-knob field names, read off field metadata.
+
+    Derived rather than hand-listed (the D-6 field-kind declaration): a parallel tuple of
+    knob names has to be edited in step with the model, and the failure when it is not is
+    silent — a newly added routing field is simply never forwarded, so an account that pins
+    it keeps the venue default with nothing reporting the omission.
+    """
+    return tuple(
+        name
+        for name, field in credential_model.model_fields.items()
+        if isinstance(field.json_schema_extra, dict)
+        and field.json_schema_extra.get("kind") == "routing"
+    )
+
+
+def _connection_overrides(
+    spec: Any, credential_model: type[BaseSettings]
+) -> dict[str, Any]:
+    """The account's own non-secret connection knobs, or ``{}``.
+
+    Only knobs the account ACTUALLY names are returned. A ``None`` must never be forwarded:
+    the precedence rule is "a key the account does not name leaves the venue default in
+    force", and passing ``sandbox=None`` through would break it in the worst direction —
+    ``None`` is not a valid bool, so it would either fail validation or coerce a configured
+    PRODUCTION account onto the demo host. Absence is not an override.
+    """
+    overrides: dict[str, Any] = {}
+    for name in _routing_fields(credential_model):
+        value = getattr(spec, name, None)
+        if value is not None:
+            overrides[name] = value
+    return overrides
 
 
 class OkxConnector:
@@ -73,7 +111,13 @@ class OkxConnector:
     lifecycle — and no venue operations. Emits no domain events.
     """
 
-    def __init__(self, settings: OkxSettings | None = None) -> None:
+    def __init__(self, settings: OkxRouting | None = None) -> None:
+        """Bind the session's settings. ``OkxRouting`` alone builds a PUBLIC session.
+
+        The annotation is the routing base so a credential-free session is expressible;
+        the default stays the AUTHENTICATED model, because a no-arg connector is the
+        single-global-credential deployment and must not silently become public.
+        """
         self.logger = get_itrader_logger().bind(component="OkxConnector")
         # SecretStr credentials live here; surfaced only at client construction (T-02-02-LEAK).
         # OkxSettings sources every field from the environment, so the no-arg construction
@@ -148,15 +192,17 @@ class OkxConnector:
         """Construct the ccxt.pro client ON the loop, route sandbox, load markets.
 
         Runs inside the loop thread so the client binds its sockets to this loop. The
-        passphrase goes in ccxt's ``password`` field; ``enableRateLimit`` stays ON (RES-01).
-        ``load_markets()`` populates the precision tables the order arm's
-        ``amount_to_precision``/``price_to_precision`` helpers need.
+        credential keys come from the settings object — the authenticated triple, or
+        NOTHING for a public session — while the ROUTING below applies either way:
+        region host, rate limiting, the sandbox REST header and the authoritative WS host
+        are properties of where the session goes, not of who it is.
+        ``enableRateLimit`` stays ON (RES-01), and ``load_markets()`` populates the
+        precision tables the order arm's ``amount_to_precision``/``price_to_precision``
+        helpers need.
         """
         self._client = ccxtpro.okx(
             {
-                "apiKey": self._settings.api_key.get_secret_value(),
-                "secret": self._settings.api_secret.get_secret_value(),
-                "password": self._settings.api_passphrase.get_secret_value(),
+                **self._settings.ccxt_credentials(),
                 # Region-derived REST host (www.okx.com global / eea.okx.com EEA). ccxt
                 # substitutes this into its ``https://{hostname}`` template.
                 "hostname": self._settings.rest_hostname,
@@ -280,3 +326,89 @@ class OkxConnector:
                 self._loop = None
                 self._thread = None
                 self._client = None
+
+
+def build_okx_connector(
+    *,
+    descriptor: Any = None,
+    spec: Any = None,
+    resolver: Any = None,
+) -> OkxConnector:
+    """Build ONE OKX session from an account's resolved credentials.
+
+    The recipe form the connector pool calls: a module-level function beside the class it
+    builds, so the construction knowledge lives with the thing constructed rather than in a
+    separate plugin module that must be kept in step with it.
+
+    Parameters
+    ----------
+    descriptor : VenueDescriptor, optional
+        The venue's catalogue entry. Its ``credential_model`` supplies the REQUIRED
+        credential field set for the completeness gate below, so the gate tracks the model
+        automatically when a credential field is added. Falls back to ``OkxSettings`` when
+        no descriptor is supplied.
+    spec : Any, optional
+        The account-shaped record naming ``secret_ref`` and the non-secret connection
+        knobs. ``None`` asks for a PUBLIC session.
+    resolver : CredentialResolver, optional
+        Turns ``secret_ref`` into credential material. Absent means a single-global-
+        credential deployment.
+
+    Notes
+    -----
+    A supplied ``secret_ref`` must resolve to the COMPLETE credential set. An incomplete
+    resolution is REFUSED, never completed: ``OkxSettings`` is a
+    ``pydantic_settings.BaseSettings``, so any field the resolved mapping omits would
+    otherwise be silently filled from the ambient global ``OKX_API_*`` environment —
+    authenticating as whichever account the process env happens to hold, while the system
+    believes the accounts are separate.
+    """
+    if spec is None:
+        # A PUBLIC session: routing only, no credential material anywhere in the client.
+        # It is built from ``OkxRouting`` rather than from an ``OkxSettings`` with blanked
+        # fields, so "carries no credentials" holds by construction rather than by a
+        # branch — and the authenticated model's fields stay REQUIRED, which is what keeps
+        # the completeness gate below alive.
+        #
+        # The routing comes from the process environment (``OKX_SANDBOX`` / ``OKX_REGION``)
+        # because a public session names no account to read overrides from. Region+sandbox
+        # still matter: an EEA host answers differently from the global one, so a public
+        # candle socket must be routed, just not authenticated.
+        return OkxConnector(OkxRouting())
+
+    credential_model = getattr(descriptor, "credential_model", None) or OkxSettings
+    connection = _connection_overrides(spec, credential_model)
+    secret_ref = getattr(spec, "secret_ref", None)
+    if resolver is None or secret_ref is None:
+        # No pointer: single global OKX_API_* deployment. An account with no pointer simply
+        # has no per-account credentials — this is not the fail-open case below, where a
+        # well-formed pointer resolves to nothing.
+        return OkxConnector(OkxSettings(**connection))
+
+    # A resolution failure PROPAGATES: an operator typo in secret_ref must stop the
+    # connect, not quietly authenticate as whichever account the process env holds.
+    resolved = resolver.resolve(secret_ref)
+
+    # Derived by CLASS access (never instance access, which pydantic deprecates and
+    # ``filterwarnings=["error"]`` turns into a failure).
+    required = {
+        name
+        for name, field in credential_model.model_fields.items()
+        if field.is_required()
+    }
+    missing = required - set(resolved)
+    if missing:
+        # Field names only: CredentialResolutionError is a redaction boundary and never
+        # carries a credential value.
+        raise CredentialResolutionError(
+            secret_ref,
+            f"resolved {sorted(set(resolved) & required)} but is missing the required "
+            f"credential field(s) {sorted(missing)} — refusing to complete the credential "
+            "set from the ambient process environment",
+        )
+
+    # Merged into ONE dict rather than splatted as two ``**`` arguments: a resolver whose
+    # prefix exposed a ``*_SANDBOX``/``*_REGION`` var would put that key in both mappings,
+    # and two splats collide with a bare TypeError. Merging makes the precedence explicit —
+    # the account row's own connection knobs win.
+    return OkxConnector(OkxSettings(**{**resolved, **connection}))

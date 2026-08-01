@@ -33,8 +33,8 @@ from itrader.order_handler.admission.admission_manager import AdmissionManager
 from itrader.order_handler.brackets.bracket_book import BracketBook
 from itrader.order_handler.brackets.bracket_manager import BracketManager
 from itrader.order_handler.order import Order
-from itrader.order_handler.storage import OrderStorageFactory
-from itrader.venues.registry import DEFAULT_ACCOUNT_ID
+from itrader.order_handler.storage import build_order_storage
+from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
 
 
 class _StubLogger:
@@ -102,7 +102,7 @@ def _make_admission(fee_model_provider, portfolio_handler=None) -> AdmissionMana
     in this file uses); the WR-01 cases below pass a ``_StubReadModel`` because
     the ACCOUNT half of the lookup key is read off it.
     """
-    storage = OrderStorageFactory.create("test")
+    storage = build_order_storage("test")
     logger = _StubLogger()
     brackets = BracketBook()
     bracket_manager = BracketManager(storage, logger, brackets)
@@ -337,7 +337,7 @@ def test_two_venues_with_different_fee_models_yield_different_estimates():
     counter would stay green through that regression, which is why this file
     pins an identity sentinel alongside the argument assertion above (the
     two-independent-signals convention from
-    ``tests/unit/venues/test_venue_bundles.py``).
+    the venue-account tests).
     """
     registry = {
         ("paper", DEFAULT_ACCOUNT_ID): _FakeFeeModel(Decimal("1.5")),

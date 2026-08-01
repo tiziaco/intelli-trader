@@ -7,7 +7,7 @@ from contextlib import contextmanager
 
 from .portfolio import Portfolio
 from .position import Position
-from .account import Account, SimulatedMarginAccount, VenueAccount
+from .account import Account, SimulatedMarginAccount
 from itrader.portfolio_handler.reconcile import is_within_single_unit_tolerance
 from itrader.core.exceptions import (
     PortfolioNotFoundError, InvalidPortfolioOperationError,
@@ -49,8 +49,8 @@ class PortfolioHandler:
     collection nor an individual ``Portfolio`` carries a lock.
     """
     
-    def __init__(self, global_queue: "EventBus", config_dir: str = "settings",
-                 environment: str = "backtest", sql_engine: "Optional[Any]" = None,
+    def __init__(self, global_queue: "EventBus", environment: str = "backtest",
+                 sql_engine: "Optional[Any]" = None,
                  *,
                  portfolio_factory: "Optional[Any]" = None) -> None:
         self.global_queue: "EventBus" = global_queue
@@ -98,8 +98,14 @@ class PortfolioHandler:
         self._order_storage: Optional[OrderStorage] = None
 
         # Engine-thread drift-halt seam: unexplained beyond-band per-symbol drift freezes
-        # the WHOLE engine. None on backtest — no VenueAccount portfolio, so no compare.
+        # the WHOLE engine. None on backtest, where no portfolio has venue truth behind it
+        # and so nothing is compared.
         self._halt_signal: Optional[Callable[[str], None]] = None
+        # Answers "is there venue truth for this portfolio, and what is it?". None → no
+        # venue anywhere, the backtest/paper default, and every drift compare skips.
+        self._snapshot_source: Optional[
+            Callable[[Portfolio], Optional[Any]]
+        ] = None
         # Answers whether a beyond-band drift maps to a KNOWN venue event and is therefore
         # adopt-and-continue rather than a halt. ``None`` → the conservative money-first
         # default: any beyond-band drift is unexplained and halts.
@@ -185,20 +191,17 @@ class PortfolioHandler:
                     raise PortfolioValidationError(0, "name", "Portfolio name cannot be empty")
 
                 # Resolve the id HERE so the definition row and the runtime graph carry
-                # the SAME one. ``create`` runs FIRST: a create that succeeds followed by
-                # a materialize that raises leaves a durable row with no live Portfolio,
-                # which the next boot rehydrates — so the row is never orphaned.
+                # the SAME one.
                 resolved_id = (
                     portfolio_id if portfolio_id is not None
                     else PortfolioId(idgen.generate_portfolio_id())
                 )
-                self.create(
-                    resolved_id,
-                    name=name,
-                    cash=cash,
-                    account_id=account_id,
-                    venue_name=venue_name,
-                )
+                # ``materialize`` runs FIRST (WR-03). It is what VALIDATES the named venue
+                # account, and the durable row carries a composite foreign key onto
+                # ``venue_accounts`` — so inserting first means an unprovisioned account is
+                # refused by the DATABASE with an ``IntegrityError`` before the domain ever
+                # gets to raise its own ``VenueAccountNotProvisionedError``, which is the
+                # error that names the account and tells the operator how to provision it.
                 portfolio = self.materialize(
                     name=name,
                     exchange=exchange,
@@ -208,6 +211,21 @@ class PortfolioHandler:
                     account_id=account_id,
                     venue_name=venue_name,
                 )
+                # A live Portfolio whose definition row did NOT persist is worse than no
+                # portfolio at all: it trades this session and vanishes at the next boot
+                # while its positions and cash rows orphan. So a failed insert UNREGISTERS
+                # the portfolio it belongs to, and the refusal stays total.
+                try:
+                    self.create(
+                        resolved_id,
+                        name=name,
+                        cash=cash,
+                        account_id=account_id,
+                        venue_name=venue_name,
+                    )
+                except Exception:
+                    self._portfolios.pop(portfolio.portfolio_id, None)
+                    raise
 
                 self.logger.info(
                     "Portfolio created successfully",
@@ -279,9 +297,10 @@ class PortfolioHandler:
         PortfolioValidationError
             ``portfolio_id`` is already registered.
         VenueAccountNotProvisionedError
-            Live only: the named venue account is missing, disabled or offline. The
-            ``VenueValidatedComputeAuthority`` refuses rather than let the portfolio sit
-            on a fabricated balance. Backtest's compute authority never raises.
+            Live only: the named venue account is missing or disabled. The live
+            ``AccountFactory``'s injected validator refuses rather than let the portfolio
+            sit on a fabricated balance; a backtest one holds no validator and never
+            raises.
         """
         # Refuse LOUDLY: the tempting inline ``SimulatedCashAccount(...)`` fallback would
         # reinstate a second account-kind selection, on a path nothing covers.
@@ -468,13 +487,14 @@ class PortfolioHandler:
     def drop_pending(self, portfolio_id: PortfolioId, order_id: OrderId) -> None:
         """Drop the local pending overlay on the venue ORDER-ACK.
 
-        Getattr-guarded because only ``VenueAccount`` carries a pending overlay, so this
-        skips cleanly for paper/simulated accounts. NON-terminal: it pops only the
-        admission overlay, never the settled ledger.
+        An unconditional call: ``drop_pending`` is declared on the account ABC, where a
+        compute leaf documents it as a no-op because it holds no venue-side hold. The
+        previous ``getattr`` probe was an account-type test in disguise, and it also
+        silently skipped for any leaf that merely forgot to implement it.
+
+        NON-terminal: it pops only the admission overlay, never the settled ledger.
         """
-        fn = getattr(self.get_portfolio(portfolio_id).account, "drop_pending", None)
-        if fn is not None:
-            fn(order_id)
+        self.get_portfolio(portfolio_id).account.drop_pending(order_id)
 
     def exchange_for(self, portfolio_id: PortfolioId) -> str:
         """Return the exchange the portfolio trades on."""
@@ -765,19 +785,38 @@ class PortfolioHandler:
 
     # ------------------------------------------------------------------
     # Engine-thread drift compare + halt decision. The venue is the arbiter of truth in
-    # live, but the async push writer only WRITES the VenueAccount cache; the compare and
-    # the halt decision run HERE, on the engine thread. That placement structurally
-    # defeats the phantom-drift race — the engine tally is fully applied before the
-    # compare reads it, and no compare is reachable from a spawned coroutine.
+    # live, and the read of that truth plus the compare and the halt decision all run HERE,
+    # on the engine thread. That placement structurally defeats the phantom-drift race —
+    # the engine tally is fully applied before the compare reads it, and no compare is
+    # reachable from a spawned coroutine.
     # ------------------------------------------------------------------
 
     def set_halt_signal(self, halt_signal: Callable[[str], None]) -> None:
         """Inject the composition-root freeze-in-place halt entrypoint.
 
         The live root wires ``LiveTradingSystem.halt`` here. Backtest never wires it — no
-        VenueAccount, so no compare.
+        venue truth anywhere, so nothing is compared.
         """
         self._halt_signal = halt_signal
+
+    def set_snapshot_source(
+        self, source: Callable[[Portfolio], Optional[Any]]
+    ) -> None:
+        """Inject the per-portfolio venue-truth source for the drift compare.
+
+        Returns an ``AccountSnapshot`` for a portfolio whose account has a venue behind
+        it, or ``None`` when there is none — backtest and paper, where cash and positions
+        are engine-computed and there is nothing external to compare against.
+
+A source rather than an account-type test. "Is there venue truth for this
+        portfolio?" is answered by whoever wired the venue, not inferred from which
+        concrete leaf the portfolio happens to hold — an inferred answer is one that can
+        become uniformly False and silently disable the whole compare with nothing red.
+
+        Left unwired, every portfolio reports no venue truth and the compare skips — the
+        correct backtest default.
+        """
+        self._snapshot_source = source
 
     def set_drift_reconciler(
         self, reconciler: Callable[[Any, str, Decimal, Decimal], bool]
@@ -816,12 +855,13 @@ class PortfolioHandler:
 
     def _compare_symbol_drift(self, portfolio: Portfolio, ticker: str,
                               correlation_id: CorrelationId,
-                              just_applied_fill_qty: Optional[Decimal] = None) -> None:
+                              just_applied_fill_qty: Optional[Decimal] = None,
+                              snapshot: Optional[Any] = None) -> None:
         """Per-symbol engine-vs-venue drift compare on the ENGINE thread.
 
-        Runs ONLY for a live ``VenueAccount`` portfolio; a paper ``SimulatedAccount`` has
-        no venue truth and skips cleanly. Compares the engine's fill-applied quantity for
-        ``ticker`` against cached venue truth, keyed to the instrument precision:
+        Runs ONLY for a portfolio with venue truth behind it; backtest and paper have none
+        and skip cleanly. Compares the engine's fill-applied quantity for ``ticker``
+        against venue truth, keyed to the instrument precision:
 
         * within the precision-epsilon band → adopt venue truth silently (last-digit dust);
         * within the spurious-halt band → absorb, defer to the periodic sweep;
@@ -838,12 +878,19 @@ class PortfolioHandler:
             per-bar sweep — means every beyond-band skew is a candidate drift, so the
             sweep still halts once the snapshot has had time to catch up and a genuinely
             persistent divergence is never hidden.
+        snapshot : Optional[AccountSnapshot]
+            Venue truth already read by the caller. Passed in by the per-bar sweep, which
+            takes ONE snapshot per portfolio and compares every symbol against it: reading
+            it per symbol would multiply the venue round trips and, worse, let two symbols
+            be judged against two different pictures of the venue. ``None`` means "read it
+            here" — the on-fill compare, which examines a single symbol.
         """
-        account: Account = portfolio.account
-        if not isinstance(account, VenueAccount):
+        if snapshot is None:
+            snapshot = self._venue_snapshot(portfolio)
+        if snapshot is None:
             return  # backtest/paper — no venue truth, nothing to reconcile.
 
-        venue_qty = account.positions.get(ticker, Decimal("0"))
+        venue_qty = snapshot.positions.get(ticker, Decimal("0"))
         engine_position = portfolio.get_open_position(ticker)
         engine_qty = (
             engine_position.net_quantity if engine_position is not None
@@ -900,19 +947,44 @@ class PortfolioHandler:
         compare.
 
         Sweeps the union of engine-held and venue-reported tickers, so a position the
-        engine has forgotten is still compared. Paper portfolios are skipped.
+        engine has forgotten is still compared. Portfolios with no venue truth are skipped.
+
+        ONE snapshot per portfolio, taken here and threaded into every per-symbol compare.
+        That placement is load-bearing now that venue truth is read on demand rather than
+        off a streamed cache: taking it inside the symbol loop would turn one sweep into
+        one venue round trip PER SYMBOL, and would let two symbols of the same portfolio be
+        judged against two different pictures of the venue.
         """
         if bar_time is None:
             return
         for portfolio in self.get_active_portfolios():
-            account: Account = portfolio.account
-            if not isinstance(account, VenueAccount):
+            snapshot = self._venue_snapshot(portfolio)
+            if snapshot is None:
                 continue
             engine_tickers = set(portfolio.positions.keys())
-            venue_tickers = set(account.positions.keys())
+            venue_tickers = set(snapshot.positions.keys())
             for ticker in sorted(engine_tickers | venue_tickers):
                 self._compare_symbol_drift(
-                    portfolio, ticker, self._generate_correlation_id())
+                    portfolio, ticker, self._generate_correlation_id(),
+                    snapshot=snapshot)
+
+    def _venue_snapshot(self, portfolio: Portfolio) -> Optional[Any]:
+        """Venue truth for ``portfolio``, or ``None`` when it has none behind it.
+
+        A failed venue read is NOT a drift signal: reporting an empty snapshot would make
+        every engine-held position look like a phantom and halt a healthy engine on a
+        transient network fault. Unreadable venue truth means "no comparison is possible
+        right now", which is what ``None`` says.
+        """
+        if self._snapshot_source is None:
+            return None
+        try:
+            return self._snapshot_source(portfolio)
+        except Exception:
+            self.logger.error(
+                "Venue snapshot failed — skipping the drift compare for this portfolio "
+                "rather than treating unreadable truth as drift", exc_info=True)
+            return None
 
     def _mark_venue_trade_settled(self, venue_trade_id: str) -> None:
         """Record a venue trade id as settled in the bounded FIFO dedup ledger.

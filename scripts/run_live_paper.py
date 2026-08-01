@@ -40,7 +40,8 @@ from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
 from itrader.logger import get_itrader_logger
 from itrader.reporting.frames import build_equity_curve, build_trade_log
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
-from itrader.trading_system.live_trading_system import LiveTradingSystem
+from itrader import config as _live_config
+from itrader.trading_system.live.build import build_live_system
 
 
 # --- Pinned paper-worker configuration (parity anchor — verbatim golden literals) ---
@@ -198,7 +199,7 @@ def _run_okx_smoke(logger) -> None:
     branch performs OKX network I/O and is invoked ONLY when explicitly requested
     with ``--mode okx``; the default replay path and CI never reach it.
     """
-    system = LiveTradingSystem.for_exchange("okx")
+    system = build_live_system(_live_config, execution_venue="okx")
     _compose(system)
 
     started = system.start()

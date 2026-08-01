@@ -2,7 +2,7 @@
 
 Every collaborator is INJECTED and NO venue I/O lives here: missed-fill re-fetch, account
 re-snapshotting, ring back-fill and connector-loop calls belong to
-``StreamRecoveryHandler`` instead. 4-space indentation.
+``StreamRecoveryHandler`` instead.
 """
 
 import threading

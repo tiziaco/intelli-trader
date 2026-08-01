@@ -36,12 +36,12 @@ import pytest
 
 from itrader.execution_handler.fee_model.base import FeeModel
 from itrader.order_handler.order_handler import OrderHandler
-from itrader.order_handler.storage import OrderStorageFactory
+from itrader.order_handler.storage import build_order_storage
 from itrader.events_handler.events import FillEvent, OrderEvent, SignalEvent
 from itrader.core.enums import OrderType, OrderStatus, Side, OrderTriggerSource, PositionSide
 from itrader.core.money import to_money
 from itrader.core.sizing import FractionOfCash, TradingDirection
-from itrader.venues.registry import DEFAULT_ACCOUNT_ID
+from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
 from tests.support.venue_wiring import backtest_portfolio_handler
 
 
@@ -58,7 +58,7 @@ class _AdmissionHarness:
     def __init__(self):
         self.queue = Queue()
         self.ptf_handler = backtest_portfolio_handler(self.queue)
-        self.order_storage = OrderStorageFactory.create("test")
+        self.order_storage = build_order_storage("test")
         self.order_handler = OrderHandler(self.queue, self.ptf_handler, self.order_storage)
         self.last_ptf_id = self.ptf_handler.add_portfolio("test_ptf", "default", 10000)
 
@@ -1074,7 +1074,7 @@ def test_funded_short_increase_still_admits(harness):
 #
 # These cases pin the fix END-TO-END, through ``on_signal`` and the real
 # check-and-reserve gate, with TWO INDEPENDENT SIGNALS (the convention in
-# ``tests/unit/venues/test_venue_bundles.py``): the RECORDED ARGUMENTS, and an
+# the venue-account tests): the RECORDED ARGUMENTS, and an
 # IDENTITY SENTINEL. A call counter alone is satisfied by a lookup that returns
 # the wrong entry, which is exactly this defect.
 # ---------------------------------------------------------------------------

@@ -22,7 +22,7 @@ from itrader.execution_handler.fee_model.base import FeeModel
 from itrader.order_handler.order_manager import OrderManager
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.order_handler.order import Order
-from itrader.order_handler.storage import OrderStorageFactory
+from itrader.order_handler.storage import build_order_storage
 from itrader.order_handler.storage.in_memory_storage import InMemoryOrderStorage
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.events_handler.events import SignalEvent, OrderEvent, FillEvent
@@ -70,7 +70,7 @@ class _Harness:
     def __init__(self):
         self.queue = Queue()
         self.ptf_handler = backtest_portfolio_handler(self.queue)
-        self.storage = OrderStorageFactory.create("test")
+        self.storage = build_order_storage("test")
         self.handler = OrderHandler(self.queue, self.ptf_handler, self.storage)
         self.portfolio_id = self.ptf_handler.add_portfolio("p", "default", 100000)
 

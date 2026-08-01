@@ -39,7 +39,7 @@ from itrader.core.exceptions import ConfigurationError
 from itrader.core.sizing import FractionOfCash, TradingDirection
 from itrader.reporting.frames import build_equity_curve, build_trade_log
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
-from itrader.trading_system.backtest_trading_system import (
+from itrader.trading_system.backtest.backtest_trading_system import (
     BacktestTradingSystem,
     build_backtest_system,
 )
@@ -181,7 +181,7 @@ def test_backtest_module_import_is_sql_import_inert() -> None:
     """
     code = (
         "import sys\n"
-        "import itrader.trading_system.backtest_trading_system\n"
+        "import itrader.trading_system.backtest.backtest_trading_system\n"
         "assert 'sqlalchemy' not in sys.modules, "
         "'GATE-01: sqlalchemy imported on the store-free backtest path'\n"
         "print('inert')\n"

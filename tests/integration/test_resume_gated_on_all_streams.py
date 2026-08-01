@@ -1,20 +1,18 @@
-"""Resume is gated on ALL venue stream arms being healthy (D-28 / WR-03).
+"""Resume is gated on ALL venue stream arms being healthy.
 
-Locks in the D-28 fix: the engine-thread resume drain
-``StreamRecoveryHandler.on_reconnect`` must resume NEW order submission
-ONLY when every wired venue stream arm reports healthy — the exchange arm
-(fills+orders) AND the data-provider arm (candles). Before the fix, ``_on_venue_stream_up``
-set ``_pending_stream_resume`` on ANY single arm's reconnect, so a candle-stream reconnect
-resumed submission while the fill stream was still down — the engine traded blind to fills
-(WR-03).
+The engine-thread resume drain ``StreamRecoveryHandler.on_reconnect`` resumes NEW order
+submission ONLY when every wired venue stream arm reports healthy — every online
+account's exchange arm (fills+orders) AND the data-provider arm (candles). Resuming on
+any SINGLE arm's reconnect would let a candle-stream recovery clear the pause while the
+fill stream was still down, and the engine would trade blind to its own fills.
 
-The fix adds NO engine-side aggregation: each arm already owns its ``_streams_down`` set;
-it exposes a public ``is_streaming_healthy()`` predicate, and the engine reads a compound
+There is NO engine-side stream aggregate: each arm owns its own ``_streams_down`` set and
+exposes a public ``is_streaming_healthy()`` predicate; the handler reads a compound
 ``_all_venue_streams_healthy()`` gate immediately before ``resume_submission()``.
 
-This test drives the RESUME PATH (not the predicate in isolation): it stands up a paused
-OKX live system fully offline, drops one arm, fires the resume flag, and asserts submission
-STAYS paused; only once BOTH arms report healthy does the next drain resume.
+These tests drive the RESUME PATH (not the predicate in isolation): they stand up a paused
+OKX live system fully offline, drop one arm, fire the reconnect route target, and assert
+submission STAYS paused; only once BOTH arms report healthy does the next drain resume.
 """
 
 import queue
@@ -28,18 +26,26 @@ import pandas as pd
 from itrader.core.exceptions import StateError
 import pytest
 
+from itrader.execution_handler.exchanges.base import AccountSnapshot
 from itrader.price_handler.feed.live_bar_feed import LiveBarFeed
-from itrader.trading_system.live_trading_system import LiveTradingSystem
-from tests.support.live_okx import the_feed_provider, the_okx_lifecycle
+from itrader import config as _live_config
+from itrader.trading_system.live.build import build_live_system
+from itrader.trading_system.live.system import LiveTradingSystem
+from tests.support.live_okx import bring_okx_online, the_feed_provider, the_okx_record
 
 
 def _exchange(system: LiveTradingSystem):
-    """The (single, store-derived) OKX execution arm — read through its lifecycle."""
-    return the_okx_lifecycle(system).bundle.exchange
+    """The (single, store-derived) OKX execution ADAPTER — read off its online record.
+
+    This one object is all three resume arms: it runs the missed-fill catch-up, reads the
+    venue snapshot and reports its own stream health, because it owns the account's
+    authenticated session.
+    """
+    return the_okx_record(system).adapter
 
 
 def _provider(system: LiveTradingSystem):
-    """The one feed data provider — the connection the binder borrowed (11.2-07/D-36)."""
+    """The one data adapter — the candle arm, on its own session."""
     return the_feed_provider(system)
 
 
@@ -47,24 +53,29 @@ def _provider(system: LiveTradingSystem):
 def paused_okx_system(provisioned_okx):
     """A paused OKX live system with both blocking resume legs stubbed offline.
 
-    P7 (§11c): the reconnect-resume I/O + the all-streams-healthy gate live on the
-    injected StreamRecoveryHandler; the ``STREAM_STATE(up)`` route drives its
-    ``on_reconnect``. The tests drive that handler directly. The venue-account snapshot
-    leg is stubbed on the HANDLER; the missed-fill catch-up leg is stubbed on the real
-    exchange object the handler shares.
+    The reconnect-resume I/O + the all-streams-healthy gate live on the injected
+    ``StreamRecoveryHandler``, which the ``STREAM_STATE(up)`` route drives; the tests
+    drive that handler directly.
 
-    11.2-07: the OKX account is STORE-DERIVED, so ``provisioned_okx`` gives the boot one
-    durable row to bring online (offline there would be none).
+    Both blocking legs are stubbed on the SAME real adapter object, because that is where
+    they both live: the adapter owns the session, so it does the catch-up AND the snapshot.
+    Its ``is_streaming_healthy`` and ``_supervisor`` are left REAL, so the gate under test
+    reads genuine arm health rather than a mock's default.
+
+    The OKX account is STORE-DERIVED, so ``provisioned_okx`` gives the boot one durable
+    row to bring online (offline there would be none).
     """
-    system = LiveTradingSystem.for_exchange("okx")
-    lifecycle = the_okx_lifecycle(system)
-    assert lifecycle.bundle.connector is not None
+    system = build_live_system(
+        _live_config, execution_venue="okx")
+    record = bring_okx_online(system)
+    assert record.connector is not None
+    exchange = record.adapter
     # Neutralize the two blocking venue-I/O legs the resume runs before the gate
     # (missed-fill catch-up + REST snapshot) so the resume path runs socket-free.
-    lifecycle.bundle.exchange.catch_up_missed_fills = MagicMock(  # type: ignore[method-assign]
+    exchange.catch_up_missed_fills = MagicMock(  # type: ignore[method-assign]
         name="catch_up_missed_fills")
-    system._stream_recovery._venue_accounts = lambda: [
-        MagicMock(name="venue_account")]
+    exchange.snapshot = MagicMock(  # type: ignore[method-assign]
+        name="snapshot", return_value=AccountSnapshot.empty())
     system.pause_submission("paused-on-disconnect")
     try:
         yield system
@@ -73,7 +84,7 @@ def paused_okx_system(provisioned_okx):
 
 
 def test_resume_stays_paused_while_fill_arm_down(paused_okx_system) -> None:
-    """A candle-stream reconnect while the fill stream is down must NOT resume (D-28).
+    """A candle-stream reconnect while the fill stream is down must NOT resume.
 
     The all-streams-healthy gate (StreamRecoveryHandler._all_venue_streams_healthy) keeps
     the pause in place until EVERY wired arm reports up.
@@ -127,16 +138,16 @@ def test_resume_when_both_arms_healthy(paused_okx_system) -> None:
 def test_an_unwired_venue_never_blocks_resume(paused_okx_system) -> None:
     """An UNWIRED venue is treated as healthy — it never blocks resume (absent ⇒ healthy).
 
-    11-09: "an arm is absent" is now expressed as an EMPTY lifecycle map, which is what a
-    non-OKX wiring actually produces (no account assembles, so neither the exchange arm
-    nor the data arm exists). The old spelling — nulling one scalar while leaving the
-    other — described a state the composition root never builds. The mixed case, where
-    one of several accounts' arms is down while the rest are healthy, is gated in
+    "The exchange arm is absent" is expressed as ZERO online account records, which is what
+    a non-OKX wiring actually produces: no account comes online, so no adapter exists to
+    catch up, snapshot or report health. Nulling one scalar while leaving another described
+    a state the composition root never builds. The mixed case — one of several accounts'
+    arms down while the rest are healthy — is gated in
     ``tests/unit/trading_system/test_stream_recovery_handler.py``.
     """
     system = paused_okx_system
 
-    system._stream_recovery._lifecycles = {}
+    system._stream_recovery._accounts = lambda: []
     _provider(system)._supervisor._streams_down = set()
 
     system._stream_recovery.on_reconnect()

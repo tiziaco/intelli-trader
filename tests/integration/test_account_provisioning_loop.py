@@ -1,12 +1,12 @@
 """The account-provisioning loop end to end on the SQL spine (11.2-05, D-27/D-29 slice).
 
 ONE durable ``venue_accounts`` row travels through EVERY layer the account domain
-touches — store → ``VenueAccountManager`` → ``assemble_venue`` → the exchange registry →
-``VenueBundles`` → a constructed account leaf — in a single test. This is deliberately
-NOT four per-layer unit tests: each layer already has those, and every one of them passed
-while the layers disagreed about the account key. What no unit test can show is that the
-key the registry is WRITTEN under is the key the order path READS, and that the row's own
-``secret_ref`` survives the whole trip.
+touches — store → ``VenueAccountManager`` → the venue's adapter recipe → the routing map
+the order path reads → a portfolio materialized over the pair — in a single test. This is
+deliberately NOT four per-layer unit tests: each layer already has those, and every one of
+them passed while the layers disagreed about the account key. What no unit test can show is
+that the key the routing map is WRITTEN under is the key the order path READS, and that the
+row's own ``secret_ref`` survives the whole trip.
 
 Proves, in one path:
 
@@ -18,23 +18,20 @@ Proves, in one path:
     by the absence of the coerced ``(venue, 'default')`` key, because a registration under
     the coerced key type-checks, boots clean, and blackholes every order for the named
     account.
-  - **The ``secret_ref`` handoff (T-11.2-05-01, ACCT-02/WR-05).** The ``VenueSpec`` built
-    inside ``bring_online`` carries the row's OWN pointer. Two INDEPENDENT signals: the
-    spec the manager recorded, and the spec the venue PLUGIN actually received (a counter
-    or a single stored copy alone cannot tell "built it right" from "built it, then
-    handed the plugin something else"). Without this, every named account silently
-    reverts to the ambient ``OKX_API_*`` credentials — a fail-open no test would redden.
-  - **ACCT-03 resolution.** ``account_for`` returns a constructed account leaf for the
-    online pair and RAISES the typed refusal for an unknown one.
+  - **The ``secret_ref`` handoff (ACCT-02/WR-05).** The ``AccountSpec`` built inside
+    ``bring_online`` carries the row's OWN pointer. Two INDEPENDENT signals: the spec the
+    manager recorded, and the spec the RECIPE actually received (a counter or a single
+    stored copy alone cannot tell "built it right" from "built it, then handed the recipe
+    something else"). Without this, every named account silently reverts to the ambient
+    ``OKX_API_*`` credentials — a fail-open no test would redden.
+  - **ACCT-03 resolution.** ``assert_available`` passes for a provisioned, enabled pair and
+    RAISES the typed refusal for an unknown one.
   - **The empty case (ACCT-01/D-09).** A venue with zero enabled rows yields ``[]`` and no
     error — a fresh deployment comes up empty rather than failing.
 
-The **paper** arm is used on purpose. Its ``account_factory`` requires ``state_storage``
-with no default (11.2-01/WR-08) while the OKX arm still defaults it, so a test written on
-the OKX-shaped arm would go green against a call shape that raises ``TypeError`` in
-production. Paper is also the arm whose bundle carries ``connector=None`` — the case the
-legacy boot loop SKIPPED registering, which is precisely how a named paper account became
-unroutable.
+The **paper** arm is used on purpose: it is the venue that carries NO session — the case
+the legacy boot loop SKIPPED registering, which is precisely how a named paper account
+became unroutable.
 
 4-space indentation (matches ``tests/integration/*``); NO ``__init__.py`` in this dir.
 Folder-derived ``integration`` marker.
@@ -51,30 +48,24 @@ import pytest
 
 from itrader.config import ExchangeConfig
 from itrader.config.sql import SqlSettings
-from itrader.connectors.provider import ConnectorProvider
+from itrader.connectors.pool import ConnectorPool
 from itrader.core.exceptions import (
     DuplicateVenueAccountProvisionError,
     VenueAccountNotProvisionedError,
 )
 from itrader.portfolio_handler.account import SimulatedCashAccount
 from itrader.portfolio_handler.portfolio_factory import (
-    ComputeAccountAuthority,
+    AccountFactory,
     PortfolioFactory,
-    VenueValidatedComputeAuthority,
 )
 from itrader.storage import SqlEngine
 from itrader.storage.venue_account_store import VenueAccountStore
 from itrader.trading_system.alert_sink import LogAlertSink
-from itrader.venues.bundles import VenueBundles
-from itrader.venues.paper_plugin import PaperVenuePlugin
-from itrader.venues.registry import (
-    COMPUTE_VENUE,
-    DEFAULT_ACCOUNT_ID,
-    ExecutionVenueRegistry,
-)
-from itrader.venues.venue_account_manager import VenueAccountManager
+from itrader.venues.accounts import VenueAccountManager
+from itrader.venues.catalog import CATALOG
+from itrader.execution_handler.exchanges.paper import paper_exchange_recipe
+from itrader.execution_handler.execution_handler import COMPUTE_VENUE, DEFAULT_ACCOUNT_ID
 from tests.support.schema import provision_schema
-from tests.support.venue_wiring import in_memory_state_storage
 
 _AT = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 _VENUE = COMPUTE_VENUE
@@ -82,23 +73,21 @@ _ACCOUNT = "acct-1"
 _SECRET_REF = "env:ACCT_1"
 
 
-class _RecordingPaperPlugin(PaperVenuePlugin):
-    """The REAL paper plugin, recording every spec ``build_bundle`` receives.
+def _recording_recipe(exchange_config: Any, received: list) -> Any:
+    """The REAL paper recipe, recording every spec it receives.
 
-    A subclass rather than a fake so the bundle, the exchange and the
-    ``state_storage``-requiring ``account_factory`` are all production objects — the
-    recording is the only addition. It is the second, independent signal for the
+    A wrapper rather than a fake, so the adapter that comes back is a production object —
+    the recording is the only addition. It is the second, independent signal for the
     ``secret_ref`` handoff: it observes what actually crossed into the venue layer, not
     what the manager kept a copy of.
     """
+    build = paper_exchange_recipe(exchange_config)
 
-    def __init__(self, exchange_config: Any) -> None:
-        super().__init__(exchange_config)
-        self.received_specs: list[Any] = []
+    def _record(**kwargs: Any) -> Any:
+        received.append(kwargs["spec"])
+        return build(**kwargs)
 
-    def build_bundle(self, ctx: Any, spec: Any, connectors: Any) -> Any:
-        self.received_specs.append(spec)
-        return super().build_bundle(ctx, spec, connectors)
+    return _record
 
 
 @pytest.fixture()
@@ -119,26 +108,26 @@ def wiring():
     provision_schema(engine)
 
     bus: Any = queue.Queue()
-    plugin = _RecordingPaperPlugin(ExchangeConfig.default())
-    registry = ExecutionVenueRegistry()
-    registry.register(_VENUE, plugin)
-    connectors = ConnectorProvider({})
+    received_specs: list[Any] = []
     ctx = SimpleNamespace(bus=bus, rng=random.Random(42))
-    bundles = VenueBundles(registry, connectors, ctx)
 
     exchange_registry: dict[tuple[str, str], Any] = {}
-    # The paper accounts here carry connector=None (no streaming connection), so the D-36
-    # feed binder never has a connection to borrow; a no-op binder satisfies the manager's
-    # required-collaborator contract. Feed binding is covered in test_feed_binder.py.
     manager = VenueAccountManager(
-        store, bundles, connectors, exchange_registry,
+        store=store,
+        pool=ConnectorPool(catalog=CATALOG, resolver=None, recipes={}),
+        routing=exchange_registry,
+        catalog=CATALOG,
+        exchange_recipes={
+            _VENUE: _recording_recipe(ExchangeConfig.default(), received_specs)},
+        ctx=ctx,
         alert_sink=LogAlertSink(),
-        feed_binder=SimpleNamespace(feed_provider=None, rebind=lambda available: None),
+        halt_signal=lambda reason: None,
+        stream_state_listener=(lambda name: None, lambda name: None),
     )
     try:
         yield SimpleNamespace(
-            store=store, manager=manager, plugin=plugin,
-            exchange_registry=exchange_registry, bundles=bundles,
+            store=store, manager=manager, received_specs=received_specs,
+            exchange_registry=exchange_registry, bus=bus,
         )
     finally:
         store.dispose()
@@ -159,8 +148,8 @@ def _provision_row(store: VenueAccountStore, account_id: str = _ACCOUNT,
     )
 
 
-def test_provisioned_row_becomes_a_routable_account_and_resolves_to_a_leaf(wiring):
-    """One row → bring_online → registered exchange → account_for → a built leaf (D-27).
+def test_provisioned_row_becomes_a_routable_account(wiring):
+    """One row → bring_online → an adapter registered under the exact pair (D-27).
 
     The tracer. Every assertion below is a link in ONE chain; a break anywhere means the
     account exists durably but is unreachable at runtime, which is the failure this whole
@@ -180,39 +169,27 @@ def test_provisioned_row_becomes_a_routable_account_and_resolves_to_a_leaf(wirin
     # fine and route every order for 'acct-1' into a lookup miss.
     assert (_VENUE, _ACCOUNT) in wiring.exchange_registry
     assert (_VENUE, DEFAULT_ACCOUNT_ID) not in wiring.exchange_registry
-    assert wiring.exchange_registry[(_VENUE, _ACCOUNT)] is record.bundle.exchange
+    assert wiring.exchange_registry[(_VENUE, _ACCOUNT)] is record.adapter
 
-    # T-11.2-05-01 — the row's OWN credential pointer reached the spec, and the spec the
-    # PLUGIN saw is the same one (two independent signals).
+    # The row's OWN credential pointer reached the spec, and the spec the RECIPE saw is
+    # the same one (two independent signals).
     assert record.spec.secret_ref == _SECRET_REF
     assert record.spec.account_id == _ACCOUNT
-    assert [spec.secret_ref for spec in wiring.plugin.received_specs] == [_SECRET_REF]
+    assert [spec.secret_ref for spec in wiring.received_specs] == [_SECRET_REF]
 
-    # ACCT-03 — the pair resolves to a CONSTRUCTED account leaf.
-    account = wiring.manager.account_for(
-        _VENUE, _ACCOUNT,
-        initial_cash=Decimal("10000"),
-        enable_margin=False,
-        state_storage=in_memory_state_storage(),
-    )
-    assert account is not None
-    assert account.balance == Decimal("10000")
+    # ACCT-03 — the pair passes the availability gate the portfolio path runs.
+    wiring.manager.assert_available(_VENUE, _ACCOUNT)
 
 
-def test_account_for_an_unprovisioned_pair_raises_and_never_returns_a_leaf(wiring):
-    """ACCT-03 empty case: no row → the typed refusal, never a compute leaf.
+def test_an_unprovisioned_pair_raises_and_is_never_routable(wiring):
+    """ACCT-03 empty case: no row → the typed refusal, and nothing registered.
 
-    Returning the compute leaf a portfolio would otherwise get is the tempting fallback
-    and the dangerous one: ``is_venue_truth=False`` silently disables the venue snapshot,
-    the streams, ``VenueReconciler`` and the unexplained-residual HALT.
+    Passing the gate for an account with no durable row is the tempting fallback and the
+    dangerous one: the portfolio would look healthy while its pair was unroutable and
+    unreconciled.
     """
     with pytest.raises(VenueAccountNotProvisionedError) as excinfo:
-        wiring.manager.account_for(
-            _VENUE, "no-such-account",
-            initial_cash=Decimal("10000"),
-            enable_margin=False,
-            state_storage=in_memory_state_storage(),
-        )
+        wiring.manager.assert_available(_VENUE, "no-such-account")
     assert excinfo.value.cause == VenueAccountNotProvisionedError.NOT_PROVISIONED
     assert excinfo.value.account_id == "no-such-account"
     assert (_VENUE, "no-such-account") not in wiring.exchange_registry
@@ -234,7 +211,7 @@ def test_fresh_deployment_provisioning_gate_walks_the_whole_loop(wiring):
     account key WRITTEN by provisioning is the key the portfolio path READS.
 
     The "add_portfolio" seam here is the LIVE portfolio-creation path verbatim: a
-    ``PortfolioFactory`` over a ``VenueValidatedComputeAuthority`` wrapping the REAL
+    ``PortfolioFactory`` over a validator-bearing ``AccountFactory`` wrapping the REAL
     ``VenueAccountManager`` (portfolio_factory.py — the arm the live composition root
     injects). It GATES on ACCT-03 through ``manager.assert_available`` and, on success,
     builds a COMPUTE leaf carrying the real pair.
@@ -245,12 +222,9 @@ def test_fresh_deployment_provisioning_gate_walks_the_whole_loop(wiring):
     unreadable at ``Portfolio.__init__`` (T-05-07). A test asserting ``is_venue_truth``
     here would pin a defect this phase deliberately does NOT ship.
     """
-    authority = VenueValidatedComputeAuthority(
-        manager=wiring.manager,
-        compute=ComputeAccountAuthority(
-            venue_bundles=wiring.bundles, compute_venue=_VENUE),
-    )
-    factory = PortfolioFactory(authority=authority, environment="backtest")
+    factory = PortfolioFactory(
+        account_factory=AccountFactory(validate=wiring.manager.assert_available),
+        environment="backtest")
 
     def _add_portfolio() -> Any:
         # The same manager instance and the same process perform steps 2–5 — the whole

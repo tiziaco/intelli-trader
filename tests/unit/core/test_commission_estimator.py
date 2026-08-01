@@ -44,7 +44,7 @@ from itrader.config import FeeModelType
 from itrader.core.commission_estimator import FeeModelProvider
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.execution_handler.fee_model import FeeModel, PercentFeeModel
-from itrader.venues.registry import DEFAULT_ACCOUNT_ID
+from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
 
 pytestmark = pytest.mark.unit
 
@@ -98,7 +98,7 @@ def test_protocol_is_runtime_checkable():
 
 
 def test_lambda_provider_satisfies_protocol():
-    """The wiring shape ``compose_engine`` injects — a lambda — conforms.
+    """The wiring shape ``build_handler_graph`` injects — a lambda — conforms.
 
     Re-points the pre-D-18 ``test_adapter_satisfies_protocol``: the
     ``FeeModelCommissionEstimator`` class it asserted against is deleted, and the

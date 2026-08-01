@@ -13,7 +13,10 @@ from itrader.events_handler.events import FillEvent, OrderEvent
 from itrader.core.enums import FillStatus, OrderType, Side
 from itrader.core.exceptions.portfolio import PortfolioNotFoundError
 
-from tests.support.venue_wiring import backtest_exchange_registry
+from tests.support.venue_wiring import (
+    backtest_exchange_registry,
+    single_account_read_model,
+)
 
 
 @pytest.fixture
@@ -21,7 +24,8 @@ def env():
     """ExecutionHandler with its queue plus a market BUY order event."""
     queue = Queue()
     execution_handler = ExecutionHandler(
-        queue, exchange_registry=backtest_exchange_registry(queue))
+        queue, exchange_registry=backtest_exchange_registry(queue),
+        portfolio_read_model=single_account_read_model())
     order_event = OrderEvent(
         time=datetime(2024, 1, 1),
         ticker="BTCUSDT",
@@ -89,7 +93,7 @@ def test_no_config_construction_admits_btcusd(env):
     can never silently wipe BTCUSD.
 
     11.1-07: the union now happens in ``default_exchange_config()`` and reaches the
-    exchange through ``PaperVenuePlugin``, not through a handler-side fallback.
+    exchange through the ROOT-owned registry, not through a handler-side fallback.
     """
     _queue, execution_handler, _order_event = env
     exchange = execution_handler.exchanges[('paper', DEFAULT_ACCOUNT_ID)]
@@ -178,7 +182,7 @@ def test_registry_is_pair_keyed_with_no_venue_aliases(env):
     pin that ``'simulated'`` and ``'csv'`` resolved to the SAME object; D-05
     deleted that aliasing in full (along with the dead ``'ccxt': None``
     placeholder), so the seeded backtest registry (D-43: built by
-    ``seed_exchange_registry``) is a SINGLE ``('paper', DEFAULT_ACCOUNT_ID)``
+    the backtest root) is a SINGLE ``('paper', DEFAULT_ACCOUNT_ID)``
     entry and no two keys may share an exchange object.
 
     It goes RED if a future phase reintroduces a venue synonym — which is the
@@ -279,15 +283,19 @@ def test_on_order_refuses_when_the_portfolio_names_no_account(env):
     assert ex_default.orders == []
 
 
-def test_on_order_without_read_model_uses_the_default_account(env):
-    """The backtest path injects no read-model and resolves the default
-    account unconditionally — the oracle route is untouched."""
+def test_a_single_account_system_routes_through_the_read_model_too(env):
+    """There is no read-model-less arm: the default account is a portfolio's answer.
+
+    The one-account (backtest) system routes exactly like a multi-account one — its
+    portfolios name ``DEFAULT_ACCOUNT_ID`` and the read-model reports it. A resolution
+    path that bypassed the read-model would be a routing default, and a routing default
+    is what submits one account's orders through another account's session (MPORT-07).
+    """
     _queue, execution_handler, _order_event = env
     ex_default = _RecordingExchange()
     execution_handler.exchanges = {
         ('paper', DEFAULT_ACCOUNT_ID): ex_default,
     }
-    assert execution_handler._portfolio_read_model is None
 
     execution_handler.on_order(_order_for(1))
     assert len(ex_default.orders) == 1

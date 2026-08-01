@@ -1,25 +1,23 @@
 """
-Pluggable alert-sink egress for CRITICAL/halt escalation (D-06, RES-01).
+Pluggable alert-sink egress for CRITICAL/halt escalation.
 
-A halt or unrecoverable error escalates to a CRITICAL ``ErrorEvent``; that event
-must reach an operator through a swappable egress seam so an external channel
-(PagerDuty/Slack/webhook) drops in later WITHOUT touching the event-handler code
-that emits it. This milestone ships ONE implementation — ``LogAlertSink`` — which
-emits a marked structured ``logger.critical``; external push is deferred (RES-01).
+A halt or unrecoverable error escalates to a CRITICAL ``ErrorEvent``; that event must
+reach an operator through a swappable egress seam so an external channel
+(PagerDuty/Slack/webhook) drops in later WITHOUT touching the event-handler code that
+emits it. ``LogAlertSink`` is the one shipped implementation — it emits a marked
+structured ``logger.critical``.
 
-``AlertSink`` follows the ``connectors/base.py::LiveConnector`` swap-a-fake seam
-pattern (a ``runtime_checkable Protocol``, not an ABC — there is no shared body to
-inherit; tests inject a structural fake). Indent: 4 spaces (matches
-``trading_system/`` siblings).
+``AlertSink`` is a ``runtime_checkable Protocol``, not an ABC: there is no shared body to
+inherit, and tests inject a structural fake.
 
-Secret discipline (Pitfall 16, T-05-01): the sink emits ONLY the declared
-``ErrorEvent`` fields — it never reaches into raw connector context, so
-``SecretStr`` credentials (OKX key/secret/passphrase) can never leak to logs. The
-``ErrorEvent`` boundary is the scrub point; the sink trusts it.
+Secret discipline: the sink emits ONLY the declared ``ErrorEvent`` fields — it never
+reaches into raw connector context, so ``SecretStr`` credentials (OKX key / secret /
+passphrase) can never leak to logs. The ``ErrorEvent`` boundary is the scrub point and
+the sink trusts it.
 
-``ErrorEvent`` is imported under ``TYPE_CHECKING`` only — the events package pulls
-pandas at runtime, and ``alert_sink`` must stay import-light so wiring it never
-drags heavy deps onto a cold path.
+``ErrorEvent`` is imported under ``TYPE_CHECKING`` only — the events package pulls pandas
+at runtime, and ``alert_sink`` must stay import-light so wiring it never drags heavy deps
+onto a cold path.
 """
 
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
@@ -34,12 +32,10 @@ __all__ = ["AlertSink", "LogAlertSink"]
 
 @runtime_checkable
 class AlertSink(Protocol):
-    """Structural egress seam for CRITICAL/halt alerts (D-06).
+    """Structural egress seam for CRITICAL/halt alerts.
 
-    The swap-a-fake contract the event handler routes CRITICAL ``ErrorEvent``s
-    through. A single method — ``alert`` — so an external channel implementation
-    drops in without any change to the emitting code. Method body is ``...``:
-    this is a contract, not a base class.
+    A single method, so an external channel implementation drops in without any change to
+    the emitting code. The method body is ``...``: this is a contract, not a base class.
     """
 
     def alert(self, event: "ErrorEvent") -> None:
@@ -48,12 +44,11 @@ class AlertSink(Protocol):
 
 
 class LogAlertSink:
-    """The ONLY alert-sink implementation this milestone (external push deferred, RES-01).
+    """The shipped alert-sink implementation.
 
-    Emits a marked structured ``logger.critical`` binding ONLY the declared
-    ``ErrorEvent`` fields (never raw connector context — secrets stay scrubbed,
-    Pitfall 16 / T-05-01). ``alert=True`` marks the record so a later log-shipping
-    channel can filter escalations without re-parsing severity.
+    Emits a marked structured ``logger.critical`` binding ONLY the declared ``ErrorEvent``
+    fields, never raw connector context. ``alert=True`` marks the record so a later
+    log-shipping channel can filter escalations without re-parsing severity.
     """
 
     def __init__(self) -> None:
@@ -62,9 +57,7 @@ class LogAlertSink:
     def alert(self, event: "ErrorEvent") -> None:
         """Emit the CRITICAL escalation as a marked structured critical log.
 
-        Binds only the declared ``ErrorEvent`` fields; ``portfolio_id`` and
-        ``details`` are optional narrowing fields bound when present. No raw
-        venue/connector context is ever read here.
+        ``portfolio_id`` and ``details`` are optional narrowing fields bound when present.
         """
         context: dict[str, Any] = {
             "alert": True,

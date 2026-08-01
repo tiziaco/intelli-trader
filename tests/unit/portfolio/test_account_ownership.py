@@ -6,8 +6,8 @@ establish, which the requirement probe could not classify into a data-shape cate
 * ``Portfolio`` is constructible ONLY with an account supplied — omitting it raises
   ``TypeError`` rather than silently minting one (T-11.1-41);
 * no branch inside ``Portfolio`` selects an account KIND — the margin-vs-cash rule
-  has exactly one owner, ``VenuePlugin.new_account`` (D-03);
-* the account a portfolio ends up holding is the EXACT object its venue bundle
+  has exactly one owner, ``build_compute_account`` (D-03);
+* the account a portfolio ends up holding is the EXACT object its account authority
   minted for it, proven by ``is``-identity in a TWO-account setup;
 * that account and the portfolio's three managers share ONE
   ``PortfolioStateStorage`` instance;
@@ -45,62 +45,46 @@ from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from tests.support.venue_wiring import (
     backtest_portfolio_handler,
-    backtest_venue_bundles,
     compute_account,
 )
 
 
-class _RecordingBundles:
-    """Wraps a real ``VenueBundles`` and records every account its factory mints.
+class _RecordingAuthority:
+    """Wraps a real ``AccountFactory`` and records every account it builds.
 
-    A DELEGATING wrapper rather than a fake: the bundle, the plugin and the minting
-    body are the production ones, so the identity these tests assert is the identity
-    production produces. Only the observation is added.
+    A DELEGATING wrapper rather than a fake: the authority and the minting body are the
+    production ones, so the identity these tests assert is the identity production
+    produces. Only the observation is added.
     """
 
     def __init__(self, inner: Any) -> None:
         self._inner = inner
         self.minted: list[Any] = []
 
-    def get(self, venue: str, account_id: str, spec: Any) -> Any:
-        from types import SimpleNamespace
-
-        bundle = self._inner.get(venue, account_id, spec)
-
-        def recording_factory(**kwargs: Any) -> Any:
-            account = bundle.account_factory(**kwargs)
-            self.minted.append(account)
-            return account
-
-        return SimpleNamespace(
-            exchange=bundle.exchange,
-            account_factory=recording_factory,
-            connector=bundle.connector,
-        )
+    def account_for(
+        self, venue_name: Any, account_id: Any, **portfolio_args: Any
+    ) -> Any:
+        account = self._inner.account_for(venue_name, account_id, **portfolio_args)
+        self.minted.append(account)
+        return account
 
 
-def _handler() -> tuple[PortfolioHandler, _RecordingBundles]:
-    """A handler whose factory's compute authority wraps a recording ``VenueBundles``.
+def _handler() -> tuple[PortfolioHandler, _RecordingAuthority]:
+    """A handler whose factory holds a recording wrapper over the real compute authority.
 
-    D-24 (11.2-09): the handler builds leaves through an injected ``PortfolioFactory``.
-    Its backtest authority is a ``ComputeAccountAuthority`` over the bundle memo — so
-    wrapping THAT memo in ``_RecordingBundles`` still observes every minted account, the
-    identity these tests assert.
+    D-24 (11.2-09): the handler builds leaves through an injected ``PortfolioFactory``,
+    and the authority it holds is the sole leaf builder — so wrapping THAT observes every
+    minted account, the identity these tests assert.
     """
     from itrader.portfolio_handler.portfolio_factory import (
-        ComputeAccountAuthority,
+        AccountFactory,
         PortfolioFactory,
     )
-    from itrader.venues.registry import COMPUTE_VENUE
 
     bus = queue.Queue()
-    bundles = _RecordingBundles(backtest_venue_bundles(bus))
-    factory = PortfolioFactory(
-        authority=ComputeAccountAuthority(
-            venue_bundles=bundles, compute_venue=COMPUTE_VENUE),
-        environment="backtest",
-    )
-    return PortfolioHandler(bus, portfolio_factory=factory), bundles
+    authority = _RecordingAuthority(AccountFactory())
+    factory = PortfolioFactory(account_factory=authority, environment="backtest")
+    return PortfolioHandler(bus, portfolio_factory=factory), authority
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +114,7 @@ def test_the_account_parameter_has_no_default() -> None:
 def test_portfolio_never_re_selects_the_account_kind() -> None:
     """D-03: the margin flag on the config does NOT make Portfolio swap the leaf.
 
-    The selection rule lives in ``VenuePlugin.new_account`` and nowhere else. This
+    The selection rule lives in ``build_compute_account`` and nowhere else. This
     hands a portfolio whose config enables margin a CASH leaf — a combination the
     composition root never produces — and asserts the portfolio keeps exactly what it
     was given. An implementation that re-derived the kind from ``self.config`` would
@@ -175,11 +159,11 @@ def test_portfolio_module_constructs_no_account_leaf() -> None:
 
 
 # ---------------------------------------------------------------------------
-# D-02/D-08 — the portfolio holds the EXACT account its bundle minted
+# D-02/D-08 — the portfolio holds the EXACT account its authority minted
 # ---------------------------------------------------------------------------
 
 
-def test_each_portfolio_holds_the_exact_account_its_bundle_minted() -> None:
+def test_each_portfolio_holds_the_exact_account_its_authority_minted() -> None:
     """TWO accounts, asserted by IDENTITY — a lucky default cannot pass this.
 
     With one portfolio, a correct binding and a freshly-minted default leaf are the
@@ -187,15 +171,15 @@ def test_each_portfolio_holds_the_exact_account_its_bundle_minted() -> None:
     handler that minted its own would have to reproduce both values by accident, and
     ``is`` rules out a different-but-equal account entirely.
     """
-    handler, bundles = _handler()
+    handler, authority = _handler()
 
     first = handler.add_portfolio(
         name="pf-one", exchange="paper", cash=Decimal("10000"), venue_name="paper")
     second = handler.add_portfolio(
         name="pf-two", exchange="paper", cash=Decimal("25000"), venue_name="paper")
 
-    assert len(bundles.minted) == 2
-    minted_one, minted_two = bundles.minted
+    assert len(authority.minted) == 2
+    minted_one, minted_two = authority.minted
 
     assert handler.get_portfolio(first).account is minted_one
     assert handler.get_portfolio(second).account is minted_two
@@ -337,7 +321,7 @@ def test_a_cash_leaf_cannot_be_built_without_naming_its_persistence_seam() -> No
     """Omitting ``state_storage`` is a ``TypeError``, not a private in-memory backend.
 
     Pins 11.1-REVIEW **WR-04**. The deleted default was
-    ``PortfolioStateStorageFactory.create("backtest")``: a leaf that fell back to it
+    ``build_portfolio_state_storage("backtest")``: a leaf that fell back to it
     kept its reserved cash, locked margin and cash-operation audit trail on a backend
     NOBODY else held. In backtest nothing else reads those containers, so the oracle
     and the whole suite stayed green; in live the restart path
@@ -372,7 +356,7 @@ def test_neither_leaf_declares_a_default_for_its_persistence_seam() -> None:
     that shape reintroduces exactly what this phase removes: an Optional production
     collaborator whose absence is a runtime discovery rather than a call-site one.
     ``inspect`` is the durable form of the property (the same convention
-    ``test_paper_plugin.py`` uses on the ``account_factory`` closure).
+    the paper-recipe tests use).
     """
     for leaf in (SimulatedCashAccount, SimulatedMarginAccount):
         parameter = inspect.signature(leaf.__init__).parameters["state_storage"]
@@ -389,9 +373,9 @@ def test_a_named_seam_is_the_one_the_leaf_routes_through() -> None:
     Guards against "fixing" the refusal by reintroducing a default under another
     name — the leaf must still adopt exactly the object it was handed.
     """
-    from itrader.portfolio_handler.storage import PortfolioStateStorageFactory
+    from itrader.portfolio_handler.storage import build_portfolio_state_storage
 
-    seam = PortfolioStateStorageFactory.create("backtest")
+    seam = build_portfolio_state_storage("backtest")
     account = SimulatedCashAccount(Decimal("1000"), state_storage=seam)
 
     assert account.state_storage is seam

@@ -37,8 +37,9 @@ from itrader.portfolio_handler.rehydrate.distinct_account_invariant import (
 from itrader.storage import SqlEngine
 from itrader.storage.portfolio_definition_store import PortfolioDefinitionStore
 from itrader.storage.venue_account_store import VenueAccountStore
-from itrader.trading_system.live_trading_system import build_live_system
-from itrader.trading_system.system_spec import PortfolioSpec, SystemSpec
+from itrader import config as _live_config
+from itrader.trading_system.live.build import build_live_system
+from tests.support.live_okx import stub_every_okx_session
 from tests.support.schema import provision_schema
 
 _AT = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
@@ -197,18 +198,16 @@ def okx_env(monkeypatch):
     monkeypatch.setenv("OKX_API_PASSPHRASE", "test-pass")
 
 
-def _spec(account_ids, primary=None):
-    """A ``SystemSpec`` whose PORTFOLIOS name the accounts (MPORT-05)."""
-    return SystemSpec(
-        start="2024-01-01", end="2024-01-02", timeframe="1d", ticker="BTCUSDT",
-        starting_cash=10_000, data={}, strategies=[],
-        portfolios=[
-            PortfolioSpec(name=f"pf-{index}", cash=10_000, account_id=account_id)
-            for index, account_id in enumerate(account_ids)
-        ],
-        execution_venue=_VENUE,
-        account_id=primary,
-    )
+def _booted(system):
+    """Run the production restart sequence over stubbed sessions; return the system.
+
+    Bring-up CONNECTS, so it is a step of ``start()`` rather than of construction. Each
+    enabled account's session is pre-built and stubbed first, so the REAL bring-up runs
+    with no socket.
+    """
+    stub_every_okx_session(system)
+    system._bootstrap_session()
+    return system
 
 
 @pytest.fixture
@@ -292,7 +291,7 @@ def test_two_persisted_portfolios_on_one_venue_both_rehydrate(live_db, okx_env) 
     first = _seed_definition(live_db, name="pf-a", account_id="acct-a")
     second = _seed_definition(live_db, name="pf-b", account_id="acct-b")
 
-    system = build_live_system(_spec([]))
+    system = _booted(build_live_system(_live_config, execution_venue=_VENUE))
     try:
         assert set(system.portfolio_handler._portfolios) == {first, second}
         accounts = {
@@ -331,7 +330,7 @@ def test_the_same_account_id_on_two_venues_boots(live_db, okx_env) -> None:
         other, name="pf-binance", venue_name="binance", account_id="main",
         initial_cash=Decimal("10000.00"), enabled=True, config=None, at=_AT)
 
-    system = build_live_system(_spec([]))
+    system = _booted(build_live_system(_live_config, execution_venue=_VENUE))
     try:
         # The binance portfolio rehydrated; the okx durable account assembled.
         assert other in system.portfolio_handler._portfolios
@@ -345,18 +344,21 @@ def test_a_binance_portfolio_does_not_receive_the_okx_venue_account(
 ) -> None:
     """CR-01 at the BOOT: the foreign-venue portfolio is not handed OKX's account.
 
-    Same seeding as the test above — a persisted ``binance``/``main`` portfolio while
-    the spec boots ``okx``/``main``. The composition root derived its account set and
-    attached venue accounts by BARE ``account_id``, so the binance portfolio was handed
-    the OKX "main" ``VenueAccount``: ``ReconciliationCoordinator`` would then snapshot
-    one venue's balance against the other venue's positions, and ``VenueReconciler``
-    would emit reconciling fills into the wrong portfolio.
+    Same seeding as the test above — a persisted ``binance``/``main`` portfolio while the
+    boot brings up ``okx``/``main`` — because that is the shape a BARE-``account_id``
+    resolution gets wrong: both accounts answer to "main", so any lookup that drops the
+    venue half hands the binance portfolio OKX's account. The consequence is not local —
+    the coordinator would judge one venue's positions against the other's and
+    ``VenueReconciler`` would emit reconciling fills into the wrong portfolio.
 
-    The OKX-side assertions are deliberately UNCHANGED from the sibling test: the OKX
-    spec portfolio still legitimately names "main", so the bundle and the registry entry
-    are not what this fix touches — only who receives the resulting account is.
+    The OKX-side assertion is deliberately IDENTICAL to the sibling test: the OKX account
+    still legitimately names "main", so the bundle and the registry entry are not what is
+    under test here — only which portfolio ends up bound to which account is.
     """
-    from itrader.portfolio_handler.account import VenueAccount
+    from itrader.portfolio_handler.account import (
+        SimulatedCashAccount,
+        SimulatedMarginAccount,
+    )
 
     other = PortfolioId(uuid.uuid4())
     # The OKX 'main' account is provisioned so the store-derived boot assembles it.
@@ -370,17 +372,22 @@ def test_a_binance_portfolio_does_not_receive_the_okx_venue_account(
         other, name="pf-binance", venue_name="binance", account_id="main",
         initial_cash=Decimal("10000.00"), enabled=True, config=None, at=_AT)
 
-    system = build_live_system(_spec([]))
+    system = _booted(build_live_system(_live_config, execution_venue=_VENUE))
     try:
         portfolio = system.portfolio_handler.get_portfolio(other)
-        assert portfolio.venue_name == "binance"
-        # It keeps its construction-time compute leaf. 11.2-07: this boot attaches NO
-        # venue-truth account to any portfolio (the ``account_for`` wiring is plan 11.2-08's
-        # COMP-07 work), so EVERY live portfolio currently sits on a compute leaf — a
-        # deliberate transient window. The binance portfolio must never receive the OKX
-        # "main" account regardless (the cross-venue conflation CR-01/D-14 prevent).
-        assert not isinstance(portfolio.account, VenueAccount)
-        assert portfolio.account.is_venue_truth is False
+        # Identity is the PAIR, and the leaf is its ONE storage site (``Portfolio``'s two
+        # properties read straight off it). The pair — not the bare account id — is what
+        # discriminates here: BOTH accounts are named "main". A leaf reading
+        # ``("okx", "main")`` would mean this portfolio's orders and reconciliation route
+        # to the OKX balance, so the coordinator would judge one venue's positions against
+        # the other's and ``VenueReconciler`` would emit reconciling fills into the wrong
+        # portfolio.
+        assert (portfolio.venue_name, portfolio.account_id) == ("binance", "main")
+        # Every live portfolio sits on a COMPUTE leaf: venue truth is read from the venue
+        # by the execution adapter that owns the authenticated session, so there is no
+        # venue-cached leaf a boot could hand to the wrong portfolio in the first place.
+        assert isinstance(
+            portfolio.account, (SimulatedCashAccount, SimulatedMarginAccount))
         # The OKX durable account still assembles and registers.
         assert set(_okx_entries(system)) == {(_VENUE, "main")}
     finally:
@@ -392,7 +399,7 @@ def test_a_binance_portfolio_does_not_receive_the_okx_venue_account(
 # --------------------------------------------------------------------------- #
 def test_a_boot_with_zero_persisted_portfolios_succeeds_cleanly(live_db, okx_env) -> None:
     """MPORT-03 empty edge at the boot — a fresh database is a valid first start."""
-    system = build_live_system(_spec(["acct-solo"]))
+    system = _booted(build_live_system(_live_config, execution_venue=_VENUE))
     try:
         assert system.portfolio_handler._portfolios == {}
     finally:
@@ -408,11 +415,16 @@ def test_a_persisted_portfolio_rehydrates_before_start_with_its_id(
     placement: a rehydrate inside ``_initialize_live_session`` would leave this empty
     (and would be monkeypatched away entirely in the restart tests).
     """
+    from itrader.portfolio_handler.account import (
+        SimulatedCashAccount,
+        SimulatedMarginAccount,
+    )
+
     persisted = _seed_definition(live_db, name="pf-durable", account_id="acct-a")
 
     # The spec names NO account: a spec portfolio on "acct-a" would collide with the
     # persisted row by design (gate (b)).
-    system = build_live_system(_spec([]))
+    system = _booted(build_live_system(_live_config, execution_venue=_VENUE))
     try:
         # start() has NOT been called — construction alone rebuilt the portfolio.
         assert list(system.portfolio_handler._portfolios) == [persisted]
@@ -423,13 +435,13 @@ def test_a_persisted_portfolio_rehydrates_before_start_with_its_id(
         # The stored ``initial_cash`` is asserted at the STORE (a definition, not a balance).
         assert PortfolioDefinitionStore(live_db).read_all()[0]["initial_cash"] == (
             Decimal("10000.00"))
-        # 11.2-07 (transient window): the rehydrated portfolio currently holds its
-        # construction-time COMPUTE leaf (``is_venue_truth=False``). The venue-truth
-        # ``VenueAccount`` attach (``PortfolioFactory -> VenueAccountManager.account_for``)
-        # is plan 11.2-08's COMP-07 work, and the ACCT-03 raise is plan 11.2-09's — so this
-        # assertion FLIPS back to ``is True`` once those land. Until then a live portfolio
-        # on a compute leaf is the deliberate, owner-sanctioned interim state.
-        assert portfolio.account.is_venue_truth is False
+        # The rehydrated portfolio holds a COMPUTE leaf carrying the stored account
+        # identity. That leaf is what makes the two assertions above readable at all: a
+        # portfolio is CONSTRUCTED with its account and construction reads the balance, so
+        # a leaf whose balance only arrives after a venue round trip could not answer here.
+        assert isinstance(
+            portfolio.account, (SimulatedCashAccount, SimulatedMarginAccount))
+        assert (portfolio.venue_name, portfolio.account_id) == (_VENUE, "acct-a")
     finally:
         system.stop(timeout=5.0)
 
@@ -449,7 +461,7 @@ def test_a_persisted_portfolio_survives_a_full_teardown_and_rebuild(
         config={}, at=_AT)
 
     # --- first boot: create the portfolio through the live handler --------------
-    system = build_live_system(_spec([]))
+    system = _booted(build_live_system(_live_config, execution_venue=_VENUE))
     try:
         first_id = system.portfolio_handler.add_portfolio(
             name="pf-restart", exchange=_VENUE, cash=Decimal("25000.00"),
@@ -458,7 +470,7 @@ def test_a_persisted_portfolio_survives_a_full_teardown_and_rebuild(
         system.stop(timeout=5.0)
 
     # --- restart: a brand-new engine over the SAME database ---------------------
-    system2 = build_live_system(_spec([]))
+    system2 = _booted(build_live_system(_live_config, execution_venue=_VENUE))
     try:
         assert list(system2.portfolio_handler._portfolios) == [first_id], (
             "the portfolio did not survive the restart — either add_portfolio "
@@ -483,7 +495,7 @@ def test_a_persisted_portfolio_config_override_is_applied_on_the_rehydrated_port
 ) -> None:
     """The BOOT-ORDERING gate, executable — layering must run AFTER rehydrate.
 
-    ``_layer_persisted_overrides`` iterates ``portfolio_handler._portfolios``. If
+    ``layer_persisted_overrides`` iterates ``portfolio_handler._portfolios``. If
     rehydrate ran after it, that collection would be empty at layering time and the
     persisted config would be silently never applied — no exception, no warning, and
     invisible in any test that only counts portfolios. This test reddens in exactly
@@ -497,7 +509,7 @@ def test_a_persisted_portfolio_config_override_is_applied_on_the_rehydrated_port
         initial_cash=Decimal("10000.00"), enabled=True,
         config={"limits": {"max_positions": 7}}, at=_AT)
 
-    system = build_live_system(_spec([]))
+    system = _booted(build_live_system(_live_config, execution_venue=_VENUE))
     try:
         portfolio = system.portfolio_handler.get_portfolio(persisted)
         assert portfolio.config.limits.max_positions == 7, (

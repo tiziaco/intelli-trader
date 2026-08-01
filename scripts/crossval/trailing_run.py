@@ -47,7 +47,7 @@ from itrader.core.enums.order import OrderType
 from itrader.core.enums.trading import TradingDirection
 from itrader.core.sizing import FixedQuantity, PercentFromFill, SignalIntent
 from itrader.strategy_handler.base import Strategy
-from itrader.trading_system.backtest_trading_system import BacktestTradingSystem
+from itrader.trading_system.backtest.backtest_trading_system import BacktestTradingSystem
 from scripts.crossval import reconcile
 
 _TICKER = "TRAILUSD"  # synthetic — NEVER BTCUSD.

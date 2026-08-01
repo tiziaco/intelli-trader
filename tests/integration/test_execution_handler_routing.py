@@ -12,14 +12,18 @@ from itrader.execution_handler.execution_handler import (
 from itrader.events_handler.events import OrderEvent, BarEvent
 from itrader.core.enums import FillStatus, OrderType, OrderCommand, Side
 
-from tests.support.venue_wiring import backtest_exchange_registry
+from tests.support.venue_wiring import (
+    backtest_exchange_registry,
+    single_account_read_model,
+)
 
 
 class _RoutingEnv:
     def __init__(self):
         self.queue = Queue()
         self.handler = ExecutionHandler(
-            self.queue, exchange_registry=backtest_exchange_registry(self.queue))
+            self.queue, exchange_registry=backtest_exchange_registry(self.queue),
+            portfolio_read_model=single_account_read_model())
         exchange = self.handler.exchanges[("paper", DEFAULT_ACCOUNT_ID)]
         exchange.connect()
         exchange.update_config({"limits": {"supported_symbols": {"BTCUSDT"}}})

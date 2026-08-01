@@ -9,21 +9,11 @@ from ...events_handler.events import TimeEvent
 
 class TimeGenerator(SimulationEngine):
     """
-    A SimulationEngine subclass that generates events on a
-    frequency defined with the time frame variable.
+    A SimulationEngine subclass that generates events on a frequency defined with the
+    time frame variable.
 
-    It yields a ``TimeEvent`` per simulation timestamp — "the clock
-    advanced to T" — pairing with the ``itrader.core.clock.Clock``
-    family (D-08).
-
-    Parameters
-    ----------
-    start_date : `pd.Timestamp`
-        The starting day of the simulation.
-    end_date : `pd.Timestamp`
-        The ending day of the simulation.
-    timeframe : `str`
-        Range at which to generate events
+    It yields a ``TimeEvent`` per simulation timestamp — "the clock advanced to T" —
+    pairing with the ``itrader.core.clock.Clock`` family.
     """
 
     def __init__(self, timezone: str = 'Europe/Paris') -> None:

@@ -25,8 +25,10 @@ reason) and reads the single assembled OKX lifecycle rather than the deleted
 import threading
 
 from itrader.events_handler.events import ConnectorFatalEvent
-from itrader.trading_system.live_trading_system import LiveTradingSystem
-from tests.support.live_okx import the_okx_lifecycle
+from itrader import config as _live_config
+from itrader.trading_system.live.build import build_live_system
+from itrader.trading_system.live.system import LiveTradingSystem
+from tests.support.live_okx import bring_okx_online
 
 
 class _CapturingHaltStore:
@@ -68,12 +70,14 @@ def _drain_connector_fatal(system: LiveTradingSystem) -> None:
 
 def test_connector_fatal_durable_write_runs_off_the_loop_thread(provisioned_okx) -> None:
     """A connector-fatal escalation writes the durable halt OFF the loop thread (SAFE-03/§11c)."""
-    system = LiveTradingSystem.for_exchange("okx")
+    system = build_live_system(
+        _live_config, execution_venue="okx")
     store = _CapturingHaltStore()
     system._safety._halt_record_store = store
     try:
-        exchange = the_okx_lifecycle(system).bundle.exchange
-        # The PRODUCTION-wired connector-fatal signal (wired at construction on the okx arm).
+        # The PRODUCTION-wired connector-fatal signal: bring-up arms it before the
+        # account is routable, so an online account always has one.
+        exchange = bring_okx_online(system).adapter
         assert exchange._halt_signal is not None
 
         # Drive the escalation on a dedicated "connector asyncio loop" thread — exactly the
@@ -107,11 +111,12 @@ def test_connector_fatal_durable_write_runs_off_the_loop_thread(provisioned_okx)
 
 def test_connector_fatal_winner_only_single_durable_write(provisioned_okx) -> None:
     """Two connector-fatal escalations still write the durable halt exactly ONCE (winner-only)."""
-    system = LiveTradingSystem.for_exchange("okx")
+    system = build_live_system(
+        _live_config, execution_venue="okx")
     store = _CapturingHaltStore()
     system._safety._halt_record_store = store
     try:
-        signal = the_okx_lifecycle(system).bundle.exchange._halt_signal
+        signal = bring_okx_online(system).adapter._halt_signal
 
         def loop() -> None:
             # Two escalations from the loop (e.g. both stream arms fail) only put events.

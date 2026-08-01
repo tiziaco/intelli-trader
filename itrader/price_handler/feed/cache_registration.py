@@ -301,7 +301,7 @@ def derive_warmup_depth(
 
     Today returns the GLOBAL ``max((s.warmup for s in strategies), default=1)`` —
     the exact expression extracted from the old inline registration
-    (``live_trading_system.py``). This is the CF-10 depth boundary: CF-10 later
+    (the live composition root). This is the CF-10 depth boundary: CF-10 later
     generalizes ONLY this function body — from the global ``max(warmup)`` to a
     per-concerned-strategy ``max(warmup for strategies concerned with symbol)``
     (the K-computation + per-symbol rings stay deferred) — WITHOUT re-touching the
@@ -373,7 +373,7 @@ def register_strategy_warmup(
     """Register a warmup consumer sized to the strategies' warmup on ``feed``.
 
     The reusable registration entry point (D-17) — called by ``SessionInitializer``
-    (06-04), replacing the inline registration in ``live_trading_system.py``.
+    (06-04), replacing the inline registration the live root used to perform.
     Computes the depth via the named ``derive_warmup_depth`` boundary, then
     registers a ``StrategyWarmupConsumer`` so ``feed.cache_capacity()`` re-derives
     the ring to the max strategy warmup at call time (``base.py`` reads

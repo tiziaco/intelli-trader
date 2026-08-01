@@ -18,9 +18,13 @@ socket.
 row, so a store is mandatory — the account SET can no longer be conjured from the spec
 offline. The account-DERIVATION logic itself (ordering, venue-scoping, the exact-pair key,
 per-account ``secret_ref``) is unit-tested on ``VenueAccountManager`` without a boot
-(``test_venue_account_manager.py`` / ``test_account_provisioning_loop.py`` /
-``test_feed_binder.py``); this file's unique job is proving production actually GOES through
-that manager.
+(``tests/unit/venues/test_accounts.py`` / ``test_account_provisioning_loop.py``); this
+file's unique job is proving production actually GOES through that manager.
+
+**Why the boot is driven explicitly.** Bring-up CONNECTS, so it is a step of ``start()``
+rather than of construction. These tests stub each account's session offline and then run
+``_bootstrap_session`` — the exact call ``start()`` makes — so the production bring-up runs
+with no socket.
 
 Indentation: 4-space. The ``integration`` marker is folder-derived; ``tests/integration/``
 has no ``__init__.py``. Postgres-gated (skips without Docker).
@@ -34,8 +38,9 @@ from itrader.config.sql import SqlDriver, SqlSettings
 from itrader.storage import SqlEngine
 from itrader.storage.portfolio_definition_store import PortfolioDefinitionStore
 from itrader.storage.venue_account_store import VenueAccountStore
-from itrader.trading_system.live_trading_system import build_live_system
-from itrader.trading_system.system_spec import SystemSpec
+from itrader import config as _live_config
+from itrader.trading_system.live.build import build_live_system
+from tests.support.live_okx import stub_every_okx_session
 from tests.support.schema import provision_schema
 
 _AT = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
@@ -88,12 +93,11 @@ def _provision(engine: SqlEngine, *account_ids: str, secret_ref=None) -> None:
             enabled=True, config={}, at=_AT)
 
 
-def _spec() -> SystemSpec:
-    """A minimal live spec — its portfolios no longer drive the account set (ACCT-01)."""
-    return SystemSpec(
-        start="2024-01-01", end="2024-01-02", timeframe="1d", ticker="BTCUSDT",
-        starting_cash=10_000, data={}, strategies=[],
-        portfolios=[], execution_venue=_VENUE)
+def _booted(system):
+    """Run the production boot over stubbed sessions; return the system."""
+    stub_every_okx_session(system)
+    system._bootstrap_session()
+    return system
 
 
 def _okx_entries(system):
@@ -117,7 +121,7 @@ def test_two_provisioned_rows_produce_two_exchanges_over_two_connectors(
     the accounts came from the STORE, not the spec.
     """
     _provision(live_db, "acct-a", "acct-b")
-    system = build_live_system(_spec())
+    system = _booted(build_live_system(_live_config, execution_venue=_VENUE))
     try:
         entries = _okx_entries(system)
         assert set(entries) == {(_VENUE, "acct-a"), (_VENUE, "acct-b")}
@@ -136,7 +140,7 @@ def test_two_provisioned_rows_produce_two_exchanges_over_two_connectors(
 def test_a_single_provisioned_row_registers_exactly_one_exchange(live_db, okx_env) -> None:
     """The N=1 path — one enabled row, one exchange, under its own pair key."""
     _provision(live_db, "acct-solo")
-    system = build_live_system(_spec())
+    system = _booted(build_live_system(_live_config, execution_venue=_VENUE))
     try:
         assert set(_okx_entries(system)) == {(_VENUE, "acct-solo")}
     finally:
@@ -145,31 +149,31 @@ def test_a_single_provisioned_row_registers_exactly_one_exchange(live_db, okx_en
 
 def test_zero_provisioned_rows_boot_up_empty(live_db, okx_env) -> None:
     """D-09 — a fresh deployment with no venue accounts comes up RUNNING and empty."""
-    system = build_live_system(_spec())
+    system = _booted(build_live_system(_live_config, execution_venue=_VENUE))
     try:
         assert _okx_entries(system) == {}
-        assert system._venue_lifecycles == {}
+        assert system._venue_manager.online_records() == []
     finally:
         system.stop()
 
 
-def test_the_facade_holds_one_lifecycle_per_account(live_db, okx_env) -> None:
-    """The facade holds ONE lifecycle PER ACCOUNT, keyed by account id (D-07/11-09).
+def test_the_manager_holds_one_online_record_per_account(live_db, okx_env) -> None:
+    """ONE online record PER ACCOUNT, and no privileged first entry.
 
-    11.2-07 (D-36) DELETED the primary-account concept: the map is still one lifecycle per
-    account, but there is no privileged first entry — the feed is bound to a CONNECTION by
-    the FeedConnectionBinder, not handed to a "primary" lifecycle. The deleted scalar
-    aliases stay gone.
+    There is no primary-account concept: the feed is bound to a CONNECTION, not handed to
+    a privileged account, so the records carry no ordering meaning beyond bring-up order.
+    The deleted scalar aliases stay gone.
     """
     _provision(live_db, "acct-a", "acct-b")
-    system = build_live_system(_spec())
+    system = _booted(build_live_system(_live_config, execution_venue=_VENUE))
     try:
-        assert set(system._venue_lifecycles) == {"acct-a", "acct-b"}
+        records = {r.spec.account_id: r for r in system._venue_manager.online_records()}
+        assert set(records) == {"acct-a", "acct-b"}
         entries = _okx_entries(system)
         for account_id in ("acct-a", "acct-b"):
-            lifecycle = system._venue_lifecycles[account_id]
-            assert lifecycle.bundle.exchange is entries[(_VENUE, account_id)]
-            assert lifecycle.bundle.connector is not None
+            record = records[account_id]
+            assert record.adapter is entries[(_VENUE, account_id)]
+            assert record.connector is not None
 
         # The deleted scalar aliases + the deleted primary accessor stay gone, not renamed.
         for gone in ("_venue_bundle", "_okx_connector", "_okx_exchange",
@@ -180,69 +184,56 @@ def test_the_facade_holds_one_lifecycle_per_account(live_db, okx_env) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 11.1-08 / D-08 — EXACTLY ONE build per boot (bundles), and D-36 ONE provider
+# 11.1-08 / D-08 — EXACTLY ONE build per boot (bundles), and ONE data adapter
 # --------------------------------------------------------------------------- #
-def _count_class_calls(monkeypatch, cls, method_name):
-    """Wrap ``cls.method_name`` with a call counter, delegating to the original."""
-    calls = []
-    original = getattr(cls, method_name)
+def test_a_two_account_boot_opens_exactly_two_sessions(live_db, okx_env):
+    """Two accounts -> exactly TWO sessions and TWO adapters, one memoized pair each.
 
-    def _counting(self, *args, **kwargs):
-        calls.append(args)
-        return original(self, *args, **kwargs)
-
-    monkeypatch.setattr(cls, method_name, _counting)
-    return calls
-
-
-def test_a_two_account_boot_builds_exactly_two_bundles(monkeypatch, live_db, okx_env):
-    """D-08: two accounts -> exactly TWO ``build_bundle`` calls, over the shared memo.
-
-    A count of two with two DIFFERENT objects reaching the two arms would still be the
-    defect, so the memo identity is asserted alongside the count.
+    A count of two with the SAME object reaching both arms would still be the defect, so
+    the identity of what the order path resolves is asserted alongside the count. The pool
+    is the single memo: a second memo on any other key is how two registries end up
+    disagreeing about one real account.
     """
-    from itrader.venues.okx_plugin import OkxVenuePlugin
-
-    build_calls = _count_class_calls(monkeypatch, OkxVenuePlugin, "build_bundle")
     _provision(live_db, "acct-a", "acct-b")
 
-    system = build_live_system(_spec())
+    system = _booted(build_live_system(_live_config, execution_venue=_VENUE))
     try:
-        assert len(build_calls) == 2, (
-            f"exactly one OKX bundle per account per boot (D-08); got {len(build_calls)}")
         entries = _okx_entries(system)
+        records = {r.spec.account_id: r for r in system._venue_manager.online_records()}
+        assert set(records) == {"acct-a", "acct-b"}
         for account_id in ("acct-a", "acct-b"):
-            lifecycle = system._venue_lifecycles[account_id]
-            assert lifecycle.bundle.exchange is entries[(_VENUE, account_id)]
-            # D-43/D-24: neither the execution handler nor the portfolio handler holds the
-            # VenueBundles memo any more (D-43 extracted the exchange registry; D-24 moved leaf
-            # construction into the injected PortfolioFactory). The shared memo is reachable
-            # through the factory's compute authority, which holds the SAME VenueBundles
-            # instance bring_online assembled through.
-            memo = system.portfolio_handler._factory._authority._compute._venue_bundles._memo
-            assert memo[(_VENUE, account_id)] is lifecycle.bundle
+            assert records[account_id].adapter is entries[(_VENUE, account_id)]
+        # ONE session per account, and the adapter holds exactly the one memoized for it.
+        assert set(system._connector_pool._sessions) == {
+            (_VENUE, "acct-a"), (_VENUE, "acct-b")}
+        for account_id in ("acct-a", "acct-b"):
+            assert (records[account_id].connector
+                    is system._connector_pool._sessions[(_VENUE, account_id)])
     finally:
         system.stop()
 
 
-def test_a_two_account_boot_binds_exactly_one_data_provider(monkeypatch, live_db, okx_env):
-    """D-14/D-36: two accounts -> exactly ONE ``build_provider`` call, bound to the feed.
+def test_a_two_account_boot_binds_exactly_one_data_provider(live_db, okx_env):
+    """Two accounts -> exactly ONE data adapter, on a session neither account owns.
 
-    ONE feed means ONE data provider. D-36 builds it in the FeedConnectionBinder for the
-    first streaming connection (not a "primary" account) and binds it to the feed; the
-    second account's provider is never constructed (WR-07 — a discarded credential-bearing
-    provider with no owner is exactly what is avoided).
+    ONE feed means ONE data adapter, and how many EXECUTION accounts a boot brings online
+    is not part of that count: the data plane is built once, from the run's data venue,
+    over the venue's public session. A per-account data build is what previously produced
+    a second credential-bearing provider with no owner.
     """
-    from itrader.venues.okx_plugin import OkxDataPlugin
-
-    build_calls = _count_class_calls(monkeypatch, OkxDataPlugin, "build_provider")
     _provision(live_db, "acct-a", "acct-b")
 
-    system = build_live_system(_spec())
+    system = _booted(build_live_system(_live_config, execution_venue=_VENUE))
     try:
-        assert len(build_calls) == 1, (
-            f"ONE feed means ONE data provider per boot (D-14/D-36); got {len(build_calls)}")
-        # The one provider reached the one feed (read the feed's private provider slot).
-        assert system.feed._provider is not None
+        provider = system._data_provider
+        assert provider is not None
+        assert system.feed._provider is provider
+
+        account_sessions = {
+            record.connector for record in system._venue_manager.online_records()}
+        assert len(account_sessions) == 2, "precondition: two accounts, two sessions"
+        assert system._data_connector not in account_sessions, (
+            "the data adapter borrowed an account's authenticated session — retiring that "
+            "account would take the feed with it")
     finally:
         system.stop()

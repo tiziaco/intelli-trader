@@ -5,7 +5,7 @@ COMPOSITE NATURAL key ``(venue_name, account_id)``: ``account_id`` alone can nev
 venue — ``"main"`` on ``okx`` and ``"main"`` on a future venue are different accounts by
 design — so an account reference is inherently two columns. There is no surrogate id column
 and no UUIDv7 id generator is imported here, matching the natural-key shape of ``VenueStore``
-and the ``ConnectorProvider._memo`` pair key.
+and the ``ConnectorPool`` session key.
 
 **The three-lifecycle column split.** The three things a row carries change on three
 different schedules, so they are three columns rather than one blob:

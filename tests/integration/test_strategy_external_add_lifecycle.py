@@ -55,14 +55,14 @@ from itrader.storage.venue_account_store import VenueAccountStore
 from itrader.strategy_handler.base import Strategy
 from itrader.strategy_handler.indicators import SMA
 from itrader.strategy_handler.registry import encode_strategy_config
-from itrader.trading_system.live_trading_system import build_live_system
+from itrader import config as _live_config
+from itrader.trading_system.live.build import build_live_system
 from itrader.trading_system.route_registrar import LiveRouteRegistrar
-from itrader.trading_system.venue_spec import build_venue_spec
 from itrader.universe.membership import StrategyDerivedSelectionModel
 from itrader.universe.universe import Universe
 from itrader.universe.universe_handler import UniverseHandler, UniverseHandlerConfig
 from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
-from tests.support.replay_harness import TestDataPlugin
+from tests.support.replay_harness import TestDataRecipe
 from tests.support.schema import provision_schema
 
 _SYM = "LIFEUSD"
@@ -167,10 +167,13 @@ class _LifecycleSystem:
     """
 
     def __init__(self) -> None:
-        plugin = TestDataPlugin()
-        spec = build_venue_spec("paper", data_provider="replay")
+        recipe = TestDataRecipe()
         system = build_live_system(
-            spec, data_plugins={"replay": plugin}, strategy_catalog=_catalog())
+            _live_config, execution_venue="paper", data_venue="replay",
+            data_recipes={"replay": recipe}, strategy_catalog=_catalog())
+        # Bring-up + rehydrate live in start(), because bring-up connects. This is the
+        # exact call start() makes.
+        system._bootstrap_session()
         self.system = system
 
         # Fail-fast under synchronous drive: build_live_system injects the live
@@ -234,7 +237,7 @@ class _LifecycleSystem:
         ).install(system.event_handler)
 
         # ACCT-03 (11.2-09): a LIVE portfolio must name a PROVISIONED + enabled venue
-        # account, or composition RAISES (VenueValidatedComputeAuthority.assert_available).
+        # account, or composition RAISES (the AccountFactory's injected assert_available).
         # Provision the paper account this portfolio names FIRST, on the SAME Postgres DB
         # build_live_system built its own engine on, so the durable venue_accounts row is
         # visible when add_portfolio validates. The account id is the portfolio's own id

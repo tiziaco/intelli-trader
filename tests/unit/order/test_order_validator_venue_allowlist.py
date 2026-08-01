@@ -99,7 +99,7 @@ def test_backtest_venue_names_are_admitted(venue):
 def test_live_okx_venue_is_admitted():
     """The registered live OKX venue passes the allowlist with zero messages.
 
-    CR-03: ``exec_registry.register('okx', OkxVenuePlugin())`` makes ``okx`` a
+    CR-03: bringing an ``okx`` venue account online makes ``okx`` a
     real execution venue, and a live portfolio on it carries
     ``Portfolio.exchange == "okx"`` — but the allowlist is not derived from the
     registry, so the two silently disagreed. This goes red if ``okx`` is ever

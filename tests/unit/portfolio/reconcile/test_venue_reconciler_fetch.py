@@ -29,6 +29,7 @@ import uuid_utils.compat as uc
 
 from itrader.core.enums import OrderStatus, OrderType, Side
 from itrader.core.ids import PortfolioId, StrategyId
+from itrader.execution_handler.exchanges.base import AccountSnapshot
 from itrader.order_handler.order import Order
 from itrader.portfolio_handler.reconcile.venue_reconciler import VenueReconciler
 
@@ -100,18 +101,27 @@ class _FakeStore:
         return True
 
 
-class _FakeVenueAccount:
-    """Minimal ``VenueAccount`` double: no-op snapshot + a canned positions map."""
+class _FakeAdapter:
+    """Execution-adapter double: the ONE object that reads this account's venue truth.
+
+    ``snapshot()`` answers an ``AccountSnapshot`` (the real return type, so a consumer
+    reading ``.positions`` off it is exercised rather than mocked around), and
+    ``adopt_venue_correlation`` absorbs the correlation-map repopulation the reconcile
+    ends with. FLAT is an ABSENT key here, matching the snapshot contract — a zero entry
+    would test a shape the venue never produces.
+    """
 
     def __init__(self, positions: Optional[Dict[str, Decimal]] = None) -> None:
-        self._positions = positions if positions is not None else {}
+        self._positions = dict(positions) if positions else {}
+        self.snapshot_calls = 0
+        self.adopted: List[Order] = []
 
-    def snapshot(self) -> None:
-        pass
+    def snapshot(self) -> AccountSnapshot:
+        self.snapshot_calls += 1
+        return AccountSnapshot(balances={}, positions=dict(self._positions))
 
-    @property
-    def positions(self) -> Dict[str, Decimal]:
-        return self._positions
+    def adopt_venue_correlation(self, order: Order) -> None:
+        self.adopted.append(order)
 
 
 def _make_order(**overrides: Any) -> Order:
@@ -133,11 +143,17 @@ def _make_order(**overrides: Any) -> Order:
 
 
 def _build_reconciler(orders, client, positions=None):
-    """Wire a VenueReconciler over the synchronous fakes; return (reconciler, halt_calls)."""
+    """Wire a VenueReconciler over the synchronous fakes; return (reconciler, halt_calls).
+
+    ONE ``adapter`` supplies the venue truth AND the correlation-map seam, so the
+    reconcile cannot be handed one account's positions alongside another account's
+    correlation index. The REST reads still go through the injected ``connector``, which
+    is what these tests observe.
+    """
     halt_calls: List[str] = []
     reconciler = VenueReconciler(
         store=_FakeStore(orders),
-        venue_account=_FakeVenueAccount(positions),
+        adapter=_FakeAdapter(positions),
         connector=_SyncConnector(client),
         global_queue=queue.Queue(),
         halt_signal=halt_calls.append,

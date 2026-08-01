@@ -1,24 +1,21 @@
 """LiveRunner — owns the live drain loop.
 
-The live runtime engine: the daemon-thread loop that drains ``bus`` and dispatches
-each event, composing a ``WorkerSupervisor`` (has-a, constructor-injected) for the
-poll-timer worker rather than subclassing a shared runner base. It holds no facade
-reference; every side-effect that must stay on ``LiveTradingSystem`` (the dispatch
-gate, the pre-submit throttle, per-tick stats/metrics hooks, loop lifecycle hooks)
-is reached through an injected callable.
+The live runtime engine: the daemon-thread loop that drains ``bus`` and dispatches each
+event, composing a ``WorkerSupervisor`` (has-a, constructor-injected) for the poll-timer
+worker rather than subclassing a shared runner base. It holds no facade reference; every
+side-effect that must stay on ``LiveTradingSystem`` (the dispatch gate, the pre-submit
+throttle, per-tick stats/metrics hooks, loop lifecycle hooks) is reached through an
+injected callable.
 
-Ordering constraint: the injected ``pre_submit`` throttle runs AHEAD of
-``dispatch_gate`` for ORDER events. When it returns ``False`` (it already emitted
-``FillEvent(REFUSED)``) the loop SKIPS the dispatch gate for that event — a
-rejected order must never also clear the gate.
+Ordering constraint: the injected ``pre_submit`` throttle runs AHEAD of ``dispatch_gate``
+for ORDER events. When it returns ``False`` (it already emitted ``FillEvent(REFUSED)``)
+the loop SKIPS the dispatch gate for that event — a rejected order must never also clear
+the gate.
 
-``queue_timeout``/``max_idle_time`` are injected config/spec values, read from
-config by the caller, never re-derived here. Import-inert: imports only stdlib
-``threading``/``queue``/``datetime`` + the ``EventBus`` seam + the two sibling
-collaborators (no ccxt.pro / no SQL on the backtest import path).
-``build_live_system`` composes and wires it.
-
-Indentation: 4 spaces (matches ``live_trading_system.py``).
+``queue_timeout``/``max_idle_time`` are injected config values, read from config by the
+caller, never re-derived here. Import-inert: imports only stdlib
+``threading``/``queue``/``datetime`` plus the ``EventBus`` seam and the two sibling
+collaborators, so no ccxt.pro and no SQL reach the backtest import path.
 """
 
 import queue
@@ -122,12 +119,10 @@ class LiveRunner:
                     event = self._bus.get(timeout=self._queue_timeout)
                     last_event_time = datetime.now(UTC)
 
-                    # The pre-submit throttle fires at the ORDER->execution boundary,
-                    # AHEAD of the dispatch gate. It meters ONLY ORDER events (its
-                    # shared classify predicate bypasses CANCEL/PROTECTIVE uncounted);
-                    # a rejected ORDER already emitted a FillEvent(REFUSED), so the
-                    # dispatch gate is SKIPPED for it. Non-ORDER events go straight to
-                    # the gate.
+                    # The pre-submit throttle fires at the ORDER->execution boundary, AHEAD of
+                    # the dispatch gate. It meters ONLY ORDER events (its shared classify
+                    # predicate bypasses CANCEL/PROTECTIVE uncounted); a rejected ORDER already
+                    # emitted a FillEvent(REFUSED), so the dispatch gate is SKIPPED for it.
                     rejected = (
                         getattr(event, 'type', None) is EventType.ORDER
                         and not self._pre_submit(event))
@@ -139,11 +134,10 @@ class LiveRunner:
                         self._update_stats(
                             event.type.name if hasattr(event, 'type') else 'UNKNOWN')
                     elif self._on_order_throttle_rejected is not None:
-                        # A throttle-REFUSED ORDER never executed (only a
-                        # FillEvent(REFUSED) was emitted); count it here as
-                        # processed-not-executed so orders_executed is never
-                        # over-reported. If the hook is absent the order is simply
-                        # left uncounted, never mis-counted as executed.
+                        # A throttle-REFUSED ORDER never executed — only a FillEvent(REFUSED)
+                        # was emitted. Count it here as processed-not-executed so
+                        # orders_executed is never over-reported. If the hook is absent the
+                        # order is simply left uncounted, never mis-counted as executed.
                         self._on_order_throttle_rejected()
 
                     self._record_bar_metrics(event)

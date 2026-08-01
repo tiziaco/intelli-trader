@@ -56,6 +56,7 @@ no marker of its own, and ``tests/integration/`` has no ``__init__.py``.
 """
 
 import datetime as dt
+import random
 import uuid
 from decimal import Decimal
 
@@ -130,16 +131,19 @@ class _PaperPair:
 
     def __init__(self, system) -> None:
         self.system = system
-        # Post-D-43: build a per-account bundle+exchange for each pair through the SAME memo
-        # ``bring_online`` uses, and register it under the account's pair. The offline in-memory
-        # harness has no manager to run ``bring_online``, so the fixture wires the two
-        # per-account exchanges by hand — each a DISTINCT ``SimulatedExchange`` object.
-        bundles = system.portfolio_handler._factory._authority._venue_bundles
+        # Build a per-account exchange for each pair and register it under that account's
+        # pair, exactly as ``bring_online`` does. The offline in-memory harness has no
+        # manager to run the bring-up, so the fixture wires the two per-account exchanges
+        # by hand — each a DISTINCT ``SimulatedExchange`` object.
+        from itrader.execution_handler.exchanges.simulated import SimulatedExchange
+        from itrader.execution_handler.execution_handler import default_exchange_config
+
         self._exchanges: dict[str, object] = {}
         for account_id in (self._ACCOUNT_A, self._ACCOUNT_B):
-            exchange = bundles.get(self._VENUE, account_id, None).exchange
-            # A freshly-built bundle exchange is not yet connected (the seeded default one is
-            # connected by seed_exchange_registry); connect it before it accepts orders.
+            exchange = SimulatedExchange(
+                system.global_queue, config=default_exchange_config(),
+                rng=random.Random(42))
+            # A freshly-built exchange is not connected; connect it before it accepts orders.
             exchange.connect()
             exchange.register_symbol(_SYMBOL)
             system.execution_handler.exchanges[(self._VENUE, account_id)] = exchange
@@ -467,10 +471,9 @@ from itrader.storage.portfolio_definition_store import PortfolioDefinitionStore 
 from itrader.storage.strategy_registry_store import StrategyRegistryStore  # noqa: E402
 from itrader.storage.venue_account_store import VenueAccountStore  # noqa: E402
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy  # noqa: E402
-from itrader.trading_system.live_trading_system import build_live_system  # noqa: E402
-from itrader.trading_system.system_spec import PortfolioSpec, SystemSpec  # noqa: E402
-from itrader.trading_system.venue_spec import build_venue_spec  # noqa: E402
-from tests.support.replay_harness import TestDataPlugin  # noqa: E402
+from itrader import config as _live_config  # noqa: E402
+from itrader.trading_system.live.build import build_live_system  # noqa: E402
+from tests.support.replay_harness import TestDataRecipe  # noqa: E402
 from tests.support.schema import provision_schema, seed_portfolio_definitions  # noqa: E402
 from tests.support.strategy_catalog import seeded_registry_rows, test_catalog  # noqa: E402
 
@@ -488,20 +491,6 @@ def okx_env(monkeypatch):
     monkeypatch.setenv("OKX_API_KEY", "test-key")
     monkeypatch.setenv("OKX_API_SECRET", "test-secret")
     monkeypatch.setenv("OKX_API_PASSPHRASE", "test-pass")
-
-
-def _spec(account_ids, primary=None):
-    """A ``SystemSpec`` whose PORTFOLIOS name the accounts (MPORT-05)."""
-    return SystemSpec(
-        start="2024-01-01", end="2024-01-02", timeframe="1d", ticker="BTCUSDT",
-        starting_cash=10_000, data={}, strategies=[],
-        portfolios=[
-            PortfolioSpec(name=f"pf-{index}", cash=10_000, account_id=account_id)
-            for index, account_id in enumerate(account_ids)
-        ],
-        execution_venue=_VENUE,
-        account_id=primary,
-    )
 
 
 @pytest.fixture
@@ -563,7 +552,7 @@ def test_a_full_restart_returns_both_portfolios_with_stable_ids(live_db, okx_env
     _seed_venue_account(live_db, "acct-b")
 
     # --- first boot: create BOTH portfolios through the live handler ----------
-    system = build_live_system(_spec([]))
+    system = build_live_system(_live_config, execution_venue=_VENUE)
     try:
         id_a = system.portfolio_handler.add_portfolio(
             name="pf-a", exchange=_VENUE, cash=Decimal("25000.00"),
@@ -587,7 +576,10 @@ def test_a_full_restart_returns_both_portfolios_with_stable_ids(live_db, okx_env
                  config={"limits": {"max_positions": 9}}, at=_AT)
 
     # --- restart: a brand-new engine over the SAME database -------------------
-    system2 = build_live_system(_spec([]))
+    system2 = build_live_system(_live_config, execution_venue=_VENUE)
+    # The rehydrate is a step of the restart sequence start() runs, so drive it here —
+    # the same call start() makes, without the drain thread.
+    system2._bootstrap_session()
     try:
         # Both ids came back FROM THE DEFINITION ROWS (rehydrate reads portfolio_id ASC;
         # UUIDv7 is monotonic, so id_a precedes id_b).
@@ -625,9 +617,14 @@ def _build_paper(**kwargs):
     ``strategy_catalog`` injection seam is exercised as production would reach it — the
     same helper ``test_strategy_registry_restart.py`` uses.
     """
-    plugin = TestDataPlugin()
-    spec = build_venue_spec("paper", data_provider="replay")
-    return build_live_system(spec, data_plugins={"replay": plugin}, **kwargs)
+    recipe = TestDataRecipe()
+    system = build_live_system(
+        _live_config, execution_venue="paper", data_venue="replay",
+        data_recipes={"replay": recipe}, **kwargs)
+    # Bring-up + rehydrate live in start(), because bring-up connects. This is the exact
+    # call start() makes, so the production restart sequence runs without a drain thread.
+    system._bootstrap_session()
+    return system
 
 
 def _seed_strategy(store: StrategyRegistryStore, strategy, portfolio_ids) -> None:

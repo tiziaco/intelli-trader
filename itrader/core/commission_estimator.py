@@ -39,7 +39,7 @@ Design decisions locked for this boundary:
   an explicit capturing-provider counter-example).
 * **D-39 / 11.1-REVIEW WR-01 — the seam is keyed on the ``(venue, account_id)``
   PAIR.** The provider was originally ``() -> FeeModel | None``, and the one
-  implementation (``compose_engine``) satisfied it with a closure over an
+  implementation (``build_handler_graph``) satisfied it with a closure over an
   exchange resolved ONCE at wiring time — always the paper compute exchange. The
   Protocol's own zero-arg shape is what made that venue-blindness invisible: a
   provider that cannot be ASKED about a venue cannot be caught answering for the

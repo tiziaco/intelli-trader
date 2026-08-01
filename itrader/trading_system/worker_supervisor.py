@@ -1,25 +1,19 @@
-"""WorkerSupervisor — the live poll-timer worker collaborator (RUN-02 / D-05).
+"""WorkerSupervisor — the live poll-timer worker collaborator.
 
-The standalone §5 collaborator that owns the dynamic-universe poll-timer worker
-lifecycle, extracted from ``LiveTradingSystem._run_poll_timer`` (the donor:
-``live_trading_system.py:1852-1873``) plus its daemon-thread creation
-(``:1836-1841``). ``LiveRunner`` COMPOSES this (has-a, constructor-injected) — it
-does NOT inherit a shared runner base (D-05, composition-over-inheritance, the
-live analog of ``compose_engine -> Engine -> BacktestRunner``).
+Owns the dynamic-universe poll-timer worker lifecycle and its daemon thread.
+``LiveRunner`` COMPOSES this (has-a, constructor-injected) rather than inheriting a
+shared runner base — the live analog of ``build_handler_graph -> Engine ->
+BacktestRunner``.
 
-The poll worker is the SOLE wall-clock event on the live path — control-plane
-ONLY (Pitfall 3 / determinism): it stamps ONLY the control-plane
-``UniversePollEvent``, and NEVER a bar/fill business ``time`` (business ``time``
-stays venue-sourced). ``stop_event.wait(cadence)`` doubles as the interruptible
+The poll worker is the SOLE wall-clock event on the live path, and control-plane ONLY:
+it stamps the control-plane ``UniversePollEvent`` and NEVER a bar/fill business ``time``,
+which stays venue-sourced. ``stop_event.wait(cadence)`` doubles as the interruptible
 sleep so ``stop()`` unblocks it immediately. The cadence is INJECTED (read from
 ``config.universe.poll_cadence_s`` by the caller), never a module literal.
 
-Live-only and import-inert: imports only stdlib ``threading``/``datetime`` + the
-events package + the ``EventBus`` seam (no ccxt.pro / no SQL on the backtest
-import path — ``test_okx_inertness.py`` green). Unwired here; ``build_live_system``
-(plan 06-05) composes it into ``LiveRunner``.
-
-Indentation: 4 SPACES (matches the ``live_trading_system.py`` donor).
+Live-only and import-inert: imports only stdlib ``threading``/``datetime`` plus the
+events package and the ``EventBus`` seam, so no ccxt.pro and no SQL reach the backtest
+import path.
 """
 
 import threading
@@ -32,13 +26,12 @@ from itrader.logger import get_itrader_logger
 
 
 class WorkerSupervisor:
-    """Owns the dynamic-universe poll-timer daemon worker (D-05).
+    """Owns the dynamic-universe poll-timer daemon worker.
 
-    Constructor injection only (no facade back-reference): the event bus/queue to
-    ``.put`` the poll event onto, the shared ``stop_event`` (the same latch the
-    ``LiveRunner`` drain loop honours), and the poll ``cadence`` in seconds (read
-    from config by the caller — NOT hardcoded). ``start()``/``stop()`` manage the
-    daemon thread; ``_run_poll_timer`` is the transplanted donor worker body.
+    Constructor injection only, with no facade back-reference: the event bus to ``.put``
+    the poll event onto, the shared ``stop_event`` (the same latch the ``LiveRunner``
+    drain loop honours), and the poll ``cadence`` in seconds, read from config by the
+    caller.
     """
 
     def __init__(
@@ -54,22 +47,17 @@ class WorkerSupervisor:
         self._thread: Optional[threading.Thread] = None
 
     def _run_poll_timer(self) -> None:
-        """Live-only dynamic-universe poll-timer daemon (Plan 06-05 / 07-07, D-02/D-06).
+        """Live-only dynamic-universe poll-timer daemon.
 
-        Loops until ``stop_event`` is set, putting a control-plane ``UniversePollEvent``
-        on the global queue every ``cadence`` seconds so the live
-        ``UniverseHandler.on_poll`` polls its selection source DECOUPLED from bars
-        (D-02) off its OWN dedicated ``UNIVERSE_POLL`` route (D-06/WR-06 — no longer the
-        shared TIME route that also fans to screeners/bar-gen). This is the SOLE
-        wall-clock event on the live path — it stamps ONLY the control-plane poll, and
-        NEVER a bar/fill business time (Pitfall 3 / determinism: business ``time`` stays
-        venue-sourced). Started only on the live daemon path, NEVER in the offline
-        synchronous parity driver or the backtest. ``stop_event.wait(cadence)``
-        doubles as the interruptible sleep so ``stop()`` unblocks it immediately.
+        Loops until ``stop_event`` is set, putting a ``UniversePollEvent`` on the bus every
+        ``cadence`` seconds so ``UniverseHandler.on_poll`` polls its selection source DECOUPLED
+        from bars, off its OWN dedicated ``UNIVERSE_POLL`` route rather than the shared TIME
+        route that also fans out to screeners and bar generation. Started only on the live
+        daemon path — never in the offline synchronous parity driver or the backtest.
         """
         while not self._stop_event.is_set():
-            # Control-plane wall-clock UniversePollEvent ONLY (D-06/Pitfall 3): its own
-            # discriminator, never a bar/fill business time, never the shared TIME route.
+            # Control-plane wall-clock UniversePollEvent ONLY: its own discriminator, never a
+            # bar/fill business time, never the shared TIME route.
             self._bus.put(UniversePollEvent(time=datetime.now(UTC)))
             self._stop_event.wait(self._cadence)
 

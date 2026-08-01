@@ -4,7 +4,7 @@ Proves the purely-additive ctor seam: with ``environment='backtest', sql_engine=
 (and no ``signal_store`` passed) the handler owns its signal-store init and yields the
 SAME ``InMemorySignalStore`` concrete the backtest path built before (byte-exact oracle
 preserved). An explicit ``signal_store=`` override still wins — the concrete exposed on
-``.signal_store`` is the object ``compose_engine`` reads back onto the Engine holder in
+``.signal_store`` is the object ``build_handler_graph`` reads back onto the Engine holder in
 plan 02-03.
 """
 

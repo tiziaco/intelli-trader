@@ -246,7 +246,7 @@ from itrader.core.sizing import FractionOfCash, TradingDirection  # noqa: E402
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import (  # noqa: E402
     SMAMACDStrategy,
 )
-from itrader.trading_system.backtest_trading_system import BacktestTradingSystem  # noqa: E402
+from itrader.trading_system.backtest.backtest_trading_system import BacktestTradingSystem  # noqa: E402
 
 
 def test_golden_run_signal_store_is_non_empty_and_queryable():

@@ -27,6 +27,7 @@ import asyncio
 import json
 import queue
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any, Callable, Optional
 from unittest.mock import MagicMock
 
@@ -36,9 +37,12 @@ import pytest
 
 from itrader.core.enums import ErrorSeverity, EventType, SystemStatus
 from itrader.events_handler.events import ErrorEvent
+from itrader.execution_handler.exchanges.base import AccountSnapshot
 from itrader.execution_handler.exchanges.okx import OkxExchange
 from itrader.price_handler.providers.okx_provider import OkxDataProvider
-from itrader.trading_system.live_trading_system import LiveTradingSystem
+from itrader import config as _live_config
+from itrader.trading_system.live.build import build_live_system, emit_stream_up
+from itrader.trading_system.live.system import LiveTradingSystem
 
 _SECRET = "OKX_API_SECRET-supersecret-0xDEADBEEF"
 
@@ -409,7 +413,8 @@ def _live_system(monkeypatch: Any) -> LiveTradingSystem:
     """A credential-free LiveTradingSystem for the default (non-OKX) venue."""
     for var in ("OKX_API_KEY", "OKX_API_SECRET", "OKX_API_PASSPHRASE"):
         monkeypatch.delenv(var, raising=False)
-    return LiveTradingSystem.for_exchange("binance")
+    return build_live_system(
+        _live_config, execution_venue="binance", data_venue="okx")
 
 
 class _RecordingSink:
@@ -483,7 +488,7 @@ def test_error_route_consumer_failure_does_not_recurse(monkeypatch: Any) -> None
     """
     system = _live_system(monkeypatch)
     # 08-03 (D-06): the live publish-and-continue policy is injected at EventHandler
-    # construction (build_live_system → compose_engine) — the old start() monkeypatch is
+    # construction (build_live_system → build_handler_graph) — the old start() monkeypatch is
     # gone, so no per-test policy install is needed. The alert-sink rides on the injected
     # ErrorHandler (D-03).
     sink = _RaisingSink()
@@ -568,23 +573,42 @@ def test_get_status_surfaces_paused_state_distinctly(monkeypatch: Any) -> None:
     assert status["status"] != SystemStatus.HALTED.value
 
 
+def _wire_one_online_adapter(system: LiveTradingSystem) -> MagicMock:
+    """Give ``system``'s resume handler ONE online account, and return its adapter.
+
+    Records are what the handler enumerates: ``record.connector is not None`` marks the
+    account as streaming and ``record.adapter`` is the adapter that gets caught up,
+    snapshotted and health-checked — one object, because it owns the account's session.
+    ``is_streaming_healthy`` is pinned True so the compound resume gate is not what these
+    tests are measuring.
+    """
+    adapter = MagicMock(name="venue_adapter")
+    adapter.is_streaming_healthy = MagicMock(return_value=True)
+    adapter.snapshot = MagicMock(
+        name="snapshot", return_value=AccountSnapshot.empty())
+    record = SimpleNamespace(
+        spec=SimpleNamespace(venue_name="okx", account_id="acct-1"),
+        connector=object(), adapter=adapter)
+    system._stream_recovery._accounts = lambda: [record]
+    return adapter
+
+
 def test_resume_after_reconnect_snapshots_then_clears_pause(monkeypatch: Any) -> None:
     """The engine-thread resume takes a fresh REST snapshot then clears the pause (D-19)."""
     system = _live_system(monkeypatch)
-    venue = MagicMock(name="venue_account")
-    system._stream_recovery._venue_accounts = lambda: [venue]
+    adapter = _wire_one_online_adapter(system)
     system.pause_submission("paused-on-disconnect")
 
     # The connector-loop reconnect callback only EMITS a STREAM_STATE(up) CONTROL event
     # (no blocking I/O) — it does not resume on the connector thread.
-    system._on_venue_stream_up("fills")
+    emit_stream_up(system.global_queue, "fills")
     assert system.get_status()["paused"] is True   # not resumed on the connector thread
-    venue.snapshot.assert_not_called()
+    adapter.snapshot.assert_not_called()
 
     # The engine-thread STREAM_STATE(up) route target performs the fresh REST snapshot,
     # then resumes.
     system._stream_recovery.on_reconnect()
-    venue.snapshot.assert_called_once()            # don't trade when you can't see the venue
+    adapter.snapshot.assert_called_once()          # don't trade when you can't see the venue
     assert system.get_status()["paused"] is False
 
 
@@ -604,29 +628,29 @@ def test_pause_does_not_fire_while_halted(monkeypatch: Any) -> None:
 def test_resume_snapshots_before_clearing_pause(monkeypatch: Any) -> None:
     """Resume takes a fresh REST snapshot BEFORE clearing the pause; a raise stays paused (WR-04).
 
-    Proves the honest resume path: ``StreamRecoveryHandler.on_reconnect`` refreshes venue
-    truth via ``VenueAccount.snapshot()`` and only then clears the pause — and a snapshot
-    that RAISES leaves the pause in place and re-sets the resume flag (never resume blind).
-    A blind mid-session ``VenueReconciler.reconcile()`` would spuriously HALT on legitimate
-    positions from filled non-bracket orders, so resume deliberately snapshots only.
+    The honest resume path: ``StreamRecoveryHandler.on_reconnect`` refreshes venue truth
+    through the adapter's ``snapshot()`` and only then clears the pause — and a snapshot
+    that RAISES leaves the pause in place (never resume blind), retried on the next
+    STREAM_STATE(up) route fire. A blind mid-session ``VenueReconciler.reconcile()`` would
+    spuriously HALT on legitimate positions from filled non-bracket orders, so resume
+    deliberately snapshots only.
     """
     system = _live_system(monkeypatch)
-    venue = MagicMock(name="venue_account")
-    system._stream_recovery._venue_accounts = lambda: [venue]
+    adapter = _wire_one_online_adapter(system)
 
     # Happy path: pause, drive the engine-thread reconnect-resume — snapshot runs, pause clears.
     system.pause_submission("paused-on-disconnect")
     system._stream_recovery.on_reconnect()
-    venue.snapshot.assert_called_once()
+    adapter.snapshot.assert_called_once()
     assert system.get_status()["paused"] is False
 
-    # Failure path: a snapshot that raises leaves the system paused (D-12 — stay paused,
-    # retried on the NEXT STREAM_STATE(up) route fire; no flag side-channel any more).
+    # Failure path: a snapshot that raises leaves the system paused — stay paused, retried
+    # on the NEXT STREAM_STATE(up) route fire; no failure counter, no halt escalation.
     system.pause_submission("paused-on-disconnect")
-    venue.snapshot.reset_mock()
-    venue.snapshot.side_effect = RuntimeError("venue unreachable")
+    adapter.snapshot.reset_mock()
+    adapter.snapshot.side_effect = RuntimeError("venue unreachable")
     system._stream_recovery.on_reconnect()
-    venue.snapshot.assert_called_once()
+    adapter.snapshot.assert_called_once()
     assert system.get_status()["paused"] is True          # never resume blind
 
 

@@ -46,7 +46,10 @@ from itrader.execution_handler.execution_handler import (
     ExecutionHandler,
 )
 
-from tests.support.venue_wiring import backtest_exchange_registry
+from tests.support.venue_wiring import (
+    backtest_exchange_registry,
+    single_account_read_model,
+)
 
 _VENUE = "okxlike"
 _PF_A = 101
@@ -100,7 +103,9 @@ def routing_env():
     composition root cannot produce this shape until plan 11-07.
     """
     queue = Queue()
-    handler = ExecutionHandler(queue, exchange_registry=backtest_exchange_registry(queue))
+    handler = ExecutionHandler(
+        queue, exchange_registry=backtest_exchange_registry(queue),
+        portfolio_read_model=single_account_read_model())
     exchange_a = _RecordingExchange("a")
     exchange_b = _RecordingExchange("b")
     handler.exchanges = {

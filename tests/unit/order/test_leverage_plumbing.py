@@ -143,8 +143,8 @@ def _admission(enable_margin, pf_max_leverage):
     from itrader.order_handler.admission.admission_manager import AdmissionManager
     from itrader.order_handler.brackets.bracket_book import BracketBook
     from itrader.order_handler.brackets.bracket_manager import BracketManager
-    from itrader.order_handler.storage import OrderStorageFactory
-    storage = OrderStorageFactory.create("test")
+    from itrader.order_handler.storage import build_order_storage
+    storage = build_order_storage("test")
     logger = _StubLogger()
     brackets = BracketBook()
     bracket_manager = BracketManager(storage, logger, brackets)

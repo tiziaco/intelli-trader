@@ -29,7 +29,7 @@ class PortfolioStateStorage(ABC):
 
     Following the order-storage split (active vs. all/history), working state is
     mutable/removable while history is append-only. The backend is pluggable via
-    ``PortfolioStateStorageFactory``. Durable record shapes carry Decimal money +
+    ``build_portfolio_state_storage``. Durable record shapes carry Decimal money +
     native UUID ids + event-derived time — there is NO DB code here.
     """
 

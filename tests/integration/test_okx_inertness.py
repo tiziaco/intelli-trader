@@ -2,7 +2,7 @@
 
 This is the recurring milestone-gate proof for Phase 2: the OKX order/data
 machinery must be **inert on the backtest hot path**. Importing the backtest
-composition root (``itrader.trading_system.backtest_trading_system``) must pull
+composition root (``itrader.trading_system.backtest.backtest_trading_system``) must pull
 **NO** OKX connector concretion and **NO** ``ccxt.pro`` — those are lazy-imported
 inside ``LiveTradingSystem.__init__`` only (Plan 02-05), so they never touch the
 backtest import graph.
@@ -33,7 +33,7 @@ import sys
 
 # The backtest composition root — the hot path. Importing it must NOT pull the OKX
 # stack (lazy-imported inside LiveTradingSystem.__init__, never on this path).
-import itrader.trading_system.backtest_trading_system  # noqa: F401
+import itrader.trading_system.backtest.backtest_trading_system  # noqa: F401
 
 _FORBIDDEN = (
     "itrader.connectors.okx",
@@ -80,28 +80,13 @@ _FORBIDDEN = (
     "itrader.storage.system_store",
     "itrader.storage.venue_store",
     "itrader.storage.strategy_registry_store",
-    # Phase 5 (05-05, VENUE-02 inertness gate): the concrete OKX venue/data/connector
-    # plugin module is LIVE-ONLY — it is registered at the LTS root (in
-    # build_live_system, P6) and its OKX concretion imports + OkxSettings()
-    # construction live INSIDE build*() (D-04 triple-deferral). If a future edit
-    # hoists that concretion import to module scope (or pulls okx_plugin onto the
-    # backtest path) this probe fails loudly, protecting the oracle byte-exactness +
-    # the W1/W2 perf gate.
-    #
-    # 11.1-07 (D-04) REMOVED `itrader.venues.paper_plugin` from this list — by
-    # DECISION, not by weakening. The backtest now goes through the SAME venue path
-    # live uses: `backtest_trading_system` builds an ExecutionVenueRegistry, registers
-    # `PaperVenuePlugin(exchange_config)` and hands compose a `VenueBundles`. The paper
-    # plugin module is therefore ON the backtest path on purpose, and forbidding it
-    # would forbid the wiring the phase exists to land.
-    #
-    # The protection that MATTERS is unchanged and is asserted below, not here: the
-    # register-vs-build block imports paper_plugin + registers the plugin objects
-    # INSIDE the ccxt-absent window, so a hoisted `SimulatedExchange`/ccxt import in the
-    # plugin still reddens this gate. `ccxt` / `ccxt.pro` / `itrader.connectors.okx`
-    # remain forbidden for the backtest root import above, which is the real invariant
-    # (paper_plugin must pull nothing heavy — not "paper_plugin must be unimported").
-    "itrader.venues.okx_plugin",
+    # The OKX execution and data adapters (which host their venue recipes) are named in
+    # the boundary-roots assertion below rather than here, so a leaked submodule of
+    # either trips the gate too. The paper adapter and its recipe are deliberately NOT
+    # forbidden anywhere: the backtest root builds its paper exchange through the same
+    # recipe live uses, so that module is ON the backtest path on purpose. What protects
+    # the gate there is the ccxt/SQL absence asserted for the backtest root import above
+    # — "the paper recipe must pull nothing heavy", not "must be unimported".
     # Phase 11 (11-04, D-02 credentials boundary): the CredentialResolver seam is
     # LIVE-ONLY — it is constructed inside build_live_system and reached by PATH import
     # (mirroring okx_settings), never through the config barrel. Listing it here makes
@@ -155,19 +140,43 @@ assert not _sql_leaked, (
     "never a module-top import)"
 )
 
-# Phase 06.1 (SEAM-04, D-12): the trading_system barrel DROPPED the live surface
-# entirely — importing the backtest root (above) pulls ONLY the backtest composition
-# root, so the live module itself must be ABSENT from sys.modules at this point. Before
-# the barrel drop, `trading_system/__init__.py` eagerly imported LiveTradingSystem /
-# build_live_system, silently dragging the whole live module onto the backtest import
-# graph (the root cause of the pervasive lazy-imports-inside-methods). The later
-# explicit `from itrader.trading_system.live_trading_system import build_live_system`
-# (in the P6 register-vs-build block below) runs AFTER this assertion and legitimately
-# pulls the module for the register-vs-build check — it does not weaken this guard.
-assert "itrader.trading_system.live_trading_system" not in sys.modules, (
-    "SEAM-04/D-12 INERTNESS VIOLATION: importing the backtest root pulled "
-    "itrader.trading_system.live_trading_system onto the backtest import graph — the "
-    "trading_system barrel must NOT re-import (or re-export) the live module (D-12)"
+# The two-roots import boundary, asserted by PREFIX (supersedes the exact-name SEAM-04
+# check it grew out of).
+#
+# An exact-name check on ``itrader.trading_system.live`` is insufficient in the precise
+# way that matters: a leaked ``itrader.trading_system.live.bootstrap`` would satisfy it
+# while dragging SQLAlchemy onto the backtest graph. The boundary is therefore stated
+# over ROOTS, and a root matches itself or anything beneath it.
+#
+# Matching is on module-path BOUNDARIES (``name == root`` or ``name.startswith(root +
+# ".")``), never a bare string prefix — a bare prefix would let a coincidental name
+# overlap do the work by accident. Every forbidden root is listed explicitly instead.
+#
+# This is the FULL §3.2 set. ``itrader.connectors`` and ``itrader.venues.accounts`` joined
+# once the backtest root stopped wiring a connector provider and a venue substrate: it now
+# builds its paper exchange and its account factory directly and calls the mode-blind
+# ``build_handler_graph``, so neither package is reachable from it at all.
+#
+# The explicit live-module imports in the register-vs-build blocks below run AFTER this
+# assertion and legitimately pull those modules for their own checks — they do not weaken
+# this guard.
+_BOUNDARY_ROOTS = (
+    "itrader.trading_system.live",
+    "itrader.connectors",
+    "itrader.venues.accounts",
+    "itrader.execution_handler.exchanges.okx",
+    "itrader.price_handler.providers.okx_provider",
+)
+_boundary_leaked = sorted(
+    name for name in sys.modules
+    for root in _BOUNDARY_ROOTS
+    if name == root or name.startswith(root + ".")
+)
+assert not _boundary_leaked, (
+    "IMPORT-BOUNDARY VIOLATION: importing the backtest root pulled live-only modules "
+    "onto the backtest import graph: " + repr(_boundary_leaked)
+    + " — the backtest and live composition roots must not reach each other, and the "
+    "trading_system barrel must re-export only the backtest surface"
 )
 
 # Phase 1 (CFG-02, D-05/D-06 register-vs-build): importing itrader runs
@@ -217,64 +226,32 @@ assert "sql" not in _cfg.__dict__, (
     "the lazy `sql` cached_property on the config singleton (must stay unbuilt)"
 )
 
-# Phase 5 (05-05, VENUE-02 register-vs-build): importing the CONCRETE OKX + paper
-# plugin modules and registering the plugin OBJECTS in the venue/data registries must
-# pull NO ccxt.pro / ccxt / OkxConnector concretion — the heavy import happens ONLY
-# inside a plugin's build*() method, which this probe deliberately NEVER calls (calling
-# it would legitimately pull ccxt + require OKX creds). This is the register != build
-# proof (D-04 triple-deferral): if a future edit HOISTS a plugin's `import ccxt.pro` /
-# `from itrader.connectors.okx import OkxConnector` / `OkxSettings()` to module top,
-# importing the plugin module here pulls the OKX stack and this assertion fails loudly.
+# Register-vs-BUILD, against the redesign's shape: the CATALOGUE, the SESSION POOL and the
+# VENUE-ACCOUNT domain must all be import-inert and construction-inert.
 #
-# NOTE — the ConnectorProvider (itrader.connectors.provider) is INSIDE this ccxt-absent
-# window as of Phase 11.1 (RESEARCH F-2). It used to be excluded, on the premise that
-# importing anything under the `itrader.connectors` package runs connectors/__init__.py,
-# which eagerly re-exported `OkxConnector` and therefore pulled ccxt. That barrel
-# re-export is GONE — the barrel now exports only the `LiveConnector` Protocol — so the
-# exclusion has no premise left. Folding the provider in is not cosmetic: Phase 11.1's
-# D-04 puts a REAL, EMPTY `ConnectorProvider({})` on the BACKTEST wiring path (absence is
-# modelled as an empty collection, never as `None`), and the assertion below is the only
-# mechanical proof that that wiring stays inert. If a future edit re-introduces a
-# concretion re-export in `connectors/__init__.py` (or hoists a ccxt import into
-# `connectors/provider.py`), importing the provider here pulls the OKX stack and the
-# assertion fails loudly. The OkxConnectorPlugin recipe's own laziness is proven by the
-# plugin MODULE staying inert to import (asserted here) plus its build-body unit contract
-# (tests/unit/venues/test_okx_plugin.py).
-from itrader.venues.okx_plugin import (
-    OkxConnectorPlugin,
-    OkxDataPlugin,
-    OkxVenuePlugin,
-)
-from itrader.venues.paper_plugin import PaperVenuePlugin
-from itrader.venues.registry import DataProviderRegistry, ExecutionVenueRegistry
-from itrader.connectors.provider import ConnectorProvider
+# The point this proves is that "which venue" is now a DATA decision: a caller can read the
+# catalogue, build a pool and construct the account domain WITHOUT touching a venue. The
+# heavy import happens only inside a RECIPE, which nothing here calls — calling one would
+# legitimately pull ccxt and require OKX credentials. If a future edit hoists an
+# ``import ccxt.pro`` / ``from itrader.connectors.okx import OkxConnector`` / an
+# ``OkxSettings()`` construction to module top in any of these, this reddens loudly.
+#
+# These imports run AFTER the boundary assertion above, which is what makes them legal here:
+# the guard has already proved the backtest root pulled none of them.
+from itrader.connectors.pool import ConnectorPool
+from itrader.venues.accounts import AccountSpec, VenueAccountManager  # noqa: F401
+from itrader.venues.catalog import CATALOG, VenueCapability, descriptor_for
 
-_exec_registry = ExecutionVenueRegistry()
-_data_registry = DataProviderRegistry()
-# Register the concrete plugin OBJECTS (store-only — no build*): the OKX venue/data
-# plugins + the paper EXECUTION venue plugin. 11.1-07 (D-06/D-17): the paper plugin now
-# takes an ExchangeConfig and BUILDS its own SimulatedExchange inside build_bundle — so
-# a real ExchangeConfig is constructed here (pure Pydantic, already on the graph) and
-# the registration below must still pull no concretion. TEST-01/D-18: paper_plugin no
-# longer holds a replay DATA plugin (it left for tests/); production paper selects the
-# OKX data feed (D-21). OkxConnectorPlugin is constructed too (an inert object;
-# build() never called).
-from itrader.config import ExchangeConfig
-_exec_registry.register("okx", OkxVenuePlugin())
-_exec_registry.register("paper", PaperVenuePlugin(ExchangeConfig.default()))
-_data_registry.register("okx", OkxDataPlugin())
-_okx_connector_plugin = OkxConnectorPlugin()
-# Phase 11.1 (D-04/D-08): this is the REAL BACKTEST WIRING PATH, not a stand-in.
-# `backtest_trading_system` builds exactly these four objects before compose — an
-# ExecutionVenueRegistry holding the paper plugin, a REAL, EMPTY ConnectorProvider
-# (never None), and a VenueBundles over both. Constructing the memo is register-only:
-# no `build_bundle` runs until something calls `get`, which this probe deliberately
-# never does. Asserting inertness over the production SHAPE (rather than a parallel
-# ConnectorProvider({}) built beside it) is what keeps this gate honest — 11.1-01
-# left this instruction when it folded the provider into the ccxt-absent window.
-from itrader.venues.bundles import VenueBundles
-_connectors = ConnectorProvider({})
-_venue_bundles = VenueBundles(_exec_registry, _connectors, _ctx)
+# Reading the catalogue answers every pre-build question — credential model, capabilities,
+# default data provider — with no concretion constructed.
+_okx = descriptor_for("okx")
+_paper = descriptor_for("paper")
+assert _okx.supports(VenueCapability.EXECUTION)
+assert _paper.credential_model is None
+# An EMPTY pool: the memo, the resolver seam and the recipe mapping, and NO session. The
+# recipes are deliberately left empty — supplying build_okx_connector would import it.
+_pool = ConnectorPool(catalog=CATALOG, resolver=None, recipes={})
+_pool.close_all()
 
 _okx_leaked = [
     name
@@ -282,47 +259,35 @@ _okx_leaked = [
     if name in sys.modules
 ]
 assert not _okx_leaked, (
-    "P5/11.1 register-vs-build inertness violation (VENUE-02/VENUE-03): importing + "
-    "registering the OKX/paper venue/data plugins, and building the registry + empty "
-    "ConnectorProvider + VenueBundles the backtest wires (D-04/D-08), pulled the "
-    "OKX/ccxt stack: "
+    "register-vs-build inertness violation: importing the venue catalogue, the connector "
+    "pool and the venue-account domain — and constructing descriptors plus an EMPTY pool — "
+    "pulled the OKX/ccxt stack: "
     + repr(_okx_leaked)
-    + " (the ccxt.pro import + OkxSettings() must stay inside a plugin's build*, never "
-    "at module or register time — D-04 triple-deferral; and itrader/connectors/__init__.py "
-    "must re-export no connector concretion — RESEARCH F-2)"
+    + " (the ccxt.pro import + OkxSettings() must stay inside a venue RECIPE, never at "
+    "module or construction time)"
+)
+assert "sql" not in _cfg.__dict__, (
+    "register-vs-build inertness violation: constructing the pool / reading the catalogue "
+    "resolved the lazy `sql` cached_property on the config singleton (must stay unbuilt)"
 )
 
-# Phase 6 (06-06, RUN-01/RUN-03 register-vs-build): the new live composition-root
-# surface — the ``build_live_system`` factory + the ``LiveRunner`` runtime (which
-# composes ``WorkerSupervisor`` + the minimal ``ErrorPolicy``) + the
-# ``LiveRouteRegistrar`` + ``SessionInitializer`` — must stay import-inert on the
-# backtest path. All their live/venue/SQL wiring lives INSIDE ``build_live_system``'s
-# body (never at module or import time), so IMPORTING them (register, not build) pulls
-# NO ccxt.pro / ccxt and constructs NO ``SqlSettings`` (the `sql` cached_property stays
-# unresolved). This is the register-vs-build proof for the P6 decomposition: if a future
-# edit hoists a venue/connector/ccxt/SqlSettings import to module scope in any of these
-# modules (or into ``build_live_system``'s top-level), importing them here pulls the OKX/
-# SQL stack and this assertion fails loudly — protecting the oracle + the W1/W2 perf gate.
-from itrader.trading_system.live_trading_system import build_live_system  # noqa: F401
+# The live composition root and the live runtime surface. Importing ``trading_system.live``
+# DOES legitimately pull ccxt — its connector recipe is named at module top, which the §3.2
+# boundary is what makes legal — so this import comes LAST, after every assertion above.
+# The invariant that matters is the BACKTEST boundary, already asserted, not the absence of
+# ccxt after a live import.
+from itrader.trading_system.live.build import build_live_system  # noqa: F401
+from itrader.trading_system.live.system import LiveTradingSystem  # noqa: F401
 from itrader.trading_system.live_runner import LiveRunner  # noqa: F401
 from itrader.trading_system.worker_supervisor import WorkerSupervisor  # noqa: F401
 from itrader.events_handler.error_policy import ErrorPolicy  # noqa: F401
 from itrader.trading_system.route_registrar import LiveRouteRegistrar  # noqa: F401
 from itrader.trading_system.session_initializer import SessionInitializer  # noqa: F401
 
-_p6_heavy = [name for name in ("ccxt.pro", "ccxt", "itrader.connectors.okx") if name in sys.modules]
-assert not _p6_heavy, (
-    "P6 register-vs-build inertness violation (RUN-01/RUN-03): importing the new live "
-    "factory/runner/registrar surface (build_live_system / LiveRunner / WorkerSupervisor "
-    "/ ErrorPolicy / LiveRouteRegistrar / SessionInitializer) pulled the OKX/ccxt stack: "
-    + repr(_p6_heavy)
-    + " — the venue/connector/ccxt imports must stay INSIDE build_live_system's body "
-    "(register != build, D-04)"
-)
 assert "sql" not in _cfg.__dict__, (
-    "P6 register-vs-build inertness violation (RUN-01): importing build_live_system / "
-    "LiveRunner resolved the lazy `sql` cached_property on the config singleton — the "
-    "live sql_engine must be built INSIDE build_live_system, never at import"
+    "register-vs-build inertness violation: importing the live root resolved the lazy "
+    "`sql` cached_property on the config singleton — the live SqlEngine must be built "
+    "INSIDE build_live_system, never at import"
 )
 
 print("INERTNESS_OK")
@@ -456,45 +421,35 @@ def test_new_store_registrars_are_register_vs_build() -> None:
 def test_production_build_live_system_registers_no_replay_data_provider() -> None:
     """TEST-01/D-21: production ``build_live_system`` registers NO ``'replay'`` data provider.
 
-    The stronger post-D-21 invariant that replaces the old replay-plugin-import
-    assertion: the offline replay DATA apparatus LEFT the ``itrader`` package for the test
-    harness (D-18), and production ``paper`` re-points to the OKX live data feed (D-21). So
-    the ONE live composition root must register EXACTLY the ``'okx'`` data provider — never
-    a ``'replay'`` one — and select ``'okx'`` for the paper venue. Asserted by static source
-    inspection (``inspect.getsource``) so it is CI-safe (no OKX creds, no build): building
-    the paper→okx system would require credentials, but the registration/selection SOURCE is
-    the load-bearing invariant. A future edit that re-registers ``'replay'`` in production (or
-    re-points the paper map back to ``'replay'``) reddens this loudly.
+    The offline replay DATA apparatus LEFT the ``itrader`` package for the test harness
+    (D-18), and production ``paper`` re-points to the OKX live data feed (D-21). So the ONE
+    live composition root must know EXACTLY the ``'okx'`` data recipe — never a ``'replay'``
+    one. Asserted by static source inspection (``inspect.getsource``) so it is CI-safe (no
+    OKX creds, no build): building the paper→okx system would require credentials, but the
+    recipe map is the load-bearing invariant. A future edit that adds ``'replay'`` to the
+    production recipe map reddens this loudly.
 
-    SEAM-03/D-11: the ``{'okx':'okx','paper':'okx'}`` default-provider map was centralized
-    into the shared ``build_venue_spec`` builder (``trading_system/venue_spec.py``) — its
-    SOLE home — which BOTH ``for_exchange`` and ``build_live_system`` call. The paper→okx
-    selection invariant is therefore asserted against ``build_venue_spec``'s source now (the
-    inline ``SimpleNamespace`` + map in ``build_live_system`` was deleted); the registration
-    assertions still inspect ``build_live_system`` where ``data_registry.register`` lives.
+    The paper→okx default-provider choice is no longer a map inside a spec builder: it is
+    the ``paper`` DESCRIPTOR's own ``default_data_provider``, so it is asserted as DATA on
+    the catalogue rather than as a literal in some function's source.
     """
     import inspect
 
-    from itrader.trading_system import live_trading_system as _lts
-    from itrader.trading_system import venue_spec as _venue_spec
+    from itrader.trading_system.live import build as _build
+    from itrader.venues.catalog import CATALOG
 
-    source = inspect.getsource(_lts.build_live_system)
+    source = inspect.getsource(_build.build_live_system)
 
-    # Production registers the OKX data provider and NO replay/test data provider.
-    assert "data_registry.register('okx'" in source, (
-        "production build_live_system must register the 'okx' data provider (paper→okx, D-21)"
+    # Production knows the OKX data recipe and NO replay/test one.
+    assert "'okx': build_okx_data_provider" in source, (
+        "production build_live_system must build the 'okx' data adapter (paper→okx, D-21)"
     )
-    assert "register('replay'" not in source and 'register("replay"' not in source, (
-        "production build_live_system must register NO 'replay' data provider — the replay "
-        "harness left itrader for tests/ (D-18); a test fixture injects it via data_plugins"
+    assert "'replay'" not in source and '"replay"' not in source, (
+        "production build_live_system must name NO 'replay' data source — the replay "
+        "harness left itrader for tests/ (D-18); a test fixture injects its recipe"
     )
-    # The paper venue selects the OKX live data feed (D-21), never the replay feed. Since
-    # SEAM-03/D-11 the default-provider map lives in the shared build_venue_spec builder.
-    builder_source = inspect.getsource(_venue_spec.build_venue_spec)
-    assert "'paper': 'okx'" in builder_source or '"paper": "okx"' in builder_source, (
-        "build_venue_spec must map paper→'okx' (the OKX live data feed, D-21/D-11)"
-    )
-    assert "'paper': 'replay'" not in builder_source and '"paper": "replay"' not in builder_source, (
-        "build_venue_spec must NOT map paper→'replay' (the replay feed left production for "
-        "the test fixture, D-21)"
+    # The paper venue's data source is the OKX live feed (D-21), never the replay feed.
+    assert CATALOG["paper"].default_data_provider == "okx", (
+        "the paper descriptor must default to the OKX live data feed (D-21) — paper "
+        "executes in-process and has no market data of its own"
     )

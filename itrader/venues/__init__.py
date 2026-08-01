@@ -1,24 +1,26 @@
-"""Venue-parametrization substrate — registries, bundle, plugin Protocols (05-04, VENUE-01/02).
+"""Venue substrate — the catalogue of venues and the venue-account domain.
 
-The top-level ``venues/`` package parallels ``connectors/``: it holds the two
-independent registries (``ExecutionVenueRegistry`` / ``DataProviderRegistry``),
-the execution-only ``VenueBundle`` value object, and the ``VenuePlugin`` /
-``DataProviderPlugin`` build seams the registries hold.
+``venues/catalog.py`` answers every pre-build question about a venue as DATA (which
+capabilities it has, which credential model it needs, which data provider it defaults
+to); ``venues/accounts.py`` owns the venue-account records and their bring-up.
 
-This barrel is deliberately INERT (the P5 acceptance gate): it re-exports ONLY
-the pure value objects / Protocols / registry classes, and imports NO concretion
-(no ccxt.pro, no OKX connector, no SQL). Concrete plugins (05-05) are registered
-by the live composition root via explicit ``register(...)`` calls (D-01) — never
-imported here — so importing ``itrader.venues`` pulls nothing heavy.
+This barrel re-exports the CATALOGUE ONLY. ``venues.accounts`` is deliberately absent:
+it is one of the roots the backtest/live import boundary forbids on the backtest graph
+(``tests/integration/test_okx_inertness.py``), and a barrel re-export would put it there
+the moment anything imported ``itrader.venues``. Live callers import it by path. For the
+same reason the connector pool is never re-exported from anywhere.
 """
 
-from itrader.venues.bundle import DataProviderPlugin, VenueBundle, VenuePlugin
-from itrader.venues.registry import DataProviderRegistry, ExecutionVenueRegistry
+from itrader.venues.catalog import (
+    CATALOG,
+    VenueCapability,
+    VenueDescriptor,
+    descriptor_for,
+)
 
 __all__ = [
-    "DataProviderPlugin",
-    "DataProviderRegistry",
-    "ExecutionVenueRegistry",
-    "VenueBundle",
-    "VenuePlugin",
+    "CATALOG",
+    "VenueCapability",
+    "VenueDescriptor",
+    "descriptor_for",
 ]

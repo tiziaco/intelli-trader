@@ -91,7 +91,7 @@ from itrader.core.enums.trading import TradingDirection
 from itrader.core.instrument import Instrument
 from itrader.core.sizing import FixedQuantity, SignalIntent
 from itrader.strategy_handler.base import Strategy
-from itrader.trading_system.backtest_trading_system import BacktestTradingSystem
+from itrader.trading_system.backtest.backtest_trading_system import BacktestTradingSystem
 from itrader.universe import Universe
 from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
 

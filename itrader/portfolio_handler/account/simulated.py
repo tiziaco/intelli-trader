@@ -31,6 +31,7 @@ import uuid_utils.compat as uuid_compat
 
 from itrader.core.enums import CashOperationType, PositionSide
 from itrader.core.exceptions import (
+    ConfigurationError,
     InsufficientFundsError,
     InvalidTransactionError,
     StateError,
@@ -901,3 +902,61 @@ class SimulatedMarginAccount(SimulatedCashAccount):
         mmr = instrument.maintenance_margin_rate
         fee_rate = instrument.liquidation_fee_rate
         return wb, mmr, fee_rate
+
+
+def build_compute_account(
+    *,
+    initial_cash: "Decimal | float | int | str",
+    state_storage: Any,
+    enable_margin: bool = False,
+    account_id: str | None = None,
+    venue_name: str | None = None,
+) -> Account:
+    """The ONE constructor for a compute account leaf.
+
+    Placed beside the leaves it builds, so the margin-vs-cash selection lives with the
+    classes being selected rather than being restated by every venue that needs a leaf.
+    Two venues previously carried their own copy of this branch, which is two places for
+    the selection order to drift.
+
+    Parameters
+    ----------
+    initial_cash : Decimal | float | int | str
+        The opening balance. Crosses into the Decimal domain here via ``to_money``, which
+        is idempotent for a ``Decimal``, so passing one is value-inert.
+    state_storage : Any
+        The ``PortfolioStateStorage`` seam. REQUIRED with no default: the leaf routes
+        reserved cash, locked margin and the cash-operation audit trail through it, and the
+        live restart path repopulates those caches on the portfolio's own instance. A leaf
+        left on a private backend loses every reservation across a restart while backtest
+        stays byte-exact — so no test would catch a defaulted seam.
+    enable_margin : bool
+        Selects the margin superset over the plain spot cash leaf. The branch ORDER matches
+        the byte-exact oracle path and must not be reordered.
+    account_id, venue_name : str | None
+        The account identity recorded on the leaf, so ``Portfolio.venue_name`` /
+        ``.account_id`` read it back from ONE storage site and the portfolio and its leaf
+        can never disagree about which account this is.
+
+    Raises
+    ------
+    ConfigurationError
+        When ``state_storage`` is ``None`` — refused rather than replaced with a private
+        backend, which is the unpersisted-leaf defect the required seam exists to prevent.
+    """
+    if state_storage is None:
+        raise ConfigurationError(
+            "state_storage", None,
+            "a compute account cannot be minted without the PortfolioStateStorage seam "
+            "its owning portfolio's other managers hold: a leaf on a private backend "
+            "loses every reservation across a live restart while backtest stays "
+            "byte-exact",
+        )
+    cash = to_money(initial_cash)
+    if enable_margin:
+        return SimulatedMarginAccount(
+            initial_cash=cash, state_storage=state_storage,
+            account_id=account_id, venue_name=venue_name)
+    return SimulatedCashAccount(
+        initial_cash=cash, state_storage=state_storage,
+        account_id=account_id, venue_name=venue_name)

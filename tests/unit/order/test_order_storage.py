@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from itrader.order_handler.storage import InMemoryOrderStorage, OrderStorageFactory
+from itrader.order_handler.storage import InMemoryOrderStorage, build_order_storage
 from itrader.order_handler.order import Order
 from itrader.core.enums import OrderType, OrderStatus, OrderTriggerSource, Side
 from itrader.core.exceptions import ConfigurationError
@@ -468,24 +468,24 @@ def test_re_add_order_is_idempotent(store):
     assert list(s._active_by_portfolio[store.pid1]) == [store.oid1]
 
 
-# --- OrderStorageFactory ----------------------------------------------------
+# --- build_order_storage ----------------------------------------------------
 
 
 def test_create_backtest_storage():
     """Test creating a backtest storage."""
-    storage = OrderStorageFactory.create("backtest")
+    storage = build_order_storage("backtest")
     assert isinstance(storage, InMemoryOrderStorage)
 
 
 def test_create_test_storage():
     """Test creating a test storage."""
-    storage = OrderStorageFactory.create("test")
+    storage = build_order_storage("test")
     assert isinstance(storage, InMemoryOrderStorage)
 
 
 def test_create_in_memory_directly():
     """Test creating in-memory storage directly."""
-    storage = OrderStorageFactory.create_in_memory()
+    storage = InMemoryOrderStorage()
     assert isinstance(storage, InMemoryOrderStorage)
 
 
@@ -502,7 +502,7 @@ def test_create_live_storage_returns_cached_sql_wrapper():
     from itrader.order_handler.storage.cached_sql_storage import CachedSqlOrderStorage
     from itrader.order_handler.storage.sql_storage import SqlOrderStorage
 
-    storage = OrderStorageFactory.create("live")
+    storage = build_order_storage("live")
     try:
         assert isinstance(storage, CachedSqlOrderStorage)
         # The wrapper composes the untouched Phase-3 SQL store (system of record).
@@ -515,7 +515,7 @@ def test_create_live_storage_returns_cached_sql_wrapper():
 def test_unsupported_environment():
     """Test creating storage with unsupported environment."""
     with pytest.raises(ConfigurationError) as exc_info:
-        OrderStorageFactory.create("unknown")
+        build_order_storage("unknown")
     assert "Unknown environment: unknown" in str(exc_info.value)
 
 

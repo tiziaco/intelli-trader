@@ -304,8 +304,12 @@ def rehydrate_strategies(
 	Returns
 	-------
 	list[str]
-		The quarantined ``strategy_name``s (D-19). Empty on a clean rehydrate. The caller
-		surfaces this on the read-model as ``state.quarantined_strategies``.
+		The quarantined ``strategy_name``s (D-19). Empty on a clean rehydrate. A
+		convenience for a direct caller, NOT the surface an operator reads: each name is
+		recorded on ``strategies_handler`` as it is skipped, and
+		``StrategiesHandler.get_strategies_status()`` is where it is read back — the
+		strategy domain owns the answer to "which of my strategies are not trading", the
+		same way ``VenueAccountManager.get_accounts_status()`` owns it for accounts.
 
 	Raises
 	------
@@ -397,6 +401,10 @@ def rehydrate_strategies(
 			# D-19 per-instance: skip, alert CRITICAL, CONTINUE. The row is NOT mutated —
 			# see the module docstring for why that is load-bearing.
 			quarantined.append(strategy_name)
+			# Recorded on the handler BEFORE the alert: the strategy domain owns which of
+			# its names have no instance, and a sink that raises must not be able to lose
+			# that fact. Only the error KIND crosses over — never the message.
+			strategies_handler.quarantine_strategy(strategy_name, type(exc).__name__)
 			alert_sink.alert(_quarantine_alert(strategy_name, exc))
 			logger.error(
 				"Quarantined strategy %s at rehydrate (%s) — row left unchanged, healthy "

@@ -47,11 +47,12 @@ def test_shared_pg_fixture_wires_live_system(pg_database_env):
     (``CachedSqlOrderStorage``) and the live signal store (``CachedSqlSignalStorage``) off ONE
     shared ``SqlEngine`` — proving the new shared fixture reaches the env gate.
     """
-    import itrader.trading_system.live_trading_system as lts
+    from itrader import config as _live_config
+    from itrader.trading_system.live.build import build_live_system
 
-    system = lts.LiveTradingSystem.for_exchange("binance")
+    system = build_live_system(_live_config, execution_venue="binance", data_venue="okx")
     try:
-        assert type(system._signal_store).__name__ == "CachedSqlSignalStorage"
+        assert type(system.strategies_handler.signal_store).__name__ == "CachedSqlSignalStorage"
         assert type(system.portfolio_handler._order_storage).__name__ == "CachedSqlOrderStorage"
     finally:
         system.stop()

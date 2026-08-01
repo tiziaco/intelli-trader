@@ -167,15 +167,25 @@ def _fresh_store(backend):
 
 
 def _build_reconciler(store, connector, halt_spy):
-    """Wire a VenueReconciler over a real store, a VenueAccount, and a fresh queue."""
-    from itrader.portfolio_handler.account.venue import VenueAccount
+    """Wire a VenueReconciler over a real store, a real execution adapter, and a fresh queue.
+
+    The adapter is a REAL ``OkxExchange`` over the canned fake connector, not a snapshot
+    double: it is the object that owns the account's authenticated session, so the venue
+    truth this reconcile compares against is produced by the same ``snapshot()``
+    (``fetch_balance`` + ``fetch_positions`` -> ``AccountSnapshot``) production takes. A
+    double here would let the reconciler agree with a positions map no venue read builds.
+
+    ``adapter`` is also the correlation-map seam the reconcile ends with, so one object
+    supplies both — the reconcile cannot be handed one account's truth alongside another
+    account's correlation index.
+    """
+    from itrader.execution_handler.exchanges.okx import OkxExchange
     from itrader.portfolio_handler.reconcile.venue_reconciler import VenueReconciler
 
     gq: "queue.Queue[Any]" = queue.Queue()
-    venue_account = VenueAccount(connector, account_id="acct-test")
     reconciler = VenueReconciler(
         store=store,
-        venue_account=venue_account,
+        adapter=OkxExchange(gq, connector),
         connector=connector,
         global_queue=gq,
         halt_signal=halt_spy,

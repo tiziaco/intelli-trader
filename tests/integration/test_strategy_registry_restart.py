@@ -7,7 +7,7 @@ the REAL factory, because the seam under test IS the wiring.
 
 Placement is the load-bearing property (RESEARCH Item 2): rehydrate runs at CONSTRUCTION
 time, inside the ``system_store is not None`` gate, immediately after
-``_layer_persisted_overrides``. Test 5 pins the consequence — the strategies are registered
+``layer_persisted_overrides``. Test 5 pins the consequence — the strategies are registered
 BEFORE ``start()``, so ``wire_universe`` (``StrategyDerivedSelectionModel`` derives
 membership FROM the strategies) and ``register_strategy_warmup`` (the feed ring is sized
 FROM them) both see the full roster.
@@ -34,10 +34,11 @@ from itrader.core.ids import PortfolioId
 from itrader.core.sizing import FractionOfCash
 from itrader.storage import SqlEngine
 from itrader.storage.strategy_registry_store import StrategyRegistryStore
+from itrader.strategy_handler.status import StrategyState
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
-from itrader.trading_system.live_trading_system import build_live_system
-from itrader.trading_system.venue_spec import build_venue_spec
-from tests.support.replay_harness import TestDataPlugin
+from itrader import config as _live_config
+from itrader.trading_system.live.build import build_live_system
+from tests.support.replay_harness import TestDataRecipe
 from tests.support.schema import provision_schema, seed_portfolio_definitions
 from tests.support.strategy_catalog import seeded_registry_rows, test_catalog
 
@@ -86,9 +87,14 @@ def _build(**kwargs: Any) -> Any:
     Mirrors ``build_paper_replay_system`` but calls ``build_live_system`` directly so the
     new ``strategy_catalog`` injection seam is exercised as production would reach it.
     """
-    plugin = TestDataPlugin()
-    spec = build_venue_spec("paper", data_provider="replay")
-    return build_live_system(spec, data_plugins={"replay": plugin}, **kwargs)
+    recipe = TestDataRecipe()
+    system = build_live_system(
+        _live_config, execution_venue="paper", data_venue="replay",
+        data_recipes={"replay": recipe}, **kwargs)
+    # Bring-up + rehydrate live in start(), because bring-up connects. This is the exact
+    # call start() makes, so the production restart sequence runs without a drain thread.
+    system._bootstrap_session()
+    return system
 
 
 # --------------------------------------------------------------------------------------
@@ -105,7 +111,7 @@ def test_no_sql_spine_builds_fine_and_never_rehydrates(monkeypatch) -> None:
     try:
         assert system._system_db_backend is None
         assert system.strategies_handler.strategies == []
-        assert system.get_status()["quarantined_strategies"] == []
+        assert system.strategies_handler.get_strategies_status() == {}
     finally:
         system.stop(timeout=5.0)
 
@@ -212,9 +218,10 @@ def test_unloadable_row_boots_healthy_sibling_and_surfaces_the_quarantine(
 ) -> None:
     """D-19 — one unloadable row is quarantined onto the read-model; boot still succeeds.
 
-    The healthy sibling trades. The bad name is exposed on ``state.quarantined_strategies``
-    (a dedicated field — ``last_error`` is single-valued and would be overwritten), and its
-    registry row is left declaring ``enabled=True`` because the DB holds operator INTENT.
+    The healthy sibling trades. The bad name is exposed through the strategy domain's own
+    read surface — ``strategies_handler.get_strategies_status()``, which reports it
+    QUARANTINED with the error kind that refused it — and its registry row is left declaring
+    ``enabled=True`` because the DB holds operator INTENT.
     """
     store = _seed_store()
     try:
@@ -228,7 +235,14 @@ def test_unloadable_row_boots_healthy_sibling_and_surfaces_the_quarantine(
         system = _build(strategy_catalog=test_catalog())
         try:
             assert [s.name for s in system.strategies_handler.strategies] == ["healthy"]
-            assert system.get_status()["quarantined_strategies"] == ["retired"]
+            status = system.strategies_handler.get_strategies_status()
+            assert status["healthy"].state is StrategyState.ACTIVE
+            assert status["retired"].state is StrategyState.QUARANTINED
+            # The row still declares enabled=True: intent is intact, the runtime is not.
+            assert status["retired"].enabled is True
+            assert status["retired"].quarantine_reason == "UnknownStrategyTypeError"
+            # NOT on the engine-operational surface any more — the strategy domain owns it.
+            assert "quarantined_strategies" not in system.get_status()
             # The row is untouched — fixing the class and restarting brings it back with no
             # manual re-enable.
             assert store.get("retired")["enabled"] is True

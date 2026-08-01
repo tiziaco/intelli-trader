@@ -101,7 +101,8 @@ class TradingRules(BaseModel):
 #   1. ``AdmissionManager._enable_margin``           — bound at CONSTRUCTION (compose.py)
 #   2. ``EnhancedOrderValidator.enable_margin``      — bound at CONSTRUCTION (compose.py)
 #   3. ``ManagedStrategies.enable_margin`` (SHORT-01)— bound at CONSTRUCTION (compose.py)
-#   4. the account leaf's very KIND (cash vs margin) — selected at CONSTRUCTION (paper_plugin.py)
+#   4. the account leaf's very KIND (cash vs margin) — selected at CONSTRUCTION
+#      (``portfolio_handler/account/simulated.py::build_compute_account``)
 #   5. ``Portfolio.process_transaction``             — re-read PER FILL
 # Flipping it at runtime therefore desynchronizes four of five readers silently: settlement takes
 # the margin arm while admission, validation, the strategy gate and the account leaf all still

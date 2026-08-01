@@ -10,7 +10,7 @@ from itrader.execution_handler.execution_handler import (
     DEFAULT_ACCOUNT_ID,
     ExecutionHandler,
 )
-from itrader.order_handler.storage import OrderStorageFactory
+from itrader.order_handler.storage import build_order_storage
 from itrader.events_handler.events import SignalEvent, BarEvent
 from itrader.core.enums import EventType, FillStatus, OrderType, Side
 from itrader.core.sizing import FractionOfCash, TradingDirection
@@ -27,10 +27,11 @@ class _StopLimitHarness:
     def __init__(self):
         self.queue = Queue()
         self.ptf = backtest_portfolio_handler(self.queue)
-        self.storage = OrderStorageFactory.create("test")
+        self.storage = build_order_storage("test")
         self.order_handler = OrderHandler(self.queue, self.ptf, self.storage)
         self.execution = ExecutionHandler(
-            self.queue, exchange_registry=backtest_exchange_registry(self.queue))
+            self.queue, exchange_registry=backtest_exchange_registry(self.queue),
+            portfolio_read_model=self.ptf)
         exchange = self.execution.exchanges[("paper", DEFAULT_ACCOUNT_ID)]
         exchange.connect()
         exchange.update_config({"limits": {"supported_symbols": {"BTCUSDT"}}})

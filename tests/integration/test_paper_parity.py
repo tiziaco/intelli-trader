@@ -45,7 +45,7 @@ from itrader.reporting.frames import (
 )
 from itrader.execution_handler.execution_handler import DEFAULT_ACCOUNT_ID
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
-from itrader.trading_system.backtest_trading_system import BacktestTradingSystem
+from itrader.trading_system.backtest.backtest_trading_system import BacktestTradingSystem
 from tests.support.replay_harness import (
     PAPER_PARITY_END_DATE,
     PAPER_PARITY_START_DATE,
@@ -118,7 +118,7 @@ def _run_paper_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
     """Drive the live-paper path over the golden dataset; return (trades, equity) frames.
 
     The paper side (TEST-01/D-18): ``build_paper_replay_system()`` builds the paper live
-    system with the relocated ``TestDataPlugin`` injected on the data registry (paper↔replay
+    system with the relocated ``TestDataRecipe`` injected as the data recipe (paper↔replay
     lives ONLY in the fixture now) and reuses the account-free 'paper'
     ``SimulatedExchange`` as-is (D-04); ``TestRunner(system, provider).run()`` replays the
     golden bars through the real feed -> queue seam with backtest-faithful per-tick +

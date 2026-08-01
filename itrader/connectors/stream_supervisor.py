@@ -3,7 +3,7 @@ streams (D-08 / CF-4 / VENUE-07).
 
 This is the single tested home for the security-critical reconnect/halt state that
 was hand-copied THREE times across the live stack — ``OkxDataProvider`` (the canonical
-donor), ``OkxExchange`` (order arm), and ``VenueAccount`` (venue-cached account leaf).
+donor) and ``OkxExchange`` (the order arm, which also reads venue truth).
 Each of those arms now **HAS-A** ``StreamSupervisor`` and delegates its consume-loop
 supervision to it; the three ``_run_stream_supervisor`` forks are gone.
 

@@ -1,0 +1,77 @@
+# Successor manifest for the venue/account redesign must-have gate.
+#
+# Every file that replaces, absorbs or renames one of the 27 baseline files, plus every
+# module the redesign introduces. Measured against the frozen EXTENDED baseline by:
+#
+#   poetry run python scripts/measure_redesign_baseline.py \
+#       --manifest scripts/redesign_successor_manifest.txt --gate
+#
+# Kept in sync AS THE STAGES LANDED rather than authored at the end, so the sign of the
+# must-have was observable throughout: a stage that trends it positive is a
+# stop-and-report event, and that is only detectable if the manifest is current.
+#
+# WHAT THE COMPARAND IS. Not the 3,886 of the requirements' Scope block — that number
+# counted 27 files, and several of the redesign's destinations were never among them, so
+# lines were counted leaving and not counted arriving. The gate compares against
+# measure_redesign_baseline.EXTENDED_BASELINE_TOTALS = 34 / 12,071 / 5,223: the same 27
+# files PLUS every host that absorbed relocated code, all measured at the frozen
+# pre-redesign commit 3a2c7692. This set must list those hosts or the script refuses to
+# report a delta at all — an extended baseline against a successor set that omits them is
+# the original asymmetry with its sign flipped.
+#
+# WHAT HAPPENED TO THE OLD SHAPE. Deleted, in stage order, with its successor named:
+#
+#   account/venue.py            -> AccountSnapshot, read by the execution adapter (stage 3)
+#   venue_account_manager.py    -> venues/accounts.py, which also absorbed
+#   assemble.py                    assemble / lifecycle / the TOFU guard (stage 4)
+#   lifecycle.py
+#   venue_uid_guard.py
+#   feed_binder.py              -> build_okx_data_provider over the pool's own public
+#                                  session, so there is no borrowed connection to bind
+#                                  (stage 5)
+#   live_trading_system.py      -> trading_system/live/{build,bootstrap,system}.py
+#   compose.py                  -> trading_system/graph.py::build_handler_graph
+#   venue_spec.py               -> build_live_system arguments; the selection is data
+#   registry.py                 -> venues/catalog.py, plus the two venue constants re-homed
+#                                  into execution_handler.py (counted below)
+#   bundle.py / bundles.py      -> one root-owned (venue, account_id) -> adapter map
+#   paper_plugin.py             -> execution_handler/exchanges/paper.py
+#   okx_plugin.py               -> the recipes, beside the things they build
+#   connectors/provider.py      -> connectors/pool.py                          (stage 7)
+
+# --- surviving / relocated baseline files ---
+itrader/trading_system/backtest/backtest_trading_system.py
+itrader/trading_system/session_initializer.py
+itrader/portfolio_handler/portfolio_factory.py
+itrader/connectors/base.py
+itrader/storage/venue_store.py
+itrader/storage/venue_account_store.py
+itrader/storage/portfolio_definition_store.py
+itrader/connectors/okx.py
+itrader/connectors/stream_supervisor.py
+itrader/portfolio_handler/account/base.py
+itrader/portfolio_handler/account/conformance.py
+itrader/portfolio_handler/account/simulated.py
+
+# --- hosts that predate the redesign and absorbed its recipes / contracts / constants ---
+# Counted on BOTH sides (they are inside EXTENDED_BASELINE_TOTALS), so a line that moved
+# into one of these is counted arriving as well as leaving.
+itrader/execution_handler/exchanges/base.py
+itrader/execution_handler/exchanges/okx.py
+itrader/execution_handler/exchanges/simulated.py
+itrader/price_handler/providers/okx_provider.py
+itrader/execution_handler/execution_handler.py
+itrader/venues/__init__.py
+itrader/connectors/__init__.py
+
+# --- new in the redesign ---
+itrader/venues/catalog.py
+itrader/venues/accounts.py
+itrader/connectors/pool.py
+itrader/execution_handler/exchanges/paper.py
+itrader/trading_system/graph.py
+itrader/trading_system/backtest/__init__.py
+itrader/trading_system/live/__init__.py
+itrader/trading_system/live/build.py
+itrader/trading_system/live/bootstrap.py
+itrader/trading_system/live/system.py

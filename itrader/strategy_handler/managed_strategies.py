@@ -17,6 +17,7 @@ State owned here (the handler now holds NONE of it, reaching it through
 delegating accessors):
   - `strategies`          the roster list  (assigned ONCE, mutated in place)
   - `_pending_removals`   the D-11 pending-removal name set (likewise)
+  - `_quarantined`        the D-19 quarantine map, name -> error kind
   - `allow_short_selling` / `enable_margin`  the SHORT-01/D-07 gate flags
 
 ⚠ SAME-OBJECT INVARIANT. `strategies` and `_pending_removals` are assigned
@@ -98,6 +99,12 @@ class ManagedStrategies:
 		# the poll's REMOVE branch drives the P7 force-close, but its registry ROW is KEPT
 		# until flat (crash-safety: restart rehydrates and resumes managing the positions).
 		self._pending_removals: set[str] = set()
+		# D-19 quarantine, name -> the error KIND that refused the row. A name lands here
+		# when rehydrate HAS a registry row it could not turn into an instance, so it is
+		# roster state in the negative: the set of names that were supposed to be on the
+		# roster and are not. It lives beside the roster because that is the only place the
+		# two facts can be read together without a second owner drifting from this one.
+		self._quarantined: dict[str, str] = {}
 		# SHORT-01/D-07 two-flag registration gate — read, never mutated here.
 		# IN-01: PUBLIC on this class. The handler's `_`-prefixed properties forward
 		# here, so this stays the single copy the gate reads (see the module
@@ -175,6 +182,32 @@ class ManagedStrategies:
 		the NAMES for iteration safety, never a second copy of the STATE.
 		"""
 		return list(self._pending_removals)
+
+	def quarantine(self, strategy_name: str, reason: str) -> None:
+		"""Record that ``strategy_name`` HAS a row but could not become an instance.
+
+		Keyed by name, so re-running rehydrate over the same still-broken row records
+		the failure once rather than accumulating duplicates.
+
+		Parameters
+		----------
+		strategy_name: `str`
+			The D-02 durable identity — the same key the registry row is written under.
+		reason: `str`
+			The error KIND (an exception's type name), never its message: this reaches an
+			operator surface, and a codec error's message quotes the stored config value.
+		"""
+		self._quarantined[strategy_name] = reason
+
+	@property
+	def quarantined(self) -> dict[str, str]:
+		"""A COPY of the quarantine map — safe to hold, cannot mutate the state.
+
+		A copy here where `pending_removals` deliberately returns the live set: nothing
+		mutates this one through the accessor. The two write paths are `quarantine` and the
+		clear inside `add_strategy`.
+		"""
+		return dict(self._quarantined)
 
 	def get_universe(self) -> list[str]:
 		"""
@@ -283,5 +316,10 @@ class ManagedStrategies:
 
 		# Add the strategy in the strategies list
 		self.strategies.append(strategy)
+		# A name cannot be both registered and quarantined: quarantine means "row present,
+		# no instance", and there is now an instance. Clearing AFTER the append (not before
+		# the gates above) keeps a rejected registration from erasing the record of why the
+		# name has no instance.
+		self._quarantined.pop(strategy.name, None)
 
 		self.logger.info(f'New strategy added: {strategy.name}')

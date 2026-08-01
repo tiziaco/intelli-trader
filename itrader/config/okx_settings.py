@@ -1,4 +1,4 @@
-"""OKX credential layer — ``OkxSettings(BaseSettings)`` (CONN-06 / D-10).
+"""OKX connection layer — ``OkxRouting`` (non-secret) + ``OkxSettings`` (CONN-06 / D-10).
 
 The OKX auth triple (API key + secret + passphrase) crosses from the process
 environment into the connector here, and NOWHERE else. Two disciplines are load-bearing:
@@ -51,12 +51,20 @@ _WS_HOSTNAME_BY_REGION_SANDBOX: dict[tuple[str, bool], str] = {
 }
 
 
-class OkxSettings(BaseSettings):
-    """OKX demo/live credentials read from the plain ``OKX_API_*`` environment (D-10).
+class OkxRouting(BaseSettings):
+    """The venue's non-secret connection knobs — where a session goes, not who it is.
 
-    The passphrase is required — OKX authentication is a triple, not a pair, so a
-    missing ``OKX_API_PASSPHRASE`` fails loud with a ``pydantic.ValidationError``
-    rather than silently shipping a half-authenticated client.
+    Region and ``sandbox`` decide which OKX entity and which environment a session
+    reaches, and they are needed by EVERY session, including one that authenticates with
+    nothing: an unauthenticated candle socket pointed at the global host answers
+    differently from the EEA one. So the routing half stands on its own, and the
+    credential half (:class:`OkxSettings`) extends it.
+
+    Constructing this class IS the public-session settings form. It is deliberately a
+    separate CLASS rather than optional credential fields on one model: making the three
+    credentials optional would empty the ``is_required()`` set a credential recipe derives
+    its completeness gate from, silently disarming the guard that refuses to finish a
+    partially-resolved credential set out of the ambient ``OKX_API_*`` environment.
     """
 
     # ``populate_by_name`` (11-04 / D-02): WITHOUT it this model is constructible ONLY
@@ -71,17 +79,24 @@ class OkxSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="", extra="ignore", populate_by_name=True)  # NO prefix (D-10)
 
-    api_key: SecretStr = Field(validation_alias="OKX_API_KEY")
-    api_secret: SecretStr = Field(validation_alias="OKX_API_SECRET")
-    api_passphrase: SecretStr = Field(validation_alias="OKX_API_PASSPHRASE")
-    sandbox: bool = Field(default=True, validation_alias="OKX_SANDBOX")
+    # Every field declares its KIND. ``secret`` fields are credential material and come
+    # from the resolver; ``routing`` fields are non-secret connection knobs an account may
+    # pin in its own stored config. Declaring it here means a consumer DERIVES both sets
+    # from the model instead of maintaining a parallel hand-written list — and a field
+    # added without a kind is a visible omission rather than a silently mis-sorted value.
+    # The distinction is load-bearing: routing knobs may be logged and persisted, secrets
+    # may be neither.
+    sandbox: bool = Field(
+        default=True, validation_alias="OKX_SANDBOX",
+        json_schema_extra={"kind": "routing"})
     # Regional entity (OKX-REGION). ``global`` (default) is reached via www.okx.com;
     # ``eea`` via eea.okx.com. A key issued on one entity returns 50119 "API key doesn't
     # exist" on the other, and the demo WS host differs per entity, so region — not a bare
     # sandbox ternary — derives BOTH hosts. The ``Literal`` makes an invalid OKX_REGION
     # fail loud with a pydantic ValidationError (no silent coercion).
     region: Literal["global", "eea"] = Field(
-        default="global", validation_alias="OKX_REGION")
+        default="global", validation_alias="OKX_REGION",
+        json_schema_extra={"kind": "routing"})
 
     @property
     def rest_hostname(self) -> str:
@@ -92,3 +107,39 @@ class OkxSettings(BaseSettings):
     def ws_hostname(self) -> str:
         """(region, sandbox)-derived WS host both WS consumers key their URL off."""
         return _WS_HOSTNAME_BY_REGION_SANDBOX[(self.region, self.sandbox)]
+
+    def ccxt_credentials(self) -> dict[str, str]:
+        """The credential keys to put in the ccxt client config — none, here.
+
+        Lives beside the fields rather than in the connector so the ccxt key names
+        (``apiKey`` / ``secret`` / ``password``) are written once, and so "a public
+        session carries no credential material" is a property of the settings OBJECT the
+        connector is handed rather than a branch the connector has to get right.
+        """
+        return {}
+
+
+class OkxSettings(OkxRouting):
+    """OKX demo/live credentials read from the plain ``OKX_API_*`` environment (D-10).
+
+    The passphrase is required — OKX authentication is a triple, not a pair, so a
+    missing ``OKX_API_PASSPHRASE`` fails loud with a ``pydantic.ValidationError``
+    rather than silently shipping a half-authenticated client. All three stay REQUIRED:
+    a credential recipe derives its completeness gate from this model's required-field
+    set, so an optional credential field is a disarmed gate.
+    """
+
+    api_key: SecretStr = Field(
+        validation_alias="OKX_API_KEY", json_schema_extra={"kind": "secret"})
+    api_secret: SecretStr = Field(
+        validation_alias="OKX_API_SECRET", json_schema_extra={"kind": "secret"})
+    api_passphrase: SecretStr = Field(
+        validation_alias="OKX_API_PASSPHRASE", json_schema_extra={"kind": "secret"})
+
+    def ccxt_credentials(self) -> dict[str, str]:
+        """The authenticated triple, surfaced at the ccxt client edge and nowhere else."""
+        return {
+            "apiKey": self.api_key.get_secret_value(),
+            "secret": self.api_secret.get_secret_value(),
+            "password": self.api_passphrase.get_secret_value(),
+        }

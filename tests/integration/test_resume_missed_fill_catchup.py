@@ -1,16 +1,17 @@
-"""Resume-path missed-fill catch-up wiring (D-25 / WR-01).
+"""Resume-path missed-fill catch-up wiring.
 
-Locks in the D-25 fix: the engine-thread resume drain
-``StreamRecoveryHandler.on_reconnect`` must re-fetch fills that settled
-while the OKX fill stream was down — by calling ``OkxExchange.catch_up_missed_fills()``
-BEFORE the fresh REST ``snapshot()`` — so a trade that settled during the outage window
-reaches the mirror/portfolio on reconnect instead of waiting for the next full startup
-reconcile.
+The engine-thread resume drain ``StreamRecoveryHandler.on_reconnect`` re-fetches fills
+that settled while the OKX fill stream was down — by calling
+``OkxExchange.catch_up_missed_fills()`` BEFORE the fresh REST ``snapshot()`` — so a trade
+that settled during the outage window reaches the mirror/portfolio on reconnect instead of
+waiting for the next full startup reconcile.
 
-Before the fix, ``OkxExchange.catch_up_missed_fills`` was fully built and unit-tested
-in isolation (tests/unit/execution/test_missed_fill_catchup.py calls it DIRECTLY) but had
-ZERO production call sites — the resume drain called only ``venue_account.snapshot()`` +
-``resume_submission()``, so the missed fill was never recovered on resume (WR-01). This
+The ORDERING is the load-bearing part: the snapshot's balance/position picture must
+already reflect the recovered trade, so a resume that snapshotted first would clear the
+pause on a picture that predates a fill the engine had not yet applied.
+
+Both legs are the same object's methods now — the execution ADAPTER owns the account's
+authenticated session, so it is what re-fetches the trades and what reads the venue. This
 test drives the RESUME PATH (not the exchange method in isolation): it proves the drain
 routes the outage-window trade through ``_handle_trade`` exactly once, and does so before
 the snapshot.
@@ -22,18 +23,18 @@ stubbed, so the real resume drain + the real ``catch_up_missed_fills`` run witho
 import queue
 import threading
 from datetime import timedelta
-from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import pandas as pd
-
+from itrader.execution_handler.exchanges.base import AccountSnapshot
 from itrader.price_handler.feed.live_bar_feed import LiveBarFeed
-from itrader.trading_system.live_trading_system import LiveTradingSystem
+from itrader import config as _live_config
+from itrader.trading_system.live.build import build_live_system
+from itrader.trading_system.live.system import LiveTradingSystem
 from itrader.trading_system.safety.stream_recovery_handler import (
     StreamRecoveryHandler,
 )
-from tests.support.live_okx import the_okx_lifecycle
+from tests.support.live_okx import bring_okx_online
 
 
 def _set_okx_env(monkeypatch) -> None:
@@ -44,16 +45,19 @@ def _set_okx_env(monkeypatch) -> None:
 
 
 def test_resume_drain_recovers_fill_settled_during_disconnect(provisioned_okx) -> None:
-    """StreamRecoveryHandler.on_reconnect re-fetches an outage-window fill, before snapshot (D-25).
+    """on_reconnect re-fetches an outage-window fill, BEFORE the snapshot.
 
-    P7 (§11c): the reconnect-resume I/O lives on the injected StreamRecoveryHandler,
-    reached by the STREAM_STATE(up) route. It calls ``catch_up_missed_fills`` BEFORE the
-    fresh REST snapshot, so the settled trade routes through ``_handle_trade`` on resume.
+    The reconnect-resume I/O lives on the injected StreamRecoveryHandler, reached by the
+    STREAM_STATE(up) route. It calls ``catch_up_missed_fills`` before the fresh REST
+    snapshot, so the settled trade routes through ``_handle_trade`` on resume and the
+    snapshot that follows sees a venue picture the engine has already caught up to.
     """
-    system = LiveTradingSystem.for_exchange("okx")
+    system = build_live_system(
+        _live_config, execution_venue="okx")
 
-    # 11.2-07 (D-36): the single store-derived OKX execution arm, read through its lifecycle.
-    exchange = the_okx_lifecycle(system).bundle.exchange
+    # The single store-derived OKX execution adapter. It is the SAME object the handler
+    # enumerates off the account manager's online records.
+    exchange = bring_okx_online(system).adapter
 
     # A trade settled on the venue while the fill stream was down.
     settled_trade = {"id": "trade-during-outage"}
@@ -72,11 +76,15 @@ def test_resume_drain_recovers_fill_settled_during_disconnect(provisioned_okx) -
         name="_handle_trade", side_effect=lambda _t: call_order.append("handle_trade"))
     exchange._handle_trade = handle_trade_spy  # type: ignore[method-assign]
 
-    # A stub venue account whose snapshot records its ordering relative to the catch-up.
-    venue_account = MagicMock(name="venue_account")
-    venue_account.snapshot = MagicMock(
-        name="snapshot", side_effect=lambda: call_order.append("snapshot"))
-    system._stream_recovery._venue_accounts = lambda: [venue_account]
+    # The snapshot leg is stubbed on the SAME adapter — it is the adapter's own method now,
+    # not a separate account leaf's — and records its ordering relative to the catch-up.
+    # It answers a real ``AccountSnapshot`` so the stub cannot pass on a shape the venue
+    # read never produces.
+    def _snapshot() -> AccountSnapshot:
+        call_order.append("snapshot")
+        return AccountSnapshot.empty()
+
+    exchange.snapshot = _snapshot  # type: ignore[method-assign]
 
     # Stand the system in the reconnect-resume precondition: paused on disconnect, then
     # drive the engine-thread reconnect-resume (the STREAM_STATE(up) route target).
@@ -94,25 +102,32 @@ def test_resume_drain_recovers_fill_settled_during_disconnect(provisioned_okx) -
     assert system._safety.is_submission_paused() is False
 
 
-def test_resume_drain_skips_catchup_when_no_venue_arm(monkeypatch) -> None:
-    """The catch-up is skipped when no account carries an execution arm.
+def test_resume_drain_does_no_venue_io_when_no_account_is_online(monkeypatch) -> None:
+    """With no online account there is nothing to catch up, and the resume still completes.
 
-    11-09: "no OKX exchange" is an EMPTY lifecycle map — the shape a non-OKX wiring
-    actually produces — rather than a nulled scalar. The snapshot leg still runs and the
-    resume still completes: absent ⇒ healthy, never a blocked resume.
+    "No OKX exchange arm" is ZERO online account records — the shape a boot with no enabled
+    ``venue_accounts`` row actually produces. One enumeration feeds the catch-up, the
+    snapshot and the health gate, so an empty one means no venue I/O is even reachable;
+    a mirrored snapshot container is what previously let a snapshot loop run over something
+    nothing populated.
+
+    The resume must still clear: absent ⇒ healthy. Treating "no venue arm" as an unhealthy
+    arm would leave such a boot permanently paused.
     """
     _set_okx_env(monkeypatch)
-    system = LiveTradingSystem.for_exchange("okx")
+    system = build_live_system(
+        _live_config, execution_venue="okx")
 
-    system._stream_recovery._lifecycles = {}
-    venue_account = MagicMock(name="venue_account")
-    system._stream_recovery._venue_accounts = lambda: [venue_account]
+    system._stream_recovery._accounts = lambda: []
 
     system.pause_submission("paused-on-disconnect")
 
     system._stream_recovery.on_reconnect()
 
-    venue_account.snapshot.assert_called_once()
+    # No adapter to reach: the catch-up and the snapshot both iterate THIS list, so an
+    # empty one is the whole statement — there is no second container that could still
+    # hold something to snapshot.
+    assert system._stream_recovery._streaming_adapters() == []
     assert system._safety.is_submission_paused() is False
 
 
@@ -159,19 +174,20 @@ def test_on_reconnect_does_no_engine_thread_ring_write_cf2() -> None:
     # A paused safety + healthy arms so on_reconnect runs the FULL resume (catch-up +
     # snapshot + gate -> resume) — the path that would be tempted to backfill the ring.
     safety = _PausedSafety()
-    exchange = MagicMock(name="okx_exchange")
-    exchange.is_streaming_healthy = MagicMock(return_value=True)
-    venue_account = MagicMock(name="venue_account")
+    adapter = MagicMock(name="okx_adapter")
+    adapter.is_streaming_healthy = MagicMock(return_value=True)
+    adapter.snapshot = MagicMock(return_value=AccountSnapshot.empty())
     provider = MagicMock(name="okx_data_provider")
     provider.is_streaming_healthy = MagicMock(return_value=True)
-    # 11-09: the per-account lifecycle map replaces the exchange/provider scalars, and
-    # the accounts arrive through a callable (they live on the portfolios).
+    # The accounts arrive as the account manager's ONLINE RECORDS, read through a callable:
+    # ``record.connector is not None`` marks a record as streaming, and ``record.adapter``
+    # is the adapter that gets caught up, snapshotted and health-checked.
     handler = StreamRecoveryHandler(
         safety=safety,
-        lifecycles={"acct-1": SimpleNamespace(
-            bundle=SimpleNamespace(connector=object(), exchange=exchange),
-            provider=provider)},
-        venue_accounts=lambda: [venue_account],
+        accounts=lambda: [SimpleNamespace(
+            spec=SimpleNamespace(venue_name="okx", account_id="acct-1"),
+            connector=object(), adapter=adapter)],
+        feed_provider=lambda: provider,
     )
 
     # Run on a stand-in ENGINE thread (NOT the connector loop).
@@ -181,8 +197,8 @@ def test_on_reconnect_does_no_engine_thread_ring_write_cf2() -> None:
 
     # The resume completed on the engine thread ...
     assert safety.resumed is True
-    exchange.catch_up_missed_fills.assert_called_once()
-    venue_account.snapshot.assert_called_once()
+    adapter.catch_up_missed_fills.assert_called_once()
+    adapter.snapshot.assert_called_once()
     # ... and NOT a single ring write happened from the engine thread (CF-2).
     assert deliver_calls == []
     # on_reconnect never claimed ring ownership — the loop-native path owns that seam.

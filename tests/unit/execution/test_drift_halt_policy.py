@@ -24,7 +24,9 @@ from itrader.events_handler.error_policy import FailFastPolicy
 from itrader.events_handler.events import ErrorEvent, PortfolioErrorEvent
 from itrader.events_handler.full_event_handler import EventHandler
 from itrader.trading_system.alert_sink import AlertSink, LogAlertSink
-from itrader.trading_system.live_trading_system import LiveTradingSystem
+from itrader import config as _live_config
+from itrader.trading_system.live.build import build_live_system
+from itrader.trading_system.live.system import LiveTradingSystem
 
 _TIME = datetime(2024, 1, 1, 12, 0, 0)
 
@@ -192,7 +194,8 @@ def _live_system(monkeypatch) -> LiveTradingSystem:
     """A credential-free LiveTradingSystem for the default (non-OKX) venue."""
     for var in ("OKX_API_KEY", "OKX_API_SECRET", "OKX_API_PASSPHRASE"):
         monkeypatch.delenv(var, raising=False)
-    return LiveTradingSystem.for_exchange("binance")
+    return build_live_system(
+        _live_config, execution_venue="binance", data_venue="okx")
 
 
 def test_halt_sets_halted_status_and_machine_readable_reason(monkeypatch):

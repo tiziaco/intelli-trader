@@ -46,7 +46,7 @@ from itrader.core.enums import (
 from itrader.core.ids import PortfolioId, StrategyId
 from itrader.order_handler.order import Order
 from itrader.strategy_handler.signal_record import SignalRecord
-from itrader.strategy_handler.storage import SignalStorageFactory
+from itrader.strategy_handler.storage import build_signal_store
 
 # A business time (never wall clock) reused so derived timestamps are deterministic.
 _BT = datetime(2020, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -204,7 +204,7 @@ def test_order_create_terminalize_durable_survives_restart(pg_url):
 def test_signal_store_live_driven_off_engine_critical_path(pg_url):
     """The signal store is live-driven and its persist is off the connector coroutine (D-11).
 
-    ``SignalStorageFactory.create('live', sql_engine=...)`` returns the live
+    ``build_signal_store('live', sql_engine=...)`` returns the live
     ``CachedSqlSignalStorage`` wrapper. The persist runs on the calling (engine-thread analog)
     with NO running asyncio loop — proving it is off the connector's event loop (Pitfall 9),
     so a signal write can never stall the loop. The store-first write returns promptly and the
@@ -212,7 +212,7 @@ def test_signal_store_live_driven_off_engine_critical_path(pg_url):
     """
     backend = _make_backend(pg_url)
     try:
-        signal_store = SignalStorageFactory.create('live', sql_engine=backend)
+        signal_store = build_signal_store('live', sql_engine=backend)
         backend.metadata.create_all(backend.engine, checkfirst=True)
         assert type(signal_store).__name__ == "CachedSqlSignalStorage"
 
@@ -241,12 +241,13 @@ def test_live_system_wires_cached_sql_from_database_url(pg_url, monkeypatch):
     set (``CachedSqlOrderStorage``) and the live signal store (``CachedSqlSignalStorage``) off ONE
     shared ``SqlEngine`` sourced from the unified ``SqlSettings`` ``ITRADER_DATABASE_*`` surface.
     """
-    import itrader.trading_system.live_trading_system as lts
+    from itrader import config as _live_config
+    from itrader.trading_system.live.build import build_live_system
 
     monkeypatch.setenv("ITRADER_DATABASE_URL", pg_url)
-    system = lts.LiveTradingSystem.for_exchange("binance")
+    system = build_live_system(_live_config, execution_venue="binance", data_venue="okx")
     try:
-        assert type(system._signal_store).__name__ == "CachedSqlSignalStorage"
+        assert type(system.strategies_handler.signal_store).__name__ == "CachedSqlSignalStorage"
         assert type(system.portfolio_handler._order_storage).__name__ == "CachedSqlOrderStorage"
     finally:
         system.stop()
@@ -265,7 +266,8 @@ def test_live_system_wires_cached_sql_from_component_vars(pg_url, monkeypatch):
     """
     from sqlalchemy import make_url
 
-    import itrader.trading_system.live_trading_system as lts
+    from itrader import config as _live_config
+    from itrader.trading_system.live.build import build_live_system
 
     u = make_url(pg_url)
     monkeypatch.delenv("ITRADER_DATABASE_URL", raising=False)
@@ -275,9 +277,9 @@ def test_live_system_wires_cached_sql_from_component_vars(pg_url, monkeypatch):
     monkeypatch.setenv("ITRADER_DATABASE_PASSWORD", u.password)
     monkeypatch.setenv("ITRADER_DATABASE_NAME", u.database)
 
-    system = lts.LiveTradingSystem.for_exchange("binance")
+    system = build_live_system(_live_config, execution_venue="binance", data_venue="okx")
     try:
-        assert type(system._signal_store).__name__ == "CachedSqlSignalStorage"
+        assert type(system.strategies_handler.signal_store).__name__ == "CachedSqlSignalStorage"
         assert type(system.portfolio_handler._order_storage).__name__ == "CachedSqlOrderStorage"
         # Proves component assembly (not a verbatim SYSTEM_DB_URL/URL read).
         assert system._system_db_backend.engine.url.database == u.database
@@ -297,14 +299,15 @@ def test_unconfigured_db_env_falls_back_to_in_memory(monkeypatch, caplog):
     NOTE: run under ``poetry run pytest`` (NOT ``make test``, which sets ``ITRADER_DISABLE_LOGS=true``
     and breaks caplog warn-assertions — see auto-memory).
     """
-    import itrader.trading_system.live_trading_system as lts
+    from itrader import config as _live_config
+    from itrader.trading_system.live.build import build_live_system
 
     monkeypatch.delenv("ITRADER_DATABASE_PASSWORD", raising=False)
     monkeypatch.delenv("ITRADER_DATABASE_URL", raising=False)
     with caplog.at_level(logging.WARNING):
-        system = lts.LiveTradingSystem.for_exchange("binance")
+        system = build_live_system(_live_config, execution_venue="binance", data_venue="okx")
     try:
-        assert type(system._signal_store).__name__ == "InMemorySignalStore"
+        assert type(system.strategies_handler.signal_store).__name__ == "InMemorySignalStore"
         assert type(system.portfolio_handler._order_storage).__name__ == "InMemoryOrderStorage"
         # WR-10: the fallback fires a loud warning naming the unified credential env vars.
         assert "ITRADER_DATABASE_PASSWORD" in caplog.text

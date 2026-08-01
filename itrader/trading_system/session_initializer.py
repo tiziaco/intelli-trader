@@ -1,42 +1,30 @@
-"""``SessionInitializer`` — the live session-wiring collaborator (RUN-04 live / RUN-05 / RUN-06 / D-11 / D-12).
+"""``SessionInitializer`` — the live session-wiring collaborator.
 
-A distinct class (D-12) owning the live session wiring, extracted out of the
-``LiveTradingSystem`` God object's ``_initialize_live_session``. It composes the
-shared seams of this phase in the exact donor order:
+Owns the live session wiring, invoked from
+``LiveTradingSystem._initialize_live_session``. It composes this phase's shared seams in
+a load-bearing order:
 
-1. ``wire_universe(engine)`` — the shared RUN-04 unit (06-01). The LIVE path now
-   GAINS the WR-03 desync assert it previously lacked (a live-only safety upgrade,
-   oracle-neutral since live is backtest-dark).
-2. ``register_strategy_warmup(engine.feed, strategies)`` — the RUN-07/D-17 seam
-   (06-03), replacing the old inline ``_LiveWarmupConsumer`` registration. Safe
-   AFTER ``wire_universe``'s ``feed.bind`` (RESEARCH Landmine 3): the ``LiveBarFeed``
-   rings are lazy at first ``_deliver``, ``cache_capacity`` reads the registered
-   consumers at call time, and the warmup fetch depth is read in ``start()`` I/O
-   after construction — do NOT re-invert this order.
-3. the LIVE-ONLY subscription/membership mismatch guard (transplanted verbatim) —
-   a fail-loud wiring-time invariant, not a trust boundary.
-4. build + wire the first-class ``UniverseHandler`` (06-04) per the D-11 shape:
-   ``set_selection_source`` (strategy-derived), ``set_venue_metadata`` UNCONDITIONAL
-   over the uniformly-resolved venue exchange (paper's ``SimulatedExchange`` satisfies
-   ``validate_symbol``/``resolve_precision`` with permissive defaults — zero OKX
-   coupling), ``set_provider`` (guard-as-today), ``set_portfolio_read_model``,
-   ``set_strategy_warmth``, and the interim ``set_freeze_gate`` callable (repointed to
-   ``SafetyController`` in P7).
-5. compose the BUSINESS/live routes via ``LiveRouteRegistrar`` (06-05 Task 1).
+1. ``wire_universe(engine)`` — the shared universe-injection unit, identical to the one
+   the backtest runner uses.
+2. ``register_strategy_warmup(engine.feed, strategies)``. Safe only AFTER
+   ``wire_universe``'s ``feed.bind``: the ``LiveBarFeed`` rings are lazy at first
+   ``_deliver``, ``cache_capacity`` reads the registered consumers at call time, and the
+   warmup fetch depth is read in ``start()`` I/O after construction — do NOT re-invert
+   this order.
+3. the LIVE-ONLY subscription/membership mismatch guard — a fail-loud wiring-time
+   invariant, not a trust boundary.
+4. build + wire the first-class ``UniverseHandler``: ``set_selection_source``
+   (strategy-derived), ``set_venue_metadata`` UNCONDITIONAL over the uniformly-resolved
+   venue exchange (paper's ``SimulatedExchange`` satisfies
+   ``validate_symbol``/``resolve_precision`` with permissive defaults, so there is zero
+   OKX coupling), ``set_provider``, ``set_portfolio_read_model``,
+   ``set_strategy_warmth`` and ``set_freeze_gate``.
+5. compose the BUSINESS/live routes via ``LiveRouteRegistrar``.
 
-Running this at construction time is what makes RUN-05 (routes declared at
-construction) + RUN-06 (``UniverseHandler`` first-class at the root) possible; the
-``start()`` lifecycle then does ONLY I/O (connect / subscribe / reconcile — the last
-being P7). Independently testable without standing up a full facade.
-
-Behavior-preserving-interim: in 06-05 this is invoked via the existing
-``_initialize_live_session`` delegation; the FLIP to construction-time invocation
-(D-12) + the ``build_live_system`` wiring land in 06-06. Per D-04 this class does NOT
-touch the facade's safety/reconcile/stream method bodies — the freeze-gate + the
-WR-03/membership guards are wired, not reimplemented.
-
-Indentation: 4 SPACES (matches ``live_trading_system.py`` — the facade that
-delegates to this collaborator).
+Running this at construction time is what lets the routes be declared at construction
+and the ``UniverseHandler`` be first-class at the root; the ``start()`` lifecycle then
+does ONLY I/O (connect / subscribe / reconcile). Independently testable without standing
+up a full facade.
 """
 
 from __future__ import annotations
@@ -47,27 +35,24 @@ from typing import TYPE_CHECKING, Any, cast
 from itrader.price_handler.feed.cache_registration import register_strategy_warmup
 from itrader.trading_system.route_registrar import LiveRouteRegistrar
 from itrader.trading_system.universe_wiring import wire_universe
+from itrader.universe.membership import StrategyDerivedSelectionModel
+from itrader.universe.universe_handler import UniverseHandler, UniverseHandlerConfig
 
 if TYPE_CHECKING:
     from itrader.execution_handler.exchanges.base import AbstractExchange
     from itrader.price_handler.feed.live_bar_feed import LiveBarFeed
-    from itrader.trading_system.compose import Engine
-    from itrader.universe.universe_handler import (
-        UniverseHandler,
-        UniverseHandlerConfig,
-    )
+    from itrader.trading_system.graph import Engine
 
 
 class SessionInitializer:
-    """Compose the live session wiring over the shared phase seams (D-12).
+    """Compose the live session wiring over the shared seams.
 
-    Constructed with the built ``engine`` (the compose ``Engine`` holder) plus the
-    facade-level collaborators the ``Engine`` holder does not carry: the
-    ``UniverseHandlerConfig`` (the RUN-06 live-plane knobs), the uniformly-resolved
-    venue exchange (for ``set_venue_metadata``), the data-plane provider (for
-    ``set_provider`` + the subscription guard — ``None`` on paper), and the interim
-    freeze-gate callable. ``initialize()`` performs the wiring in donor order and
-    returns the built ``UniverseHandler`` for the facade + poll timer to reference.
+    Constructed with the built ``engine`` plus the facade-level collaborators the
+    ``Engine`` holder does not carry: the ``UniverseHandlerConfig`` (the live-plane
+    knobs), the uniformly-resolved venue exchange (for ``set_venue_metadata``), the
+    data-plane provider (for ``set_provider`` + the subscription guard — ``None`` on
+    paper), and the freeze-gate callable. ``initialize()`` performs the wiring in order
+    and returns the built ``UniverseHandler`` for the facade + poll timer to reference.
     """
 
     def __init__(
@@ -87,89 +72,72 @@ class SessionInitializer:
         self._venue_exchange = venue_exchange
         self._data_provider = data_provider
         self._freeze_gate = freeze_gate
-        # SAFE-03/§11c: the CONTROL-plane actuators threaded to the LiveRouteRegistrar so
-        # it can SET the STREAM_STATE / CONNECTOR_FATAL routes to the engine-thread
+        # The CONTROL-plane actuators threaded to the LiveRouteRegistrar so it can SET the
+        # STREAM_STATE / CONNECTOR_FATAL routes to the engine-thread
         # SafetyController.pause_submission / StreamRecoveryHandler.on_reconnect /
         # SafetyController.halt.
         self._safety = safety
         self._stream_recovery = stream_recovery
-        # D-22/D-23 (Wave 3): the engine-thread ConfigRouter threaded to the
-        # LiveRouteRegistrar so it can SET the CONFIG_UPDATE CONTROL route to
-        # ConfigRouter.apply. None when there is no SQL spine (route stays the empty slot).
+        # The engine-thread ConfigRouter threaded to the LiveRouteRegistrar so it can SET
+        # the CONFIG_UPDATE CONTROL route to ConfigRouter.apply. None when there is no SQL
+        # spine, in which case that route stays the empty slot.
         self._config_router = config_router
 
     def initialize(self) -> "UniverseHandler":
-        """Wire the live session in donor order; return the built ``UniverseHandler``.
+        """Wire the live session in order; return the built ``UniverseHandler``.
 
-        Order: ``wire_universe`` -> ``register_strategy_warmup`` -> subscription guard
-        -> build + wire ``UniverseHandler`` (D-11) -> ``LiveRouteRegistrar.install``.
-        The live-only concretions are lazy-imported here (backtest import path stays
-        inert — the recurring ``tests/integration/test_okx_inertness.py`` gate).
+        Order: ``wire_universe`` -> ``register_strategy_warmup`` -> subscription guard ->
+        build + wire ``UniverseHandler`` -> ``LiveRouteRegistrar.install``.
         """
-        # LAZY imports of the live-only concretions (mirrors the donor's lazy live
-        # imports) so the backtest import path never pulls them onto its graph.
-        from itrader.universe.membership import StrategyDerivedSelectionModel
-        from itrader.universe.universe_handler import UniverseHandler
-
         engine = self._engine
 
-        # (1) The shared RUN-04 unit (06-01): derive membership/instruments -> WR-03
-        # desync assert (LIVE GAINS this) -> Universe -> inject exchange/order/
-        # portfolio/strategies -> feed.bind. Held on engine.universe.
+        # (1) The shared universe unit: derive membership/instruments -> desync assert ->
+        # Universe -> inject exchange/order/portfolio/strategies -> feed.bind. Held on
+        # engine.universe.
         universe = wire_universe(engine)
 
-        # (2) RUN-07/D-17 warmup registration (06-03): sizes the LIVE feed ring to the
-        # max strategy warmup so cache_capacity() derives to 100 (SMA_MACD). Safe
-        # AFTER wire_universe's feed.bind (RESEARCH Landmine 3 — do NOT re-invert).
+        # (2) Warmup registration sizes the LIVE feed ring to the max strategy warmup. Safe
+        # only AFTER wire_universe's feed.bind — do NOT re-invert.
         #
-        # F-1: the depth is derived in BASE-bar units, scaled by each strategy's
-        # timeframe multiple — the ring holds BASE bars while strategy.warmup counts
-        # STRATEGY-TIMEFRAME bars, so a strategy coarser than the base cadence needs
-        # warmup * multiple base bars (a 4h strategy on a 1h base resampling a
-        # warmup-deep ring would otherwise never warm, and never trade, silently).
-        # For SMA_MACD the timeframe equals the base cadence, so the multiple is 1 and
-        # the derived depth is unchanged at 100. engine.feed is a LiveBarFeed on this
-        # live-only path (same interim cast as the UniverseHandler ctor below).
+        # The depth is derived in BASE-bar units, scaled by each strategy's timeframe
+        # multiple: the ring holds BASE bars while strategy.warmup counts STRATEGY-TIMEFRAME
+        # bars, so a strategy coarser than the base cadence needs warmup * multiple base
+        # bars. Without the scaling a 4h strategy on a 1h base, resampling a warmup-deep
+        # ring, would never warm and never trade, silently. engine.feed is a LiveBarFeed on
+        # this live-only path (the same cast as the UniverseHandler ctor below).
         register_strategy_warmup(
             engine.feed, engine.strategies_handler.strategies,
             base_timeframe=cast("LiveBarFeed", engine.feed).base_timeframe)
 
-        # (3) WR-03 subscription/membership invariant — no guard needed TODAY.
-        # Subscription is derived SOLELY from universe.members: start() runs
-        # `for sym in universe.members: subscribe(sym)` (dynamic per-symbol subscribe,
-        # 06-02/D-05), and the old single-symbol start_stream() has no live call site,
-        # so the feed ring key and the strategy's window() ticker cannot diverge by
-        # construction. (The prior guard here compared `list(members)` against
-        # `members` — unconditionally empty, hence unreachable: false safety.)
+        # (3) Subscription/membership invariant — no guard needed TODAY. Subscription is
+        # derived SOLELY from universe.members: start() runs
+        # `for sym in universe.members: subscribe(sym)`, and the old single-symbol
+        # start_stream() has no live call site, so the feed ring key and the strategy's
+        # window() ticker cannot diverge by construction.
         # TODO: IF a future edit reintroduces an INDEPENDENT subscription source — an
-        # operator-configured stream-symbol allowlist, a per-member/per-strategy
-        # timeframe, or start_stream() re-wired into the live path — add a real
-        # wiring-time guard HERE asserting that independent subscribed set is a subset
-        # of universe.members BEFORE start() subscribes (else MissingPriceDataError
-        # only at the FIRST window(), deep on the live path).
+        # operator-configured stream-symbol allowlist, a per-member/per-strategy timeframe,
+        # or start_stream() re-wired into the live path — add a real wiring-time guard HERE
+        # asserting that independent subscribed set is a subset of universe.members BEFORE
+        # start() subscribes. Otherwise the mismatch surfaces as MissingPriceDataError only
+        # at the FIRST window(), deep on the live path.
 
-        # (4) Build the first-class UniverseHandler (RUN-06/D-11 ctor: bus, universe,
-        # feed, config). engine.feed is a LiveBarFeed on the live path (the compose
-        # Engine holder types it BacktestBarFeed — 06-06's live-feed-aware build
-        # removes this interim cast).
-        # bus: the compose Engine holder types global_queue as EventBus; the live
-        # facade threads a raw queue.Queue (UniverseHandler's bus contract). Bridge
-        # the interim typing (06-06's EventBus-native wiring supersedes this).
+        # (4) Build the first-class UniverseHandler. engine.feed is a LiveBarFeed on the
+        # live path, and the Engine holder types global_queue as EventBus while
+        # UniverseHandler's bus contract is a raw queue.Queue — hence the two casts.
         universe_handler = UniverseHandler(
             bus=cast(Any, engine.global_queue),
             universe=universe,
             feed=cast("LiveBarFeed", engine.feed),
             config=self._universe_config,
         )
-        # OP-SEAM: the poll selection source re-reads the live strategy universe each
-        # select(), so an operator ticker edit propagates on the next poll.
+        # The poll selection source re-reads the live strategy universe on each select(), so
+        # an operator ticker edit propagates on the next poll.
         universe_handler.set_selection_source(
             StrategyDerivedSelectionModel(engine.strategies_handler))
-        # RUN-06/D-11 venue metadata: ONE unconditional set_venue_metadata wires BOTH
-        # validate_symbol (D-06) and resolve_precision (VENUE-04/D-09) off the resolved
-        # venue exchange — NO OKX guard (paper's SimulatedExchange satisfies both with
-        # permissive defaults). The None-guard is purely defensive: live/paper always
-        # resolve a non-None venue exchange.
+        # ONE unconditional set_venue_metadata wires BOTH validate_symbol and
+        # resolve_precision off the resolved venue exchange — no OKX guard, since paper's
+        # SimulatedExchange satisfies both with permissive defaults. The None-guard is purely
+        # defensive: live and paper always resolve a non-None venue exchange.
         if self._venue_exchange is not None:
             universe_handler.set_venue_metadata(self._venue_exchange)
         # Data-plane provider the add/remove branch drives (guard None on paper).
@@ -177,19 +145,17 @@ class SessionInitializer:
             universe_handler.set_provider(self._data_provider)
         # Open-position truth for the remove consumer + detach-on-flat.
         universe_handler.set_portfolio_read_model(engine.portfolio_handler)
-        # WR-02 strategy-warmth re-verify: on_bars_loaded re-checks is_warm before
-        # flipping a symbol READY (a swallowed partial warmup can't make a half-warmed
-        # symbol tradeable).
+        # on_bars_loaded re-checks is_warm before flipping a symbol READY, so a swallowed
+        # partial warmup cannot make a half-warmed symbol tradeable.
         universe_handler.set_strategy_warmth(engine.strategies_handler)
-        # WR-05/D-07 freeze gate (interim callable): while the engine is HALTED or
-        # submission-paused the poll freezes membership in place. Repointed to
-        # SafetyController in P7 (mirrors the D-08 dispatch-gate pattern).
+        # While the engine is HALTED or submission-paused the poll freezes membership in
+        # place.
         universe_handler.set_freeze_gate(self._freeze_gate)
 
-        # (5) Compose the BUSINESS/live routes + the SAFE-03 CONTROL-plane routes via the
-        # central declarative registrar — list order = execution order; no runtime
-        # mutation (LR-16). The safety + stream_recovery collaborators resolve the
-        # STREAM_STATE / CONNECTOR_FATAL routes (§11c).
+        # (5) Compose the BUSINESS/live routes + the CONTROL-plane routes via the central
+        # declarative registrar — list order = execution order, no runtime mutation. The
+        # safety + stream_recovery collaborators resolve the STREAM_STATE / CONNECTOR_FATAL
+        # routes.
         LiveRouteRegistrar(
             engine.strategies_handler,
             universe_handler,

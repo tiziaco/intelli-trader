@@ -111,9 +111,10 @@ def _build_live_okx_stack():
     """
     from itrader.core.sizing import FractionOfCash, TradingDirection
     from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
-    from itrader.trading_system.live_trading_system import LiveTradingSystem
+    from itrader import config as _live_config
+    from itrader.trading_system.live.build import build_live_system
 
-    system = LiveTradingSystem.for_exchange("okx")
+    system = build_live_system(_live_config, execution_venue="okx")
     strategy = SMAMACDStrategy(
         timeframe="1d",
         tickers=[_OKX_SYMBOL],
@@ -192,7 +193,7 @@ def _submit_min_demo_order(system, portfolio_id):
         strategy_id=StrategyId(uc.uuid7()),
         portfolio_id=portfolio_id,
     )
-    system._order_storage.add_order(order)
+    system.order_handler.storage.add_order(order)
     system.global_queue.put(OrderEvent.new_order_event(order, OrderCommand.NEW))
     return order
 
@@ -292,7 +293,7 @@ def _seed_believed_position_to_venue(system, portfolio_id):
 
     The only OKX demo account available is NON-FLAT: OKX pre-seeds ~1 BTC and the EEA/MiCA
     account cannot be sold flat (sells blocked by a price-floor > best-bid). On such an
-    account ``_run_session_baseline_guard`` (live_trading_system.py:579) reads a base-asset
+    account ``_run_session_baseline_guard`` reads a base-asset
     residual and latches ``halt('baseline-residual')`` inside ``start()`` — the two online
     start()-driven tests never reach RUNNING.
 
