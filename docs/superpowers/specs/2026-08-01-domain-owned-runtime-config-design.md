@@ -44,7 +44,9 @@ The two scopes that no handler owns are exactly the two scopes that do not work.
   (`live/system.py:444` → `universe_handler.py:218`). `ConfigRouter._apply_system` justifies
   having no push step by claiming these are read live off the mutable config object. That
   claim is false — an edit validates, persists, mutates `config.universe`, reports success,
-  and never reaches the running engine.
+  and never reaches the running engine. This design fixes `remove_policy` and makes
+  `poll_cadence_s` explicitly construction-time rather than falsely editable (see "The
+  `universe` scope" below).
 
 This is structural, not accidental. A central router can persist on a domain's behalf, but it
 cannot know what the domain cached at construction. **An owner that holds the store also holds
@@ -144,12 +146,14 @@ def on_config_update(self, event: UniverseConfigEvent) -> None:
         self.logger.warning('Universe config refused: %s', exc)
         return
     self._store.save_config(merged.model_dump(mode='json'), event.time)
-    self._apply(merged)
+    self._config = merged
 ```
 
-`OrderManager` and `Portfolio` already hold their Pydantic model (`order_config`, `config`) and
-can validate a merge directly. `UniverseHandler` does not — it holds a dataclass snapshot — so
-it needs the change described under "Making `universe` genuinely live" below.
+All three consumers share this shape, including the atomic swap: each handler is the sole reader
+of its own model, so rebinding the attribute is safe and no field-wise mutation is needed
+anywhere in the design. `OrderManager` and `Portfolio` already hold their Pydantic model
+(`order_config`, `config`); `UniverseHandler` holds a dataclass snapshot today and needs the
+change described under "The `universe` scope" below.
 
 Unknown keys are rejected by `extra="forbid"` on each Pydantic model. There is no
 hand-maintained allowlist anywhere in the design — the model *is* the allowlist, and it cannot
@@ -164,55 +168,31 @@ Persist-first matches the strategy precedent and its rationale: the durable row 
 intent and a restart heals a failed apply. An apply failure after a successful persist is
 logged, not rolled back.
 
-### Making `universe` genuinely live
+### The `universe` scope
 
-The only scope with real work behind it rather than plumbing. It is also the only config with
-**two** collaborators reading it — `UniverseHandler` and `WorkerSupervisor` — which is what
-makes it different from `order` and `portfolio`.
+`UniverseHandler` needs one change to look like the other two: it must hold its Pydantic model
+instead of a dataclass snapshot. Nothing else about the scope is special.
 
-Today each reader takes its own snapshot at construction and nothing refreshes them:
+**`UniverseHandlerConfig` is deleted** (`universe_handler.py:64-79`), replaced by two ctor params
+with honestly different lifecycles:
 
-```
-config.universe.poll_cadence_s      ─(build.py:400, a float)─▶ WorkerSupervisor._cadence   → :62
-config.universe.remove_policy       ─(system.py:444)─▶ UniverseHandlerConfig ─▶ _remove_policy → :565
-config.stream.okx_stream_timeframe  ─(system.py:443)─▶ UniverseHandlerConfig ─▶ _timeframe     → :347,449,452
-```
+- `config: UniverseConfig` — owned, editable, atomic-swapped on update. `self._remove_policy`
+  (`:565`) becomes `self._config.remove_policy`.
+- `poll_timeframe: str` — a construction snapshot. `self._timeframe` (`:347`, `:449`, `:452`)
+  stays exactly as it is.
 
-After: **one object, read live by both readers, written by one owner.**
+This is still constructor injection of a domain model, so the handler stays off the config root
+and the decoupling `UniverseHandlerConfig` existed for is preserved.
 
-```
-config.universe : UniverseConfig ──┬──▶ WorkerSupervisor._config.poll_cadence_s  (read each tick, :62)
-      ▲                            └──▶ UniverseHandler._config.remove_policy / .poll_timeframe
-      │ setattr, field-wise
-  UniverseHandler.on_config_update  (sole writer)
-```
+`poll_timeframe` stays a snapshot deliberately. It is sourced from
+`config.stream.okx_stream_timeframe` (`live/system.py:443`), which has two other readers:
+`okx_provider.py:721` — the timeframe the venue stream actually subscribes to — and
+`live/system.py:552`. An independently editable universe copy could drift from the subscribed
+timeframe (warm 1d bars, stream 1h) with nothing detecting it;
+`tests/support/replay_harness.py:344` already carries a comment about that hazard.
 
-This works because `config.universe` is a MUTABLE Pydantic sub-model with
-`validate_assignment=True`, mounted on the frozen root and mutated field-wise, never reassigned
-(`itrader_config.py:78-86`).
-
-1. **`poll_timeframe` does NOT move and does NOT become editable.** It is sourced from
-   `config.stream.okx_stream_timeframe` (`live/system.py:443`), which has two other readers:
-   `okx_provider.py:721` — the timeframe the venue stream actually subscribes to — and
-   `live/system.py:552`. Making the universe copy independently editable would let the warmup
-   timeframe drift from the subscribed timeframe (warm 1d bars, stream 1h), with nothing
-   detecting it; `tests/support/replay_harness.py:344` already carries a comment about that
-   hazard. It stays a construction-time snapshot, and `UniverseConfig`'s editable surface stays
-   `poll_cadence_s` + `remove_policy`.
-2. **`UniverseHandlerConfig` is deleted** (`universe_handler.py:64-79`), replaced by two ctor
-   params with honestly different lifecycles: `config: UniverseConfig` (owned, live, editable)
-   and `poll_timeframe: str` (a construction snapshot that must match the stream). The handler
-   keeps the REFERENCE (`self._config = config`) instead of unpacking (`:217-218`), so
-   `self._remove_policy` (`:565`) becomes `self._config.remove_policy`. `self._timeframe`
-   (`:347`, `:449`, `:452`) stays exactly as it is. This is still constructor injection of a
-   domain model, so the handler stays off the config root — the decoupling
-   `UniverseHandlerConfig` existed for is preserved.
-3. **`WorkerSupervisor` takes the model, not a float.** `cadence: float`
-   (`worker_supervisor.py:41`) becomes `universe_config: UniverseConfig`, and `:62` becomes
-   `self._stop_event.wait(self._config.poll_cadence_s)`. `build.py:400` passes `config.universe`
-   instead of `config.universe.poll_cadence_s`. A `Callable[[], float]` was considered and
-   rejected: it closes over the same object for the same effect, with a lambda in between.
-4. **The consumer mutates field-wise**, not by swapping:
+The consumer then atomic-swaps, exactly like `OrderManager.update_config` and
+`Portfolio.update_config`:
 
 ```python
 def on_config_update(self, event: UniverseConfigEvent) -> None:
@@ -223,25 +203,43 @@ def on_config_update(self, event: UniverseConfigEvent) -> None:
         self.logger.warning('Universe config refused: %s', exc)
         return
     self._store.save_config(merged.model_dump(mode='json'), event.time)
-    for field in event.updates:
-        setattr(self._config, field, getattr(merged, field))
+    self._config = merged
 ```
 
-Field-wise mutation is REQUIRED here, not stylistic: `ITraderConfig` is frozen so
-`config.universe` cannot be reassigned, and both collaborators hold a reference to the
-INSTANCE — an atomic swap would leave them pointing at the old object. This is the mutation
-model `validate_assignment=True` exists for.
+### `poll_cadence_s` is NOT editable in this design
 
-It differs deliberately from `order` and `portfolio`, which DO atomic-swap
-(`self.order_config = new_config`, `self.config = new_config`). That is correct for them: each
-is the sole reader of its own model. Do not "unify" the two — the difference tracks a real
-difference in ownership.
+`UniverseConfig`'s editable surface is **`remove_policy` only**. `poll_cadence_s` remains
+construction-time and requires a restart to change.
 
-**Thread-safety.** The poll thread reads `poll_cadence_s` while the engine thread writes it. A
-single attribute read/write is atomic under the GIL, so no torn read is possible; worst case the
-timer sleeps one more interval at the old cadence before picking up the new one. This is the one
-place in the design where a config field is read off the engine thread, and it is why the
-supervisor reads a plain field rather than calling into the handler.
+The reason is the poll timer's ownership. `WorkerSupervisor` captures the cadence as a FLOAT at
+construction (`worker_supervisor.py:41`, read at `:62` via `build.py:400`), so nothing can
+refresh it. Making it editable requires either handing the supervisor the `UniverseConfig` model
+or a `Callable[[], float]` — and BOTH force `UniverseHandler` to abandon the atomic swap for
+field-wise mutation on a shared instance, because the supervisor holds a reference the swap would
+strand. That would make `universe` the one scope in the design with a different mutation model
+and a cross-thread config read, to buy a tuning knob on a 60-second timer.
+
+Passing `UniverseConfig` to `WorkerSupervisor` was in an earlier draft and is rejected: the
+supervisor needs one float and would depend on a two-field domain model. Nautilus Trader and LEAN
+both answer this by not making timer intervals runtime-mutable at all — an interval is a
+registration parameter, changed by re-registering. Where server-side config systems do support
+it (Netflix Archaius `DynamicIntProperty`, `Supplier<T>`), the consumer holds a handle to ONE
+value, never the config aggregate.
+
+**The follow-up ticket** — moving the poll timer into `UniverseHandler` itself — dissolves this
+entirely, and is the reason the constraint is acceptable here. A timer owned by the handler reads
+`self._config.poll_cadence_s`, dereferencing through the owner on every tick, so the atomic swap
+keeps working and the cadence becomes editable by adding one field to the editable surface. No
+part of this design has to be undone for that; `WorkerSupervisor` is untouched here and gets
+deleted there (the poll timer is all it does).
+
+That ticket has to decide three things this one does not: the timer thread must keep putting a
+`UniversePollEvent` on the bus rather than calling `on_poll` directly (the poll is actuated on the
+engine thread — the single-writer contract); lifecycle moves, since `LiveRunner` composes
+`WorkerSupervisor` today while `UniverseHandler` is only built in `SessionInitializer` during
+`start()`, and the handler's thread should keep honouring the shared `stop_event` so `stop()`
+unblocks it immediately; and a domain handler owning a daemon thread is new here — handlers are
+engine-thread consumers today, and this makes one a producer with its own lifecycle.
 
 ### `UniverseStore`
 
@@ -331,9 +329,10 @@ that fails loudly, and it is on the backtest path.
   (`tests/unit/portfolio/test_update_config.py`) — it is now the only layer enforcing it.
 - `tests/integration/test_config_ingress.py` and `test_config_restart_layering.py` are rewritten
   against the three events.
-- A live-apply test for `universe`: after a `UniverseConfigEvent`, `WorkerSupervisor` observes
-  the new cadence and `UniverseHandler` the new remove policy. This is the regression that would
-  have caught the current silent no-op.
+- A live-apply test for `universe`: after a `UniverseConfigEvent`, the removal path observes the
+  new `remove_policy` — not merely that `self._config` changed. This is the regression that would
+  have caught the current silent no-op, where the edit lands on the config object and the running
+  handler keeps its construction-time snapshot.
 - `tests/integration/test_okx_inertness.py` must stay green — `UniverseStore` is a SQL module
   and must not reach the backtest import graph.
 - `tests/integration/test_backtest_oracle.py` must stay byte-exact. All three events are
@@ -350,6 +349,8 @@ that fails loudly, and it is on the backtest path.
   (`ExchangeConfig.default()` / `.high_fee()`), and mid-run changes make a run's PnL incoherent.
 - No widening of the editable surface. `stream`, `feed_provider` and `safety` remain
   construction-time; adding one later is a new event plus a consumer, in obvious places.
+- No change to `WorkerSupervisor`. `poll_cadence_s` stays construction-time until the poll timer
+  moves into `UniverseHandler` in the follow-up ticket.
 - No config **read** surface. The engine needs none, and the deleted `PortfolioHandler.get_config`
   / `get_portfolio_config` had no caller. A FastAPI layer wanting "show me this portfolio's
   config" is a separate piece of work, and its natural source is each store's `load_config`
